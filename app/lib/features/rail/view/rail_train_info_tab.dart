@@ -30,10 +30,6 @@ class _InfoTab extends StatelessWidget {
   /// best-effort and possibly null.
   final RailFareQuote? fullFare;
 
-  /// Fare for the segment the user actually searched, when known — the
-  /// number an O/D result list already showed, so this (not [fullFare]) is
-  /// the headline figure once available. See RailTrainBloc for why quoting
-  /// the wrong one used to price the same trip two different ways.
   final RailFareQuote? userFare;
   final String? userOrigin;
   final String? userDest;
@@ -52,12 +48,6 @@ class _InfoTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    // Match the user's searched station names back into this train's own
-    // stop list so every row below quotes that stop's actual scheduled time
-    // rather than mixing a user-supplied name with the full run's times.
-    // Falls back to the full run when a name can't be matched (e.g. a
-    // formatting difference between the search source and the stop list) so
-    // the 起迄站 and 行駛時間 rows can never disagree with each other.
     final userOriginStop = userOrigin != null ? _findStop(userOrigin!) : null;
     final userDestStop = userDest != null ? _findStop(userDest!) : null;
     final showUserSegment = userOriginStop != null && userDestStop != null;
@@ -67,10 +57,13 @@ class _InfoTab extends StatelessWidget {
             userDestStop.name == stops.last.name);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space16,
+        vertical: AppTheme.space16,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        spacing: 16,
+        spacing: AppTheme.space16,
         children: [
           _buildTrainInfo(
             AppI18n.of(context),
@@ -153,11 +146,11 @@ class _InfoTab extends StatelessWidget {
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      spacing: 10,
+      spacing: AppTheme.space10,
       children: [
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          spacing: 4,
+          spacing: AppTheme.space4,
           children: [
             Text(
               i18n.railTrainAndType,
@@ -166,7 +159,7 @@ class _InfoTab extends StatelessWidget {
             Row(
               children: [
                 Text(trainNo, style: _valueStyle),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppTheme.space10),
                 TrainTypeChip(type: type),
               ],
             ),
@@ -181,7 +174,7 @@ class _InfoTab extends StatelessWidget {
               style: _labelStyle.copyWith(color: cs.onSurfaceVariant),
             ),
             Row(
-              spacing: 6,
+              spacing: AppTheme.space6,
               children: [
                 Text(headlineOrigin.name, style: _valueStyle),
                 const Text('→', style: _valueStyle),
@@ -210,7 +203,7 @@ class _InfoTab extends StatelessWidget {
               style: _labelStyle.copyWith(color: cs.onSurfaceVariant),
             ),
             Row(
-              spacing: 6,
+              spacing: AppTheme.space6,
               children: [
                 Text(departTime, style: _valueStyle),
                 const Text('→', style: _valueStyle),
@@ -270,7 +263,7 @@ class _InfoTab extends StatelessWidget {
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          spacing: 12,
+          spacing: AppTheme.space12,
           children: [
             Text(
               AppI18n.of(context).railFareInfo,
@@ -281,7 +274,7 @@ class _InfoTab extends StatelessWidget {
             AppCard.outlined(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                spacing: 4,
+                spacing: AppTheme.space4,
                 children: [
                   Text(
                     primaryLabel,

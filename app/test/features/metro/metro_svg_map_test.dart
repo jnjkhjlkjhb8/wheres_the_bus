@@ -11,10 +11,6 @@ void main() {
       final semanticsHandle = tester.ensureSemantics();
       MetroMapStation? tapped;
 
-      // The map (1080x1920) renders taller than the default 800x600 test
-      // surface at typical widths, leaving lower stations off-screen and
-      // unreachable by tapAt. Size the surface to the map's own aspect
-      // ratio (scale s=1) so every station is on-screen and reachable.
       tester.view.physicalSize = const Size(1080, 1920);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
@@ -33,10 +29,6 @@ void main() {
       // Flush the 350ms hit-target defer timer.
       await tester.pump(const Duration(milliseconds: 400));
 
-      // BL21 (昆陽) and BL22 (南港) sit only 42 map units apart — their
-      // 44px hit regions overlap. Use their real rendered rects so the
-      // test exercises the actual InteractiveViewer transform rather than
-      // assuming a scale factor.
       final bl21 = tester.getRect(find.bySemanticsLabel('BL21 昆陽'));
       final bl22 = tester.getRect(find.bySemanticsLabel('BL22 南港'));
       final c21 = bl21.center;

@@ -33,10 +33,6 @@ func (d *deadlineSearchDB) Query(ctx context.Context, _ string, _ ...any) (pgx.R
 	return nil, errors.New("stop after context inspection")
 }
 
-// _textSearchColumns mirrors the columns _textSearchSQL projects: the
-// searchResult fields plus the rank/similarity columns used to dedupe and
-// order candidates that reach the same row through multiple UNION ALL
-// branches.
 var _textSearchColumns = []string{"type", "uid", "name", "city", "depart", "destin", "lat", "lon", "rank", "sim"}
 
 func performSearchRequest(t *testing.T, db searchDB, query string) *httptest.ResponseRecorder {
@@ -63,10 +59,6 @@ func (r searchRouter) get(t *testing.T, target string) *httptest.ResponseRecorde
 	return recorder
 }
 
-// TestHandleSearchPassesCityFilterToQuery pins the filter to the database
-// rather than to a post-filter in Go: the branch LIMITs mean a response
-// filtered after the fact would show only the chosen city's share of the
-// top rows, not the rows that city actually has.
 func TestHandleSearchPassesCityFilterToQuery(t *testing.T) {
 	t.Setenv("EMBED_URL", "")
 	db, err := pgxmock.NewPool()
@@ -570,16 +562,7 @@ func TestTextSearchBranchesAreCappedIndependently(t *testing.T) {
 	}
 }
 
-// TestTextSearchBranchesOrderBeforeCapping guards against arbitrary
-// truncation: a branch LIMIT without an ORDER BY lets the planner cut rows
-// in heap/index scan order, which can drop the highest-similarity match
-// before the outer ranking ever sees it. Every branch must therefore sort
-// its candidates before applying its cap.
 func TestTextSearchBranchesOrderBeforeCapping(t *testing.T) {
-	// Each WHERE clause body must be followed by an ORDER BY before the
-	// branch's LIMIT. Walk the SQL branch by branch: every "LIMIT $2" must
-	// be preceded (within its branch, i.e. after the branch's WHERE) by an
-	// "ORDER BY".
 	rest := _textSearchSQL
 	for branch := 0; ; branch++ {
 		whereIdx := strings.Index(rest, "WHERE")

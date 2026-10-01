@@ -17,18 +17,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * On-device checks for the alight-tracking card.
- *
- * The interesting assertion here cannot be made off-device: whether the system
- * will actually promote the notification to a status-bar chip is decided by
- * `Notification.hasPromotableCharacteristics()` inside the platform, against
- * rules (allowed styles, ongoing flag, required title) that our builder can
- * only try to satisfy. A unit test would assert our own intent back to us.
- *
- * `POST_ALL` posts every state to the device's shade so the card can be looked
- * at as well as asserted.
- */
 @RunWith(AndroidJUnit4::class)
 class AlightTrackNotificationTest {
 
@@ -120,10 +108,6 @@ class AlightTrackNotificationTest {
         assertEquals("取消追蹤", n.actions[0].title)
     }
 
-    /**
-     * The four networks share one card: only the strings inside it change.
-     * If a mode ever grows its own layout again, this is what fails.
-     */
     @Test
     fun everyNetworkProducesTheSameCard() {
         assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA)
@@ -164,15 +148,6 @@ class AlightTrackNotificationTest {
         )
     }
 
-    /**
-     * The colour ramp is keyed on the rider's own 提前站數.
-     *
-     * `Notification.color` only tints the header — on a Pixel 8 / Android 17
-     * the status-bar chip stays a system neutral and the action text follows
-     * the device accent, whatever we pass. Distance is therefore carried by
-     * the progress bar (Segment.setColor, which is honoured) and by the chip's
-     * wording; this test pins the header tint and the wording.
-     */
     @Test
     fun theChipStaysInkUntilTheLastStop() {
         val ink = context.getColor(R.color.track_ink)
@@ -200,10 +175,6 @@ class AlightTrackNotificationTest {
         )
     }
 
-    /**
-     * Waiting is the same card at hop zero, counting minutes instead of stops
-     * — not the separate card it used to be.
-     */
     @Test
     fun waitingIsTheSameCardAtHopZero() {
         val n = card.buildTrack(
@@ -224,10 +195,6 @@ class AlightTrackNotificationTest {
         assertEquals("8分", n.shortCriticalText)
     }
 
-    /**
-     * An ending must be seen. It drops the chip and the cancel action, but it
-     * is still a card until Dart dismisses the lease.
-     */
     @Test
     fun terminalStatesStopBeingOngoingButStillRead() {
         val arrived = card.buildTrack(payload(phase = "arrived", remainingStops = 0))
@@ -245,12 +212,6 @@ class AlightTrackNotificationTest {
         assertEquals("失效", lost.shortCriticalText)
     }
 
-    /**
-     * A live card carries its own retirement so a process the system kills
-     * mid-ride cannot leave an un-swipeable card whose numbers never move
-     * again. Per mode, because the feeds behind them are not one cadence — and
-     * never on a terminal card, which Dart dismisses after its own linger.
-     */
     @Test
     fun aLiveCardRetiresItselfPerModeAndATerminalOneDoesNot() {
         val bus = card.buildTrack(payload(mode = "bus"))
@@ -268,14 +229,6 @@ class AlightTrackNotificationTest {
         assertTrue(bus.timeoutAfter > 60 * 1000L)
     }
 
-    /**
-     * register() registers a context-wide BroadcastReceiver and installs a
-     * channel handler, both of which outlive the FlutterEngine that created
-     * them unless dispose() takes them back down. unregisterReceiver throws
-     * IllegalArgumentException for a receiver that is not registered, so a
-     * second unregister succeeding-by-throwing is the proof the first one
-     * actually happened.
-     */
     @Test
     fun disposeUnregistersTheCancelReceiver() {
         plugin.register(NoopMessenger())
@@ -294,11 +247,6 @@ class AlightTrackNotificationTest {
         plugin.dispose()
     }
 
-    /**
-     * A server-pushed refresh (ADR-0018) arrives over FCM, whose data values
-     * are all strings — the same fields reach the MethodChannel path as
-     * numbers. One builder serves both, so it has to read either.
-     */
     @Test
     fun buildsTheSameCardFromStringValuedFields() {
         val numbers = card.buildTrack(payload(remainingStops = 4, leadStops = 2))
@@ -322,12 +270,6 @@ class AlightTrackNotificationTest {
         )
     }
 
-    /**
-     * A cancel has to stick through the refresh already in flight behind it.
-     * Ending the session stops new pushes, but one in the air still lands, and
-     * reposting a card the rider just dismissed is worse than never having
-     * pushed at all.
-     */
     @Test
     fun refusesARefreshForASessionJustCancelled() {
         card.beginSession()
@@ -351,12 +293,6 @@ class AlightTrackNotificationTest {
         card.cancel()
     }
 
-    /**
-     * Dart dismisses a terminal card after its own linger, but a card pushed to
-     * a process that is gone has no Dart to do it, and 已到站 would sit in the
-     * shade until someone swiped it. This is iOS's `dismissal-date`, Android
-     * side.
-     */
     @Test
     fun aTerminalCardRetiresItselfWithoutAnApp() {
         val arrived = card.buildTrack(payload(phase = "arrived", remainingStops = 0))
@@ -370,12 +306,6 @@ class AlightTrackNotificationTest {
         }
     }
 
-    /**
-     * Two writers now reach one card — the app while it is awake, and a server
-     * push while it is not — and they can race. Ordering them by clock is not
-     * available (two machines, one card), so the card takes the reading that is
-     * further along: a ride only ever moves toward the alight stop.
-     */
     @Test
     fun dropsAPushedReadingOlderThanTheOneOnScreen() {
         card.beginSession()
@@ -384,14 +314,53 @@ class AlightTrackNotificationTest {
         assertTrue("a later reading must draw", card.post(payload(remainingStops = 2)))
         assertFalse(
             "a push that lost its race to a local update must not put the ride back",
-            card.post(payload(remainingStops = 3)),
+            card.post(payload(remainingStops = 3), fromPush = true),
         )
         // An ending is the one reading that is never discarded.
-        assertTrue(card.post(payload(phase = "arrived", remainingStops = 0)))
+        assertTrue(card.post(payload(phase = "arrived", remainingStops = 0), fromPush = true))
 
         // A new ride is not judged against the last one's progress.
         card.beginSession()
         assertTrue(card.post(payload(remainingStops = 9)))
+
+        card.cancel()
+    }
+
+    @Test
+    fun aLocalUpdateThatPutsTheRideBackStillDrawsAndSetsTheFloor() {
+        card.beginSession()
+
+        assertTrue(card.post(payload(remainingStops = 2)))
+        assertTrue(
+            "the session owns the card while it is awake",
+            card.post(payload(remainingStops = 6)),
+        )
+        assertTrue("and the ride keeps moving from there", card.post(payload(remainingStops = 5)))
+        assertFalse(
+            "a push is now measured against the reading the app put up",
+            card.post(payload(remainingStops = 7), fromPush = true),
+        )
+
+        card.cancel()
+    }
+
+    @Test
+    fun anUnpushedCardGoesDownWithTheEngine() {
+        card.beginSession()
+        assertTrue(card.post(payload(mode = "bus", remainingStops = 4)))
+        card.dropUnpushedCard()
+        assertTrue(
+            "a dropped card is gone, so the next session's first reading draws",
+            card.post(payload(mode = "bus", remainingStops = 9)),
+        )
+
+        card.beginSession()
+        assertTrue(card.post(payload(mode = "metro", remainingStops = 4)))
+        card.dropUnpushedCard()
+        assertFalse(
+            "a metro card stays, and stays under the ordering rule",
+            card.post(payload(mode = "metro", remainingStops = 5), fromPush = true),
+        )
 
         card.cancel()
     }

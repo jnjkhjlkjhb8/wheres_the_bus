@@ -6,18 +6,11 @@ import 'package:wheres_the_bus/features/bus/view/bus_stop_detail_view.dart';
 import 'package:wheres_the_bus/features/metro/view/metro_station_detail_view.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 import 'package:wheres_the_bus/features/rail/view/rail_station_detail_view.dart';
-import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 
-/// 依站別回傳首頁第二層 sheet 要顯示的 detail 內容。
-///
-/// 外層的 [SheetPageTopInset] 讓第二層跟第一層一樣，往上拉時內容會逐漸讓開狀態列。
-///
-/// [bloc] 由首頁持有並傳入（公車才有），讓 sheet 的成員 chip 和地圖上的站牌膠囊
-/// 共用同一份 selectedStationUid；省略時 detail view 自建一份。
 Widget stationDetailPage(
   NearStationViewModel station, {
   BusStopBloc? bloc,
-}) => SheetPageTopInset(child: _stationDetailContent(station, bloc));
+}) => _stationDetailContent(station, bloc);
 
 Widget _stationDetailContent(
   NearStationViewModel station,

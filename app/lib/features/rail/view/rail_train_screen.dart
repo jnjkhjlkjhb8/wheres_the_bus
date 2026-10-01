@@ -31,6 +31,7 @@ import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/bookmark_button.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/fare_preference.dart';
+import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/route_tab_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/train_type_chip.dart';
 import 'package:wheres_the_bus/shared/widgets/transit_timeline.dart';
@@ -38,11 +39,6 @@ import 'package:wheres_the_bus/shared/widgets/transit_timeline.dart';
 part 'rail_train_info_tab.dart';
 part 'rail_train_timetable_tab.dart';
 
-/// Board→alight scheduled stops (inclusive) that ride on a rail track leg so
-/// the live tracker can derive 還剩 N 站 / progress / ETA from the timetable
-/// after this screen is gone (see `defaultRailTrackStream`). Empty when the
-/// segment is degenerate or any stop time is unparseable — the session then
-/// falls back to a plain scheduled countdown.
 List<RailStopSchedule> railTrackSchedule(
   List<RailTrainStop> stops,
   String serviceDate, {
@@ -75,11 +71,6 @@ Map<int, String> _weekdayLabels(AppI18n i18n) => {
   DateTime.sunday: i18n.weekdaySun,
 };
 
-/// Matches the results-list header format (`rail_screen.dart`'s
-/// `_formatDateDisplay`) so the same date doesn't read as two different
-/// formats across the two screens a user compares side by side. Reimplemented
-/// locally rather than imported: that copy is private, behind a `part`
-/// boundary this file isn't part of.
 String _formatDateDisplay(AppI18n i18n, String isoDate) {
   final date = DateTime.tryParse(isoDate);
   if (date == null) return isoDate.replaceAll('-', '/');
@@ -88,14 +79,6 @@ String _formatDateDisplay(AppI18n i18n, String isoDate) {
   return '$mm/$dd (${_weekdayLabels(i18n)[date.weekday]})';
 }
 
-/// Warm-navigation payload for `/rail/train/:trainNo`.
-///
-/// These are things the *caller* happens to know, not properties of the train
-/// number the location names: a live delay, the segment the rider searched,
-/// and marks that never travel on the stop-times RPC this screen calls. They
-/// ride in `state.extra` rather than the URL so the location stays shareable
-/// and restorable; a cold deep link simply arrives without them and shows the
-/// train's full run, exactly as the 車次查詢 path already does.
 class RailTrainExtra {
   const RailTrainExtra({
     this.typeLabel,
@@ -135,11 +118,6 @@ class RailTrainScreen extends StatefulWidget {
   /// Service date in `yyyy-MM-dd`.
   final String date;
 
-  /// The stations the user actually searched for, when this screen was opened
-  /// from an O/D timetable result. The train's own run is usually longer, so
-  /// the fare and the stop list must be scoped to this segment rather than to
-  /// the full run — otherwise the two screens quote different prices for what
-  /// the user reads as the same trip. Null when opened by train number alone.
   final String? userOrigin;
   final String? userDest;
 
@@ -148,10 +126,6 @@ class RailTrainScreen extends StatefulWidget {
   /// 追蹤 countdown so it reflects the actual 誤點 rather than the timetable.
   final int delayMinutes;
 
-  /// Service marks and 備註 for this train, carried from the timetable list.
-  /// Neither travels on the stop-times RPC this screen calls, so a screen
-  /// opened by train number alone (the 車次查詢 path) simply shows neither
-  /// rather than quoting a second, emptier set of facts about the same train.
   final List<RailServiceMark> marks;
   final String remark;
 
@@ -159,12 +133,6 @@ class RailTrainScreen extends StatefulWidget {
   State<RailTrainScreen> createState() => _RailTrainScreenState();
 }
 
-/// Where the 下車提醒 flow is on this screen.
-///
-/// [confirm] is normally reached straight from [idle]: this screen is opened
-/// from an O/D result, so the 下車站 is already settled and asking for it again
-/// would be asking twice. [picking] happens only when the screen was opened by
-/// train number alone, or when the rider taps 改選.
 enum _AlightMode { idle, picking, confirm, manage }
 
 class _RailTrainScreenState extends State<RailTrainScreen>
@@ -338,10 +306,6 @@ class _RailTrainScreenState extends State<RailTrainScreen>
           title: '$trainLabel ${widget.trainNo}',
           subtitle: _formatDateDisplay(AppI18n.of(context), widget.date),
           actions: [
-            // 追蹤 sits here rather than on the result card: the card header
-            // could not hold chip, number, fare, 追蹤 and 訂購 on one line even
-            // at the default text scale, and tracking is a deliberate act on a
-            // chosen train, not something glanced at down a list.
             BlocBuilder<RailTrainBloc, RailTrainState>(
               builder: (context, state) {
                 // Nothing to set a reminder on until the stop list has landed.
@@ -385,13 +349,6 @@ class _RailTrainScreenState extends State<RailTrainScreen>
             ),
           ],
         ),
-        // 訂購 is this screen's primary commit action, so it sits pinned at
-        // the bottom within thumb reach rather than as a third icon in an app
-        // bar that already holds two toggles. It also puts the action and its
-        // price in one line — "spend NT$ 99 on this train" is one sentence,
-        // and splitting it across two places makes the user reassemble it.
-        // Only shown once the stops load: before that there is no fare and no
-        // confirmed train to book.
         bottomNavigationBar: BlocBuilder<RailTrainBloc, RailTrainState>(
           builder: (context, state) {
             if (state.status != RailTrainStatus.loaded) {
@@ -425,7 +382,7 @@ class _RailTrainScreenState extends State<RailTrainScreen>
                 onClose: () => setState(() => _alightMode = _AlightMode.idle),
                 onCancel: () {
                   context.read<JourneySessionBloc>().add(
-                    const JourneyCancelled(),
+                    const JourneyCancelled(userInitiated: true),
                   );
                   _cancelAlight();
                 },
@@ -475,12 +432,10 @@ class _RailTrainScreenState extends State<RailTrainScreen>
               case RailTrainStatus.empty:
                 return Center(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppTheme.space32,
+                    ),
                     child: Text(
-                      // Name the train and date, and give the one next step
-                      // that actually helps — a bare "not found" leaves the
-                      // user unsure whether the number was wrong or the date
-                      // was.
                       AppI18n.of(context).railTrainNotFound(
                         trainLabel,
                         widget.trainNo,
@@ -515,6 +470,7 @@ class _RailTrainScreenState extends State<RailTrainScreen>
                               serviceDate: widget.date,
                               delayMinutes:
                                   state.liveDelayMinutes ?? widget.delayMinutes,
+                              delayUpdatedAt: state.delayUpdatedAt,
                               userOrigin: widget.userOrigin,
                               alight: _alightTarget ?? widget.userDest,
                               picking: _alightMode == _AlightMode.picking,
@@ -576,16 +532,8 @@ class _BookingBar extends StatelessWidget {
   /// `HH:mm` departure from [origin]. THSR's deeplink needs it; TRA ignores it.
   final String departTime;
 
-  /// Fares for this journey, or null when the fare query landed no data. The
-  /// price shown is the one matching the rider's ticket type; a quote that
-  /// resolves to nothing drops the price from the label rather than quoting 0,
-  /// since no TRA/THSR O/D costs NT$0.
   final RailFareQuote? fareQuote;
 
-  // Opens the booking sheet rather than handing off directly. Both operators
-  // take options the deeplink carries — THSR a cabin and five per-category
-  // counts, TRA a booking class and a quantity — and the sheet exchanges the
-  // deeplink in the background, so the tap no longer blocks on a round-trip.
   void _openSheet(BuildContext context) {
     unawaited(
       showRailBookingSheet(
@@ -616,7 +564,12 @@ class _BookingBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space16,
+            AppTheme.space10,
+            AppTheme.space16,
+            AppTheme.space10,
+          ),
           child: Pressable(
             onTap: () => _openSheet(context),
             semanticLabel: AppI18n.of(context).railBookTicketSemantics(trainNo),
@@ -637,10 +590,6 @@ class _BookingBar extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  // The price the rider is actually quoted, so the action and
-                  // the number they will pay stay one sentence. A concession
-                  // fare names its type here: 'NT$ 63' alone beside 訂購 would
-                  // read as the standard price on a screen where it is not.
                   FarePreferenceBuilder(
                     builder: (context, fareType) {
                       final resolved = fareQuote?.resolve(fareType);
@@ -651,7 +600,7 @@ class _BookingBar extends StatelessWidget {
                           ? ''
                           : ' ${resolved.matched.labelOf(AppI18n.of(context))}';
                       return Padding(
-                        padding: const EdgeInsets.only(left: 8),
+                        padding: const EdgeInsets.only(left: AppTheme.space8),
                         child: Text(
                           'NT\$ ${resolved.price}$suffix',
                           style: AppTextStyles.timeValue(

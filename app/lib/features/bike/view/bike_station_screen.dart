@@ -147,10 +147,6 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
               listenWhen: (prev, next) =>
                   (prev.lat == 0 && prev.lon == 0) &&
                   (next.lat != 0 || next.lon != 0),
-              // The static fetch can land after the map is already up (its
-              // initial camera target was only the GPS fallback); once the
-              // station's coordinates arrive, pan to them explicitly since
-              // `initialCameraPosition` never re-applies post-creation.
               listener: (context, state) {
                 unawaited(
                   _controller?.animateCamera(
@@ -184,9 +180,7 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
                   myLocationEnabled: true,
                   myLocationButtonEnabled: false,
                   zoomControlsEnabled: false,
-                  // Map shares a Stack with the draggable sheet; without an
-                  // eager recognizer the map loses the gesture arena, so
-                  // pan/pinch leak to the sheet instead of moving the map.
+                  // Keep map gestures from dragging the enclosing sheet.
                   gestureRecognizers: const {
                     Factory<OneSequenceGestureRecognizer>(
                       EagerGestureRecognizer.new,

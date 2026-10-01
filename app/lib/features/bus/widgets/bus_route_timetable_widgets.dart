@@ -33,7 +33,7 @@ class _TimetableState extends State<_Timetable> {
     final reduceMotion = AppMotion.reduced(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      spacing: 12,
+      spacing: AppTheme.space12,
       children: [
         _SectionLabel(AppI18n.of(context).busTimetable, cs: cs),
         if (!weekly && timetable.departures.isEmpty)
@@ -104,7 +104,10 @@ class _TimetableState extends State<_Timetable> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space16,
+            vertical: AppTheme.space14,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -169,7 +172,10 @@ class _TimetableState extends State<_Timetable> {
         if (rows.isEmpty && timetable.windows.isEmpty) ...[
           const DividerLine(),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.space16,
+              vertical: 18,
+            ),
             child: Text(
               AppI18n.of(context).busNotRunningToday,
               style: AppTextStyles.bodyRegular.copyWith(
@@ -189,7 +195,10 @@ class _TimetableState extends State<_Timetable> {
     final highlight = AppTheme.surfaceHighlight(cs.brightness);
     return Container(
       color: info.isNext ? highlight : null,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+      padding: const EdgeInsets.symmetric(
+        vertical: AppTheme.space12,
+        horizontal: AppTheme.space6,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -202,10 +211,6 @@ class _TimetableState extends State<_Timetable> {
               color: cs.onSurface,
             ),
           ),
-          // Minimum-height tag slot keeps the time baseline aligned across
-          // the grid whether or not a cell carries a tag, while still
-          // growing with the tag text at large accessibility scales instead
-          // of clipping it. 下一班 wins over 低地板 when a trip is both.
           ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 14),
             child: info.isNext
@@ -253,9 +258,12 @@ class _HeadwayRow extends StatelessWidget {
         ? AppI18n.of(context).busHeadwayFixed(window.minMins)
         : AppI18n.of(context).busHeadwayRange(window.minMins, window.maxMins);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space16,
+        vertical: AppTheme.space14,
+      ),
       child: Row(
-        spacing: 12,
+        spacing: AppTheme.space12,
         children: [
           Text(
             '${window.start}–${window.end}',

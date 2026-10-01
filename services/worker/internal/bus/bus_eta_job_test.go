@@ -176,11 +176,6 @@ func TestBusLiveJobModifiedFeedPublishesCanonicalArrivals(t *testing.T) {
 		"bus_RealTimeByFrequencyInterCity":    []byte(`[{"PlateNumb":"GPS-9999","StopUID":"STOP1","SubRouteUID":"THB902301","Direction":9,"BusPosition":{"PositionLon":121.5,"PositionLat":25.05},"Azimuth":90,"Speed":30}]`),
 	}}
 	sink := &captureLiveSink{}
-	// The static map arrives already canonical: the loader canonicalizes on the
-	// ingestion boundary (ADR-0006), and bus_eta.go relies on that — running
-	// CanonicalSubroute over mp a second time would strip THB902301 twice. The
-	// live feeds above stay raw, because those come straight from TDX and the
-	// job canonicalizes them itself.
 	store := &fakeBusEtaStore{stops: []busmodel.StationMap{{
 		StationUID: "STATION1", StationName: "站牌一", GroupUID: "GROUP1", GroupName: "群組一",
 		SubRouteUID: "THB9023", SubRouteName: "9023", Direction: 0, StopUID: "STOP1",
@@ -243,10 +238,6 @@ func TestBusLiveJobModifiedFeedPublishesCanonicalArrivals(t *testing.T) {
 	}
 }
 
-// A non-recording tick must still publish. The sampling test sits inside the
-// per-stop loop, and putting it on the branch (or reaching for a continue) would
-// take the stop's Redis payload with it — the live path would go dark for
-// nineteen ticks out of twenty while the logs showed nothing wrong.
 func TestBusLiveJobPublishesOnNonSnapshotTicks(t *testing.T) {
 	prefix := busmodel.CityPrefix["InterCity"]
 	predict.StaticMapCache().Delete(prefix)
@@ -358,12 +349,6 @@ func TestBusLiveJobReusesStaticStopCache(t *testing.T) {
 	}
 }
 
-// TestBusSpec304RefreshesCityTTL covers the plain 304 city: the bus spec keeps
-// its own precise per-city re-arm inside busLiveJob.runCity rather than in
-// pipeline.BoundFetch, so a city run that ends without republishing re-arms exactly that
-// city's station and route key patterns with the 180s window. Driven directly
-// (no db needed on the skip path) with an all-304 source, using a static-map
-// cache seeded for one city so the fetch is reached.
 func TestBusSpec304RefreshesCityTTL(t *testing.T) {
 	src := &fakeLiveSource{fixtures: map[string][]byte{}}
 	sink := &captureLiveSink{}
@@ -394,10 +379,6 @@ func TestBusSpec304RefreshesCityTTL(t *testing.T) {
 	}
 }
 
-// TestBusCityAbortRefreshesCityTTL covers a path that used to return without
-// re-arming anything: only the ETA feed's decode error did that, so a stretch of
-// bad position payloads could let a still-valid snapshot age out. runCity now
-// re-arms on every abort before the publish, so this path refreshes too.
 func TestBusCityAbortRefreshesCityTTL(t *testing.T) {
 	src := &fakeLiveSource{fixtures: map[string][]byte{
 		"bus_EstimatedTimeOfArrival" + "Taipei": []byte(`[]`),

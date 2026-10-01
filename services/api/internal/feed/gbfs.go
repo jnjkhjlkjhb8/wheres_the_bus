@@ -1,13 +1,11 @@
-// Package feed publishes the router's machine-readable transit feeds: GBFS for
-// bike share and GTFS-Realtime for buses. Both are built elsewhere — GBFS from
-// PostgreSQL and Redis at request time, GTFS-RT from the snapshot the functions
-// service rebuilds — and served here behind a bearer credential.
 package feed
 
 import (
 	"context"
 	"net"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,39 +14,15 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/proto"
 )
 
-// GBFS (General Bikeshare Feed Specification) exposes the bike-share network to
-// a trip planner. GTFS has no concept of shared vehicles, so a planner that is
-// to offer a YouBike leg as first or last mile reads it from here instead.
-//
-// Version 2.3 rather than 3.0: 2.3 is what the planners that consume this
-// actually implement, and nothing here needs a 3.0 field.
-//
-// The feed is served rather than built. Both halves already exist in the
-// running system — stations in bike_stations, availability in Redis under
-// shared.BikeAvailabilityKey — so a builder would only add a copy to go stale.
 const (
-	_gbfsVersion = "2.3"
-	// _gbfsSystemID identifies the whole feed as one system.
-	//
-	// Taiwan has several bikeshare operators and GBFS models one operator per
-	// feed, so this is a deliberate simplification: it publishes them as a single
-	// system. A planner only needs to know where a bike can be picked up and
-	// dropped off, and that answer does not change. Split into per-operator feeds
-	// if something downstream ever needs to price or brand a leg.
-	_gbfsSystemID = "tw"
-	// Station locations change on the order of months and availability on the
-	// order of seconds; the ttl fields tell a consumer how often to re-poll each.
-	// _gbfsStatusTTL matches the 30s bikeEta cron that writes the Redis keys —
-	// polling faster than the producer only re-reads the same numbers.
-	_gbfsStaticTTL = 3600
-	_gbfsStatusTTL = 30
-	// _gbfsStatusChunk bounds one MGET. The network is ~10k stations, and asking
-	// for every key in a single command makes one oversized request and one
-	// oversized reply; chunking keeps both bounded without meaningfully more
-	// round trips.
+	_gbfsVersion     = "2.3"
+	_gbfsSystemID    = "tw"
+	_gbfsStaticTTL   = 3600
+	_gbfsStatusTTL   = 30
 	_gbfsStatusChunk = 1000
 	// TDX ServiceStatus: 0 stopped, 1 in service, 2 suspended.
 	_bikeServiceStopped   = 0
@@ -66,12 +40,6 @@ func gbfsWrite(c *gin.Context, ttl int, data any) {
 	})
 }
 
-// handleGBFSDiscovery serves gbfs.json, the auto-discovery file: the entry point
-// a consumer is pointed at, listing the URLs of every other file.
-//
-// The URLs are absolute per the spec and are built from the request's own scheme
-// and host, so the feed is correct behind whatever hostname it is reached by
-// without a base-URL setting to keep in sync.
 func handleGBFSDiscovery(serverPort string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		base := requestBaseURL(c.Request, serverPort)
@@ -84,15 +52,6 @@ func handleGBFSDiscovery(serverPort string) gin.HandlerFunc {
 	}
 }
 
-// requestBaseURL reconstructs the scheme://host the client used. gin has already
-// applied the trusted-proxy rules to X-Forwarded-*, so an untrusted client
-// cannot forge either value.
-//
-// A direct client whose Host header carries no port gets serverPort appended.
-// MOTIS's HTTP client sends only the host part, so without this the discovery
-// document advertises the sub-feeds on port 80 and every fetch is refused. A
-// forwarded request is left alone: there the port-less host is the proxy's
-// public name, and 8080 is not reachable on it.
 func requestBaseURL(r *http.Request, serverPort string) string {
 	scheme := "http"
 	if r.TLS != nil {
@@ -128,13 +87,60 @@ type gbfsStation struct {
 	Capacity  int32   `json:"capacity,omitempty"`
 }
 
-// gbfsStations reads the station list. station_uid is the station_id in the feed
-// because it is the same key the availability cache is written under, so the two
-// files join without a translation table.
-//
-// Rows with no geometry are skipped: a station GBFS cannot place is one a
-// planner cannot route to, and emitting it at (0,0) would put it in the Gulf of
-// Guinea.
+type gbfsStationSnapshot struct {
+	stations  []gbfsStation
+	expiresAt time.Time
+}
+type gbfsStatusSnapshot struct {
+	statuses    []gbfsStatus
+	expiresAt   time.Time
+	generatedAt int64
+}
+
+type gbfsCache struct {
+	sync.Mutex
+	station gbfsStationSnapshot
+	status  gbfsStatusSnapshot
+	flight  singleflight.Group
+}
+
+func sharedGBFSStations(ctx context.Context, db *pgxpool.Pool, cache *gbfsCache) ([]gbfsStation, error) {
+	now := time.Now()
+	cache.Lock()
+	snapshot := cache.station
+	cache.Unlock()
+	if now.Before(snapshot.expiresAt) {
+		return snapshot.stations, nil
+	}
+	resultCh := cache.flight.DoChan("stations", func() (any, error) {
+		buildCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cache.Lock()
+		current := cache.station
+		cache.Unlock()
+		if time.Now().Before(current.expiresAt) {
+			return current.stations, nil
+		}
+		stations, queryErr := gbfsStations(buildCtx, db)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		cache.Lock()
+		cache.station = gbfsStationSnapshot{stations: stations, expiresAt: time.Now().Add(_gbfsStaticTTL * time.Second)}
+		cache.Unlock()
+		return stations, nil
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		return result.Val.([]gbfsStation), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func gbfsStations(ctx context.Context, db *pgxpool.Pool) ([]gbfsStation, error) {
 	rows, err := db.Query(ctx, `
 		SELECT station_uid, name, ST_Y(geom), ST_X(geom), COALESCE(address, ''), COALESCE(capacity, 0)
@@ -159,9 +165,9 @@ func gbfsStations(ctx context.Context, db *pgxpool.Pool) ([]gbfsStation, error) 
 	return stations, nil
 }
 
-func handleGBFSStationInformation(db *pgxpool.Pool) gin.HandlerFunc {
+func handleGBFSStationInformation(db *pgxpool.Pool, cache *gbfsCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		stations, err := gbfsStations(c.Request.Context(), db)
+		stations, err := sharedGBFSStations(c.Request.Context(), db, cache)
 		if err != nil {
 			zap.S().Errorw("failed",
 				"component", "gbfs",
@@ -187,76 +193,113 @@ type gbfsStatus struct {
 	LastReported      int64  `json:"last_reported"`
 }
 
-// handleGBFSStationStatus joins the station list to the live availability cache.
-//
-// A station whose Redis key is absent — never published, or expired past
-// bikeLiveTTL because the upstream stopped reporting it — is omitted rather than
-// emitted with zeroes. Absent means "no current data", which is what happened;
-// zeroes would assert an empty dock the planner would then route around.
-func handleGBFSStationStatus(db *pgxpool.Pool, rc *redis.Client) gin.HandlerFunc {
+func handleGBFSStationStatus(db *pgxpool.Pool, rc *redis.Client, cache *gbfsCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
-		stations, err := gbfsStations(ctx, db)
+		cache.Lock()
+		cached := cache.status
+		cache.Unlock()
+		if time.Now().Before(cached.expiresAt) {
+			gbfsWrite(c, _gbfsStatusTTL, gin.H{"stations": cached.statuses})
+			return
+		}
+		resultCh := cache.flight.DoChan("status", func() (any, error) {
+			buildCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cache.Lock()
+			current := cache.status
+			cache.Unlock()
+			if time.Now().Before(current.expiresAt) {
+				return current, nil
+			}
+			stations, stationsErr := sharedGBFSStations(buildCtx, db, cache)
+			if stationsErr != nil {
+				return nil, stationsErr
+			}
+			statuses, statusErr := buildGBFSStatuses(buildCtx, rc, stations)
+			if statusErr != nil {
+				return nil, statusErr
+			}
+			result := gbfsStatusSnapshot{statuses: statuses, expiresAt: time.Now().Add(_gbfsStatusTTL * time.Second), generatedAt: time.Now().Unix()}
+			cache.Lock()
+			cache.status = result
+			cache.Unlock()
+			return result, nil
+		})
+		var value any
+		var err error
+		select {
+		case result := <-resultCh:
+			if result.Err != nil {
+				err = result.Err
+			} else {
+				value = result.Val
+			}
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
 		if err != nil {
 			zap.S().Errorw("failed", "component", "gbfs", "action", "station_status", "event", "failed", "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "station status unavailable"})
 			return
 		}
-		// The upstream payload carries no per-station observation time, so every
-		// row reports the time this response was built. A key that is present was
-		// written within its TTL, so the value is accurate to bikeEta's cadence
-		// rather than invented — but that cadence is now per-city: a city no rider
-		// is streaming refreshes every few minutes instead of every 30s (FDPL-90),
-		// and this endpoint does not claim demand for the cities it reads, since
-		// it reads every station in the country on every call.
-		now := time.Now().Unix()
-		statuses := make([]gbfsStatus, 0, len(stations))
-		for start := 0; start < len(stations); start += _gbfsStatusChunk {
-			end := min(start+_gbfsStatusChunk, len(stations))
-			chunk := stations[start:end]
-			keys := make([]string, len(chunk))
-			for i, s := range chunk {
-				keys[i] = shared.BikeAvailabilityKey(s.StationID)
-			}
-			values, err := rc.MGet(ctx, keys...).Result()
-			if err != nil {
-				zap.S().Errorw("mget failed",
-					"component", "gbfs",
-					"action", "station_status",
-					"event", "mget_failed",
-					"err", err,
-				)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "station status unavailable"})
-				return
-			}
-			for i, value := range values {
-				status, ok := decodeBikeStatus(chunk[i].StationID, value, now)
-				if !ok {
-					continue
-				}
-				statuses = append(statuses, status)
-			}
+		snapshot := value.(gbfsStatusSnapshot)
+		gbfsWrite(c, _gbfsStatusTTL, gin.H{"stations": snapshot.statuses})
+	}
+}
+
+func buildGBFSStatuses(ctx context.Context, rc *redis.Client, stations []gbfsStation) ([]gbfsStatus, error) {
+	statuses := make([]gbfsStatus, 0, len(stations))
+	for start := 0; start < len(stations); start += _gbfsStatusChunk {
+		end := min(start+_gbfsStatusChunk, len(stations))
+		chunk := stations[start:end]
+		keys := make([]string, len(chunk))
+		observedKeys := make([]string, len(chunk))
+		for i, s := range chunk {
+			keys[i] = shared.BikeAvailabilityKey(s.StationID)
+			observedKeys[i] = shared.BikeAvailabilityObservedAtKey(s.StationID)
 		}
-		if len(statuses) < len(stations) {
-			zap.S().Infow("partial",
+		values, err := rc.MGet(ctx, keys...).Result()
+		if err != nil {
+			zap.S().Errorw("mget failed",
 				"component", "gbfs",
 				"action", "station_status",
-				"event", "partial",
-				"stations", len(stations),
-				"reported", len(statuses),
+				"event", "mget_failed",
+				"err", err,
 			)
+			return nil, err
 		}
-		gbfsWrite(c, _gbfsStatusTTL, gin.H{"stations": statuses})
+		observedValues, err := rc.MGet(ctx, observedKeys...).Result()
+		if err != nil {
+			return nil, err
+		}
+		for i, value := range values {
+			observedAt := int64(0)
+			if raw, ok := observedValues[i].(string); ok {
+				observedAt, _ = strconv.ParseInt(raw, 10, 64)
+			}
+			status, ok := decodeBikeStatus(chunk[i].StationID, value, observedAt)
+			if !ok {
+				continue
+			}
+			statuses = append(statuses, status)
+		}
 	}
+	if len(statuses) < len(stations) {
+		zap.S().Infow("partial",
+			"component", "gbfs",
+			"action", "station_status",
+			"event", "partial",
+			"stations", len(stations),
+			"reported", len(statuses),
+		)
+	}
+	return statuses, nil
 }
 
 // decodeBikeStatus turns one cached Bike_eta into a GBFS status row. It reports
 // false for a missing key or an undecodable value, which the caller omits.
 func decodeBikeStatus(stationID string, value any, now int64) (gbfsStatus, bool) {
-	// MGET yields nil for a key that is absent or expired. An empty string is
-	// treated the same way: bikeEta always sets StationUID, so a marshaled
-	// Bike_eta is never zero-length, and a zero-length value means a corrupt or
-	// truncated write rather than a station with nothing at it.
 	raw, ok := value.(string)
 	if !ok || raw == "" {
 		return gbfsStatus{}, false
@@ -274,11 +317,7 @@ func decodeBikeStatus(stationID string, value any, now int64) (gbfsStatus, bool)
 	}
 	inService := eta.GetServiceStatus() == _bikeServiceInService
 	return gbfsStatus{
-		StationID: stationID,
-		// TDX splits the rentable count by vehicle kind. GBFS carries that split
-		// in a vehicle_types feed, which this one does not publish: a planner
-		// choosing a station needs to know a bike is there, not which kind. Add
-		// vehicle_types when a leg's speed or price depends on the distinction.
+		StationID:         stationID,
 		NumBikesAvailable: eta.GetGeneralBikes() + eta.GetElectricBikes(),
 		NumDocksAvailable: eta.GetAvailableReturnBikes(),
 		IsInstalled:       eta.GetServiceStatus() != _bikeServiceStopped,
@@ -297,10 +336,11 @@ var _gbfsFeedNames = []string{"system_information", "station_information", "stat
 // point is that a planner can poll it. The rate limit is the only guard, and it
 // is shared across the files because they are polled together.
 func RegisterGBFSRoutes(r gin.IRoutes, db *pgxpool.Pool, rc *redis.Client, limit gin.HandlerFunc, serverPort string) {
+	cache := &gbfsCache{}
 	handlers := map[string]gin.HandlerFunc{
 		"system_information":  handleGBFSSystemInformation(),
-		"station_information": handleGBFSStationInformation(db),
-		"station_status":      handleGBFSStationStatus(db, rc),
+		"station_information": handleGBFSStationInformation(db, cache),
+		"station_status":      handleGBFSStationStatus(db, rc, cache),
 	}
 	r.GET("/gbfs/gbfs.json", limit, handleGBFSDiscovery(serverPort))
 	for _, name := range _gbfsFeedNames {

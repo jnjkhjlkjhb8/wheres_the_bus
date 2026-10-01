@@ -52,13 +52,6 @@ class FirebaseRepository {
     return FirebaseDecoder.instance.decodeDeviceState(state);
   }
 
-  /// Stores the device's whole 訂閱範圍, replacing whatever the server held.
-  /// [scope] entries are `'<route_type>:<route_key>'`, as produced by
-  /// `subscriptionScope`. An empty set is valid and unsubscribes the device.
-  ///
-  /// There is deliberately no per-route toggle: the set is only ever sent as a
-  /// whole, so a 收藏 removed on a screen that never notified the server, or
-  /// restored on a fresh install, cannot leave the stored scope stale.
   Future<FirebaseAck> replaceRouteSubscriptions(Set<String> scope) async {
     if (!FirebaseGate.enabled) {
       return const FirebaseAck(ok: true, message: 'disabled');

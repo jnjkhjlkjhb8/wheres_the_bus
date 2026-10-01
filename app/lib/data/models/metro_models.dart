@@ -1,15 +1,5 @@
 import 'package:equatable/equatable.dart';
 
-/// One live metro arrival estimate. estimateSeconds is raw; callers apply
-/// etaCeilMinutes (eta_format.dart) for display so the ceil rule has one owner.
-///
-/// Fields beyond the estimate carry the per-train identity the 捷運下車提醒
-/// feature binds against (ADR-0015): [stationId] is the physical TDX station
-/// the arrival is at, [trainNumber]/[cn1] identify the trip and its congestion
-/// carriage pair, and [congestion] is the per-car crowding level (1..3, car
-/// order, only cars the feed reported). They default empty because an arrival
-/// that could not be paired ships without them — pairing never blocks the
-/// countdown (congestion pairing, CONTEXT.md).
 class MetroLiveArrival extends Equatable {
   const MetroLiveArrival({
     required this.line,
@@ -35,7 +25,6 @@ class MetroLiveArrival extends Equatable {
   /// board→alight path client-side.
   final String destinationStationId;
 
-  /// Metro operator code, e.g. `TRTC`. Reminders are TRTC-only (ADR-0015).
   final String system;
 
   /// Trip identifier (= congestion feed TrainNumber); empty when unpaired.

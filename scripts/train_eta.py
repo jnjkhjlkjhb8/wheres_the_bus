@@ -32,12 +32,6 @@ def load_data(conn):
           AND EXTRACT(EPOCH FROM recorded_at - prev_at) < 300
     """, conn)
 
-    # Each stop's running seconds from its subroute's origin, accumulated from
-    # the observed segment times. Mirrors batchStopOffsets in
-    # services/functions/predict.go — the model predicts a residual on this
-    # figure, so training and prediction must accumulate the same way.
-    # Incomplete directions are excluded for the same reason they are at
-    # prediction time: one unobserved hop compresses every stop after it.
     offsets = pd.read_sql("""
         WITH linked AS (
             SELECT m.sub_route_uid, m.direction, m.stop_uid, m.stop_sequence,
@@ -64,10 +58,6 @@ def load_data(conn):
         FROM accumulated WHERE complete
     """, conn)
 
-    # Origin-stop departure per trip. Timetable rows are type=false with the
-    # TDX StopSequence; frequency rows (type=true, stopsequence=-1) carry no
-    # per-trip departure and are excluded. Mirrors batchNextDepartures in
-    # services/functions/predict.go.
     schedules = pd.read_sql("""
         SELECT DISTINCT ON (sub_route_uid, direction, tripid)
                sub_route_uid, direction, service_day,

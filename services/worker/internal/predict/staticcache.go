@@ -62,19 +62,6 @@ func InvalidateStaticMapCity(prefix string) {
 	_busStaticMapCache.Delete(prefix)
 }
 
-// _stopOffsetCache holds each subroute's stop offsets, keyed by sub_route_uid.
-//
-// BatchStopOffsets runs busPatternSQL, whose known_stop CTE unnests every
-// raw_tdx.bus_stopofroute row before the uid filter is applied — so the cost is
-// the same whether one subroute is asked for or a thousand. On the 30s tick
-// across twenty cities that was ~2,400 executions an hour against the 2 GB Azure
-// server, and it is what the "BatchStopOffsets rows error: context deadline
-// exceeded" line in the logs was.
-//
-// bus_segment_time, the only input that moves, is rewritten once a night by the
-// 04:00 segmentTimes job. An hour's TTL is well inside that cadence and needs no
-// invalidation hook: the worst case is one hour of yesterday's offsets, on a
-// figure that is a seven-day median.
 var _stopOffsetCache sync.Map
 
 const _stopOffsetCacheTTL = time.Hour

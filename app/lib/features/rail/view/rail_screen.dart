@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_bloc.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_state.dart';
@@ -19,7 +21,6 @@ import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
-import 'package:wheres_the_bus/shared/widgets/state_cards.dart';
 import 'package:wheres_the_bus/shared/widgets/train_type_chip.dart';
 
 part '../widgets/rail_shimmer_widgets.dart';
@@ -114,10 +115,6 @@ class _RailScreenState extends State<RailScreen> {
   String _destName = '';
   String _destId = '';
   late final SheetController _sheetController;
-  // [_selectedDate] carries the query's time-of-day too; the backend request
-  // stays date-only, but the time (with [_isDeparture]) is sent to the bloc as
-  // a cutoff so results start at the time the user picked — depart at/after it,
-  // or (arrive mode) arrive at/before it — not the first train of the day.
   DateTime _selectedDate = DateTime.now();
   bool _isDeparture = true;
   bool _hasSubmittedQuery = false;
@@ -138,11 +135,6 @@ class _RailScreenState extends State<RailScreen> {
     _applyRouteArgs();
   }
 
-  /// Seeds the form — and, for `submit`, runs the query — from the location.
-  ///
-  /// Read once here rather than on every dependency change: the location is
-  /// fixed for the life of the page, so re-reading it would undo the rider's
-  /// own edits to the form.
   void _applyRouteArgs() {
     final args = widget.args;
     // No origin means a bare `/rail`: the empty form, with nothing to seed and
@@ -242,12 +234,6 @@ class _RailScreenState extends State<RailScreen> {
     return _rowsCache;
   }
 
-  /// Index of the first departure still to come, and how many minutes away it
-  /// is — or `(null, null)` when the query is not for today, where a countdown
-  /// would be nonsense and no row deserves the coming-soon emphasis.
-  ///
-  /// Suspended trains are skipped: the next train you can actually board is
-  /// the one worth highlighting.
   (int?, int?) _nextDeparture(List<_RailRow> rows, String date) {
     final now = DateTime.now();
     if (date != _dateFormat.format(now)) return (null, null);
@@ -351,7 +337,12 @@ class _RailScreenState extends State<RailScreen> {
                   builder: (context, state) {
                     if (state is RailError) {
                       return ListView(
-                        padding: EdgeInsets.fromLTRB(16, topPad + 68, 16, 16),
+                        padding: EdgeInsets.fromLTRB(
+                          AppTheme.space16,
+                          topPad + 68,
+                          AppTheme.space16,
+                          AppTheme.space16,
+                        ),
                         children: [
                           ErrorStateView(
                             error: state.error,
@@ -366,8 +357,8 @@ class _RailScreenState extends State<RailScreen> {
                       // when the trains arrive.
                       return ListView(
                         padding: EdgeInsets.only(
-                          top: topPad + 68 + 12,
-                          bottom: 16,
+                          top: topPad + 68 + AppTheme.space12,
+                          bottom: AppTheme.space16,
                         ),
                         children: const [_TimetableSkeleton()],
                       );
@@ -376,7 +367,12 @@ class _RailScreenState extends State<RailScreen> {
                       // No search run yet — prompt instead of auto-querying a
                       // placeholder O/D pair.
                       return Padding(
-                        padding: EdgeInsets.fromLTRB(24, topPad + 68, 24, 24),
+                        padding: EdgeInsets.fromLTRB(
+                          AppTheme.space24,
+                          topPad + 68,
+                          AppTheme.space24,
+                          AppTheme.space24,
+                        ),
                         child: Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -386,7 +382,7 @@ class _RailScreenState extends State<RailScreen> {
                                 size: 40,
                                 color: cs.outline,
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(height: AppTheme.space16),
                               Text(
                                 AppI18n.of(context).railPickStations,
                                 textAlign: TextAlign.center,
@@ -401,21 +397,16 @@ class _RailScreenState extends State<RailScreen> {
                     }
                     final items = _rowsFor(state);
                     if (items.isEmpty) {
-                      // A successful query that simply found no departures in
-                      // this window is not an error — ErrorStateView (with its
-                      // retry button) would imply the request failed and
-                      // retrying might help, when the fix is to change the
-                      // search itself.
                       return ListView(
-                        padding: EdgeInsets.fromLTRB(24, topPad + 68, 24, 24),
+                        padding: EdgeInsets.fromLTRB(
+                          AppTheme.space24,
+                          topPad + 68,
+                          AppTheme.space24,
+                          AppTheme.space24,
+                        ),
                         children: const [_NoTimetableEmpty()],
                       );
                     }
-                    // The sheet offset changes every frame while the query
-                    // sheet is dragged, but it only feeds the list's bottom
-                    // inset. Hand the train list to the builder as a stable
-                    // child so only the trailing spacer sliver rebuilds per
-                    // frame instead of every visible card.
                     final (nextIndex, minutesUntil) = _nextDeparture(
                       items,
                       state.date,
@@ -426,7 +417,9 @@ class _RailScreenState extends State<RailScreen> {
                         slivers: [
                           SliverToBoxAdapter(
                             child: Padding(
-                              padding: EdgeInsets.only(top: topPad + 68 + 12),
+                              padding: EdgeInsets.only(
+                                top: topPad + 68 + AppTheme.space12,
+                              ),
                               child: const _TimetableHeader(),
                             ),
                           ),
@@ -474,11 +467,6 @@ class _RailScreenState extends State<RailScreen> {
               top: 0,
               left: 0,
               right: 0,
-              // Deliberately no fare in the subtitle. TRA prices the same O/D
-              // differently per train type (自強 costs more than 區間車), so a
-              // single figure over a mixed list would misquote most of the
-              // rows under it. The per-train fare belongs to the detail
-              // screen, which knows which train the user picked.
               child: FloatingAppBar(
                 middle: AppBarTitlePill(
                   title: _hasSubmittedQuery
@@ -524,8 +512,12 @@ class _NoTimetableEmpty extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.event_busy_rounded, size: 40, color: cs.outline),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.event_busy_rounded,
+            size: 40,
+            color: AppTheme.inkTertiary(cs.brightness),
+          ),
+          const SizedBox(height: AppTheme.space16),
           Text(
             AppI18n.of(context).railNoTrains,
             textAlign: TextAlign.center,
@@ -533,7 +525,7 @@ class _NoTimetableEmpty extends StatelessWidget {
               color: cs.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppTheme.space6),
           Text(
             AppI18n.of(context).railNoTrainsHint,
             textAlign: TextAlign.center,

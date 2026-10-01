@@ -1,27 +1,4 @@
 #!/usr/bin/env bash
-# check-proto-contract.sh
-#
-# API-contract gate for models/*.proto, using buf pinned to a fixed version
-# (installed hermetically into .tools/bin via `go install pkg@version`, the
-# same pattern the Makefile uses for protoc-gen-go — never @latest):
-#
-#   1. `buf build` — the proto set compiles into a valid image (a stronger
-#      well-formedness check than protoc alone).
-#   2. `buf breaking` — no wire-breaking change (field renumbering, type
-#      changes, message/RPC removal, ...) relative to a git baseline.
-#      Default baseline is HEAD, catching breaking edits before they are
-#      committed; CI passes PROTO_BASELINE_REF=<base branch> to compare a
-#      PR against its merge base instead.
-#
-# `buf lint` is deliberately NOT enforced: the existing wire contract bakes
-# in 324 style violations (no package declarations, PascalCase field names,
-# lowercase RPC names). Renaming would be wire-compatible but would break
-# every generated Go/Dart call site for zero contract value, and excepting
-# nearly every lint rule would make the gate meaningless. Wire safety is
-# what matters, and `buf breaking` covers it.
-#
-# Usage: scripts/check-proto-contract.sh
-#   PROTO_BASELINE_REF  git ref to diff the contract against (default HEAD)
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

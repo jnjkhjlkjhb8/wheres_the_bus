@@ -1,7 +1,3 @@
-// Package nearby finds the stops, stations and docks around a point and orders
-// them by walking time. Candidates come from PostGIS; the walk legs come from
-// MOTIS, and a routing failure degrades to straight-line distance rather than
-// failing the query.
 package nearby
 
 import (
@@ -36,7 +32,11 @@ const (
 	// settled camera position: the cache has to be capped or it grows without
 	// bound inside the router's 230 MiB heap.
 	_nearbyCacheMaxEntries = 128
+	_nearbyRequestTimeout  = 3 * time.Second
+	_nearbyConcurrency     = 8
 )
+
+var nearbyBudget = make(chan struct{}, _nearbyConcurrency)
 
 var (
 	ErrInvalidNearbyQuery = errors.New("invalid nearby query")
@@ -181,11 +181,6 @@ func validateNearbyQuery(query NearbyQuery) (NearbyQuery, error) {
 	if query.Limit <= 0 {
 		query.Limit = _defaultNearbyLimit
 	}
-	// The cache key carries the radius, and the client derives its radius from
-	// the exact viewport (screen size × zoom), so an unrounded value mints a
-	// fresh key on nearly every cold start. Snapping up to the next 100 m
-	// collapses those into one entry and only ever widens the search, so the
-	// answer stays a superset of what was asked for.
 	query.RadiusMeters = (query.RadiusMeters + _nearbyRadiusBucket - 1) /
 		_nearbyRadiusBucket * _nearbyRadiusBucket
 	return query, nil
@@ -207,14 +202,22 @@ func (d *NearbyDiscovery) Discover(ctx context.Context, query NearbyQuery) (*pb.
 		return cached, nil
 	}
 
-	candidates, err := d.findAll(ctx, query)
+	workCtx, cancel := context.WithTimeout(ctx, _nearbyRequestTimeout)
+	defer cancel()
+	select {
+	case nearbyBudget <- struct{}{}:
+		defer func() { <-nearbyBudget }()
+	case <-workCtx.Done():
+		return nil, workCtx.Err()
+	}
+	candidates, err := d.findAll(workCtx, query)
 	if err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	response, err := d.enrich(ctx, query.Origin, candidates)
+	response, err := d.enrich(workCtx, query.Origin, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -227,10 +230,6 @@ func (d *NearbyDiscovery) Discover(ctx context.Context, query NearbyQuery) (*pb.
 func (d *NearbyDiscovery) findAll(ctx context.Context, query NearbyQuery) (map[NearbyMode][]NearbyCandidate, error) {
 	workerCtx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	// cancel unblocks any worker still waiting to send on results (e.g. after
-	// an early error return below); wg.Wait must run after it so both defers
-	// together guarantee every worker has actually exited before findAll
-	// returns, not just that it has been asked to.
 	defer wg.Wait()
 	defer cancel()
 
@@ -272,10 +271,6 @@ func (d *NearbyDiscovery) findAll(ctx context.Context, query NearbyQuery) (map[N
 	return byMode, nil
 }
 
-// enrich attaches walking times with a single OSRM table request covering every
-// mode's candidates. One request per nearby query instead of one per mode: the
-// table service reuses the shared origin search, and the single-core osrm
-// container no longer has five of them contending for it.
 func (d *NearbyDiscovery) enrich(ctx context.Context, origin GeoPoint, byMode map[NearbyMode][]NearbyCandidate) (*pb.RespNear, error) {
 	points := make([]GeoPoint, 0, len(byMode)*_defaultNearbyLimit)
 	for _, mode := range AllNearbyModes {

@@ -1,21 +1,5 @@
 package maas
 
-// The MOTIS v2 planning backend (ADR-0022).
-//
-// MOTIS answers the same question TDX MaaS did, so this file's job is to speak
-// its request shape and translate its itineraries back into the internal
-// [tdxAPIResponse] every downstream stage already consumes. Keeping that
-// intermediate shape means fares, bus notification identities and rail line
-// geometry are computed by exactly one implementation regardless of which
-// backend produced the plan -- only the upstream call and the walk geometry
-// differ.
-//
-// Walk geometry is the one place the two backends genuinely diverge: TDX
-// returns none, so [enrichWalkSections] pays an OSRM round trip per walk
-// section, while MOTIS returns an encoded polyline and turn-by-turn steps
-// inside the leg it already computed. The geometry therefore travels alongside
-// the converted response rather than being fetched again.
-
 import (
 	"context"
 	"errors"
@@ -37,24 +21,15 @@ const (
 	// _maasBackendEnv selects the planner. Anything other than "tdx" means
 	// MOTIS: the switch exists to fall back, so an unset or misspelled value
 	// must not silently resurrect the backend being replaced.
-	_maasBackendEnv = "MAAS_BACKEND"
-	_maasBackendTDX = "tdx"
-	// _motisBaseURLEnv is where MOTIS is reached. Prod's router shares a
-	// network with it; staging's dials prod's published port over the host
-	// gateway (ADR-0022).
+	_maasBackendEnv      = "MAAS_BACKEND"
+	_maasBackendTDX      = "tdx"
 	_motisBaseURLEnv     = "MOTIS_BASE_URL"
 	_motisDefaultBaseURL = "http://motis:8080"
 	_motisPlanPath       = "/api/v6/plan"
 	// _motisTimeout bounds one plan call. The shared work timeout is 20s and
 	// covers fares and geometry on top of this, so the upstream call cannot be
 	// allowed to consume all of it.
-	_motisTimeout = 12 * time.Second
-	// _motisExtraItineraries is how many more itineraries than the rider asked
-	// for are requested, so [rankMotisRoutes] has something to rank. MOTIS
-	// optimises on time and transfers only -- it cannot search on price at all
-	// -- so a cheaper-but-slower itinerary is only ever available if it happens
-	// to be inside this window. Widening it costs the 6 GB host real work for
-	// diminishing returns.
+	_motisTimeout          = 12 * time.Second
 	_motisExtraItineraries = 5
 	_motisMaxItineraries   = 10
 )
@@ -85,10 +60,6 @@ type motisClient struct {
 	http *resty.Client
 }
 
-// NewMotisClient builds the client. Unlike the TDX one there is no retry
-// policy: MOTIS is a local service on the same host, so a failure is a real
-// failure rather than a rate limit worth waiting out, and a retry would only
-// spend the caller's remaining budget.
 func NewMotisClient(baseURL string) *motisClient {
 	return &motisClient{
 		http: resty.New().
@@ -133,11 +104,7 @@ type motisLeg struct {
 	IntermediateStops []motisPlace  `json:"intermediateStops"`
 	LegGeometry       motisPolyline `json:"legGeometry"`
 	Steps             []motisStep   `json:"steps"`
-	// Services that could replace this leg, each framed by MOTIS as its own
-	// little journey -- normally [ingress footpath, transit, egress footpath].
-	// Only set when the request asked for alternatives, and only on the first
-	// leg of an interlined chain.
-	Alternatives [][]motisLeg `json:"alternatives"`
+	Alternatives      [][]motisLeg  `json:"alternatives"`
 }
 
 type motisPlace struct {
@@ -161,22 +128,11 @@ type motisStep struct {
 	Polyline          motisPolyline `json:"polyline"`
 }
 
-// motisWalkGeometry is one walk section's path and turn-by-turn steps, already
-// known because MOTIS routed the street leg itself. Index i corresponds to the
-// i-th section of the converted response, in the same flattened order
-// [convertRoutes] assigns to its refs.
 type motisWalkGeometry struct {
 	path  []*pb.Location
 	steps []*pb.WalkStep
 }
 
-// Plan runs one MOTIS query and returns it in the internal shape, alongside the
-// per-section walk geometry MOTIS already computed. The geometry slice is
-// parallel to the flattened section order, with a nil entry for any section
-// that is not a walk.
-// motisPlanResult is one MOTIS answer in the router's internal shape: the plan,
-// the walk geometry MOTIS already computed for it, and the cursors that let the
-// rider ask for earlier or later departures.
 type motisPlanResult struct {
 	api      *tdxAPIResponse
 	geometry []*motisWalkGeometry
@@ -220,10 +176,6 @@ func (c *motisClient) Plan(
 	}, nil
 }
 
-// convertMotisItineraries maps MOTIS itineraries onto the internal shape. The
-// geometry slice is built in the same nested order the caller will flatten its
-// sections in, which is what lets [applyMotisWalkGeometry] pair them by index
-// without threading a key through the conversion.
 func convertMotisItineraries(itineraries []motisItinerary) (*tdxAPIResponse, []*motisWalkGeometry) {
 	api := &tdxAPIResponse{}
 	geometry := make([]*motisWalkGeometry, 0)
@@ -243,10 +195,6 @@ func convertMotisItineraries(itineraries []motisItinerary) (*tdxAPIResponse, []*
 	return api, geometry
 }
 
-// motisSection maps one leg. The mode strings are deliberately TDX's rather
-// than MOTIS's, because the rail/bus/metro classifiers in maas_geometry.go and
-// the fare lookup in maas.go both switch on them -- translating once here keeps
-// a second vocabulary out of the rest of the router.
 func motisSection(leg motisLeg) tdxSection {
 	section := tdxSection{
 		Type: motisSectionType(leg.Mode),
@@ -310,12 +258,6 @@ func motisSection(leg motisLeg) tdxSection {
 	return section
 }
 
-// motisAlternativeLeg picks the one leg of an alternative the rider is actually
-// being offered. MOTIS wraps each alternative in the footpaths that get the
-// rider to and from it, and an interlined alternative carries several transit
-// legs; in both cases the first transit leg is the service being named, so that
-// is what the section reports. An alternative with no transit leg at all is
-// walking the rider somewhere, which is not an answer to "what else runs this?".
 func motisAlternativeLeg(legs []motisLeg) (motisLeg, bool) {
 	for _, leg := range legs {
 		if motisTransitMode(leg.Mode) != "" {
@@ -325,10 +267,6 @@ func motisAlternativeLeg(legs []motisLeg) (motisLeg, bool) {
 	return motisLeg{}, false
 }
 
-// motisRouteName picks the label the bus notification lookup matches on.
-// displayName is MOTIS's own already-composed label and is the closest thing to
-// TDX's route name; the short name is the fallback because a bus leg always has
-// one and matching on an empty string finds nothing.
 func motisRouteName(leg motisLeg) string {
 	if leg.DisplayName != "" {
 		return leg.DisplayName
@@ -359,14 +297,6 @@ func motisPlaceType(place motisPlace) string {
 	return "place"
 }
 
-// motisTransitMode translates a MOTIS mode onto the TDX mode vocabulary the
-// rest of the router classifies on. An empty result means the leg is not
-// transit.
-//
-// The rail split is what the feed's route_type carries: THSR is emitted as the
-// extended type 101 and TRA as the plain 2, which nigiri maps to HIGHSPEED_RAIL
-// and REGIONAL_RAIL respectively. Without that split both would arrive here as
-// the same class and a rider filtering to one would get the other.
 func motisTransitMode(mode string) string {
 	switch strings.ToUpper(mode) {
 	case "BUS":
@@ -457,11 +387,6 @@ func motisStepInstruction(step motisStep) string {
 	}
 }
 
-// applyMotisWalkGeometry fills in the walk paths MOTIS already computed. It
-// pairs by position rather than by identity because both slices are built by
-// flattening the same routes in the same order; a length mismatch means that
-// invariant broke, and leaving the geometry off is better than attaching the
-// wrong section's path to a rider's map.
 func applyMotisWalkGeometry(refs []maasSectionRef, geometry []*motisWalkGeometry) bool {
 	if len(geometry) != len(refs) {
 		return false
@@ -477,10 +402,6 @@ func applyMotisWalkGeometry(refs []maasSectionRef, geometry []*motisWalkGeometry
 	return true
 }
 
-// decodeMotisPolyline decodes a Google-encoded polyline. The precision is read
-// from the response rather than assumed: MOTIS documents 7 for its v1 endpoints
-// and 6 for v2, so a hardcoded exponent would silently misplace every point by
-// a factor of ten the day an endpoint's version moves.
 func decodeMotisPolyline(line motisPolyline) []*pb.Location {
 	if line.Points == "" {
 		return nil
@@ -541,12 +462,6 @@ func decodeMotisPolyline(line motisPolyline) []*pb.Location {
 	return out
 }
 
-// motisPlanQuery builds the MOTIS plan query from the app's request.
-//
-// The mode ids are TDX's and stay in the wire contract; they are translated
-// here rather than in the app so an old build keeps working. Codes with no
-// MOTIS equivalent are dropped rather than widened: asking for a mode the feed
-// cannot contain would quietly turn a filtered search into an unfiltered one.
 func motisPlanQuery(req *pb.MaasPlanRequest, now time.Time) url.Values {
 	query := url.Values{}
 	query.Set("fromPlace", fmt.Sprintf("%.6f,%.6f", req.FromLat, req.FromLon))
@@ -564,11 +479,6 @@ func motisPlanQuery(req *pb.MaasPlanRequest, now time.Time) url.Values {
 	if modes := motisTransitModes(req.TransitModes); len(modes) > 0 {
 		query.Set("transitModes", strings.Join(modes, ","))
 	}
-	// MOTIS takes a floor, not a window. The upper bound has no equivalent: MOTIS
-	// does not reject a connection for waiting too long, it ranks a faster one
-	// higher, so only the floor changes which connections are legal. A reversed
-	// pair is read as the smaller of the two -- sending the larger would reject
-	// connections the rider's own settings allow.
 	tMin := clampInt(req.TransferTimeMin, 0, 60, 15)
 	tMax := clampInt(req.TransferTimeMax, 0, 60, 60)
 	query.Set("minTransferTime", fmt.Sprintf("%d", min(tMin, tMax)))
@@ -592,10 +502,6 @@ func motisPlanQuery(req *pb.MaasPlanRequest, now time.Time) url.Values {
 	return query
 }
 
-// addMotisPreferences sends the parameters only MOTIS honours. Each is omitted
-// when unset rather than sent at a default, because MOTIS's own defaults are
-// the ones its documentation describes and restating them here would mean two
-// places to change when it moves.
 func addMotisPreferences(query url.Values, req *pb.MaasPlanRequest) {
 	if req.Wheelchair {
 		query.Set("pedestrianProfile", "WHEELCHAIR")
@@ -629,12 +535,6 @@ func addMotisPreferences(query url.Values, req *pb.MaasPlanRequest) {
 	}
 }
 
-// motisLocalTime restates a MOTIS timestamp in the router's zone. MOTIS answers
-// in UTC; the wire contract this response reuses is TDX's, whose times are
-// local, and the app reads them as wall-clock text rather than as instants -- a
-// UTC timestamp reaches the rider eight hours early. A value that will not
-// parse is passed through unchanged: an unreadable clock is still the only one
-// the leg has.
 func motisLocalTime(ts string) string {
 	parsed, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
@@ -643,11 +543,6 @@ func motisLocalTime(ts string) string {
 	return parsed.In(time.Local).Format(time.RFC3339)
 }
 
-// motisTimeParam renders the departure or arrival instant MOTIS expects. Unlike
-// TDX it takes one RFC 3339 timestamp rather than a depart/arrival pair, and it
-// does not reject a time in the past, so no bump is needed. An unparseable date
-// or time falls back to now rather than failing the search: the rider asked for
-// a plan, and "now" is the answer to a malformed clock.
 func motisTimeParam(date, timeStr string, _ bool, now time.Time) string {
 	if len(timeStr) == len("HH:mm") {
 		timeStr += ":00"
@@ -659,10 +554,6 @@ func motisTimeParam(date, timeStr string, _ bool, now time.Time) string {
 	return parsed.Format(time.RFC3339)
 }
 
-// motisTransitModes translates the app's TDX mode ids. The mapping is exact
-// rather than generous: every value here corresponds to a route_type the feed
-// actually emits (gtfs_files.go), so a mode the rider deselects cannot come
-// back through a broader MOTIS alias such as RAIL.
 func motisTransitModes(modes []int32) []string {
 	byID := map[int32][]string{
 		3: {"HIGHSPEED_RAIL"},
@@ -687,10 +578,6 @@ func motisTransitModes(modes []int32) []string {
 	return out
 }
 
-// motisMileModes translates a first/last-mile mode id, reporting whether the
-// choice was a shared bike so the caller can add the form-factor filter. Car is
-// mapped to CAR even though no Taiwan rider plans one today, because dropping
-// it would silently turn the request into a walk.
 func motisMileModes(mode int32) (modes []string, rental bool) {
 	switch mode {
 	case 1:
@@ -704,22 +591,6 @@ func motisMileModes(mode int32) (modes []string, rental bool) {
 	}
 }
 
-// rankMotisRoutes orders itineraries by the rider's price/time preference and
-// trims the list to what they asked for.
-//
-// This exists because MOTIS cannot search on price: withFares is experimental
-// and reporting-only, and the documented search criteria are travel time,
-// transfers and departure/arrival time (ADR-0022). TDX took the preference as a
-// search input, so the slider used to change which itineraries were found; here
-// it can only change which of the found ones are shown. An itinerary that is
-// much cheaper but much slower is therefore only offered when MOTIS returned it
-// anyway -- the slider's reach is genuinely smaller than it was, and no amount
-// of ranking recovers that.
-//
-// gc is the app's slider: 0 is cheapest, 1 is fastest. Both axes are normalised
-// against the range actually present in this result set, so the weighting is
-// between the alternatives the rider has rather than against an absolute scale
-// that would make every urban trip look identical.
 func rankMotisRoutes(response *pb.MaasPlanResponse, gc float64, top int32) {
 	if response == nil || len(response.Routes) <= 1 {
 		return

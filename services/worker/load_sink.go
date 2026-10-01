@@ -13,11 +13,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// loadSink is the write seam a loadSpec's transform receives instead of raw
-// PostgreSQL and Redis clients. CopyUpsert owns the temp-table COPY + upsert
-// skeleton the station, fare and timetable transforms repeat; semantic methods
-// own the loaders that do not fit that shape. The production adapter is
-// pgLoadSink; unit tests drive the transforms through fakeLoadSink.
 type loadSink interface {
 	CopyUpsert(ctx context.Context, spec pipeline.CopyUpsertSpec, rows [][]any) error
 	loadBusCity(ctx context.Context, src pipeline.LoadSource, city string) error
@@ -60,13 +55,6 @@ func (s pgLoadSink) loadThsrStations(ctx context.Context, dec *json.Decoder, par
 	return rail.LoadThsrStation(ctx, dec, s, part)
 }
 
-// CopyUpsert runs the temp-table COPY + upsert skeleton in one transaction:
-// preExec statements, CREATE TEMP TABLE ... ON COMMIT DROP, CopyFrom, the
-// INSERT ... SELECT drain, then Commit, with a deferred Rollback. Each step
-// failure logs a structured [LOAD] line keyed by spec.key and returns; an
-// aborted transaction never commits, so the SQL effect matches the per-transform
-// skeletons this replaces. The per-partition success/date fields are logged by
-// runLoadSpecs; this line carries the row count.
 func (s pgLoadSink) CopyUpsert(ctx context.Context, spec pipeline.CopyUpsertSpec, rows [][]any) error {
 	return pipeline.RunCopyUpsert(ctx, s, spec, rows)
 }

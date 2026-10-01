@@ -10,10 +10,6 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
-// contextGovernedRedisOptions mirrors what shared.ConnectRedis builds, with the
-// socket timeouts disabled so the context is the *only* thing that can unblock a
-// command. ContextTimeoutEnabled is the load-bearing setting: without it go-redis
-// applies socket deadlines alone and ignores the context entirely.
 func contextGovernedRedisOptions(addr string) *redis.Options {
 	return &redis.Options{
 		Network: "tcp", Addr: addr,
@@ -28,20 +24,6 @@ func contextGovernedRedisOptions(addr string) *redis.Options {
 	}
 }
 
-// TestDailyBoundsRedisReadByContextDeadline is the regression test for the v6→v9
-// migration. It exercises the whole request chain — the Daily RPC, the
-// BusDailytable handler it delegates to, and the Redis GET underneath — against
-// a server that accepts the GET and then never answers.
-//
-// Under go-redis v6 this could not pass: WithContext stored the context but
-// nothing on the command path ever read it, so the only escape from a parked
-// read was a socket timeout, and those are disabled here.
-//
-// Note what this does and does not assert. go-redis v9 maps a context *deadline*
-// onto the socket deadline; it does not watch Done, so cancelling a
-// deadline-less context will not interrupt a command already in flight. A
-// deadline is therefore the guarantee callers actually have, and the one worth
-// pinning down.
 func TestDailyBoundsRedisReadByContextDeadline(t *testing.T) {
 	endpoint := redistest.Start(t, "get")
 	client := redis.NewClient(contextGovernedRedisOptions(endpoint.Address))

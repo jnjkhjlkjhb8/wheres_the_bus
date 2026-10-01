@@ -24,10 +24,6 @@ class SearchState extends Equatable {
   /// pick, only nothing picked.
   final String? city;
 
-  /// TDX codes the unfiltered results for [query] spanned, ordered by how
-  /// many results each held. Computed only from an unfiltered response: a
-  /// filtered one holds a single city by construction, and recomputing from
-  /// it would collapse the list to the chip already selected.
   final List<String> cityOptions;
 
   SearchState copyWith({

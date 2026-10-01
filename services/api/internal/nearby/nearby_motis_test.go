@@ -11,10 +11,6 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-// The contract this inherits from the OSRM table it replaced: answers come back
-// in the order the destinations went out, and a destination with no path keeps
-// its slot as a nil metric instead of shifting every later stop's walking time
-// onto the wrong stop.
 func TestMotisWalkingRouterPreservesOrderAndNullableCells(t *testing.T) {
 	var body motisOneToManyRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

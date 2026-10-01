@@ -3,11 +3,6 @@ import 'package:wheres_the_bus/data/models/bus_models.dart';
 /// Pure geometry for the "pin a bus, pick your alight stop" flow. Kept out of
 /// the screen's `part` files so it can be unit-tested directly.
 
-/// Index in [stopUidsInOrder] of the first stop the pinned [plate] is still
-/// heading toward — the lowest-order stop whose live ETA still lists that
-/// plate. Every stop before it has already been passed. Returns null when no
-/// ETA frame mentions the plate (out of range / stale feed), leaving the caller
-/// to treat every stop as still ahead.
 int? pinnedBusNextStopIndex({
   required Iterable<BusStopEtaViewModel> etas,
   required List<String> stopUidsInOrder,
@@ -15,9 +10,12 @@ int? pinnedBusNextStopIndex({
   required String plate,
 }) {
   int? best;
+  // The estimate's plate is server-normalized; the tapped marker's comes from
+  // the raw position feed.
+  final wanted = plate.trim().toUpperCase();
   for (final eta in etas) {
     if (eta.direction != direction) continue;
-    if (!eta.vehiclePlates.contains(plate)) continue;
+    if (eta.plate.isEmpty || eta.plate != wanted) continue;
     final i = stopUidsInOrder.indexOf(eta.stopUid);
     if (i < 0) continue;
     if (best == null || i < best) best = i;

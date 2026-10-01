@@ -2,25 +2,14 @@ syntax = "proto3";
 
 option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 
-// Rider-to-ops reporting. One-way in this phase: the app opens a thread, ops
-// read it out of band. Replies land on feedback_message with author='ops' and
-// are delivered separately, so no read RPC exists here yet.
 service Feedback_Service {
   rpc postFeedback(PostFeedbackRequest) returns (ReportReceipt) {}
 }
 
-// What the app knew about itself when the report was written. Collected by the
-// client and shown to the reporter before submit, so nothing here is a secret
-// the rider hasn't seen: no location, no account, no device identifiers beyond
-// the install_id the device already sends on every call.
 message ReportDiagnostics {
   string app_version = 1;
   string platform = 2;
   string os_version = 3;
-  // Router location the reporter was on before opening the sheet (e.g.
-  // "/bus/route/:subRouteUid"). The path pattern, never a resolved id, so it
-  // says which screen misbehaved without carrying what the rider was looking
-  // at.
   string screen = 4;
   string locale = 5;
 }

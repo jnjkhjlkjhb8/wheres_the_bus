@@ -18,28 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// The GTFS-RT feed builder (ADR-0019).
-//
-// The static feed states the plan; this states what is happening to it today.
-// The first producer is 減班: a departure the weekly schedule places today but
-// that TDX's daily timetable does not list is reported as a cancelled trip.
-//
-// The snapshot is rebuilt here and served by services/api, handed over as
-// one serialized FeedMessage in Redis. The router owns HTTP, this process owns
-// periodic work, and neither changes shape. The key's TTL is the failure mode:
-// if this builder stops, the key expires and the endpoint 503s, so a planner
-// falls back to the static timetable rather than being served a snapshot that
-// is silently hours old.
-//
-// Nothing here guesses. Every subroute whose two sources cannot be shown to
-// describe the same departures is dropped whole — an omitted cancellation costs
-// a planner the static timetable, an invented one actively misroutes.
-
 const (
-	// RTCadence matches the bus ETA refresh. Cancellations themselves move
-	// at most hourly (the daily timetable's incremental load), but the delay
-	// producer FDPL-29 adds to this same snapshot moves at the ETA's pace, and
-	// one cadence is cheaper to reason about than two.
 	RTCadence = "@every 30s"
 	// _gtfsRTSnapshotTTL outlives several rebuild periods so an ordinary slow
 	// tick cannot blank the feed, while still expiring fast enough that a dead
@@ -72,11 +51,7 @@ type gtfsRTRouteKey struct {
 // id to name it by, the days it runs, and the origin departure that identifies
 // it within its subroute direction.
 type gtfsRTTrip struct {
-	tripID string
-	// departure is minutes since midnight. The trip_id embeds the departure as
-	// TDX spelled it ("6:10" and "06:10" are different trip_ids on purpose), but
-	// matching across two feeds cannot depend on formatting, so the match key is
-	// normalized while the id is not.
+	tripID    string
 	departure int
 	// week is Sunday-first, matching both time.Weekday and the EXTRACT(DOW)
 	// ordering gtfsWeekArraySQL emits.
@@ -114,25 +89,6 @@ type gtfsRTStats struct {
 	cancellations    int
 }
 
-// _gtfsRTTripIndexSQL is every bus trip the static feed can emit, reduced to the
-// three columns a cancellation needs.
-//
-// It reads the same two sources gtfs_files.go builds trips.txt from, so the
-// trip_ids here are the trip_ids in the published feed by construction rather
-// than by a second definition that could drift. The second branch is
-// busPatternTripsSQL and not the busOriginTripSource beneath it, because an
-// origin departure only becomes a trip once its route direction has a complete
-// pattern: reading the ungated source named departures trips.txt never emitted,
-// and nigiri drops a TripUpdate whose trip_id is not in the static feed, so
-// those cancellations were counted and then thrown away.
-//
-// The subroute and departure are recovered from the trip_id instead of being
-// selected again, which is the same thing gtfsShapesSQL already does
-// (split_part(trip_id, ':', 1)) and keeps this query from having to reach back
-// into the sources' own SELECT lists.
-//
-// city comes along because canonicalisation needs it: InterCity encodes
-// direction in the UID suffix and everything else does not.
 var _gtfsRTTripIndexSQL = `
 SELECT DISTINCT trip_id, direction_id, service_id
 FROM (
@@ -274,12 +230,6 @@ func loadGTFSRTIndex(ctx context.Context, db *pgxpool.Pool, today string) (*gtfs
 	return index, nil
 }
 
-// parseGTFSRTTrip recovers a trip's identity from its id and service id.
-//
-// The id's shape is <SubRouteUID>:<direction>:<HHMM>:<service_id>, and the
-// service id is itself "W:<mask>" — so the id has five colon-separated parts,
-// not four. Anything that does not decompose that way is skipped rather than
-// guessed at: a trip we cannot place is a trip we must not cancel.
 func parseGTFSRTTrip(tripID, serviceID string, direction int32) (gtfsRTTrip, gtfsRTRouteKey, bool) {
 	parts := strings.Split(tripID, ":")
 	if len(parts) != 5 {
@@ -305,10 +255,6 @@ func parseGTFSRTTrip(tripID, serviceID string, direction int32) (gtfsRTTrip, gtf
 		gtfsRTRouteKey{subRouteUID: uid, direction: int32(dir)}, true
 }
 
-// canonicalGTFSRTSubroute maps a TDX-native subroute UID onto the canonical one
-// the Redis keys use. Only InterCity differs, and its UIDs are the ones carrying
-// the THB prefix, so the city CanonicalSubroute needs is recovered from the UID
-// rather than carried through the query.
 func canonicalGTFSRTSubroute(tdxUID string, direction uint8) (string, uint8) {
 	city := ""
 	if len(tdxUID) >= 3 {
@@ -317,10 +263,6 @@ func canonicalGTFSRTSubroute(tdxUID string, direction uint8) (string, uint8) {
 	return shared.CanonicalSubroute(city, tdxUID, direction)
 }
 
-// parseGTFSRTCompactTime reads the colon-stripped departure the trip_id carries
-// ("610", "0610", "2405" for a trip past midnight) as minutes since midnight.
-// The last two digits are always the minute; whatever precedes them is the hour,
-// which is how a service day can legitimately run past 24:00.
 func parseGTFSRTCompactTime(compact string) (int, bool) {
 	if len(compact) < 3 || len(compact) > 4 {
 		return 0, false
@@ -375,22 +317,6 @@ func parseGTFSRTWeekMask(serviceID string) ([7]bool, bool) {
 	return week, true
 }
 
-// buildGTFSRTCancellations is the diff: for every subroute direction running
-// today, the scheduled departures TDX's daily timetable does not list.
-//
-// Two rules carry the whole design. A daily departure that matches no scheduled
-// departure proves the two sources do not agree on how to name a departure for
-// this subroute, so the subroute emits nothing at all rather than a mixture of
-// real reductions and correspondence failures. And one daily departure satisfies
-// every scheduled trip sharing it: bus_dailytimetable carries no ServiceDay, so
-// two weekday masks that both cover today put two trip_ids behind one
-// observation, and consuming it against only one of them would cancel the rest.
-// It also returns the trips still running today — active minus whatever it just
-// cancelled — because that is the candidate set the vehicle matcher must draw
-// from. ADR-0019: a ghost departure left in the candidates attracts a real
-// vehicle, and under an order-preserving assignment one bad match shifts every
-// vehicle behind it. Removing them here makes the two entity sets disjoint by
-// construction rather than by a reconciliation pass afterwards.
 func buildGTFSRTCancellations(
 	ctx context.Context,
 	index *gtfsRTIndex,
@@ -448,14 +374,6 @@ func buildGTFSRTCancellations(
 	for _, key := range keys {
 		observed, ok := observedDepartures(daily[key.subRouteUID], key.direction)
 		if !ok {
-			// No daily timetable for this subroute direction. In Taipei, New
-			// Taipei, Tainan, Kinmen and Lienchiang TDX serves none at all, so
-			// absence carries no information anywhere and can never mean
-			// withdrawn.
-			//
-			// Every trip stays a candidate: nothing here is known to be
-			// cancelled, and a vehicle running one of them can still be matched.
-			// This is what leaves those cities delay-only rather than silent.
 			stats.routesNoDaily++
 			running[key] = active[key]
 			continue
@@ -506,11 +424,6 @@ func gtfsRTGatePasses(observed map[int]struct{}, scheduled map[int][]string) boo
 	return true
 }
 
-// observedDepartures reduces one direction's daily timetable to the set of
-// origin departures it lists. The second return distinguishes "TDX published no
-// timetable for this direction" from "it published one with no usable trip";
-// only the former is silence, the latter is an empty set that the gate will
-// judge on its own.
 func observedDepartures(timetable *models.Bus_DailyTimetables, direction int32) (map[int]struct{}, bool) {
 	if timetable == nil {
 		return nil, false
@@ -588,10 +501,6 @@ func marshalGTFSRTFeed(entities []*gtfs.FeedEntity, now time.Time) ([]byte, erro
 	return payload, nil
 }
 
-// readDailyTimetables fetches the daily timetables for the subroutes running
-// today. A missing key is not an error — it is the ordinary state for the five
-// cities TDX publishes no daily timetable for — so it is simply absent from the
-// returned map.
 func (b *gtfsRTBuilder) readDailyTimetables(ctx context.Context, subRouteUIDs []string) (map[string]*models.Bus_DailyTimetables, error) {
 	client := b.rc
 	out := make(map[string]*models.Bus_DailyTimetables, len(subRouteUIDs))

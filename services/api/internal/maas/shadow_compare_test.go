@@ -2,34 +2,6 @@
 
 package maas
 
-// The TDX/MOTIS shadow comparison (ADR-0022).
-//
-// This is the cutover's acceptance gate, and it is only runnable while TDX is
-// still serving -- which is why it is a precondition of the switch rather than
-// follow-up work.
-//
-// It lives as a build-tagged test in this package, rather than as a script,
-// because it calls the production request mapping directly: motisPlanQuery,
-// motisClient.Plan and MaasServer.fetch are the same functions the router uses.
-// A standalone script would have to reimplement the mode translation, the time
-// format and the first/last-mile mapping, and would then be measuring its own
-// copy -- drifting in exactly the direction that reports green while production
-// is broken.
-//
-// The tag keeps it out of `go test ./...` entirely: nothing here compiles
-// unless it is asked for.
-//
-//	DATABASE_URL=... TDX_CLIENT_ID=... TDX_CLIENT_SECRET=... \
-//	MOTIS_BASE_URL=http://127.0.0.1:8082 \
-//	go test -tags=shadow ./services/api -run TestShadowCompare -v -timeout 60m
-//
-// The gate is the no-result rate, not the travel-time delta. TDX prices live
-// traffic and MOTIS prices a timetable, so their times differ without either
-// being wrong; "MOTIS returns nothing where TDX returned something" is the
-// binary, un-arguable failure, and it is what the feed's known holes (Taichung,
-// the four cities whose bus times are accumulated rather than observed) would
-// produce.
-
 import (
 	"context"
 	"errors"
@@ -54,14 +26,8 @@ const (
 	// _shadowPairs is how many origin/destination pairs are drawn. Large enough
 	// that a 2 percentage point threshold is not one unlucky pair, small enough
 	// to stay inside TDX's quota.
-	_shadowPairs = 400
-	// _shadowThresholdPP is the gate from ADR-0022: MOTIS's no-result rate may
-	// exceed TDX's by at most this many percentage points.
-	_shadowThresholdPP = 2.0
-	// _shadowMinRegionShare is the floor for Taichung and for the south, each
-	// as a share of the corpus. Without it the sample is Taipei, which is where
-	// the feed is strongest -- a green run would then mean nothing about the
-	// places most likely to fail.
+	_shadowPairs          = 400
+	_shadowThresholdPP    = 2.0
 	_shadowMinRegionShare = 0.15
 	// _shadowRequestGap paces the run. TDX is a metered third party and MOTIS
 	// shares a 6 GB host with everything else; there is no deadline here worth
@@ -69,14 +35,6 @@ const (
 	_shadowRequestGap = 250 * time.Millisecond
 )
 
-// shadowRegionOf partitions Taiwan by the `city` column the stop tables carry.
-// The split is by where the feed's quality actually differs, not by geography
-// for its own sake: Taipei and New Taipei are where bus times are accumulated
-// from segment estimates, Taichung is the hole both our feed and the official
-// one miss, and the south is where coverage is thinnest.
-//
-// The table is built per call rather than held in a package-level map, which
-// would be a mutable global any test in this package could reach into.
 func shadowRegionOf(city string) string {
 	regions := map[string][]string{
 		"north":    {"Taipei", "NewTaipei", "Keelung", "Taoyuan", "Hsinchu", "HsinchuCounty"},
@@ -190,10 +148,6 @@ func TestShadowCompare(t *testing.T) {
 	}
 }
 
-// shadowRequest is a plain weekday-morning departure. The options are left at
-// their defaults deliberately: this measures whether a plan exists at all, and
-// a narrowed mode filter or a tightened transfer window would confound that
-// with the filter's own effect.
 func shadowRequest(pair shadowPair) *pb.MaasPlanRequest {
 	departure := time.Now().Add(24 * time.Hour)
 	for departure.Weekday() == time.Saturday || departure.Weekday() == time.Sunday {
@@ -259,10 +213,6 @@ type shadowPair struct {
 	to   shadowPlace
 }
 
-// shadowPlaces draws candidate endpoints from the stop tables. Metro, rail and
-// bus stops are all included because they sit in different parts of the street
-// network -- a corpus of rail stations alone would only ever exercise the
-// best-connected coordinates in the country.
 func shadowPlaces(ctx context.Context, db *pgxpool.Pool) ([]shadowPlace, error) {
 	const query = `
 	SELECT name, city, ST_Y(position) AS lat, ST_X(position) AS lon
@@ -291,11 +241,6 @@ func shadowPlaces(ctx context.Context, db *pgxpool.Pool) ([]shadowPlace, error) 
 	return places, rows.Err()
 }
 
-// shadowPairs builds the corpus, stratified so Taichung and the south each
-// clear their floor. Origins are drawn per region and destinations drawn freely
-// from anywhere, which is what makes cross-city trips -- the ones most likely
-// to expose a calendar or timetable hole -- part of the sample rather than an
-// afterthought.
 func shadowPairs(places []shadowPlace) []shadowPair {
 	random := rand.New(rand.NewSource(_shadowSeed))
 	byRegion := map[string][]shadowPlace{}
@@ -328,10 +273,6 @@ func shadowPairs(places []shadowPlace) []shadowPair {
 	return pairs
 }
 
-// reportShadowComposition states what was actually sampled. A run whose corpus
-// silently fell short of the regional floors would report a rate that says
-// nothing about the places the feed is weakest, so the composition is printed
-// next to the result rather than assumed from the quota.
 func reportShadowComposition(t *testing.T, pairs []shadowPair) {
 	t.Helper()
 	counts := map[string]int{}

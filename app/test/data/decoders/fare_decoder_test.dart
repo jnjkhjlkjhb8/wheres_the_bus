@@ -76,10 +76,6 @@ void main() {
   });
 
   group('decodeFareTable', () {
-    // Shapes mirror real TDX Bus/RouteFare samples: FareClass 1=全票, 10=半票;
-    // each entry (section / stage / OD) carries a Fares array of
-    // {FareClass, TicketType, Price, FareName?}. Records hold Lists (identity
-    // equality), so flatten to nested strings for comparison.
     List<Object?> dump(List<FareGroup> groups) => [
       for (final g in groups)
         [

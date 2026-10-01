@@ -1,4 +1,6 @@
-tunnel: idk
+# Operator must provide the staging tunnel id in the credentials/config bundle.
+# Keeping this placeholder makes an unconfigured tunnel fail closed.
+tunnel: REPLACE_WITH_STAGING_TUNNEL_ID
 credentials-file: /etc/cloudflared/creds.json
 
 ingress:

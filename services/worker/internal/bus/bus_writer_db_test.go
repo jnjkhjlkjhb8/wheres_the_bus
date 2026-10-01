@@ -11,13 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestWriteBusCitySnapshotDB exercises the complete transaction against an
-// isolated PostgreSQL 18 + PostGIS schema. It is opt-in so normal unit tests do
-// not mutate a developer database; CI/local verification sets
-// BUS_WRITER_DATABASE_URL to an ephemeral container.
 func TestWriteBusCitySnapshotDB(t *testing.T) {
 	dsn := os.Getenv("BUS_WRITER_DATABASE_URL")
 	if dsn == "" {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("BUS_WRITER_DATABASE_URL required for DB integration tests")
+		}
 		t.Skip("BUS_WRITER_DATABASE_URL not set; skipping atomic bus writer integration")
 	}
 	ctx := context.Background()

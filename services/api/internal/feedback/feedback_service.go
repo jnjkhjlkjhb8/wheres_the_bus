@@ -36,11 +36,6 @@ type feedbackPersistence interface {
 	OpenThread(context.Context, feedbackThreadRecord, string) (time.Time, error)
 }
 
-// FeedbackServer accepts rider-written problem reports. Riders are anonymous —
-// there is no account system — so the caller is authenticated exactly like
-// every other device-scoped RPC: against the install secret it registered with.
-// That is what makes the per-installation quota meaningful, since an
-// unauthenticated caller could otherwise mint a fresh install_id per request.
 type FeedbackServer struct {
 	pb.UnimplementedFeedback_ServiceServer
 	store    feedbackPersistence
@@ -48,12 +43,6 @@ type FeedbackServer struct {
 	notifier feedbackNotifier
 }
 
-// PostFeedback opens a thread with the rider's message on it and returns the
-// thread id, whose first characters the app shows as a case number.
-//
-// Ops notification is deliberately not part of the RPC's success condition: a
-// report that is durable in Postgres has been received, whether or not a chat
-// webhook was reachable at that moment.
 func (s *FeedbackServer) PostFeedback(ctx context.Context, request *pb.PostFeedbackRequest) (*pb.ReportReceipt, error) {
 	if !installid.ValidText(request.GetInstallId(), 128) {
 		return nil, status.Error(codes.InvalidArgument, "install_id is required")
@@ -187,12 +176,6 @@ func NewFeedbackNotifier() feedbackNotifier {
 	return &webhookNotifier{url: url, client: &http.Client{Timeout: 10 * time.Second}}
 }
 
-// Notify returns immediately and posts on its own goroutine with its own
-// context. The context that produced the notice is cancelled the moment the
-// RPC responds, and the rider must not wait on a chat service to be told their
-// report was accepted. A failed post is logged and dropped rather than
-// retried: the report is already durable, and a queue for chat notifications
-// would be more machinery than the failure is worth.
 func (n *webhookNotifier) Notify(notice feedbackNotice) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -243,11 +226,6 @@ const (
 	_feedbackNoticeBodyLimit = 1500
 )
 
-// feedbackWebhookContent renders one report as a chat message. Every body line
-// is quoted so a report containing its own newlines still reads as one block,
-// and the whole thing is capped twice — once on the body, once on the result —
-// so a long report cannot push the diagnostics line past Discord's limit and
-// have the whole POST rejected.
 func feedbackWebhookContent(notice feedbackNotice) string {
 	var content strings.Builder
 	fmt.Fprintf(&content, "**新回報** `%s` · `%s`\n", notice.Category, shortThreadReference(notice.ThreadID))
@@ -274,11 +252,6 @@ func feedbackDiagnosticsSummary(diagnostics map[string]string) string {
 	return strings.Join(parts, " · ")
 }
 
-// shortThreadReference is the case number a rider can quote: the first segment
-// of the thread UUID. It is a lookup prefix, not an identifier — ops resolve it
-// with a prefix match — which is why nothing keys on it. Ids always come from
-// newUUIDv4, so the hyphen is always there; a value without one is returned
-// whole rather than cut at a guessed width.
 func shortThreadReference(threadID string) string {
 	if index := strings.IndexByte(threadID, '-'); index > 0 {
 		return threadID[:index]

@@ -18,10 +18,6 @@ Future<PackageInfo> _packageInfo() async => PackageInfo(
   buildNumber: '9',
 );
 
-// Pinned to zh-TW: `flutter_test` reports an en_US platform locale, so
-// without this the screen would resolve to English and every assertion below
-// would be asserting on whatever Crowdin last returned rather than on the
-// copy this test is about.
 Widget _wrap(Widget child) => MaterialApp(
   locale: const Locale('zh'),
   localizationsDelegates: AppI18n.localizationsDelegates,

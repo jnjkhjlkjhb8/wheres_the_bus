@@ -88,14 +88,6 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
         ),
       );
 
-      // Live 誤點 for the on-screen timetable + position marker. TRA only —
-      // THSR exposes no delay feed. The router seeds from cache, so the first
-      // frame lands almost immediately; until then the screen shows the
-      // snapshot the caller navigated in with.
-      // Guard against the screen being left mid-load: close() runs during the
-      // awaits above, before _delaySub is assigned, so it cancels nothing.
-      // Skip subscribing once closed, and re-check before each add — otherwise
-      // a delay frame lands on the closed bloc (root-zone "add after close").
       if (!_isThsr && stops.length >= 2 && !isClosed) {
         unawaited(_delaySub?.cancel());
         _delaySub = _tra.delay(date, stops.first.name, stops.last.name).listen(
@@ -106,8 +98,6 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
         );
       }
     } on Object catch (e) {
-      // NotFound is a normal outcome (ADR-0005): a date beyond the landed
-      // window or an unknown train renders the calm empty state, not an error.
       final error = AppError.from(e);
       emit(
         RailTrainState(
@@ -120,17 +110,6 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
     }
   }
 
-  /// Loads the train's full-run fare and, when the caller searched a
-  /// specific segment ([userOrigin]/[userDest] both set), that segment's
-  /// fare too — fetched concurrently so a slow or failing one doesn't delay
-  /// the other. Both are independently best-effort (null on failure).
-  ///
-  /// The two used to collapse into one RPC scoped to the full run, which is
-  /// how the fare card ended up quoting a different price than the O/D
-  /// result list for what the user read as the same trip (the list already
-  /// showed the segment fare). The segment fare is now fetched — and
-  /// surfaced by the screen — as the primary number; the full-run fare is
-  /// kept only as clearly-labelled secondary context.
   Future<(RailFareQuote?, RailFareQuote?)> _loadFares(
     List<RailTrainStop> stops,
   ) async {
@@ -155,13 +134,6 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
     return (results[0], results[1]);
   }
 
-  /// Best-effort fares for the origin→destination pair on *this* train, left
-  /// unresolved for the view to price against the rider's ticket type. Returns
-  /// null on any failure so the timetable still renders without a fare card.
-  ///
-  /// TRA prices a pair per train class, so the quote carries [type] — the
-  /// train's class — to select the right tier: quoting the pair's cheapest or
-  /// priciest row instead showed 桃園→臺北 as 99 (自強) on a 區間車 that costs 63.
   Future<RailFareQuote?> _loadFare(String originName, String destName) async {
     try {
       // The router resolves station names to ids, so the stop names go straight
@@ -185,7 +157,12 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
     Emitter<RailTrainState> emit,
   ) {
     if (state.status != RailTrainStatus.loaded) return;
-    emit(state.copyWith(liveDelayMinutes: event.minutes));
+    emit(
+      state.copyWith(
+        liveDelayMinutes: event.minutes,
+        delayUpdatedAt: DateTime.now(),
+      ),
+    );
   }
 
   @override

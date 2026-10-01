@@ -36,11 +36,6 @@ func (s *BusRouteserver) Eta(in *pb.Bus_Ask_Route, stream pb.Bus_Route_Service_E
 	return s.BusRouteEta(in, stream)
 }
 
-// BusRouteStatic returns the pre-serialized static payload for a bus route.
-// The requested sub-route UID is used as-is: canonical subroute identity is
-// produced at the 03:30 load (ADR-0006), so requests arrive already canonical
-// and the router does no normalization. Results are memoized in the in-process
-// cache for an hour; a missing row maps to NotFound via grpcStatusFor.
 func (s *BusRouteserver) BusRouteStatic(ctx context.Context, in *pb.Bus_Ask_Route) (*pb.Resp_BusStatic, error) {
 	zap.S().Infow("call", "component", "grpc", "action", "bus_static", "event", "call", "sub_route_uid", in.SubRouteUID)
 	route := in.SubRouteUID
@@ -73,10 +68,6 @@ func (s *BusRouteserver) BusRouteStatic(ctx context.Context, in *pb.Bus_Ask_Rout
 	return &pb.Resp_BusStatic{Data: sub}, nil
 }
 
-// BusRouteEta streams live ETA for a bus route. It subscribes to the route's
-// Redis channel first, then sends the current cached value (if any) so a new
-// client sees state immediately, and forwards each published update until the
-// client disconnects. Payloads failing usableBusEtaPayload are skipped.
 func (s *BusRouteserver) BusRouteEta(in *pb.Bus_Ask_Route, stream pb.Bus_Route_Service_EtaServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "bus_route_eta", "event", "call", "sub_route_uid", in.SubRouteUID)
 	key := shared.BusRouteEtaKey(in.SubRouteUID)
@@ -94,13 +85,6 @@ func (s *BusRouteserver) BusRouteEta(in *pb.Bus_Ask_Route, stream pb.Bus_Route_S
 	})
 }
 
-// streamBusStationEta streams live ETA for a station group. The request carries
-// the group_uid and, optionally, its city; when the city is omitted it is looked
-// up from bus_station_groups. It returns InvalidArgument when neither a city nor
-// a resolvable group_uid is available. Like BusRouteEta it seeds the stream from
-// the cached value, then forwards Redis Pub/Sub updates, skipping empty payloads.
-// It lives as a free function over the query seam rather than as a method on
-// either bus server, so it carries no server state beyond db and rc.
 func streamBusStationEta(db store.DB, live livestream.LiveSource, in *pb.Bus_Ask_StationGroup, stream pb.Bus_Station_Service_EtaServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "bus_station_eta", "event", "call", "city", in.City, "group_uid", in.GroupUid)
 	groupUID := in.GroupUid
@@ -131,10 +115,6 @@ func streamBusStationEta(db store.DB, live livestream.LiveSource, in *pb.Bus_Ask
 	})
 }
 
-// BusDailytable returns the daily timetable payload cached in Redis for a route.
-// The sub-route UID is used as-is: canonical subroute identity is produced at
-// the 03:30 load (ADR-0006), so requests arrive already canonical. A missing key
-// maps to NotFound via grpcStatusFor.
 func (s *BusRouteserver) BusDailytable(ctx context.Context, in *pb.Bus_Ask_Route) (*pb.Resp_BusDailyTimetable, error) {
 	zap.S().Infow("call", "component", "grpc", "action", "bus_dailytable", "event", "call", "sub_route_uid", in.SubRouteUID)
 	route := in.SubRouteUID
@@ -203,10 +183,6 @@ func (s *BikeServer) Eta(in *pb.BikeRequest, stream pb.Bike_Service_EtaServer) e
 	return s.bikeEta(in, stream)
 }
 
-// BikeStatic returns static data for a bike station from PostgreSQL. Results are
-// cached in-process for an hour as the marshaled protobuf; a corrupt cache entry
-// that fails to unmarshal is ignored and re-fetched. A missing station maps to
-// NotFound via grpcStatusFor.
 func (s *BikeServer) BikeStatic(ctx context.Context, in *pb.BikeRequest) (*pb.BikeStatic, error) {
 	zap.S().Infow("call", "component", "grpc", "action", "bike_static", "event", "call", "station_uid", in.StationUID)
 	if s.cache != nil {
@@ -248,10 +224,6 @@ func (s *BikeServer) BikeStatic(ctx context.Context, in *pb.BikeRequest) (*pb.Bi
 	return resp, nil
 }
 
-// bikeEta streams live availability for a bike station. It subscribes to the
-// station's Redis channel first, seeds a new client from the cached value, then
-// forwards published updates until the client disconnects. Empty payloads are
-// skipped, so a client with no cached value receives no seed frame.
 func (s *BikeServer) bikeEta(in *pb.BikeRequest, stream pb.Bike_Service_EtaServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "bike_eta", "event", "call", "station_uid", in.StationUID)
 	key := shared.BikeAvailabilityKey(in.StationUID)
@@ -278,13 +250,6 @@ func (s *NearServer) Near(stream pb.Near_Station_Service_NearServer) error {
 	return s.FindNear(stream)
 }
 
-// latestNearRequest drains the request stream into a single-slot Channel: a
-// request that arrives while another is being computed replaces whatever is
-// waiting behind it rather than queueing. A client panning the map is answered
-// for where it stopped, and the intermediate viewports cost nothing.
-//
-// Callers must read the returned error only after the channel is closed; the
-// close is what publishes it.
 func latestNearRequest(stream pb.Near_Station_Service_NearServer) (<-chan *pb.Ask_Near, *error) {
 	requests := make(chan *pb.Ask_Near, 1)
 	var recvErr error
@@ -310,14 +275,10 @@ func latestNearRequest(stream pb.Near_Station_Service_NearServer) (<-chan *pb.As
 	return requests, &recvErr
 }
 
-// FindNear is a bidirectional stream: for each location the client sends, it
-// replies with nearby stations of every mode. Responses are not one-per-request
-// — a viewport superseded before it was picked up is dropped, so a client must
-// treat every response as "the newest answer" rather than the answer to a
-// specific request it sent. It returns nil on client EOF.
 func (s *NearServer) FindNear(stream pb.Near_Station_Service_NearServer) error {
 	ctx := stream.Context()
 	requests, recvErr := latestNearRequest(stream)
+	var lastQueryAt time.Time
 	for {
 		var in *pb.Ask_Near
 		select {
@@ -337,7 +298,23 @@ func (s *NearServer) FindNear(stream pb.Near_Station_Service_NearServer) error {
 		lon := in.PositionLon
 		lat := in.PositionLat
 		r := in.Radius
-		zap.S().Infow("received location:", "component", "grpc", "lon", lon, "lat", lat, "radius", r)
+		// Enforce a per-stream work cadence regardless of how far the client
+		// jumps. The receiver keeps only the latest queued value, so waiting
+		// here still delivers the newest position without allowing a flood.
+		if !lastQueryAt.IsZero() {
+			wait := 100*time.Millisecond - time.Since(lastQueryAt)
+			if wait > 0 {
+				timer := time.NewTimer(wait)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				}
+			}
+		}
+		lastQueryAt = time.Now()
+		zap.S().Infow("received nearby query", "component", "grpc", "radius", r)
 		started := time.Now()
 		resp, err := s.discovery.Discover(ctx, nearby.NearbyQuery{
 			Origin: nearby.GeoPoint{Lon: lon, Lat: lat}, RadiusMeters: int(r),
@@ -351,10 +328,6 @@ func (s *NearServer) FindNear(stream pb.Near_Station_Service_NearServer) error {
 			"elapsed_ms", time.Since(started).Milliseconds(),
 		)
 		if err != nil {
-			// A rejected query is the caller's bug, not the router's: it logs at
-			// Warn so a stale client sending an out-of-range radius does not
-			// raise a server-side error issue. The client clamps before sending
-			// (kNearbyMaxRadiusMeters), so this only fires for old builds.
 			if errors.Is(err, nearby.ErrInvalidNearbyQuery) {
 				zap.S().Warnw("invalid",
 					"component", "grpc",
@@ -378,11 +351,6 @@ func (s *NearServer) FindNear(stream pb.Near_Station_Service_NearServer) error {
 	}
 }
 
-// busEtaDemandKey names the demand key for one city's TDX bus polling, or ""
-// for a UID whose city could not be resolved. The dataset name must match the
-// one functions gates busEta with. Taipei and New Taipei are not gated there
-// (their ETAs come from Data.taipei, not TDX), so their key is simply never
-// read — the router does not need to know which cities those are.
 func busEtaDemandKey(city string) string {
 	if city == "" {
 		return ""

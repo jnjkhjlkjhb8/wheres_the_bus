@@ -12,10 +12,6 @@ class RouteTabBar extends StatelessWidget implements PreferredSizeWidget {
   final TabController controller;
   final List<String> tabs;
 
-  /// When true the bar sits on [ColorScheme.surfaceContainerLow] (used inside
-  /// sheets) instead of [ColorScheme.surface]. Resolved against the live theme
-  /// on every build so it tracks light/dark switches — passing a pre-resolved
-  /// colour from a route builder that only runs once would leave it stale.
   final bool raised;
 
   @override

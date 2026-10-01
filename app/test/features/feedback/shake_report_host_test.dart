@@ -20,10 +20,6 @@ Future<void> _shake(
   await tester.pumpAndSettle();
 }
 
-/// Mounts the host over a two-route router. [openedFrom] collects the `from`
-/// parameter every time the report route is built, which is the contract the
-/// gesture has to keep: the report must name the screen the rider shook on,
-/// not the form itself.
 Future<void> _pump(
   WidgetTester tester,
   StreamController<UserAccelerometerEvent> samples, {

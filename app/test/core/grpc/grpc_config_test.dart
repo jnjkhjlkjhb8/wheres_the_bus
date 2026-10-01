@@ -70,10 +70,6 @@ void main() {
       );
     });
 
-    // Fail-closed by default: an environment name that is not explicitly a
-    // local flavor ('dev'/'test') must get the strict deployed-build
-    // validation. Otherwise an unset or misspelled APP_ENV in a release
-    // build silently skips the loopback/TLS guard entirely.
     test('unset APP_ENV (empty string) gets strict validation', () {
       expect(
         () => GrpcClient.validateConfig(

@@ -1,21 +1,11 @@
 import ActivityKit
 import Foundation
 
-/// One alight-tracking session, as the Live Activity sees it.
-///
-/// Mirrors Dart's `AlightTrackContent` field for field. Bus, TRA, THSR and
-/// metro all speak this one vocabulary, so the card cannot drift per mode —
-/// which is the whole reason the four per-surface layouts that used to live
-/// here were replaced by one.
 struct AlightTrackAttributes: ActivityAttributes {
     /// Which network. Selects the leading glyph, and nothing else.
     enum Mode: String, Codable, Hashable {
         case bus, tra, thsr, metro
 
-        /// All four glyphs exist on iOS 16, so no availability guard is needed.
-        /// TRA and THSR share the rail glyph: the card's own text already says
-        /// which train, and at badge size the useful distinction is
-        /// rail-versus-bus-versus-metro.
         var glyph: String {
             switch self {
             case .bus: return "bus.fill"
@@ -59,25 +49,8 @@ struct AlightTrackAttributes: ActivityAttributes {
         /// turns warm at the same count the reminder fires on.
         var leadStops: Int
 
-        /// Absolute arrival time, unix seconds. Not rendered: it sets the
-        /// waiting card's stale window, which is the arrival it names.
-        ///
-        /// It used to drive a self-ticking `Text(timerInterval:)`. iOS renders
-        /// that as `4:––` on a locked screen — it withholds the seconds — and a
-        /// locked screen is where this card spends most of its life.
-        ///
-        /// Unix seconds rather than a `Date` because this struct is also the
-        /// wire format of a server-pushed refresh (ADR-0018), which ActivityKit
-        /// decodes with a plain `JSONDecoder`. A bare number would be read as
-        /// seconds since 2001, and a 31-year skew is not something a card would
-        /// visibly fail on until a rider read it.
         var etaUnix: Int?
 
-        /// The arrival as the minutes the backend actually reported, printed
-        /// verbatim. Deriving minutes from [etaDate] against the device clock
-        /// would move the number on every re-render with no new data behind it,
-        /// which reads as a countdown the feed is not backing. Android prints
-        /// the same field for the same reason.
         var etaMinutes: Int?
 
         /// Walk to the board stop, minutes. Only meaningful while waiting.
@@ -105,12 +78,6 @@ extension AlightTrackAttributes.ContentState {
     /// [etaUnix] as a date, for the stale window a waiting card sets from it.
     var etaDate: Date? { etaUnix.map { Date(timeIntervalSince1970: Double($0)) } }
 
-    /// Fraction of the ride completed, `0...1`.
-    ///
-    /// A waiting session sits at 0 rather than hiding the bar: an empty track
-    /// reads as "this ride has not started", and keeping the row means nothing
-    /// reflows at the moment the rider boards. A lost session freezes wherever
-    /// it was — that position is the last true thing the card knows.
     var progress: Double {
         switch phase {
         case .waiting:

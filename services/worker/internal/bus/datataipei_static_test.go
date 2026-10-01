@@ -10,11 +10,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
 )
 
-// _specTimeTableJSON is the GetSpecTimeTable shape as the blob actually serves it
-// (singular-named wrapper objects around every list), trimmed to the cases the
-// reshaping has to decide: a filed trip for the day, one for another day, one
-// the operator filed as 停止營運, and an entry with the "null" direction the feed
-// uses when it does not know.
 const _specTimeTableJSON = `{
   "updateTime": 1785950118247,
   "authorityCode": "TPE",

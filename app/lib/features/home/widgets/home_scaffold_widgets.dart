@@ -1,11 +1,6 @@
 part of '../home_screen.dart';
 
 extension _HomeScreenScaffold on _HomeScreenState {
-  /// The map and everything the map itself draws.
-  ///
-  /// Nearby pins and member capsules are published through separate notifiers
-  /// — a nearby refresh and a selection have nothing to say to each other —
-  /// and merged here into the one set the platform view takes.
   Widget _buildMap(BuildContext context) {
     return ValueListenableBuilder<Set<Marker>>(
       valueListenable: _markers,
@@ -27,10 +22,6 @@ extension _HomeScreenScaffold on _HomeScreenState {
               unawaited(controller.moveCamera(CameraUpdate.newLatLng(_center)));
               _scheduleNearbyForViewport();
             },
-            // Member capsules ride in the same set as the nearby pins so the
-            // map composites them with the ground they sit on — a Flutter
-            // overlay would have to chase the camera over the platform channel
-            // and shake through every pan.
             markers: {...markers, ...memberMarkers},
             // Map shares a Stack with the draggable sheet; without an eager
             // recognizer the map loses the gesture arena, so pan/pinch leak to
@@ -57,12 +48,6 @@ extension _HomeScreenScaffold on _HomeScreenState {
 
   Widget _buildScaffold(BuildContext context, ColorScheme cs) {
     return PopScope(
-      // Back on home unwinds the sheet before it unwinds the app: a pushed
-      // sheet page pops, then the sheet returns to peek, and only a sheet
-      // already at peek with nothing pushed lets the app go. `canPop: false`
-      // is what buys that — the platform hands the gesture over instead of
-      // playing its predictive exit preview, which on the first two steps
-      // previews a departure that isn't going to happen.
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
@@ -103,10 +88,6 @@ extension _HomeScreenScaffold on _HomeScreenState {
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
-          // Mounted on the first frame at the default centre. Creating the
-          // platform view is the slowest single step in home, so it must not
-          // sit behind a location fix; `_initializeMapPosition` moves the
-          // camera as soon as the OS-cached position arrives.
           Positioned.fill(child: _buildMap(context)),
 
           // Sits directly on the map and under every control: the ring is
@@ -133,38 +114,45 @@ extension _HomeScreenScaffold on _HomeScreenState {
           ),
 
           Positioned(
-            top: 16,
-            left: 16,
-            child: SafeArea(
-              child: Pressable(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: FloatingAppBar(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              leading: Pressable(
                 onTap: () {
                   unawaited(context.push(AppRoutes.settings));
                 },
                 semanticLabel: AppI18n.of(context).commonSettings,
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: AppTheme.floatingControl(
-                    cs,
-                    borderRadius: BorderRadius.circular(12),
+                child: ValueListenableBuilder<String?>(
+                  valueListenable: availableUpdate,
+                  builder: (context, version, child) => Badge(
+                    isLabelVisible: version != null,
+                    backgroundColor: cs.error,
+                    smallSize: AppTheme.space8,
+                    child: child,
                   ),
-                  child: Icon(
-                    Icons.settings_rounded,
-                    size: 20,
-                    color: cs.onSurface,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: AppTheme.floatingControl(
+                      cs,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.settings_rounded,
+                      size: 20,
+                      color: cs.onSurface,
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
-
-          Positioned(
-            top: 16,
-            right: 16,
-            child: SafeArea(
-              child: Column(
+              // No height cap: the arrival state is taller than the 44px
+              // resident capsule and grows downward over the map.
+              middle: const Center(child: HomeAlertCapsule()),
+              trailing: Column(
                 mainAxisSize: MainAxisSize.min,
-                spacing: 8,
+                spacing: AppTheme.space8,
                 children: [
                   BlocBuilder<AlertBloc, AlertState>(
                     buildWhen: (p, c) => p.unreadCount != c.unreadCount,
@@ -245,20 +233,6 @@ extension _HomeScreenScaffold on _HomeScreenState {
             ),
           ),
 
-          // Severe-alert capsule, centered in the gap between the settings
-          // button and the right control column; expands outward from its
-          // midpoint when an alert arrives.
-          const Positioned(
-            top: 16,
-            left: 16 + 44 + 8,
-            right: 16 + 44 + 8,
-            child: SafeArea(
-              // No height cap: the arrival state is taller than the 44px
-              // resident capsule and grows downward over the map.
-              child: Center(child: HomeAlertCapsule()),
-            ),
-          ),
-
           // Floating controls: recenter above, route planner below. They ride
           // the sheet while it sits below the half detent, then park at half
           // once it's taller — so they never climb into the sheet content.
@@ -286,7 +260,7 @@ extension _HomeScreenScaffold on _HomeScreenState {
               },
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                spacing: 8,
+                spacing: AppTheme.space8,
                 children: [
                   Pressable(
                     onTap: _recenter,
@@ -364,9 +338,9 @@ extension _HomeScreenScaffold on _HomeScreenState {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SheetPageTopInset(child: SheetDragHandle()),
+        const SheetDragHandle(),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
           child: Row(
             children: [
               Expanded(
@@ -379,7 +353,7 @@ extension _HomeScreenScaffold on _HomeScreenState {
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppTheme.space12),
         RouteTabBar(
           controller: _tabController,
           tabs: [
@@ -425,10 +399,6 @@ const double _kScanFillAlpha = 0.07;
 /// the tap read as a camera flash.
 const double _kScanFadeInFraction = 0.1;
 
-/// Radius and stroke opacity the scan ring holds at [t] of its sweep. Pulled
-/// out of the painter so the shape of the motion — emerges from the location
-/// dot, peaks early, arrives at the queried radius as it vanishes — can be
-/// asserted without a canvas. See [scanRingFrameForTest].
 (double, double) _scanRingFrame({
   required double t,
   required double radius,
@@ -447,10 +417,6 @@ const double _kScanFadeInFraction = 0.1;
   return (_kScanSeedRadius + (radius - _kScanSeedRadius) * eased, alpha);
 }
 
-/// The one-shot ring a manual locate tap leaves on the map: it expands from
-/// the user's position to [radius] — the true reach of the nearby query, in
-/// pixels — and fades. Painted, not composed of widgets, because it is one
-/// circle per frame over a platform view.
 class _ScanRingPainter extends CustomPainter {
   _ScanRingPainter({
     required this.progress,

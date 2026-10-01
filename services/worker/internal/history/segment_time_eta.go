@@ -9,61 +9,20 @@ import (
 	"go.uber.org/zap"
 )
 
-// Running time between consecutive stops, differenced within one observation
-// instead of across two.
-//
-// This is the only observation pass. A single ETA snapshot answers the question
-// directly: at one instant TDX gives the seconds-to-arrival for every stop the
-// approaching bus still has ahead of it, so the difference between two adjacent
-// stops' estimates is that bus's running time between them. One row, no pairing,
-// no vehicle identity.
-//
-// It outlived the plate-pairing pass it used to complement (removed 2026-08-02,
-// see segment_time.go). Needing no vehicle identity is why: Taipei and NewTaipei
-// publish no PlateNumb at all — over a week 36.8% and 31.6% of their rows carry
-// none — so pairing never reached the two largest networks anyway, and where both
-// did produce a hop they agreed to within 2 seconds of median over 45,775 of
-// them.
-//
-// Needing only a snapshot is the other reason, and it is what lets the writer
-// sample: a pass that differences within one recorded instant is indifferent to
-// how far apart those instants are (historySnapshotInterval).
 const (
 	// _segmentDiffMinSecs / segmentDiffMaxSecs match segmentMinSecs/segmentMaxSecs:
 	// both bound one hop's running time, and a disagreement would put two
 	// different definitions of "plausible" in one table.
 	_segmentDiffMinSecs = _segmentMinSecs
 	_segmentDiffMaxSecs = _segmentMaxSecs
-	// _segmentDiffWindow is deliberately wider than segmentWindow. The cumulative
-	// pass has to match each observation to a departure, so old rows buy it
-	// little; this pass only needs a route to have run once, and TDX reports
-	// StopStatus 0 for the whole remainder of a route — a median of 32 consecutive
-	// stops — so a single snapshot of a running route yields nearly all its hops.
-	// Reaching further back therefore picks up the route that ran on a Tuesday and
-	// not since: 7 days yields 131,507 hops, 14 yields 156,156. Beyond 14 adds
-	// almost nothing today (156,478 for all of it) because the retained history
-	// does not reach further, and 30-day cleanup bounds it regardless.
-	_segmentDiffWindow = 14 * 24 * time.Hour
+	_segmentDiffWindow  = 14 * 24 * time.Hour
 	// _segmentRateMinHops is how many observed hops a route direction needs before
 	// its own pace is used instead of its city's. Below it the median is drawn
 	// from too few segments to describe the route.
-	_segmentRateMinHops = 5
-	// _segmentEstimatedSamples marks a row as estimated rather than observed.
-	// bus_segment_time carries no source column, and sample_count already means
-	// "how many observations back this figure" — so zero says the honest thing,
-	// and the sample-count conflict rule then lets any real observation replace
-	// it. Readers wanting observed data only filter on sample_count > 0.
+	_segmentRateMinHops      = 5
 	_segmentEstimatedSamples = 0
 )
 
-// ComputeSegmentTimesFromEstimates fills bus_segment_time from adjacent-stop
-// estimate differences over the last window of history.
-//
-// A pair is kept only when the two stops are adjacent in the sequence and the
-// later stop's estimate is the larger one. A bus approaching a stop is always
-// further from the stop after it, so a non-positive difference means the two
-// estimates describe different vehicles — most often a following bus that TDX
-// reported at the later stop — and differencing them would be meaningless.
 func ComputeSegmentTimesFromEstimates(ctx context.Context, db *pgxpool.Pool, hist Reader) error {
 	if db == nil {
 		return nil
@@ -90,26 +49,6 @@ func ComputeSegmentTimesFromEstimates(ctx context.Context, db *pgxpool.Pool, his
 	return nil
 }
 
-// FillSegmentTimesFromDistance writes an estimated running time for every hop the
-// two observation passes left empty, so a route direction is not lost to a single
-// unobserved segment.
-//
-// GTFS is all-or-nothing per route Direction: a journey is laid out by
-// accumulating its hops, so one missing segment compresses everything downstream
-// and the whole direction has to be dropped. That is why observed coverage of
-// 46.1% of hops still leaves almost every route direction unusable — a 30-stop
-// route needs all 29.
-//
-// Every stop carries a coordinate, so the gap can be closed with distance and a
-// pace calibrated from the segments actually observed on that route (or, below
-// segmentRateMinHops, on that city). Measured against observed Taipei hops the
-// estimate lands within 30 seconds 72.9% of the time and within 60 seconds 92.2%,
-// with a median error of 17 seconds — well short of a real observation's 2, which
-// is why these rows are written with sample_count = 0 and never replace one.
-//
-// Straight-line distance understates the road, but the pace is calibrated from
-// the same straight-line measure, so the detour is absorbed into the rate rather
-// than left as a bias.
 func FillSegmentTimesFromDistance(ctx context.Context, db *pgxpool.Pool) error {
 	if db == nil {
 		return nil

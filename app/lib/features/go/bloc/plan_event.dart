@@ -63,16 +63,11 @@ class PlanSearchCancelled extends PlanEvent {
   const PlanSearchCancelled();
 }
 
-/// Select a route and enter the plan-preview phase (single itinerary shown).
-/// Fired by a results card tap or a map alternate-polyline tap.
 class RouteSelected extends PlanEvent {
   const RouteSelected({required this.index});
   final int index;
 }
 
-/// Leave the plan-preview phase. Returns to the results list, or — when the
-/// preview was entered directly from a saved route (no results list behind it)
-/// — clears the injected result and restores the pre-search planner.
 class PreviewClosed extends PlanEvent {
   const PreviewClosed();
 }

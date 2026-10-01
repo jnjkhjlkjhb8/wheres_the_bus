@@ -2,22 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 
-/// Three-segment occupancy meter: how full the vehicle an arrival describes is.
-///
-/// Crowding is deliberately achromatic. Green / amber / red are already spent
-/// on *time* in this system — green is 進站中 ("go now"), amber is 即將進站, red
-/// is a delay — so banding people by the same hues would put two greens meaning
-/// two different things in one row. The system's other ladder, the stop marker,
-/// escalates by fill before colour for the same reason; this follows it.
-///
-/// Only [CrowdLevel.crowded] takes full ink, because it is the one
-/// reading that changes a decision: whether to let this bus go and wait for the
-/// next. Comfortable and normal sit in secondary ink — present for whoever
-/// looks, silent for everyone scanning for a time.
-///
-/// Static by construction: the reading changes on a 20-second poll, and a meter
-/// that animated on every refresh would be noise on a row whose job is a
-/// number. Reduce-motion is therefore identical, with nothing to gate.
 class CrowdMeter extends StatelessWidget {
   const CrowdMeter({required this.level, super.key});
 

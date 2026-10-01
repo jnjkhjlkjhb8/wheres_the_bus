@@ -133,7 +133,7 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
   void _onEtaUpdated(BusRouteEtaUpdated event, Emitter<BusRouteState> emit) {
     // The feed guards empty frames upstream; this stays a defensive no-op.
     if (event.etaMap.isEmpty && state.etaMap.isNotEmpty) return;
-    emit(state.copyWith(etaMap: event.etaMap));
+    emit(state.copyWith(etaMap: event.etaMap, updatedAt: DateTime.now()));
   }
 
   void _onDetailsUpdated(

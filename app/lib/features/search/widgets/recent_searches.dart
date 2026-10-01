@@ -1,12 +1,5 @@
 part of '../view/search_screen.dart';
 
-/// What the search screen offers before anything is typed: the stops and
-/// routes this rider looked up last.
-///
-/// Deliberately only history. Ranking already weights nearby and
-/// often-opened results once there is a query (see rankSearchResults); a
-/// second, differently-ordered list of the same places before the query is a
-/// competing answer to a question the rider has not asked yet.
 class _ZeroInputSuggestions extends StatelessWidget {
   const _ZeroInputSuggestions();
 
@@ -58,7 +51,7 @@ class _ZeroInputSuggestions extends StatelessWidget {
         minHeight: 44,
       ),
       alignment: Alignment.centerRight,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space8),
       child: Text(
         AppI18n.of(context).commonClear,
         style: AppTextStyles.bodySmall.copyWith(
@@ -88,7 +81,9 @@ class _ZeroInputSuggestions extends StatelessWidget {
           child: recentItems.isEmpty
               ? Center(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppTheme.space32,
+                    ),
                     child: Text(
                       i18n.searchRecentEmpty,
                       textAlign: TextAlign.center,
@@ -117,7 +112,9 @@ class _ZeroInputSuggestions extends StatelessWidget {
                       background: Container(
                         color: cs.errorContainer,
                         alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppTheme.space24,
+                        ),
                         child: Icon(
                           Icons.delete_rounded,
                           color: cs.onErrorContainer,
@@ -125,10 +122,6 @@ class _ZeroInputSuggestions extends StatelessWidget {
                         ),
                       ),
                       child: Semantics(
-                        // Swiping is the only way to delete for a sighted
-                        // user; a screen reader needs an equivalent it can
-                        // actually reach, so the same action is exposed here
-                        // and on long-press.
                         customSemanticsActions: {
                           CustomSemanticsAction(
                             label: i18n.searchRecentRemoveOne,
@@ -170,7 +163,10 @@ class _RecentRow extends StatelessWidget {
       onLongPress: onLongPress,
       child: Container(
         constraints: const BoxConstraints(minHeight: 56),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: 11,
+        ),
         decoration: BoxDecoration(color: cs.surfaceContainerLow),
         child: Row(
           children: [
@@ -189,7 +185,7 @@ class _RecentRow extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -205,7 +201,7 @@ class _RecentRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppTheme.space2),
                   Text(
                     result.subtitle,
                     style: AppTextStyles.bodySmall.copyWith(
@@ -218,7 +214,7 @@ class _RecentRow extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             Icon(
               Icons.chevron_right_rounded,
               size: 24,

@@ -484,9 +484,6 @@ func TestReadBusCitySnapshotMapsNativeFareAndMergesCanonicalOffers(t *testing.T)
 		t.Fatal("canonical subroute did not receive native SubRouteID fare")
 	}
 
-	// Two offers for one canonical subroute (e.g. a route-wide fare seen via both
-	// of its native SubRouteIDs, FDPL-67): the scalar fields come from the first
-	// offer, and the city still loads.
 	t.Setenv("LOAD_QUARANTINE_MAX_RATIO", "1")
 	src.bodies["bus_routefare|"+city] = []byte(`[
 		{"RouteID":"0968","SubRouteID":"096801","FarePricingType":1,"IsForAllSubRoutes":1},
@@ -618,10 +615,6 @@ func TestNormalizeClock(t *testing.T) {
 	}
 }
 
-// Every case here is a real 2026-07-17 loader failure. Each one rejected an
-// entire city, which writes nothing and therefore froze that city at its last
-// good snapshot indefinitely — TDX never repairs these on its own. The record
-// goes; the city loads.
 func TestReadBusCitySnapshotQuarantinesRecordDefects(t *testing.T) {
 	// These fixtures are one record wide, so any drop is 100% of its kind. The
 	// ratio gate is exercised in TestLoadQuarantineRatioGate; here it is the

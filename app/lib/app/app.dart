@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/adapters.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/router/app_router.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/bootstrap/app_bootstrap.dart';
@@ -36,17 +37,8 @@ import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 class App extends StatefulWidget {
   const App({required this.bootstrap, this.debugRouter, super.key});
 
-  /// Drives [isInitialized]: [AppBootstrapState.ready] and
-  /// [AppBootstrapState.degraded] both mean Hive and the gRPC channel are
-  /// usable (the only difference is whether a best-effort dependency like
-  /// Firebase or PowerSync also came up), so either unlocks the full UI.
   final AppBootstrapController bootstrap;
 
-  /// Overrides the router `_AppShell` mounts once bootstrap is ready.
-  /// Production always leaves this null (falls back to `AppRouter.router`);
-  /// tests use it to avoid routing into screens with platform-view/network
-  /// dependencies (Google Maps, gRPC) that widget tests can't satisfy, so
-  /// the bootstrap gate itself stays the thing under test.
   @visibleForTesting
   final GoRouter? debugRouter;
 
@@ -128,11 +120,6 @@ class _BootstrapGateApp extends StatelessWidget {
   }
 }
 
-/// Controlled loading screen shown while the essential bootstrap path runs.
-/// A plain spinner, not the pulsing coming-soon highlight — that motion is
-/// reserved for ETA emphasis (docs/design.md); this is ordinary indefinite
-/// progress and respects reduce-motion via `CircularProgressIndicator`'s
-/// own platform behavior.
 class _BootstrapSplash extends StatelessWidget {
   const _BootstrapSplash();
 
@@ -176,7 +163,7 @@ class _BootstrapFailedView extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.space32),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -185,13 +172,13 @@ class _BootstrapFailedView extends StatelessWidget {
                   size: 40,
                   color: AppTheme.inkLight,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppTheme.space16),
                 Text(
                   _message(AppI18n.of(context)),
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 15, color: Colors.black87),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppTheme.space24),
                 FilledButton(
                   key: const Key('bootstrapRetryButton'),
                   onPressed: onRetry,
@@ -234,31 +221,16 @@ class _AppShell extends StatelessWidget {
               channel: liveActivityChannel,
               positions: LocationService.instance.navigationStream,
             );
-            // Bus, TRA and THSR sessions live here, so the card's 取消追蹤 has
-            // to reach this bloc too — bound only to the metro one, the button
-            // did nothing at all on a train.
-            //
-            // Both owners listen and the non-owner ignores it: only one card
-            // exists at a time, so "am I running a session" is the whole
-            // routing rule, and it beats teaching the platform side which bloc
-            // to talk to.
             AlightTrackInboundChannel.bind(() {
               if (bloc.state.phase == JourneyPhase.idle) return;
-              bloc.add(const JourneyCancelled());
+              bloc.add(const JourneyCancelled(userInitiated: true));
             });
             return bloc;
           },
         ),
         BlocProvider(
-          // The metro alight-reminder session shares the single Live Activity
-          // channel; restoring on startup re-lights the bell and re-watches a
-          // session that survived a restart (ADR-0015).
           create: (_) {
             final bloc = MrtTrackBloc(
-              // `create` runs against this provider's own context, which sits
-              // above the MaterialApp that installs Localizations, so
-              // `AppI18n.of` has nothing to read. Resolve the locale the same
-              // way MaterialApp does instead.
               i18n: lookupAppI18n(
                 SettingsRepository.instance.locale ??
                     basicLocaleListResolution(
@@ -274,11 +246,6 @@ class _AppShell extends StatelessWidget {
               if (bloc.state.session == null) return;
               bloc.add(const MrtTrackCancelled());
             });
-            // iOS hands up a push token for the card it just opened; the server
-            // needs it to refresh that card while the app is suspended
-            // (ADR-0018). Metro is the only mode the server can push today, so
-            // this binds here alone — the journey bloc has nothing to do with a
-            // token it could not use.
             AlightTrackInboundChannel.bindPushToken(
               (token) => bloc.add(MrtTrackPushTokenReceived(token)),
             );
@@ -295,10 +262,6 @@ class _AppShell extends StatelessWidget {
   }
 }
 
-/// Reads `AlertBloc` from context on the first frame, so it must be a
-/// *child* of the `MultiBlocProvider` that creates it (P1-08 regression
-/// guard: this used to live in the same widget that built the provider,
-/// whose own `context` sits above the provider it was trying to read).
 class _AppShellView extends StatefulWidget {
   const _AppShellView({this.router});
 
@@ -361,16 +324,27 @@ class _AppShellViewState extends State<_AppShellView> {
         debugShowCheckedModeBanner: false,
         builder: (context, child) {
           final base = child!;
-          // Marker bitmaps are painted off-tree on a ui.Canvas, so this is the
-          // one place they can learn the device pixel ratio and text size to
-          // paint at: the only builder that sees every screen and rebuilds
-          // when either changes. Any app-level text-scale override must be
-          // installed above this read to be picked up here.
           MapMarkers.configure(
             devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
             textScaler: MediaQuery.textScalerOf(context),
           );
-          return UpdateGate(child: NotificationToastHost(child: base));
+          // Reduce-motion swaps the shimmer sweep for a flat fill: the
+          // skeleton still says "this is content, not chrome" without a
+          // moving highlight. One override for every skeleton in the app.
+          final theme = Theme.of(context);
+          final skeleton = theme.extension<SkeletonizerConfigData>();
+          final gated = UpdateGate(child: NotificationToastHost(child: base));
+          if (skeleton == null || !MediaQuery.disableAnimationsOf(context)) {
+            return gated;
+          }
+          return SkeletonizerConfig(
+            data: skeleton.copyWith(
+              effect: SolidColorEffect(
+                color: theme.colorScheme.surfaceContainerHighest,
+              ),
+            ),
+            child: gated,
+          );
         },
       ),
     );

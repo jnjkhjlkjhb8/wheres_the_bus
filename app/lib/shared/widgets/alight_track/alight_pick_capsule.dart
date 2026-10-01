@@ -9,17 +9,6 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 
-/// The one piece of chrome on screen while a rider is choosing where to get
-/// off.
-///
-/// It says the mode and nothing else: the stop list, timetable or line map
-/// underneath is what the rider is actually reading, so the mode indicator
-/// floats over it as a capsule instead of taking a band of its own. The
-/// settings (which vehicle, how many stops of warning) wait for the confirm
-/// bar, which only appears once a stop has been chosen.
-///
-/// Ink fill, surface label — the same capsule shape the tracking card uses, so
-/// the rider meets it once and recognises it afterwards.
 class AlightPickCapsule extends StatelessWidget {
   const AlightPickCapsule({required this.onCancel, super.key});
 
@@ -32,7 +21,10 @@ class AlightPickCapsule extends StatelessWidget {
     final i18n = AppI18n.of(context);
     return Container(
       height: 44,
-      padding: const EdgeInsets.only(left: 16, right: 4),
+      padding: const EdgeInsets.only(
+        left: AppTheme.space16,
+        right: AppTheme.space4,
+      ),
       decoration: BoxDecoration(
         color: cs.onSurface,
         borderRadius: BorderRadius.circular(AppTheme.radiusStadium),
@@ -48,7 +40,7 @@ class AlightPickCapsule extends StatelessWidget {
               color: cs.surface,
             ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: AppTheme.space4),
           Pressable(
             onTap: () {
               // Leaving a mode is a commit of its own, and the rider gets no
@@ -75,11 +67,6 @@ class AlightPickCapsule extends StatelessWidget {
   }
 }
 
-/// Floats [AlightPickCapsule] over a screen's content, top-centred, fading it
-/// in and out with the mode.
-///
-/// Callers wrap their body in this rather than each assembling a Stack: the
-/// capsule lands in the same place on every network, which is the point of it.
 class AlightPickCapsuleHost extends StatelessWidget {
   const AlightPickCapsuleHost({
     required this.picking,

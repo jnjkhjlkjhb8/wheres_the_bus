@@ -30,11 +30,6 @@ func testRedisAddr() string {
 	return "127.0.0.1:6379"
 }
 
-// dialTestRedis connects to testRedisAddr. An unreachable Redis is only a
-// skip when REDIS_TEST_ADDR is unset (no Redis was promised — local dev
-// without docker); when it is set, the environment declared a Redis and an
-// unreachable one is a fixture failure that must fail loudly, or a CI Redis
-// outage would silently green the suite by skipping every gated test.
 func dialTestRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	rc := redis.NewClient(&redis.Options{
@@ -262,12 +257,6 @@ func TestLoadBusDailyTimetableDuplicateStopSequencePolicy(t *testing.T) {
 	}
 }
 
-// TestLoadBusDailyTimetableFiltersMisfiledDirectionTrips models the Taoyuan
-// circular-route feed (e.g. TAO7010): TDX lists a direction's trips alongside
-// return-leg trips that depart the opposite direction's origin. Trips are kept
-// when they depart this direction's origin — by UID or by name (paired
-// roadside stops carry distinct UIDs) — and dropped when they depart the other
-// direction's origin. Without StopOfRoute data (nil src) everything is kept.
 func TestLoadBusDailyTimetableFiltersMisfiledDirectionTrips(t *testing.T) {
 	rc := dialTestRedis(t)
 	defer func() { _ = rc.Close() }()

@@ -1,7 +1,3 @@
-// Package vector refreshes search_vector, the one table the app searches: every
-// stop, station and dock name together with its phonetic aliases. It runs at the
-// end of the nightly load, in the loader process, over the schema that load just
-// wrote.
 package vector
 
 import (
@@ -192,10 +188,6 @@ type Redis interface {
 	Set(context.Context, string, any, time.Duration) *redis.StatusCmd
 }
 
-// Per-entity queries select rows not already present with an identical,
-// non-null alias (the freshness skip built by FreshVectorSkipSQL). Most use
-// the half-open watermark window; MRT checks all rows below the captured upper
-// cutoff so code-only label revisions older than the lower watermark backfill.
 var (
 	_busSubroutesForVectorSQL = `
 	SELECT bs.sub_route_uid, bs.sub_route_name, bs.city, bs.depart, bs.destin
@@ -345,15 +337,6 @@ var _vectorDatasets = []vectorDataset{
 	},
 }
 
-// FreshVectorSkipSQL builds a NOT EXISTS clause that skips rows already embedded
-// with unchanged content, so a run only re-embeds new or changed entities.
-// vectorType, uidExpr, and samePredicate are interpolated into SQL from
-// package-constant call sites only — never from external input.
-//
-// alias is what proves a row was written by a current build. It replaced
-// embedding in that role when the semantic fallback was removed: rows landed
-// before the alias column existed hold NULL, so they are not fresh and the
-// first run after the migration backfills them.
 func FreshVectorSkipSQL(vectorType, uidExpr, samePredicate string) string {
 	return fmt.Sprintf(`
 	  AND NOT EXISTS (
@@ -418,10 +401,6 @@ func processVectorDataset(
 	}
 	defer rows.Close()
 
-	// The process funcs still return the descriptive text each row used to be
-	// embedded as. It is discarded here rather than removed from twelve
-	// dataset definitions: it is also what documents what each row is, and
-	// nothing else about those funcs changes.
 	metadata := make([]resp, 0, _size)
 	for rows.Next() {
 		_, row, err := dataset.process(rows)

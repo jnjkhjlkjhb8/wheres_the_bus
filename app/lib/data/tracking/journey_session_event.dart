@@ -37,17 +37,11 @@ class AlightConfirmed extends JourneySessionEvent {
 }
 
 class JourneyCancelled extends JourneySessionEvent {
-  const JourneyCancelled();
+  const JourneyCancelled({this.userInitiated = false});
+
+  final bool userInitiated;
 }
 
-/// Internal: new ETA value for the current waiting leg (null = unknown).
-///
-/// [generation] is the journey generation this event was produced under
-/// (see the journey session bloc's class doc). A stream subscription
-/// belonging to a cancelled or superseded journey can still have an event
-/// in flight when the next journey starts; the bloc compares [generation]
-/// against its current one and drops anything that doesn't match, so a
-/// late event never mixes into a different journey's state.
 class EtaTicked extends JourneySessionEvent {
   const EtaTicked(this.eta, {required this.generation});
   final Duration? eta;

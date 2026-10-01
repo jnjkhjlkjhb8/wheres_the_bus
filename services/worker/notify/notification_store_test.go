@@ -131,12 +131,6 @@ func TestNotificationStoreClaimIsAtomic(t *testing.T) {
 	}
 }
 
-// TestNotificationStoreClaimReclaimCutoff pins the SQL text and arguments of
-// the reclaim contract: the claim UPDATE must carry a cutoff of exactly
-// now−ReminderClaimTimeout alongside the reclaim predicate. pgxmock does not
-// execute the predicate — whether a given claimed_at is actually reclaimed is
-// enforced by PostgreSQL — so the two scenarios below only exercise how claim()
-// translates the database's 1-row/0-row answers.
 func TestNotificationStoreClaimReclaimCutoff(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {

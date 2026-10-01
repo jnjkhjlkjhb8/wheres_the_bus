@@ -27,10 +27,6 @@ func (f fakeRawFetcher) GetInto(ctx context.Context, url, name string, commit fu
 	return f.getInto(ctx, url, name, commit)
 }
 
-// fakeTDXStore is an in-memory shared.TDXStore for the ingestor fan-out tests: it
-// returns a cached token so the client never does a real client_credentials
-// exchange, and empty values (never an error) for every other key so the
-// conditional-GET sends no If-Modified-Since. Writes are dropped.
 type fakeTDXStore struct {
 	token string
 	set   func(key, value string, ttl time.Duration) error
@@ -164,11 +160,6 @@ func TestIngestRaw_FetchesAllBusCityAPIs(t *testing.T) {
 			} else {
 				path = "/v2/Bus/" + api + "/City/" + city
 			}
-			// Two bus APIs are not served for every city, and landing the
-			// unserved partitions only yields an HTTP error: DailyTimeTable
-			// answers 400 for the cities in busDailyTimetableSkip, and
-			// DisplayStopOfRoute is served for five cities only (400 elsewhere,
-			// 404 for InterCity).
 			want := 1
 			if api == "DailyTimeTable" && dataset.BusDailyTimetableSkip(city) {
 				want = 0
@@ -183,11 +174,6 @@ func TestIngestRaw_FetchesAllBusCityAPIs(t *testing.T) {
 	}
 }
 
-// TestRawLandingHTTPFixtureCommitsBeforeMarker guards the protocol assumption
-// used by the fan-out fixture above: a successful 200 response carries a marker,
-// invokes the durable landing callback, and advances the marker only afterward.
-// The callback is kept in-memory because dumpRawTDX's database integration is
-// covered separately by the DATABASE_URL-gated rawdump tests.
 func TestRawLandingHTTPFixtureCommitsBeforeMarker(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Last-Modified", "fixture-v1")
@@ -433,9 +419,6 @@ func TestFetchRawBoundedRefetchFailsClosed(t *testing.T) {
 	})
 }
 
-// TestFetchRawFullReland covers the FDPL-37 weekly re-land: a 304 is refused
-// once, the marker is dropped, and the unconditional second pass lands the body
-// without ever consulting the landing-state verifier.
 func TestFetchRawFullReland(t *testing.T) {
 	var calls, invalidations, verifications atomic.Int64
 	fetcher := fakeRawFetcher{getInto: func(

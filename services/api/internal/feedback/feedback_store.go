@@ -45,14 +45,6 @@ type feedbackStore struct{ db feedbackDB }
 
 func NewFeedbackStore(db *pgxpool.Pool) *feedbackStore { return &feedbackStore{db: db} }
 
-// OpenThread writes a thread and its opening message as one statement, and
-// returns when the thread was created.
-//
-// The quota is enforced inside the INSERT's WHERE rather than by a preceding
-// SELECT, so two concurrent submissions from the same installation cannot both
-// read an under-limit count and both write. When the quota is spent the thread
-// CTE returns no row, the message CTE selecting from it writes nothing, and
-// the outer SELECT finds nothing — which is what errFeedbackQuota reports.
 func (s *feedbackStore) OpenThread(ctx context.Context, record feedbackThreadRecord, messageID string) (time.Time, error) {
 	diagnostics, err := json.Marshal(record.Diagnostics)
 	if err != nil {

@@ -39,10 +39,6 @@ func TestBusStaticCacheRedisOutageFallsBackOnlyUntilTTL(t *testing.T) {
 	}
 }
 
-// The subroutes busPatternSQL returns nothing for are the majority, and they are
-// the ones worth caching: without a negative entry every incomplete Direction
-// re-runs the statement on every tick, which is most of the cost the cache
-// exists to avoid.
 func TestStopOffsetCacheRemembersMisses(t *testing.T) {
 	var cache sync.Map
 	now := time.Now()

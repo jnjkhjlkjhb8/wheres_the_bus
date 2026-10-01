@@ -31,12 +31,15 @@ class _SearchResultRow extends StatelessWidget {
       onTap: onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 62),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space12,
+        ),
         decoration: BoxDecoration(color: cs.surfaceContainerLow),
         child: Row(
           children: [
             leadingWidget,
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -52,7 +55,7 @@ class _SearchResultRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppTheme.space2),
                   Text(
                     result.subtitle,
                     style: AppTextStyles.bodySmall.copyWith(
@@ -65,7 +68,7 @@ class _SearchResultRow extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             Icon(
               Icons.chevron_right_rounded,
               size: 24,

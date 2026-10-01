@@ -1,10 +1,4 @@
-/// The shared vertical route spine used by every stop list — bus route stops
-/// and rail train stops alike.
-///
-/// The two screens show the same fact in two vehicles (a line of stops, a
-/// vehicle somewhere along it), so they draw it with one vocabulary rather than
-/// each inventing a layout. Everything here is achromatic: the spine carries
-/// structure through weight and fill, never through a new colour.
+/// Shared transit timeline widgets.
 library;
 
 import 'package:flutter/material.dart';
@@ -53,13 +47,9 @@ class TimelineSpine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final ahead = cs.outline;
+    final ahead = AppTheme.inkTertiary(cs.brightness);
     final done = cs.onSurface;
 
-    // The two halves are Expanded rather than fractionally sized: the row's
-    // height comes from its text, which is not known here, and a
-    // FractionallySizedBox inside a Positioned would be asked to resolve a
-    // fraction of an unbounded height.
     return ExcludeSemantics(
       child: SizedBox(
         width: kTimelineGutter,
@@ -118,7 +108,7 @@ class _Node extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final ink = dimmed ? cs.outline : cs.onSurface;
+    final ink = dimmed ? AppTheme.inkTertiary(cs.brightness) : cs.onSurface;
 
     return switch (kind) {
       // The terminus is a square: it reads as a stop-end rather than as one
@@ -155,11 +145,6 @@ class _Node extends StatelessWidget {
   }
 }
 
-/// The "vehicle is here" divider, inserted between two stop rows.
-///
-/// It sits between rows rather than on one because that is what the data
-/// supports: the schedule and the ETA sequence place the vehicle in a segment,
-/// not at a stop. Claiming a precise point would be inventing precision.
 class TimelineVehicleMarker extends StatelessWidget {
   const TimelineVehicleMarker({
     required this.semanticLabel,
@@ -175,10 +160,6 @@ class TimelineVehicleMarker extends StatelessWidget {
   /// out loud even when nothing is printed on it.
   final String semanticLabel;
 
-  /// Optional text printed on the divider — the plate of the vehicle this
-  /// marker stands for. Null prints nothing: the line and the arrow already
-  /// say "a vehicle is in this segment", and naming a vehicle the feed did
-  /// not identify would be inventing it.
   final String? label;
 
   /// Optional right-hand note — a delay, a plate. Null shows nothing.
@@ -188,10 +169,6 @@ class TimelineVehicleMarker extends StatelessWidget {
   /// (a plate) does not read as a problem.
   final bool trailingIsAlert;
 
-  /// A state glyph printed immediately after [label] — the seat mark on the
-  /// vehicle a 下車提醒 is bound to. Bare ink, no fill: this reports what the
-  /// session is following, it is not a control and not a selection, so it
-  /// stays out of the ink budget the 目標站 row spends (docs/design.md:253).
   final IconData? badge;
 
   @override
@@ -234,7 +211,12 @@ class TimelineVehicleMarker extends StatelessWidget {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(0, 6, 16, 6),
+              padding: const EdgeInsets.fromLTRB(
+                0,
+                AppTheme.space6,
+                AppTheme.space16,
+                AppTheme.space6,
+              ),
               child: Row(
                 children: [
                   if (label != null) ...[
@@ -246,11 +228,11 @@ class TimelineVehicleMarker extends StatelessWidget {
                         color: cs.onSurface,
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppTheme.space8),
                   ],
                   if (badge != null) ...[
                     Icon(badge, size: 16, color: cs.onSurface),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppTheme.space8),
                   ],
                   Expanded(
                     child: Container(
@@ -259,7 +241,7 @@ class TimelineVehicleMarker extends StatelessWidget {
                     ),
                   ),
                   if (trailing != null) ...[
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppTheme.space8),
                     Text(
                       trailing!,
                       style: AppTextStyles.bodyVerySmall.copyWith(
@@ -281,11 +263,6 @@ class TimelineVehicleMarker extends StatelessWidget {
   }
 }
 
-/// A small role tag beside a stop name — 上車 / 下車 / 你在這.
-///
-/// Solid ink is a committed state (the stop the rider picked); the outlined
-/// variant is context the app inferred for them. Per the design system's Ink
-/// Inversion Rule, at most one solid tag is ever on screen at a time.
 class TimelineStopTag extends StatelessWidget {
   const TimelineStopTag(this.label, {this.solid = true, super.key});
 
@@ -297,7 +274,10 @@ class TimelineStopTag extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space6,
+        vertical: AppTheme.space2,
+      ),
       decoration: BoxDecoration(
         color: solid ? cs.onSurface : Colors.transparent,
         borderRadius: BorderRadius.circular(AppTheme.radiusChip),

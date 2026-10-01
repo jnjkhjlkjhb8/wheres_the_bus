@@ -10,11 +10,6 @@ import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/train_type_chip.dart';
 
-/// Opens the booking sheet for [request] and hands off to the operator.
-///
-/// The sheet opens immediately and exchanges the deeplink in the background, so
-/// the network round-trip is spent while the user picks tickets rather than
-/// after they commit — the tap used to block on it with no feedback at all.
 Future<void> showRailBookingSheet(
   BuildContext context,
   RailBookingRequest request, {
@@ -160,7 +155,12 @@ class _RailBookingSheetState extends State<_RailBookingSheet> {
           const SheetDragHandle(),
           Flexible(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space20,
+                AppTheme.space10,
+                AppTheme.space20,
+                AppTheme.space4,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -195,7 +195,7 @@ class _RailBookingSheetState extends State<_RailBookingSheet> {
                             ).railOpenOperatorApp(operator),
                             onTap: _loading ? null : () => _book(useApp: true),
                           ),
-                          const SizedBox(height: 6),
+                          const SizedBox(height: AppTheme.space6),
                           Text(
                             AppI18n.of(context).railBookingAppNoCount,
                             style: AppTextStyles.bodyVerySmall.copyWith(
@@ -341,7 +341,7 @@ class _SheetSection extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: AppTheme.space10),
         child,
       ],
     );
@@ -567,7 +567,11 @@ class _Notes extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(top: 7, right: 8, left: 3),
+                  padding: const EdgeInsets.only(
+                    top: 7,
+                    right: AppTheme.space8,
+                    left: 3,
+                  ),
                   child: Container(
                     width: 4,
                     height: 4,
@@ -605,7 +609,7 @@ class _FailureNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(AppTheme.space12),
       decoration: BoxDecoration(
         color: cs.errorContainer,
         borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -620,7 +624,7 @@ class _FailureNotice extends StatelessWidget {
               height: 1.5,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: AppTheme.space10),
           _GhostButton(
             label: AppI18n.of(context).railBookingOpenAnyway,
             onTap: onOpenAnyway,
@@ -682,7 +686,12 @@ class _Footer extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final enabled = onBook != null;
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space12,
+        AppTheme.space20,
+        AppTheme.space16,
+      ),
       decoration: BoxDecoration(
         color: cs.surface,
         border: Border(top: BorderSide(color: cs.outlineVariant)),
@@ -712,7 +721,7 @@ class _Footer extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Pressable(
             onTap: onBook,
             enabled: enabled,
@@ -736,7 +745,7 @@ class _Footer extends StatelessWidget {
                             color: cs.onPrimary,
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: AppTheme.space8),
                         Text(
                           AppI18n.of(context).railBookingPreparing,
                           style: AppTextStyles.bodyRegular.copyWith(
@@ -755,12 +764,7 @@ class _Footer extends StatelessWidget {
                     ),
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            AppI18n.of(context).railOpenOperatorSite(operator),
-            textAlign: TextAlign.center,
-            style: AppTextStyles.bodyVerySmall.copyWith(color: cs.outline),
-          ),
+          const SizedBox(height: AppTheme.space8),
         ],
       ),
     );

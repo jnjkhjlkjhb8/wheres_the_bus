@@ -1,10 +1,5 @@
 package maas
 
-// Alternatives -- the "what else runs this leg?" answers MOTIS attaches to a
-// transit leg -- ride through the same conversion and the same batched
-// identity lookup as the legs they could replace. Kept in their own file so
-// maas_test.go does not keep growing past its budget.
-
 import (
 	"context"
 	"testing"
@@ -12,12 +7,6 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 )
 
-// An alternative is only tappable through to a route screen if the identity
-// lookup resolves it, so alternatives ride along in the same batch query --
-// with indices continuing past the real sections, which is what lets one query
-// map every row back to the section that asked for it. Fares are deliberately
-// not asked for: an alternative is a departure the rider is told exists, not
-// one this plan has priced.
 func TestConvertResolvesIdentitiesForAlternativesInTheSameBatch(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {

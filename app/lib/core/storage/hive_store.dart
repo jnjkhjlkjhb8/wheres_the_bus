@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:hive_ce_flutter/adapters.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -23,14 +22,6 @@ class HiveStore {
 
   static Future<void>? _initFuture;
 
-  /// Opens every Hive box the app reads from. Concurrent callers share the
-  /// same in-flight [Future]. Unlike a plain memoized future, a failure is
-  /// visible to every awaiter (the returned future rejects) and is *not*
-  /// permanently cached (F13): the next call to [init] retries from
-  /// scratch instead of silently reporting success while boxes stay
-  /// unopened. [initBinding] exists only for tests, which point Hive at a
-  /// directory manually and would otherwise hit `path_provider`'s missing
-  /// platform channel via `Hive.initFlutter()`.
   static Future<void> init({Future<void> Function()? initBinding}) {
     final existing = _initFuture;
     if (existing != null) return existing;
@@ -46,11 +37,6 @@ class HiveStore {
 
   static Future<void> _open(Future<void> Function() initBinding) async {
     await initBinding();
-    // Only the boxes the splash path actually reads block startup. The
-    // rest (saved plans, reminders, board layout, recent queries) are opened
-    // lazily below so they stop contending for I/O during app launch —
-    // `recent_searches` alone measured ~410 ms of the ~470 ms splash, and its
-    // only reader is the rail query sheet.
     await Future.wait([
       Hive.openBox<dynamic>(_boxFavRoutes),
       Hive.openBox<dynamic>(_boxFavorites),
@@ -61,16 +47,11 @@ class HiveStore {
 
   static Future<void>? _lazyFuture;
 
-  /// Opens the non-critical boxes. Kicked off unawaited right after the
-  /// critical boxes finish (see [_open]); callers that need one of these
-  /// boxes before it's open should check the matching `*Ready` getter, same
-  /// as the existing pattern for [favoritesReady]/[settingsReady].
   static Future<void> _openLazyBoxes() {
     return _lazyFuture ??=
         Future.wait([
           Hive.openBox<dynamic>(_boxLayout),
           Hive.openBox<dynamic>(_boxReminders),
-          Hive.openBox<dynamic>(_boxSavedPlans),
           Hive.openBox<dynamic>(_boxRecents),
           Hive.openBox<dynamic>(_boxStaticCache),
         ]).then((_) => pruneStaticCache()).catchError((Object _) {
@@ -81,27 +62,17 @@ class HiveStore {
         });
   }
 
-  /// Drops offline-cache entries that can no longer be trusted (ADR-0017).
-  ///
-  /// Two independent rules, cheapest first:
-  ///
-  /// * The cache epoch is the running build number paired with the backend's
-  ///   static dataset version. Entries hold verbatim protobuf bytes (plus the
-  ///   write timestamp [getStaticFresh] reads), and a proto change ships app
-  ///   and backend together, so every wire-breaking change also changes the
-  ///   build number — a mismatch means the whole box may decode to garbage and
-  ///   is truncated. The version half is what makes a cache-first entry
-  ///   (`routeStatic`) notice an upstream edit: it moves only when the nightly
-  ///   load republishes the static tables, so a rebuilt dataset expires the
-  ///   box on the next launch instead of the entry waiting out its `maxAge`.
-  ///   A version that cannot be fetched keeps the stored one — see
-  ///   [fetchStaticVersion].
-  /// * `d:<yyyy-MM-dd>:` entries are service-date scoped. Past dates are
-  ///   deleted; today and future dates are kept, because the rail query sheet
-  ///   can legitimately look up a timetable days ahead and that entry must
-  ///   survive the launches between caching it and travelling.
-  ///
-  /// [now], [buildNumber] and [staticVersion] are injectable for tests only.
+  static Future<void>? _savedPlansFuture;
+
+  static Future<void> _openSavedPlans() {
+    return _savedPlansFuture ??= Hive.openBox<dynamic>(_boxSavedPlans)
+        .then<void>((_) {})
+        .catchError((Object error, StackTrace stack) {
+          _savedPlansFuture = null;
+          Error.throwWithStackTrace(error, stack);
+        });
+  }
+
   static Future<void> pruneStaticCache({
     DateTime? now,
     Future<String> Function()? buildNumber,
@@ -130,10 +101,6 @@ class HiveStore {
     if (stale.isNotEmpty) await box.deleteAll(stale);
   }
 
-  /// The dataset-version half of a stored epoch, used as the fallback when the
-  /// backend cannot be reached. An epoch written before this pairing existed
-  /// has no separator and yields '', which reads as "unknown" and truncates
-  /// once — the same launch already changes the build half anyway.
   static String _versionOf(Object? epoch) {
     if (epoch is! String) return '';
     final separator = epoch.indexOf('|');
@@ -161,20 +128,9 @@ class HiveStore {
   static bool get staticCacheReady => Hive.isBoxOpen(_boxStaticCache);
   static Box<dynamic> get staticCache => Hive.box(_boxStaticCache);
 
-  /// Verbatim protobuf response bytes for [key], or null on a miss.
-  ///
-  /// [HiveStore] deliberately never decodes these: keeping the box opaque is
-  /// what lets generated proto types stay inside `app/lib/data/` as the
-  /// CONTEXT.md operating rule requires. Callers serialize and decode in
-  /// their repository.
   static List<int>? getStatic(String key) =>
       staticCacheReady ? _bytesOf(staticCache.get(key)) : null;
 
-  /// Same as [getStatic], but only when the entry was written less than
-  /// [maxAge] ago — the read a cache-first caller makes before touching the
-  /// network. An entry written by a build that predates the timestamp, or one
-  /// stamped in the future because the device clock moved backwards, counts as
-  /// expired: the safe direction is to refetch.
   static List<int>? getStaticFresh(String key, Duration maxAge) {
     if (!staticCacheReady) return null;
     final value = staticCache.get(key);
@@ -197,6 +153,18 @@ class HiveStore {
       'b': bytes,
       't': DateTime.now().millisecondsSinceEpoch,
     });
+  }
+
+  /// Waits for the saved-plan box without delaying the rest of app startup.
+  /// A failed lazy open is retried on the next feature access.
+  static Future<void> ensureSavedPlansReady() async {
+    if (savedPlansReady) return;
+    await init();
+    if (savedPlansReady) return;
+    await _openSavedPlans();
+    if (!savedPlansReady) {
+      throw StateError('saved_plans could not be opened');
+    }
   }
 
   static Future<void> deleteStatic(String key) {
@@ -253,14 +221,6 @@ class HiveStore {
     await recents.put('train_queries', items.take(6).toList());
   }
 
-  /// Recent rail origin/destination pairs as
-  /// `{system, originId, originName, destId, destName}`, newest first.
-  ///
-  /// User intent, not cache: this survives an app update, which is why it
-  /// lives here and not in the `static_cache` box that every release
-  /// truncates. Stored as a capped list even though only the newest entry per
-  /// system is read today, so a recent-pairs list can be added later without
-  /// migrating what riders already have.
   static List<Map<String, dynamic>> get recentOdQueries {
     if (!recentsReady) return const [];
     return (recents.get('od_queries', defaultValue: const <dynamic>[]) as List)
@@ -269,10 +229,6 @@ class HiveStore {
         .toList();
   }
 
-  /// The newest origin/destination pair for [system], or null if the rider
-  /// has never queried that system. Scoped per system because TRA and THSR
-  /// station names do not overlap — a global "last pair" would prefill the
-  /// THSR screen with TRA stations.
   static Map<String, dynamic>? lastOdQuery(String system) {
     for (final entry in recentOdQueries) {
       if (entry['system'] == system) return entry;
@@ -321,26 +277,25 @@ class HiveStore {
           ),
         );
 
-  static Future<void> putSavedPlan(String key, List<int> bytes) =>
-      savedPlans.put(key, {
-        'key': key,
-        'bytes': bytes,
-        'savedAt': DateTime.now().millisecondsSinceEpoch,
-      });
+  static Future<void> putSavedPlan(String key, List<int> bytes) async {
+    await ensureSavedPlansReady();
+    await savedPlans.put(key, {
+      'key': key,
+      'bytes': bytes,
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
 
-  static Future<void> removeSavedPlan(String key) => savedPlans.delete(key);
+  static Future<void> removeSavedPlan(String key) async {
+    await ensureSavedPlansReady();
+    await savedPlans.delete(key);
+  }
 
   static Box<dynamic> get favorites => Hive.box(_boxFavorites);
   static bool get favoritesReady => Hive.isBoxOpen(_boxFavorites);
   static Box<dynamic> get settings => Hive.box(_boxSettings);
   static bool get settingsReady => Hive.isBoxOpen(_boxSettings);
 
-  /// Last position the OS actually reported for this device, as `[lat, lon]`.
-  ///
-  /// Seeds home's camera and its *first* nearby query on the next launch, so
-  /// neither waits on `getLastKnownPosition` — which costs ~700 ms cold, and
-  /// returns nothing at all on a device whose OS cache has been evicted, where
-  /// the fallback is a GPS fix several seconds out. Null before the first fix.
   static List<double>? get lastDevicePosition {
     if (!settingsReady) return null;
     final raw = settings.get('last_device_position');
@@ -355,21 +310,13 @@ class HiveStore {
     await settings.put('last_device_position', [lat, lon]);
   }
 
-  /// Mirrors `SettingsRepository.liveActivityEnabled`: Android is force-
-  /// disabled while the Live Update surface is paused.
+  /// Mirrors `SettingsRepository.liveActivityEnabled`.
   static bool get liveActivityEnabled =>
-      !Platform.isAndroid &&
       settings.get('live_activity_enabled', defaultValue: true) as bool;
 
   static set liveActivityEnabled(bool v) =>
       settings.put('live_activity_enabled', v);
 
-  /// The `latest_version` the rider last waved off, so the update nudge stays
-  /// silent across launches for that release only. Null before any dismissal.
-  ///
-  /// Guarded on [settingsReady] like every other read here: the gate's first
-  /// check can land before Hive's lazy boxes open, and an unopened box throws.
-  /// Null then just means "not dismissed", which nudges — the safe direction.
   static String? get dismissedUpdateVersion {
     if (!settingsReady) return null;
     final raw = settings.get('dismissed_update_version');
@@ -381,15 +328,6 @@ class HiveStore {
     await settings.put('dismissed_update_version', v);
   }
 
-  // Defaults to false-until-asked: a brand-new install has no stored value,
-  // and `FirebaseBootstrap.init` passes this straight through as the
-  // `requested` permission on first launch (F-push-launch). Defaulting it
-  // true used to fire the OS permission dialog on first launch with no
-  // context. An existing user who already granted push always has an
-  // explicit `true` persisted here (every `updatePushPreference` call
-  // writes the real, OS-reconciled value before returning — see
-  // `FirebaseBootstrap.updatePushPreference`), so this default only ever
-  // applies to installs that have never been through that flow.
   static bool get pushEnabled =>
       settings.get('push_enabled', defaultValue: false) as bool;
 
@@ -416,9 +354,6 @@ class HiveStore {
   static set favMetroStations(List<String> list) =>
       settings.put('fav_metro_stations', list);
 
-  // Active metro alight-reminder session (ADR-0015). Persisted in the settings
-  // box (opened on the critical path) so the bell state, Live Activity, and
-  // re-watch survive an app restart. Only one session is active at a time.
   static const _mrtTrackKey = 'mrt_track_session';
   static const _alightFiredKey = 'mrt_track_fired_id';
 
@@ -432,12 +367,6 @@ class HiveStore {
 
   static Future<void> clearMrtTrackSession() => settings.delete(_mrtTrackKey);
 
-  /// Whether a 下車提醒 vibration has already gone off for [firedKey]
-  /// (`sessionId:event`) — guards against a double buzz when the live stream
-  /// and the FCM data message both deliver the same crossing. One slot is
-  /// enough: a session's two events can only be crossed in order, and a new
-  /// session carries a different id. The Hive key keeps its ADR-0015 name so
-  /// an upgrade doesn't re-fire a session in flight.
   static bool isAlightFired(String firedKey) =>
       firedKey.isNotEmpty && settings.get(_alightFiredKey) == firedKey;
 

@@ -9,14 +9,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
 )
 
-// TestUnwatchedBikeRefreshFailureDropsCadenceClaim covers the one path that
-// calls refreshOwnedTTL outside bindFetch, and so has no 304 to invalidate a
-// marker from: an unwatched city whose owned keys have expired (a restart longer
-// than pipeline.BikeLiveTTL leaves the 24h ownership set pointing at nothing).
-//
-// Re-arming cannot bring those keys back, so the recovery is to drop the cadence
-// claim and let the gate open. Without it the city never fetches and the failure
-// repeats every tick until the ownership set itself expires.
 func TestUnwatchedBikeRefreshFailureDropsCadenceClaim(t *testing.T) {
 	refreshErr := errors.New("ownership set contains missing live keys")
 	sink := &captureLiveSink{

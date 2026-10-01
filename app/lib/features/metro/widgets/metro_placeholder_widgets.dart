@@ -38,10 +38,6 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
     super.dispose();
   }
 
-  // Focusing the search field brings up the keyboard, which otherwise covers
-  // roughly the bottom third of the sheet at its `half` detent — under two
-  // result rows of clearance. Move to `tall` so results have room above the
-  // keyboard; the sheet doesn't react to the keyboard on its own (B2).
   void _onSearchFocusChange() {
     // A focus change can still be delivered while an ancestor is being torn
     // down, after this State is defunct — both the MediaQuery lookup and the
@@ -50,7 +46,7 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
     if (!_searchFocus.hasFocus) return;
     unawaited(
       widget.sheetController.animateToDetent(
-        AppSheetSnap.tall,
+        AppSheetSnap.full,
         reduced: AppMotion.reduced(context),
       ),
     );
@@ -59,10 +55,6 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // surfaceContainerHigh and surfaceContainerLow are both pure white in
-    // the light scheme and the sheet background is surfaceContainerLow, so
-    // the field needs the light-scheme surface tone instead to read as a
-    // distinct control (mirrors _SystemPill's brightness split).
     final fieldFill = cs.brightness == Brightness.light
         ? cs.surface
         : cs.surfaceContainerHigh;
@@ -89,7 +81,7 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
           child: TextField(
             controller: _searchCtrl,
             focusNode: _searchFocus,
@@ -111,8 +103,8 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
                     )
                   : null,
               contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 12,
+                horizontal: AppTheme.space16,
+                vertical: AppTheme.space12,
               ),
               filled: true,
               fillColor: fieldFill,
@@ -123,7 +115,7 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
             ),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppTheme.space12),
         Expanded(
           child: _query.isNotEmpty
               ? _buildSearchResults(cs, searchResults)
@@ -144,11 +136,14 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
         widget.onStationSelect(station);
       },
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        padding: const EdgeInsets.symmetric(
+          vertical: AppTheme.space12,
+          horizontal: AppTheme.space8,
+        ),
         child: Row(
           children: [
             TransportIcon(type: _getTransportType(_lineCode(station.id))),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -161,7 +156,7 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppTheme.space2),
                   Text(
                     _lineName(AppI18n.of(context), station.id),
                     style: AppTextStyles.bodySmall.copyWith(
@@ -180,12 +175,13 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
 
   Widget _buildSearchResults(ColorScheme cs, List<MetroMapStation> results) {
     if (results.isEmpty) {
-      // The parent Sheet's content box is SheetSize.stretch — full viewport
-      // height — while the sheet itself only rests at the `half` detent, so
-      // a Center here lands well below the visible sheet area. Top-align
-      // instead; don't reintroduce Center/Expanded for this branch.
       return Padding(
-        padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space32,
+          AppTheme.space24,
+          AppTheme.space32,
+          AppTheme.space32,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -198,7 +194,7 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppTheme.space4),
             Text(
               AppI18n.of(context).metroSearchNoMatchHint,
               style: AppTextStyles.bodySmall.copyWith(
@@ -215,10 +211,10 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
       // own, so without this the last row(s) can sit permanently behind it
       // (B2).
       padding: EdgeInsets.fromLTRB(
-        16,
+        AppTheme.space16,
         0,
-        16,
-        32 + MediaQuery.viewInsetsOf(context).bottom,
+        AppTheme.space16,
+        AppTheme.space32 + MediaQuery.viewInsetsOf(context).bottom,
       ),
       itemCount: results.length,
       separatorBuilder: (_, _) =>
@@ -232,11 +228,16 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space20,
+            AppTheme.space8,
+            AppTheme.space20,
+            AppTheme.space8,
+          ),
           child: Row(
             children: [
               Icon(Icons.bookmark_rounded, size: 18, color: cs.primary),
-              const SizedBox(width: 6),
+              const SizedBox(width: AppTheme.space6),
               Text(
                 AppI18n.of(context).metroFavoriteStations,
                 style: AppTextStyles.bodyRegular.copyWith(
@@ -252,7 +253,12 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
               ? Align(
                   alignment: Alignment.topLeft,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
+                    padding: const EdgeInsets.fromLTRB(
+                      AppTheme.space32,
+                      AppTheme.space24,
+                      AppTheme.space32,
+                      AppTheme.space32,
+                    ),
                     child: Text(
                       AppI18n.of(context).metroNoFavoriteStations,
                       style: AppTextStyles.bodySmall.copyWith(
@@ -265,10 +271,10 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
               : ListView.separated(
                   // Keyboard clearance, same as the search results list (B2).
                   padding: EdgeInsets.fromLTRB(
-                    16,
+                    AppTheme.space16,
                     0,
-                    16,
-                    32 + MediaQuery.viewInsetsOf(context).bottom,
+                    AppTheme.space16,
+                    AppTheme.space32 + MediaQuery.viewInsetsOf(context).bottom,
                   ),
                   itemCount: favs.length,
                   separatorBuilder: (_, _) => Divider(

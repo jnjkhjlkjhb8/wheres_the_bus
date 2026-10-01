@@ -19,10 +19,6 @@ import 'package:wheres_the_bus/shared/widgets/tra_station_picker.dart';
 
 const List<FontFeature> _tnum = AppTextStyles.tabularFigures;
 
-/// The value line of every field in both query cards — the O/D card and the
-/// train-number card. Shared so the two cards measure the same height at any
-/// text scale; the train field is a [TextField], which only matches a plain
-/// [Text] when the style (and so the strut) is identical.
 final TextStyle _fieldValueStyle = AppTextStyles.bodyLarge.copyWith(
   fontWeight: FontWeight.w700,
   fontSize: 18,
@@ -129,10 +125,6 @@ final class RailTrainQuerySubmission extends RailQuerySubmission {
   final DateTime date;
 }
 
-/// Self-contained rail timetable query form. Owns all form state and works
-/// inside both a smooth_sheets `Sheet` (rail screen) and a `PagedSheetRoute`
-/// (home sheet); it relies on the enclosing sheet for scroll/drag, so its own
-/// list never scrolls.
 class RailQuerySheetContent extends StatefulWidget {
   const RailQuerySheetContent({
     required this.onSubmit,
@@ -146,10 +138,6 @@ class RailQuerySheetContent extends StatefulWidget {
   final ValueChanged<RailQuerySubmission> onSubmit;
   final ValueChanged<RailSystem>? onSystemChanged;
 
-  /// When set, a leading `<` back button shows next to the title. Used in the
-  /// home sheet, where this form is a route pushed onto the sheet's nested
-  /// navigator and needs a way back to the nearby list; the rail screen omits
-  /// it (it has its own top-bar back and must not pop its route from here).
   final VoidCallback? onBack;
 
   @override
@@ -194,10 +182,6 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
       _selectedTime = TimeOfDay.fromDateTime(preset!.date!);
     }
     _isDepartureTime = preset?.isDeparture ?? true;
-    // Only when the caller named neither end. A preset that carries just an
-    // origin is a deliberate hand-off from a station detail, and pairing it
-    // with a destination the rider picked for some other origin would submit
-    // a trip nobody asked for.
     if (_originName.isEmpty && _destName.isEmpty) {
       _seedOdFromLastQuery(_system);
     }
@@ -234,10 +218,6 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
     if (system == _system) return;
     setState(() {
       _system = system;
-      // TRA and THSR station names do not overlap, so a carried-over pick would
-      // be unresolvable on the new system. Reseeded from the rider's own last
-      // query on the system being switched to, which is why the stored pairs
-      // are scoped per system rather than kept as one global last pair.
       _seedOdFromLastQuery(system);
       _hasSubmittedOd = false;
     });
@@ -294,12 +274,12 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
         return SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppTheme.space16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const SheetDragHandle(),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppTheme.space8),
                 AppDatePicker(
                   selectedDay: _selectedDate,
                   onDaySelected: (date) => Navigator.pop(context, date),
@@ -379,7 +359,12 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
         : _buildTrainPane(cs);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        0,
+        AppTheme.space16,
+        AppTheme.space24,
+      ),
       physics: const NeverScrollableScrollPhysics(),
       // Without this the list expands to the full viewport, so the sheet reads
       // the page as full-height: it opens at the top instead of the requested
@@ -397,7 +382,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
                 semanticLabel: AppI18n.of(context).commonBack,
                 minTapSize: 44,
                 child: Padding(
-                  padding: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.only(right: AppTheme.space8),
                   child: Icon(
                     Icons.arrow_back_ios_new_rounded,
                     size: 18,
@@ -415,7 +400,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppTheme.space16),
         AppSlidingSegment<RailQueryMode>(
           options: {
             RailQueryMode.od: AppI18n.of(context).railModeOd,
@@ -424,7 +409,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
           value: _mode,
           onChanged: _setMode,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppTheme.space12),
         AppSlidingSegment<RailSystem>(
           options: {
             RailSystem.tra: AppI18n.of(context).modeTra,
@@ -433,7 +418,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
           value: _system,
           onChanged: _switchSystem,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppTheme.space16),
         if (reduceMotion)
           KeyedSubtree(key: ValueKey(_mode), child: pane)
         else
@@ -457,7 +442,10 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
       mainAxisSize: MainAxisSize.min,
       children: [
         AppCard.outlined(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space16,
+            vertical: AppTheme.space16,
+          ),
           child: Column(
             children: [
               Row(
@@ -479,7 +467,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
                     // hit target only, per the 44px touch-target floor.
                     minTapSize: 44,
                     child: Container(
-                      padding: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(AppTheme.space8),
                       decoration: BoxDecoration(
                         color: cs.surfaceContainerLow,
                         shape: BoxShape.circle,
@@ -543,7 +531,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppTheme.space16),
         AppSlidingSegment<bool>(
           options: {
             true: AppI18n.of(context).goDepartAt,
@@ -552,7 +540,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
           value: _isDepartureTime,
           onChanged: (value) => setState(() => _isDepartureTime = value),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppTheme.space16),
         _SubmitButton(
           enabled: _originName.isNotEmpty && _destName.isNotEmpty,
           onTap: _submitOd,
@@ -568,7 +556,10 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         AppCard.outlined(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space16,
+            vertical: AppTheme.space16,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -579,7 +570,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: AppTheme.space6),
               TextField(
                 controller: _trainController,
                 keyboardType: TextInputType.number,
@@ -612,7 +603,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
           ),
         ),
         if (_recentQueries.isNotEmpty) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: AppTheme.space16),
           Text(
             AppI18n.of(context).railRecentQueries,
             style: AppTextStyles.bodyVerySmall.copyWith(
@@ -620,10 +611,10 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: AppTheme.space8,
+            runSpacing: AppTheme.space8,
             children: [
               for (final query in _recentQueries)
                 _RecentTrainChip(
@@ -634,10 +625,10 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
             ],
           ),
         ],
-        const SizedBox(height: 16),
+        const SizedBox(height: AppTheme.space16),
         _SubmitButton(enabled: trainNoEntered, onTap: _submitTrain),
         if (!trainNoEntered) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Text(
             AppI18n.of(context).railTrainNumberPrompt,
             style: AppTextStyles.bodyVerySmall.copyWith(
@@ -650,7 +641,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
   }
 
   Widget _cardDivider(ColorScheme cs) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 12),
+    padding: const EdgeInsets.symmetric(vertical: AppTheme.space12),
     child: Divider(
       color: cs.outlineVariant.withValues(alpha: 0.4),
       height: 1,
@@ -687,7 +678,7 @@ class _FieldColumn extends StatelessWidget {
             fontWeight: FontWeight.w500,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: AppTheme.space6),
         Text(
           value.isEmpty ? (placeholder ?? value) : value,
           style: _fieldValueStyle.copyWith(
@@ -720,7 +711,10 @@ class _RecentTrainChip extends StatelessWidget {
       // without inflating the visual chip.
       minTapSize: 44,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space12,
+          vertical: AppTheme.space8,
+        ),
         decoration: BoxDecoration(
           border: Border.all(color: cs.outlineVariant),
           borderRadius: BorderRadius.circular(AppTheme.radiusStadium),
@@ -737,7 +731,7 @@ class _RecentTrainChip extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: AppTheme.space6),
             Text(
               trainNo,
               style: AppTextStyles.memo.copyWith(

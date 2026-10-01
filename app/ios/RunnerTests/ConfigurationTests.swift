@@ -1,12 +1,5 @@
 import XCTest
 
-/// Guards the iOS project configuration itself (findings P0-05/P0-06,
-/// F01-F04): Info.plist privacy/capability keys, and Xcode project wiring
-/// that can't be expressed as ordinary Swift unit tests (target membership,
-/// the widget-extension target, the embed build phase). These read the
-/// checked-in `Info.plist` / `project.pbxproj` files directly from disk so a
-/// regression (a key removed, a file dropped from a target) fails a test
-/// instead of only surfacing as a runtime crash or App Store rejection.
 final class ConfigurationTests: XCTestCase {
 
   /// `RunnerTests/ConfigurationTests.swift` -> `app/ios`.
@@ -91,8 +84,6 @@ final class ConfigurationTests: XCTestCase {
 
   func testSharedAttributesAreMembersOfBothRunnerAndWidgetExtension() throws {
     let text = try pbxprojText()
-    // PBXBuildFile entries are unique per (file, target-sources-phase), so
-    // two distinct entries referencing this file confirm dual membership.
     let occurrences = text.components(separatedBy: "BusLiveActivityAttributes.swift in Sources").count - 1
     XCTAssertEqual(
       occurrences, 2,

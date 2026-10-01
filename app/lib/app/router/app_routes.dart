@@ -1,17 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/data/models/near_models.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-/// Single source for route paths and location construction.
-///
-/// Call sites build locations through these helpers instead of hand-writing
-/// strings, so parameter names and URI encoding cannot drift between the
-/// router and its callers. Detail-screen parameters travel in the URL (query
-/// or path), which keeps every route cold-deep-linkable and restorable;
-/// `state.extra` is only an optional warm-navigation cache.
 class AppRoutes {
   AppRoutes._();
 
@@ -30,12 +24,6 @@ class AppRoutes {
   static const go = '/go';
   static const feedback = '/feedback';
 
-  /// The report form, optionally told which screen the rider came from.
-  ///
-  /// [from] is the concrete location the rider shook on, with the station or
-  /// route it was showing: a report that says only which *kind* of screen
-  /// misbehaved cannot be acted on. It travels in the URL so the page survives
-  /// a cold deep link like every other route here.
   static String feedbackLocation({String? from}) => from == null || from.isEmpty
       ? feedback
       : _location(feedback, {'from': from});
@@ -85,24 +73,8 @@ class AppRoutes {
     },
   );
 
-  /// Route pattern for the home sheet's station detail layer.
-  ///
-  /// Reads as a sub-location of [home] and behaves like one — the map stays
-  /// underneath, focused on the same station — but it is declared as a sibling
-  /// route rendering the same keyed page, because the sheet is home's own
-  /// navigator rather than the router's. See `app_router.dart`.
   static const nearStationPattern = '/near/:type/:id';
 
-  /// [name]/[lat]/[lon] let the sheet title and the camera land before the
-  /// nearby query answers — and, for a station outside the current viewport,
-  /// they are the only thing that can put the map on it at all.
-  ///
-  /// [back] is where closing the sheet returns to, when that is not the bare
-  /// map. It exists because this page cannot be *stacked* on its caller: it
-  /// renders the home screen, which is already the bottom of the stack, so a
-  /// caller sitting above home (search) would otherwise be dropped with no way
-  /// back. Naming the return location says in the URL what a stack entry would
-  /// have said implicitly.
   static String nearStation({
     required NearStationType type,
     required String id,
@@ -120,10 +92,6 @@ class AppRoutes {
     },
   );
 
-  /// True for every location the home screen renders — the bare map and both
-  /// of the sheet's second layers, which sit on the same live screen rather
-  /// than replacing it. Callers asking "is the rider on home" must use this
-  /// and not compare against [home] alone.
   static bool isHomeLocation(Uri uri) =>
       uri.path == home ||
       uri.path == railQueryPattern ||
@@ -146,11 +114,6 @@ class AppRoutes {
     },
   );
 
-  /// Route pattern for a metro station on the line map.
-  ///
-  /// Declared top-level rather than as a child of [metro] on purpose: the
-  /// station detail is a sheet *inside* [metro]'s own screen, not a page above
-  /// it, so nesting the route would stack two line maps on a cold deep link.
   static const metroStationPattern = '/metro/station/:id';
 
   /// [id] is a Taipei Metro (TDX) station code — the same id that keys ETA
@@ -163,10 +126,6 @@ class AppRoutes {
   static String metroLocation({MetroMapMode? mode}) =>
       _location(metro, {'mode': ?mode?.name});
 
-  /// The rail timetable, with as much of the query as the caller knows.
-  ///
-  /// [submit] runs the search on open; without it the form is only pre-filled,
-  /// which is what a station preset wants.
   static String railLocation({
     required RailSystem system,
     String? originName,
@@ -249,25 +208,11 @@ class AppRoutes {
   );
 }
 
-/// Custom URL scheme the app is registered for on both platforms.
-///
-/// Canonical link form is three slashes — `wheresthebus:///metro/station/BL12`
-/// — because Android hands Dart the URL's path alone and drops any authority,
-/// so a two-slash `wheresthebus://metro/...` loses `metro` before the router
-/// can see it. iOS hands over the whole URL instead; [normalizeDeepLink]
-/// reconciles the two.
 const appLinkScheme = 'wheresthebus';
 
 /// Domain the app claims verified https links on.
 const appLinkHost = 'rabbitsayhello.me';
 
-/// Prefix every https app link sits under, e.g.
-/// `https://rabbitsayhello.me/app/metro/station/BL12`.
-///
-/// Scoped rather than claiming the whole domain because the site serves pages
-/// of its own: one prefix is one pattern to verify and one to strip, where
-/// per-route patterns would need a new entry on both platforms for every route
-/// added here.
 const appLinkPathPrefix = '/app';
 
 /// Turns an incoming deep-link location into a plain in-app location.
@@ -310,11 +255,6 @@ class GoRouteArgs {
   }
 }
 
-/// Parameters of the `/bus/stop` route, resolved URL-first.
-///
-/// Query parameters are authoritative so cold deep links and state
-/// restoration work without `state.extra`; the legacy extra map is accepted
-/// as a fallback cache only.
 class BusStopRouteArgs {
   const BusStopRouteArgs({
     required this.stopName,
@@ -412,11 +352,6 @@ class BikeStationRouteArgs {
   }
 }
 
-/// Parameters of the home sheet's station detail page.
-///
-/// [name]/[lat]/[lon] are optional because the nearby response carries them
-/// too; supplying them is what lets a station outside the current viewport —
-/// a search result in another city — put the map on itself.
 class NearStationRouteArgs {
   const NearStationRouteArgs({
     required this.type,
@@ -437,13 +372,6 @@ class NearStationRouteArgs {
   /// [AppRoutes.nearStation].
   final String? back;
 
-  /// Reads the whole location rather than go_router's path parameters,
-  /// because both readers need it: the route that renders home, and home
-  /// itself, which sits above the match that would carry them.
-  ///
-  /// Returns null for any location that is not `/near/<known type>/<id>` —
-  /// including `/` — so a caller can use the result directly as "is a station
-  /// open".
   static NearStationRouteArgs? fromUri(Uri uri) {
     final segments = uri.pathSegments;
     if (segments.length != 3 || segments.first != 'near') return null;
@@ -487,11 +415,6 @@ class MetroRouteArgs {
   final MetroMapMode mode;
 }
 
-/// Parameters of `/rail`, the timetable screen.
-///
-/// Every field is optional: a bare `/rail` opens the empty form, exactly as
-/// the nav entry point does. [submit] is what separates a pre-filled form from
-/// a query that runs on open.
 class RailRouteArgs {
   const RailRouteArgs({
     required this.system,
@@ -605,9 +528,9 @@ class RouteErrorScreen extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(AppI18n.of(context).routeNotFound),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Text('$uri', style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppTheme.space16),
           TextButton(
             onPressed: () => GoRouter.of(context).go(AppRoutes.home),
             child: Text(AppI18n.of(context).routeGoHome),

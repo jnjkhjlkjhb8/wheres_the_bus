@@ -65,15 +65,6 @@ class EtaListTile extends StatelessWidget {
     this.isLastBus = false,
   });
 
-  /// Builds a tile straight from the shared [ArrivalDisplay] contract. The
-  /// caller decides [highlighted] from the list position and
-  /// [ArrivalDisplay.isComingSoon] so at most the soonest row lights up; modes
-  /// without the coming-soon highlight (metro) leave it false.
-  ///
-  /// [leading] replaces the [routeNo] text with a custom lead (metro's line
-  /// roundel); [destinationStyle] overrides the default destination text style;
-  /// [bare] drops the tap/highlight/min-height chrome, leaving just the row so
-  /// a caller can supply its own list chrome (metro's divider-separated rows).
   factory EtaListTile.fromDisplay(
     ArrivalDisplay display, {
     Key? key,
@@ -139,8 +130,12 @@ class EtaListTile extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     // The coming-soon highlight is achromatic: same Ink text as every other
     // row, emphasis carried by the surface-highlight background alone.
-    final routeColor = muted ? cs.outline : cs.onSurface;
-    final destColor = muted ? cs.outline : cs.onSurfaceVariant;
+    final routeColor = muted
+        ? AppTheme.inkTertiary(cs.brightness)
+        : cs.onSurface;
+    final destColor = muted
+        ? AppTheme.inkTertiary(cs.brightness)
+        : cs.onSurfaceVariant;
 
     final row = Row(
       children: [
@@ -152,7 +147,7 @@ class EtaListTile extends StatelessWidget {
                 color: routeColor,
               ),
             ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppTheme.space12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -185,19 +180,14 @@ class EtaListTile extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 12),
-        // The meter sits under the time, not beside it: the time is the row's
-        // one job, and a second object on its baseline would compete for the
-        // glance. Muted rows (末班已過 / 今日未營運) drop it — there is no bus to
-        // be full. The column collapses to the time alone when there is no
-        // reading, so untracked rows keep their exact previous layout.
+        const SizedBox(width: AppTheme.space12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
           children: [
             EtaValue(status: status, muted: muted),
             if (!muted && CrowdMeter.filledFor(crowdLevel) > 0) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: AppTheme.space4),
               CrowdMeter(level: crowdLevel),
             ],
           ],
@@ -210,7 +200,11 @@ class EtaListTile extends StatelessWidget {
       if (track == null) return row;
       return Column(
         mainAxisSize: MainAxisSize.min,
-        children: [row, const SizedBox(height: 6), track!],
+        children: [
+          row,
+          const SizedBox(height: AppTheme.space6),
+          track!,
+        ],
       );
     }
 
@@ -221,7 +215,7 @@ class EtaListTile extends StatelessWidget {
           constraints: const BoxConstraints(minHeight: 56),
           child: Align(alignment: Alignment.centerLeft, child: row),
         ),
-        if (track != null) ...[const SizedBox(height: 6), track!],
+        if (track != null) ...[const SizedBox(height: AppTheme.space6), track!],
       ],
     );
 
@@ -234,7 +228,10 @@ class EtaListTile extends StatelessWidget {
         // Margin + padding sum to 16 on each side either way, so the highlight
         // tint insets without shifting the row's content off the 16px column.
         margin: highlighted
-            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 6)
+            ? const EdgeInsets.symmetric(
+                horizontal: AppTheme.space8,
+                vertical: AppTheme.space6,
+              )
             : EdgeInsets.zero,
         decoration: highlighted
             ? BoxDecoration(
@@ -243,8 +240,8 @@ class EtaListTile extends StatelessWidget {
               )
             : null,
         padding: EdgeInsets.symmetric(
-          horizontal: highlighted ? 8 : 16,
-          vertical: 10,
+          horizontal: highlighted ? AppTheme.space8 : AppTheme.space16,
+          vertical: AppTheme.space10,
         ),
         child: content,
       ),
@@ -287,7 +284,7 @@ class EtaValue extends StatelessWidget {
             '$value',
             style: _bigTime(cs),
           ),
-          const SizedBox(width: 2),
+          const SizedBox(width: AppTheme.space2),
           Text(
             AppI18n.of(context).goMinutesUnit,
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
@@ -307,7 +304,7 @@ class EtaValue extends StatelessWidget {
             AppI18n.of(context).goMinutesUnit,
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
           ),
-          const SizedBox(width: 2),
+          const SizedBox(width: AppTheme.space2),
           Text(
             seconds.toString().padLeft(2, '0'),
             style: _bigTime(cs),
@@ -325,7 +322,7 @@ class EtaValue extends StatelessWidget {
               ? AppTextStyles.bodyRegular.fontSize
               : AppTextStyles.heading1.fontSize,
           weight: muted ? FontWeight.w400 : AppTextStyles.heading1.fontWeight,
-          color: muted ? cs.outline : cs.onSurface,
+          color: muted ? AppTheme.inkTertiary(cs.brightness) : cs.onSurface,
         ),
       ),
       EtaLabel(:final text) => Text(
@@ -333,13 +330,17 @@ class EtaValue extends StatelessWidget {
         style: AppTextStyles.bodyLarge.copyWith(
           fontWeight: muted ? FontWeight.w400 : FontWeight.w600,
           fontSize: muted ? AppTextStyles.bodyRegular.fontSize : null,
-          color: muted ? cs.outline : cs.onSurfaceVariant,
+          color: muted
+              ? AppTheme.inkTertiary(cs.brightness)
+              : cs.onSurfaceVariant,
         ),
       ),
       EtaUnknown() => Text(
         '—',
         semanticsLabel: AppI18n.of(context).etaNoInfo,
-        style: AppTextStyles.bodyLarge.copyWith(color: cs.outline),
+        style: AppTextStyles.bodyLarge.copyWith(
+          color: AppTheme.inkTertiary(cs.brightness),
+        ),
       ),
     };
   }

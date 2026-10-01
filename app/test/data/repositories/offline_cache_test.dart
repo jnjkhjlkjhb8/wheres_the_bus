@@ -8,9 +8,6 @@ import 'package:wheres_the_bus/data/repositories/bus_repository.dart';
 
 import '../../support/helpers/fake_grpc.dart';
 
-/// Guards the fallback branch shared by every cached repository call
-/// (ADR-0017). Lives in its own file because it needs a real open Hive box,
-/// which the other repository tests deliberately run without.
 void main() {
   setUp(() async {
     Hive.init('./.dart_tool/hive_test_offline_cache');

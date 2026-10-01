@@ -244,10 +244,6 @@ func TestMaasKeyIdentityAndCollision(t *testing.T) {
 	}
 }
 
-// TestBatchSectionFaresPicksFullTraFare pins the TRA branch to the adult 成復
-// fare — the 區間車 tier a planner leg runs on. tra_fares packs 票種 and 車種 into
-// ticket_type, so the cheapest row is a discounted (sometimes 0) ticket and the
-// priciest is the 自強 fare; neither prices a 區間車 leg.
 func TestBatchSectionFaresPicksFullTraFare(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {

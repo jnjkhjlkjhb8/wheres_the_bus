@@ -81,7 +81,7 @@ class _SavePlaceDialogState extends State<_SavePlaceDialog> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           TextField(
             controller: _name,
             autofocus: true,
@@ -94,8 +94,8 @@ class _SavePlaceDialogState extends State<_SavePlaceDialog> {
             decoration: InputDecoration(
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
+                horizontal: AppTheme.space14,
+                vertical: AppTheme.space12,
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -115,12 +115,12 @@ class _SavePlaceDialogState extends State<_SavePlaceDialog> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: AppTheme.space10),
           _IconGrid(
             selected: _icon,
             onSelect: (key) => setState(() => _icon = key),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: AppTheme.space20),
           Row(
             children: [
               Expanded(
@@ -129,7 +129,7 @@ class _SavePlaceDialogState extends State<_SavePlaceDialog> {
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppTheme.space12),
               Expanded(
                 child: AppButton(
                   label: AppI18n.of(context).commonSave,
@@ -154,8 +154,8 @@ class _IconGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Wrap(
-      spacing: 10,
-      runSpacing: 10,
+      spacing: AppTheme.space10,
+      runSpacing: AppTheme.space10,
       children: [
         for (final key in SavedPlaceIcons.keys)
           Pressable(

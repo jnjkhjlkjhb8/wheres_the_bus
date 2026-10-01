@@ -28,10 +28,6 @@ func newRetentionMock(t *testing.T) pgxmock.PgxPoolIface {
 	return db
 }
 
-// TestCleanupPredictionErrorsCapsDeleteBatches guards the retention rewrite: a
-// single unbounded 30-day DELETE is replaced with capped batches. With more
-// stale rows than one batch holds, PredictionErrors must issue more than
-// one DELETE, each bounded by the batch-size argument.
 func TestCleanupPredictionErrorsCapsDeleteBatches(t *testing.T) {
 	db := newRetentionMock(t)
 
@@ -48,10 +44,6 @@ func TestCleanupPredictionErrorsCapsDeleteBatches(t *testing.T) {
 	}
 }
 
-// cancelAfterExec cancels its own context after a chosen number of Exec calls
-// land on the wrapped pgxmock pool, so a test can simulate cancellation
-// arriving strictly between two batches of the same cleanup loop rather than
-// before the run starts.
 type cancelAfterExec struct {
 	pgxmock.PgxPoolIface
 	cancel   context.CancelFunc
@@ -68,10 +60,6 @@ func (d *cancelAfterExec) Exec(ctx context.Context, sql string, args ...any) (pg
 	return tag, err
 }
 
-// TestCleanupPredictionErrorsStopsOnContextCancellation proves the batch loop
-// checks ctx between batches instead of looping until the table is empty
-// regardless of cancellation, and that the cancellation surfaces as an error
-// rather than being reported as a clean success.
 func TestCleanupPredictionErrorsStopsOnContextCancellation(t *testing.T) {
 	db := newRetentionMock(t)
 	ctx, cancel := context.WithCancel(context.Background())

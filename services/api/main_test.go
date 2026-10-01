@@ -49,10 +49,6 @@ func TestGrpcStatusFor(t *testing.T) {
 	}
 }
 
-// TestGrpcStatusForRecordsDBErrorOnlyForGenuineFailures proves the
-// router_db_errors_total counter fires when grpcStatusFor maps an error to
-// Internal, but not for the not-found cases -- a missing row is expected
-// traffic, not a database health signal (see grpcStatusFor's doc comment).
 func TestGrpcStatusForRecordsDBErrorOnlyForGenuineFailures(t *testing.T) {
 	before := parseCounterTotal(t, "router_db_errors_total")
 	_ = store.GRPCStatusFor(pgx.ErrNoRows, "not found")
@@ -559,14 +555,6 @@ func TestMaasResourceInterceptorHasDedicatedRateLimit(t *testing.T) {
 	}
 }
 
-// TestReportProcessFailureBypassesSentryAfterFlush covers the final line
-// main() prints when run() fails. By that point Init's deferred cleanup has
-// already flushed the Sentry client (obs.Init's cleanup, which flushes
-// Sentry, runs last among runtime.run's cleanups — see
-// TestServerCoordinatorStopsHandlersBeforeBackendCleanup for the ordering),
-// so routing this message through log.Errorf/slog would silently enqueue an
-// event nothing ever flushes. reportProcessFailure must write directly to
-// the given writer and never touch Sentry.
 func TestReportProcessFailureBypassesSentryAfterFlush(t *testing.T) {
 	previousClient := sentry.CurrentHub().Client()
 	t.Setenv("SENTRY_DSN", "https://key@example.com/1")

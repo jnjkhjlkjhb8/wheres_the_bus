@@ -1,7 +1,3 @@
-// Package history records what actually happened, so predictions can be scored
-// against it: arrival events, ETA snapshots, per-segment travel observations,
-// and the prediction-error measurements derived from them. It writes to the
-// separate archive database, not the env schema.
 package history
 
 import (
@@ -15,28 +11,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// The MySQL host owns the observation history outright — it is the primary
-// store for bus_eta_history, not a copy of it. Postgres holds the static and
-// derived tables (bus_schedule, bus_segment_time, bus_eta_prediction_error);
-// anything that grows by ~200k rows a day lives here instead, off the 2 GB
-// Azure server. ARCHIVE_MYSQL_DSN empty disables the path entirely, which is
-// how test runs; on prod an unreachable archive means the ETA training loop
-// stops collecting, so Init refuses to start rather than degrade quietly.
-//
-// archiver holds the single process-wide MySQL pool. Init constructs
-// one; main.go stores the result here once at startup. Tests never reassign
-// this var — they exercise the pure helpers and the Execer/Source
-// seams directly instead.
 type archiver struct {
 	db *sql.DB
 }
 
 var _archive *archiver
 
-// RowsPerInsert bounds one multi-row INSERT. MySQL caps a statement at
-// 65535 placeholders, so bus_eta_history's 20 columns put the hard ceiling at
-// 3276 rows; 1000 stays clear of that and of max_allowed_packet.
-// RowsPerInsert bounds one multi-row INSERT into the archive.
 const RowsPerInsert = 1000
 
 // Execer is the write seam. *sql.DB satisfies it; tests substitute a
@@ -45,15 +25,6 @@ type Execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// SegmentObs is one hop's running time, already reduced to a median over the
-// observations behind it. It is the whole result of a segment rebuild: the
-// aggregation happens on the history host, and only these rows cross the wire.
-//
-// bus_segment_time lives on PostgreSQL while the observations live on MySQL, so
-// a rebuild can no longer be the single INSERT ... SELECT it once was. Splitting
-// it at the aggregate rather than at the raw row is what keeps the transfer
-// small — one row per (sub_route_uid, direction, from_stop_uid, to_stop_uid)
-// instead of the millions of history rows they were derived from.
 type SegmentObs struct {
 	SubRouteUID string
 	Direction   int16
@@ -63,36 +34,13 @@ type SegmentObs struct {
 	sampleCount int
 }
 
-// Source is what the daily jobs need from the history host, stated in
-// domain rows rather than *sql.Rows. The SQL type is concrete and cannot be
-// faked, so a seam shaped like the query would force a driver-level mock into
-// every test of fillPredictionActuals; this shape lets it take fixtures
-// instead.
 type Reader interface {
 	arrivals(ctx context.Context, since time.Time) ([]arrivalEvent, error)
 	segmentsByEstimate(ctx context.Context, window time.Duration) ([]SegmentObs, error)
 }
 
-// mysqlHistory is the production Source, reading bus_eta_history off the
-// MySQL host. recorded_at is stored UTC throughout, so every bound is either an
-// explicit UTC instant or UTC_TIMESTAMP() — never NOW(), which follows the
-// session time zone.
 type mysqlHistory struct{ db *sql.DB }
 
-// _segmentMedianTail reduces a `kept` CTE of (key..., secs) observations to one
-// median row per key, and is the tail of the segment query.
-//
-// MySQL has no percentile_cont, so the middle one or two values are picked by
-// rank and averaged — for an odd count that is the middle value, for an even one
-// the mean of the two straddling the middle, which is exactly what
-// percentile_cont(0.5) returned while these rebuilds ran on PostgreSQL. Keeping
-// the definition identical is what makes the figures before and after the move
-// comparable; a different median would look like the buses got faster.
-//
-// The two windows differ deliberately. n is counted over a partition with no
-// ORDER BY, because a counting window that carries one produces a running total
-// rather than the group size — sample_count would then be wrong on every row
-// while still looking like a plausible number.
 const _segmentMedianTail = `
 	), ranked AS (
 		SELECT sub_route_uid, direction, from_stop_uid, to_stop_uid, secs,
@@ -108,20 +56,6 @@ const _segmentMedianTail = `
 	WHERE rn IN (FLOOR((n + 1) / 2), CEILING((n + 1) / 2))
 	GROUP BY sub_route_uid, direction, from_stop_uid, to_stop_uid`
 
-// segmentsByEstimate differences adjacent stops' estimates within one snapshot,
-// returning one median running time per hop.
-//
-// At a single instant TDX gives the seconds-to-arrival for every stop the
-// approaching bus still has ahead of it, so the difference between two adjacent
-// stops' estimates is that bus's running time between them — one row, no pairing,
-// no vehicle identity. That is why this pass reaches the operators that publish
-// no plate at all.
-//
-// A pair is kept only when the later stop's estimate is the larger one. A bus
-// approaching a stop is always further from the stop after it, so a non-positive
-// difference means the two estimates describe different vehicles — most often a
-// following bus reported at the later stop — and differencing them would be
-// meaningless.
 func (m mysqlHistory) segmentsByEstimate(ctx context.Context, window time.Duration) ([]SegmentObs, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		WITH kept AS (
@@ -188,17 +122,6 @@ func (m mysqlHistory) arrivals(ctx context.Context, since time.Time) ([]arrivalE
 	return out, rows.Err()
 }
 
-// Init opens the MySQL history pool. An empty DSN reports the path
-// disabled by returning a nil *archiver, which every archive call treats as
-// "disabled" rather than an error; a DSN that is set but unusable is fatal,
-// since bus_eta_history has no other home and silently not recording is the
-// one outcome worth refusing to start over. The pool is deliberately small:
-// the writers are the 30s ETA job and two daily readers, none of them
-// concurrent with each other.
-// Init opens the archive connection and installs it as the package's single
-// archive handle, the one Target, AdminTarget and ResolveSource read through.
-// An empty DSN leaves the archive disabled and every read a no-op. The returned
-// func closes it.
 func Init(ctx context.Context, dsn string) (func() error, error) {
 	if strings.TrimSpace(dsn) == "" {
 		zap.S().Infow("disabled", "component", "archive", "event", "disabled", "reason", "empty_dsn")
@@ -236,11 +159,6 @@ func (a *archiver) Close() error {
 	return a.db.Close()
 }
 
-// target and history return the write and read seams, or a true nil interface
-// when archiving is disabled. Handing callers a.db directly would give them a
-// non-nil interface wrapping a nil *sql.DB, so every `== nil` guard downstream
-// would silently read false — these stay nil-safe on a nil *archiver receiver
-// instead.
 func (a *archiver) target() Execer {
 	if a == nil {
 		return nil
@@ -265,17 +183,6 @@ func archiveHistory() Reader {
 	return _archive.history()
 }
 
-// ResolveSource returns where observations are read from, or nil when there is
-// nowhere to read them.
-//
-// There is only one source now. This used to choose between MySQL and a
-// PostgreSQL fallback while the history was mid-move; the drop migration
-// (2026-07-30-drop-bus-eta-history.sql) removed the PostgreSQL table, so the
-// fallback could only ever report the table missing and was deleted with it.
-//
-// nil means the rows are genuinely nowhere rather than merely not where the
-// reader looked, and callers log a skip instead of writing a figure built from
-// no observations.
 func ResolveSource() Reader {
 	h := archiveHistory()
 	if h == nil {
@@ -299,10 +206,6 @@ func archiveInsertSQL(table string, cols []string, n int) string {
 		strings.TrimSuffix(strings.Repeat(one+",", n), ",")
 }
 
-// Insert appends rows to a MySQL history table in bounded batches, every
-// timestamp normalized to UTC on the way out (see archiveUTC). IGNORE covers the
-// tables that carry a natural unique key — for the append-only observation
-// tables, whose id is auto-assigned, it never fires.
 func Insert(ctx context.Context, db Execer, table string, cols []string, rows [][]any) error {
 	if db == nil || len(rows) == 0 {
 		return nil

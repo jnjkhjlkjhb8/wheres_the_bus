@@ -1,7 +1,3 @@
-// Package mrttrack runs metro alight-reminder sessions (ADR-0015): each tick
-// polls the rider's train, decides how close they are to their stop, and fires
-// the reminder through a haptic dispatch and a Live Activity push. Sessions
-// live in the shared reminders table so a restart resumes them.
 package mrttrack
 
 import (
@@ -18,15 +14,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
-
-// This file is the metro alight-reminder tracker (捷運下車提醒, ADR-0015): a 15s
-// cron that advances each active car-bound session one station hop at a time. It
-// is NOT a pipeline.LiveSpec — it never touches TDX. Polling is event-driven: a session
-// is only polled once its previous reading's countdown has elapsed, so a ride
-// costs about one GetTrainInfo call per station hop rather than one per tick.
-// Position, path, and progress live in the session's Redis state (MrtTrackKey);
-// the reminders table only enumerates which sessions are active and carries the
-// device token for the lead vibration.
 
 // Metro session status values carried in MrtTrackState.status. tracking and
 // lead_fired are live; the rest are terminal endings surfaced only on the card.
@@ -216,21 +203,8 @@ func (t *mrtTracker) advanceSession(ctx context.Context, track notify.MrtTrackRe
 	}
 }
 
-// _mrtCardStaleAfter is how long one metro reading stays true without another.
-// A metro card moves once per station hop, so this is a few hops' worth — long
-// enough that a normal inter-station run never reads as stale, short enough that
-// a suspended app's frozen card admits it before the rider trusts a wrong count.
-// It matches the window the local iOS path already uses for this mode.
 const _mrtCardStaleAfter = 6 * time.Minute
 
-// pushCard refreshes the rider's tracking card after the session advanced, so a
-// backgrounded app's card keeps counting (ADR-0018). It is additive: the app's
-// own MethodChannel updates remain the foreground path, and a device with no
-// push at all keeps exactly today's degrade-to-stale behaviour.
-//
-// Only a reading that moved is pushed. The card's numbers may not change without
-// data behind them, and a push per tick rather than per hop would also spend the
-// Live Activity budget on nothing.
 func (t *mrtTracker) pushCard(
 	ctx context.Context,
 	previous, next *models.MrtTrackState,
@@ -290,11 +264,6 @@ func mrtCardMoved(previous, next *models.MrtTrackState) bool {
 		previous.NextStationName != next.NextStationName
 }
 
-// mrtCard renders one session state as the card both native surfaces draw.
-//
-// The waiting phase is deliberately unreachable here: whether the rider has
-// boarded is the app's own reading, and a waiting card already carries a
-// countdown to a fixed arrival time, so it stays true without any refresh.
 func mrtCard(state *models.MrtTrackState, now time.Time) notify.AlightCard {
 	hopCount := max(state.TargetIndex, 1)
 	remaining := min(max(state.RemainingStops, 0), hopCount)
@@ -320,9 +289,6 @@ func mrtCard(state *models.MrtTrackState, now time.Time) notify.AlightCard {
 	}
 }
 
-// mrtCardPhase maps a session status onto the card's phase vocabulary. The
-// approaching threshold is the rider's own 提前站數 plus the last stop, the same
-// boundary the app colours the bar on and the vibration fires on.
 func mrtCardPhase(status string, remaining, lead int32) string {
 	switch status {
 	case _mrtStatusArrived:
@@ -400,10 +366,6 @@ func (t *mrtTracker) publishState(ctx context.Context, state *models.MrtTrackSta
 	}
 }
 
-// readPosition acquires one position reading for a due session: GetTrainInfo
-// first (one call per hop), falling back to the already-ingested mrt_live stream
-// by TripId when GetTrainInfo is empty. It is the impure counterpart of
-// advanceMrtTrack.
 func (t *mrtTracker) readPosition(ctx context.Context, state *models.MrtTrackState) mrtReading {
 	info, ok, err := t.trtc.GetTrainInfo(ctx, state.CarId)
 	if err != nil {
@@ -441,11 +403,6 @@ func (t *mrtTracker) readPosition(ctx context.Context, state *models.MrtTrackSta
 	return mrtReading{}
 }
 
-// fallbackFromLive scans the ingested TRTC mrt_live keys for path stations ahead
-// of the current position and returns the earliest one whose live arrival row
-// carries this session's TripId — the train is just before that station. The
-// terminal is the session's direction field; each path station's line comes from
-// its ID prefix.
 func (t *mrtTracker) fallbackFromLive(ctx context.Context, state *models.MrtTrackState) (int, bool) {
 	if len(state.PathStationIds) == 0 {
 		return 0, false
@@ -492,12 +449,6 @@ func (t *mrtTracker) fallbackFromLive(ctx context.Context, state *models.MrtTrac
 	return 0, false
 }
 
-// mrtReading is one resolved position observation, the pure input to
-// advanceMrtTrack. nextIndex is the path index of the train's next station.
-// resolved distinguishes "the train is at nextIndex" from "no position this
-// tick". gotInfo means GetTrainInfo answered (so its countdown schedules the
-// next poll); a fallback or empty reading retries on the short interval. lost
-// means the reading places the train off the ride.
 type mrtReading struct {
 	nextIndex    int
 	countdown    time.Duration
@@ -507,18 +458,11 @@ type mrtReading struct {
 	lost         bool
 }
 
-// The two 下車提醒 buzzes, as they travel to the device (ADR-0020).
 const (
 	_mrtAlightEventLead   = "lead"
 	_mrtAlightEventAlight = "alight"
 )
 
-// mrtFireEvent names the buzz owed at this position, or "" for none.
-//
-// remaining is stops to the 目標站, where 1 means "your station is next". The
-// lead window opens at lead+1 because the 提前提醒站 sits lead stations before
-// the target. At lead 0 only the alight window exists, which is what
-// 不提前提醒 means.
 func mrtFireEvent(remaining, lead int32) string {
 	switch {
 	case remaining <= 1:
@@ -529,12 +473,6 @@ func mrtFireEvent(remaining, lead int32) string {
 	return ""
 }
 
-// advanceMrtTrack is the pure session-advance decision: given the prior state, a
-// position reading, and the clock, it returns the next state and whether the
-// lead vibration should fire this tick. Position never moves backward. It sets
-// the ending status (arrived / lost / stale) or the live status
-// (tracking / lead_fired) and schedules the next poll. Firing is decided here
-// but performed by the caller (which owns the once-only claim machinery).
 func advanceMrtTrack(state *models.MrtTrackState, reading mrtReading, now time.Time) (*models.MrtTrackState, string) {
 	next, ok := proto.Clone(state).(*models.MrtTrackState)
 	if !ok {
@@ -544,10 +482,6 @@ func advanceMrtTrack(state *models.MrtTrackState, reading mrtReading, now time.T
 	}
 	target := next.TargetIndex
 
-	// Within one stop of the alight station, a lost binding IS the arrival: at
-	// the end of a run the carID re-trips (new TripId) or reports off-path, and
-	// terminal alight stations are common — ending such a ride as "lost" would
-	// misreport a completed ride. Reclassify by advancing past the target.
 	finishing := state.CurrentIndex >= target-1
 	if reading.lost {
 		if !finishing {
@@ -583,12 +517,6 @@ func advanceMrtTrack(state *models.MrtTrackState, reading mrtReading, now time.T
 		next.Progress = float64(next.CurrentIndex) / float64(target)
 	}
 
-	// fire is requested on every tick inside a threshold, not just the first:
-	// the claim/fired machinery makes delivery once-only, and re-requesting lets
-	// a transiently failed (released) send retry on a later tick.
-	//
-	// The 下車站 buzz wins whenever both windows are open — at 提前站數 0 they
-	// are the same window, and there the rider is owed the long one.
 	fire := mrtFireEvent(next.RemainingStops, next.LeadStops)
 
 	switch {

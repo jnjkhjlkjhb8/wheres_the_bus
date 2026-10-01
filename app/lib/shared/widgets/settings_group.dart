@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_switch.dart';
 
@@ -18,7 +19,12 @@ class SettingsGroup extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          AppTheme.space8,
+          AppTheme.space16,
+          AppTheme.space6,
+        ),
         child: Text(title, style: Theme.of(context).textTheme.labelMedium),
       ),
       ...children,

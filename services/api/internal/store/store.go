@@ -1,7 +1,3 @@
-// Package store holds the router's read-only PostgreSQL queries for bus and
-// bike-share static data, plus the single choke point that maps a backing-store
-// failure onto a gRPC status. Every path is a read: the router never writes to
-// the env schema.
 package store
 
 import (
@@ -19,10 +15,6 @@ type DB interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// BusStaticPayload reads the pre-serialized static payload for a bus sub-route
-// from the loaded env schema. The sub-route UID is used as-is: canonical
-// subroute identity is produced at the 03:30 load (ADR-0006). A missing row
-// surfaces as pgx.ErrNoRows for the caller to map to NotFound.
 func BusStaticPayload(ctx context.Context, db DB, subRouteUID string) ([]byte, error) {
 	var data []byte
 	if err := db.QueryRow(ctx, `SELECT pb FROM bus_static WHERE sub_route_uid = $1;`, subRouteUID).Scan(&data); err != nil {

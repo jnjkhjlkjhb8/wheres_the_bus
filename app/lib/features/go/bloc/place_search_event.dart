@@ -11,12 +11,6 @@ class PlaceSearchStarted extends PlaceSearchEvent {
   const PlaceSearchStarted();
 }
 
-/// A keystroke. Debounced, and superseded by any later keystroke.
-///
-/// [bias] is where the rider is, when the view knows. It is passed rather than
-/// read from the location service here because that service's cached fix is a
-/// one-shot the home screen's startup path depends on; the view already holds
-/// a position for its current-location option.
 class PlaceQueryChanged extends PlaceSearchEvent {
   const PlaceQueryChanged(this.query, {this.bias});
   final String query;

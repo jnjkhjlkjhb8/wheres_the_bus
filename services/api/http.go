@@ -54,47 +54,21 @@ const (
 	_httpGBFSRateLimit    = 120
 	// MOTIS polls its realtime endpoints once a minute by default, and the feed
 	// has exactly one authenticated consumer, so this is generous already.
-	_httpGTFSRTRateLimit = 10
-	// Per minute, and tighter than /api/search's 30 per second because the two
-	// are backed by different things: /api/search hits Postgres, while this one
-	// hits the planner. Spending MOTIS on autocomplete would degrade route
-	// planning, which is the more expensive thing to lose.
-	_httpGeocodeRateLimit = 60
-	// Per minute. The app polls this when the planner opens and caches the
-	// answer for 20s, so this is generous by an order of magnitude on purpose:
-	// an app rate-limited here falls back to guessing which options exist,
-	// which is the thing the endpoint was added to stop.
+	_httpGTFSRTRateLimit        = 10
+	_httpGeocodeRateLimit       = 60
 	_httpPlannerStatusRateLimit = 60
 	// One fetch per app launch, answered from a process-local cache, so this
 	// only has to survive a device relaunching in a loop.
 	_httpStaticVersionRateLimit = 60
 
-	// Bound every phase of an HTTP request/connection so a slow or hostile
-	// client (or a stalled network path) cannot hold a connection open
-	// indefinitely and exhaust the router's file descriptors or goroutines.
 	_httpReadHeaderTimeout = 5 * time.Second
 	_httpReadTimeout       = 10 * time.Second
 	_httpWriteTimeout      = 15 * time.Second
 	_httpIdleTimeout       = 60 * time.Second
 
-	// _powersyncTokenTTL bounds how long a leaked/observed PowerSync JWT stays
-	// usable. Was 24h; narrows this to 1h — short enough to cap exposure, long
-	// enough that PowerSyncService's normal refresh cadence (it re-fetches well
-	// before expiry) never causes a mid-session drop. No revocation/quota on top
-	// of this: single-host scale doesn't justify that machinery (YAGNI; see docs/config.md).
-	_powersyncTokenTTL = time.Hour
-	// _powersyncAnonymousSubject is the "sub" claim used when the caller sends
-	// no installation id — either an older app build that predates the header,
-	// or any other caller of this endpoint. Keeps the endpoint working exactly
-	// as before for those callers instead of failing the request.
+	_powersyncTokenTTL         = time.Hour
 	_powersyncAnonymousSubject = "powersync-client"
-	// _installIDHeaderMaxLen bounds the installation id accepted into the JWT
-	// "sub" claim. It is not an authorization credential (no secret is
-	// checked here, unlike the gRPC x-install-id/x-install-secret pair in
-	// firebase_service.go) — only a correlation id an operator can use to
-	// trace a specific token back to an installation — so it only needs
-	// sanity bounds, not the same validation UpsertDevice applies.
-	_installIDHeaderMaxLen = 128
+	_installIDHeaderMaxLen     = 128
 )
 
 type httpServerConfig struct {
@@ -112,21 +86,11 @@ type httpServerConfig struct {
 	// that is actually answering rather than a second opinion about it.
 	plannerHealth    *maas.PlannerHealthMonitor
 	MetricsRateLimit int
-	// booking is the TDX deeplink proxy for the rail 訂購 handoff (ADR-0012).
-	// Set in main; nil in tests and any env without a TDX client, where the
-	// endpoint returns 503 and the app falls back to a plain booking site link.
-	booking *rail.BookingProxy
-	// redis backs the GBFS station_status feed, which reads the same live
-	// availability keys the app's bike screens do. Set in main; when nil the
-	// GBFS routes are not mounted at all, so an env without Redis serves no
-	// half-working feed.
-	redis *redis.Client
+	booking          *rail.BookingProxy
+	redis            *redis.Client
 	// GBFSRateLimit bounds GBFS polling per client. The feed is public and
 	// unauthenticated, and station_status costs a full station scan.
-	GBFSRateLimit int
-	// GTFSRealtimeCredential gates the GTFS-RT endpoint (ADR-0019). Empty leaves
-	// the route unmounted, which is what every environment that has not been
-	// given a secret should serve.
+	GBFSRateLimit          int
 	GTFSRealtimeCredential string
 }
 
@@ -292,9 +256,6 @@ func newHTTPRouter(db *pgxpool.Pool, live *livestream.LiveHub, key *rsa.PrivateK
 	r.GET(static.StaticVersionPath,
 		httpRateLimit(limiter, "GET "+static.StaticVersionPath, _httpStaticVersionRateLimit, time.Minute),
 		static.HandleStaticVersion(db))
-	// Mounted only when MOTIS is the configured planner: with MAAS_BACKEND=tdx
-	// there is nothing behind this route, and the app's Google Places fallback
-	// becomes its only source (ADR-0022).
 	search.RegisterGeocodeRoutes(r, config.MotisBaseURL, config.MotisEnabled,
 		httpRateLimit(limiter, "GET "+search.GeocodePath, _httpGeocodeRateLimit, time.Minute))
 	// Always mounted, unlike the geocode proxy: an app that cannot tell which
@@ -318,9 +279,6 @@ func newHTTPRouter(db *pgxpool.Pool, live *livestream.LiveHub, key *rsa.PrivateK
 		feed.RegisterGBFSRoutes(r, db, config.redis,
 			httpRateLimit(limiter, "GET /gbfs", gbfsLimit, time.Minute), _httpPort)
 	}
-	// GTFS-RT is mounted only with both a Redis client and a credential: the
-	// snapshot lives in Redis, and prod's HTTP port is public, so an ungated
-	// route would publish a feed that was scoped as internal (ADR-0019).
 	feed.RegisterGTFSRTRoutes(r, config.redis, config.GTFSRealtimeCredential,
 		httpRateLimit(limiter, "GET "+feed.GTFSRTPath, _httpGTFSRTRateLimit, time.Minute))
 	r.GET("/metrics",
@@ -342,12 +300,6 @@ func safeAccessLogger() gin.HandlerFunc {
 		started := time.Now()
 		c.Next()
 		status := c.Writer.Status()
-		// FullPath (the registered route pattern, e.g. "/bus/route/:subRouteUid")
-		// keeps the router_http_requests_total label set bounded to the routes
-		// actually registered in newHTTPRouter; the raw request path would let a
-		// client mint unbounded label values by varying path parameters or
-		// probing unregistered paths. An unmatched route (404, empty FullPath)
-		// is aggregated under "unmatched" for the same reason.
 		routePath := c.FullPath()
 		if routePath == "" {
 			routePath = "unmatched"
@@ -444,13 +396,6 @@ func handleMetrics(live *livestream.LiveHub) gin.HandlerFunc {
 	}
 }
 
-// handleToken issues a short-lived PowerSync sync JWT. The "sub" claim binds
-// the token to the caller's installation id (X-Install-Id header, the same
-// identity the app already carries for gRPC — see FirebaseCallOptions in the
-// Flutter client) when present, purely so a token can be traced back to an
-// installation after the fact; there is no secret check here and no
-// revocation, so a stolen token is still usable until it expires
-// (_powersyncTokenTTL) regardless of whose sub it carries.
 func handleToken(key *rsa.PrivateKey) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		now := time.Now()
@@ -468,10 +413,6 @@ func handleToken(key *rsa.PrivateKey) gin.HandlerFunc {
 	}
 }
 
-// tokenSubject sanitizes the caller-supplied installation id into a "sub"
-// claim, falling back to _powersyncAnonymousSubject for an empty, oversized, or
-// otherwise unusable header instead of putting untrusted content straight
-// into a signed token.
 func tokenSubject(installID string) string {
 	installID = strings.TrimSpace(installID)
 	if installID == "" || len(installID) > _installIDHeaderMaxLen {
@@ -517,10 +458,6 @@ func loadOrGenerateKey() (*rsa.PrivateKey, error) {
 	return loadOrGenerateKeyAt("/data/powersync_key.pem")
 }
 
-// loadOrGenerateKeyAt loads the persisted RS256 signing key, generating and
-// persisting a fresh one when the file is missing or unparseable. A key change
-// invalidates every client's PowerSync JWT at once, so keeping the persisted
-// key readable across restarts is what keeps sync alive.
 func loadOrGenerateKeyAt(keyFile string) (*rsa.PrivateKey, error) {
 	data, err := os.ReadFile(keyFile)
 	if err == nil {
@@ -548,14 +485,6 @@ func loadOrGenerateKeyAt(keyFile string) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-// persistKeyAtomically writes data to a temp file in keyFile's own directory,
-// fsyncs it, restricts it to owner-only 0600, and renames it into place.
-// Writing through a same-directory temp file plus rename means a concurrent
-// reader (or a crash mid-write) never observes a partial key; Sync forces the
-// bytes to durable storage before the rename makes them visible under
-// keyFile, and every step's error is returned rather than swallowed so a
-// failed persist regenerates loudly instead of silently invalidating every
-// client's PowerSync token on the next restart.
 func persistKeyAtomically(keyFile string, data []byte) error {
 	dir := filepath.Dir(keyFile)
 	tmp, err := os.CreateTemp(dir, filepath.Base(keyFile)+".tmp-*")

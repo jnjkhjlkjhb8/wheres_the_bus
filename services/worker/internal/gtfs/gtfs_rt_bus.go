@@ -14,75 +14,20 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// The GTFS-RT delay producer, bus half (ADR-0019, FDPL-29).
-//
-// The rail half is an identity join; this one is the hard case, and every line
-// of it is a gate. The live ETA feed knows a plate, a stop and a predicted
-// arrival, and says nothing about which of the day's departures that vehicle is
-// running. A trip update is addressed by trip_id. Everything here exists to
-// bridge that gap without ever guessing across it, because a wrong assignment
-// does not degrade a plan, it reroutes one.
-//
-// Two gates, in order.
-//
-// A plate seen on more than one subroute is dropped. Taipei and New Taipei
-// publish route-level arrivals, so buildBusEtaMap fans one entry across every
-// subroute of the route and the same vehicle appears under all of them. This
-// makes those cities self-answering rather than special-cased: where the feed
-// really does distinguish subroutes the plate is unique and matching proceeds,
-// and where it does not every vehicle there is dropped.
-//
-// Then vehicles are assigned to departures by a single greedy pass that is both
-// injective and order-preserving. Time alone breaks on short headways, where
-// back-projection error exceeds the gap and two vehicles claim one trip. Order
-// alone breaks when the running and scheduled counts disagree, which shifts a
-// whole route by one. Together, either failing yields no match rather than a
-// wrong one.
-//
-// What is emitted is absolute arrival times, not a delay. A single propagated
-// delay would flatten a bus held up in one congested segment into "late by that
-// much at every remaining stop", which is exactly the input that makes a planner
-// reject a downstream transfer that is in fact catchable.
-
 const (
-	// _gtfsRTBusMatchWindow bounds how far a back-projected departure may sit from
-	// the scheduled one it is assigned to.
-	//
-	// The back-projection is a live arrival estimate minus an accumulated running
-	// time, so it carries both feeds' error. The window has to be wide enough to
-	// hold a genuinely late bus and narrow enough that a vehicle never reaches
-	// the departure before or after the one it is running. Beyond it the vehicle
-	// is left unmatched, which costs a trip update and states nothing false.
 	_gtfsRTBusMatchWindow = 20 * time.Minute
-	// _gtfsRTBusMinCalls is how many stops a vehicle must be predicted at before
-	// its back-projected departure is trusted. One stop is one estimate and one
-	// estimate's error; the median of several is what makes the assignment stable
-	// enough for an order-preserving pass to mean anything.
-	_gtfsRTBusMinCalls = 2
+	_gtfsRTBusMinCalls    = 2
 	// _gtfsRTScanBatch is the COUNT hint for the live-snapshot scan. It matches
 	// the one the live jobs' own key sweep uses; the whole keyspace here is a few
 	// thousand keys, so this is a handful of round trips.
 	_gtfsRTScanBatch = 500
 )
 
-// _busPatternOffsetSQL is every stop's cumulative running time from its route
-// direction's origin — the term that turns a predicted arrival back into the
-// departure the vehicle must have left on.
-//
-// Only complete patterns are read, for the same reason busPatternTripsSQL only
-// lays out complete ones: one unknown segment silently compresses every offset
-// after it, and a back-projection off by that much lands on the wrong departure.
 var _busPatternOffsetSQL = `
   SELECT p.sub_route_uid, p.direction, p.stop_uid, p.offset_secs
   FROM (` + busmodel.PatternSQL + `) p
   WHERE p.complete`
 
-// readBusArrivals reads the whole live bus ETA snapshot.
-//
-// The whole of it, not just the subroutes with candidate trips: the plate gate
-// asks whether anything else in the feed claims the same vehicle, and an answer
-// drawn from a subset would call a plate unique because the sibling subroute
-// contradicting it was never read.
 func (b *gtfsRTBuilder) readBusArrivals(ctx context.Context) (map[string]*models.Bus_RouteArrival, error) {
 	var keys []string
 	var cursor uint64
@@ -141,11 +86,7 @@ type gtfsRTBusStats struct {
 // two things matching needs: where it must have started, and what it is
 // predicted to do next.
 type gtfsRTVehicle struct {
-	plate string
-	// projected is the back-projected origin departure as a unix time: the
-	// median over its calls of (live arrival estimate - that stop's offset). The
-	// median rather than the earliest call because each estimate carries its own
-	// error and one of them being wrong should not move the vehicle.
+	plate     string
 	projected int64
 	calls     []gtfsRTCall
 }
@@ -186,12 +127,6 @@ func loadBusPatternOffsets(ctx context.Context, db *pgxpool.Pool) (map[gtfsRTRou
 	return offsets, nil
 }
 
-// platesOnOneSubroute reports, per plate, whether the whole snapshot claims it
-// for exactly one subroute.
-//
-// This is the first gate, and it is computed across the whole snapshot rather
-// than per route: a plate is only unambiguous if nothing else in the feed claims
-// it.
 func platesOnOneSubroute(arrivals map[string]*models.Bus_RouteArrival) map[string]bool {
 	seen := make(map[string]map[string]bool, 4096)
 	for uid, arrival := range arrivals {
@@ -253,9 +188,6 @@ func collectBusVehicles(
 		}
 		projected := projections[id]
 		if len(projected) == 0 {
-			// No stop on this vehicle's route has a known offset, so there is
-			// nothing to project from. The route direction has no complete
-			// pattern (FDPL-23, FDPL-26).
 			stats.patternUnknown++
 			continue
 		}
@@ -273,10 +205,6 @@ func collectBusVehicles(
 	return vehicles
 }
 
-// medianUnix is the middle of an unordered set of instants. An even count takes
-// the lower of the two middles rather than averaging: the inputs are seconds
-// from a feed that reports whole seconds, and an average invents a value none of
-// the sources stated.
 func medianUnix(values []int64) int64 {
 	sorted := make([]int64, len(values))
 	copy(sorted, values)
@@ -284,13 +212,6 @@ func medianUnix(values []int64) int64 {
 	return sorted[(len(sorted)-1)/2]
 }
 
-// matchBusVehicles assigns vehicles to scheduled departures.
-//
-// Both sides are sorted by departure and walked once. The pass is injective —
-// each side advances past whatever it consumes — and order-preserving, because
-// buses do not overtake, so the nth vehicle out is running the nth departure.
-// Where the two disagree, the pointer that is behind advances alone and that
-// side's entry goes unmatched rather than being forced onto the other.
 func matchBusVehicles(vehicles []gtfsRTVehicle, trips []gtfsRTTrip, midnight time.Time) map[string]gtfsRTVehicle {
 	sort.Slice(vehicles, func(i, j int) bool { return vehicles[i].projected < vehicles[j].projected })
 	scheduled := make([]gtfsRTTrip, len(trips))
@@ -337,10 +258,6 @@ func abs64(v int64) int64 {
 	return v
 }
 
-// buildGTFSRTBusDelays turns the live ETA snapshot into trip updates.
-//
-// running is the candidate set buildGTFSRTCancellations already pruned: a trip
-// cancelled today is not a trip a vehicle can be running.
 func buildGTFSRTBusDelays(
 	running map[gtfsRTRouteKey][]gtfsRTTrip,
 	arrivals map[string]*models.Bus_RouteArrival,
@@ -401,17 +318,6 @@ func buildGTFSRTBusDelays(
 	return entities, stats
 }
 
-// busStopTimeUpdates turns a matched vehicle's predictions into stop time
-// updates, clamped so they never move backwards.
-//
-// TDX computes each stop's estimate independently and they can invert; a trip
-// update whose times go backwards along the trip is rejected outright by some
-// consumers and silently reordered by others.
-//
-// No stop_sequence is stated. gtfsStopTimesSQL renumbers the sequence with
-// ROW_NUMBER because TDX repeats it within a trip, so the live sequence is not
-// the feed's, and a StopTimeUpdate is addressable by stop_id alone — which is
-// unique within a trip there by construction (DISTINCT ON (trip_id, stop_id)).
 func busStopTimeUpdates(vehicle gtfsRTVehicle) []*gtfs.TripUpdate_StopTimeUpdate {
 	updates := make([]*gtfs.TripUpdate_StopTimeUpdate, 0, len(vehicle.calls))
 	var previous int64

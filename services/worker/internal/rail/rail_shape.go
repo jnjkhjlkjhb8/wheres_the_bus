@@ -24,12 +24,7 @@ type railShapeRow struct {
 	UpdateTime      string `json:"UpdateTime"`
 }
 
-// isValidRailShapeWKT is a cheap shape check on the raw TDX WKT string before
-// it ever reaches ST_GeomFromText: PostgreSQL parses/validates the geometry
-// server-side, but a parse error there would fail the whole upsert
-// transaction, not just the offending row. This catches the gross defects
-// (empty string, missing parens, wrong geometry type) so a single bad row is
-// quarantined instead of losing the whole partition's shapes.
+// Reject invalid WKT before it aborts the whole transaction.
 func isValidRailShapeWKT(wkt string) bool {
 	t := strings.ToUpper(strings.TrimSpace(wkt))
 	if !strings.Contains(t, "(") || !strings.HasSuffix(t, ")") {

@@ -14,11 +14,6 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterActivity() {
 
     companion object {
-        // FlutterActivity extends plain android.app.Activity, not
-        // androidx.activity.ComponentActivity, so the Activity Result API
-        // (registerForActivityResult) isn't available here — the grant/deny
-        // decision is instead delivered through the legacy
-        // onRequestPermissionsResult callback, keyed by this request code.
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1001
     }
 

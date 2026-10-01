@@ -65,6 +65,7 @@ docs/requirements.md
 /functions
 /router
 secrets/
+env/.rendered/
 osrm-data/
 motis-data/
 /model/

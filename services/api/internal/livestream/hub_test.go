@@ -106,10 +106,6 @@ func TestLiveHubSharesOneUpstreamSubscription(t *testing.T) {
 	closeSecond()
 }
 
-// TestLiveHubOrderedDeliveryForHealthySubscriber asserts that a subscriber
-// whose queue never fills receives every distinct frame, in publish order.
-// The old buffer-of-1 drop-old implementation silently discarded all but
-// the newest of these frames.
 func TestLiveHubOrderedDeliveryForHealthySubscriber(t *testing.T) {
 	src := newHubSource()
 	hub := NewLiveHub(src, 10)
@@ -278,14 +274,6 @@ func TestLiveHubClosesUpstreamAfterSourceDisconnect(t *testing.T) {
 	}
 }
 
-// TestLiveHubUnsubscribeClearsCloseReasonAfterEviction asserts that
-// closeReasons does not leak when a subscriber's handler exits via its own
-// context (calling the closeStream func returned by subscribe) after the hub
-// already evicted it for overflow. evictSlowSubscriber records the eviction
-// cause keyed by the downstream channel without removing the subscriber from
-// entry.subscribers under unsubscribe's usual path — a caller that never
-// reads the cause through subscriptionCloseCause must still not leave a
-// closeReasons entry behind.
 func TestLiveHubUnsubscribeClearsCloseReasonAfterEviction(t *testing.T) {
 	src := newHubSource()
 	hub := NewLiveHubWithQueueSize(src, 10, 1)
@@ -295,10 +283,6 @@ func TestLiveHubUnsubscribeClearsCloseReasonAfterEviction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Fill the bounded queue past capacity without draining, so the hub
-	// evicts this subscriber (evictSlowSubscriber): it deletes the
-	// subscribers[id] entry, closes the channel, and records the eviction
-	// cause in closeReasons.
 	for range 3 {
 		src.publish("route:1", []byte("frame"))
 	}
@@ -314,10 +298,6 @@ func TestLiveHubUnsubscribeClearsCloseReasonAfterEviction(t *testing.T) {
 	for range stream {
 	}
 
-	// The caller's handler exits via ctx.Done() (or similar) without ever
-	// calling subscriptionCloseCause to read and clear the eviction reason —
-	// it just invokes the closeSubscriber func returned by subscribe, same
-	// as the healthy-unsubscribe path.
 	closeStream()
 
 	hub.mu.Lock()

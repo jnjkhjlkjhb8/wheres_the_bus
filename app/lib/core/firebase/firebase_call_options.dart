@@ -18,9 +18,17 @@ class FirebaseCallOptions {
       firebaseEnabled: enabled,
       tlsEnabled: tls,
     );
-    final installId = await (installIdLoader ?? InstallIdentity.getOrCreate)();
-    final installSecret =
-        await (installSecretLoader ?? InstallIdentity.getOrCreateSecret)();
+    late final String installId;
+    late final String installSecret;
+    if (installIdLoader == null && installSecretLoader == null) {
+      final pair = await InstallIdentity.getOrCreatePair();
+      installId = pair.$1;
+      installSecret = pair.$2;
+    } else {
+      installId = await (installIdLoader ?? InstallIdentity.getOrCreate)();
+      installSecret =
+          await (installSecretLoader ?? InstallIdentity.getOrCreateSecret)();
+    }
     if (installId.isEmpty || installSecret.isEmpty) {
       throw StateError('installation credential is unavailable');
     }

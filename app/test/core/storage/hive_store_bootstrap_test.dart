@@ -6,10 +6,6 @@ void main() {
   group('HiveStore.init', () {
     test('a failed init is visible to the caller and retryable', () async {
       Hive.init('./.dart_tool/hive_test_bootstrap');
-      // Pre-open one of HiveStore's critical-path boxes with a conflicting
-      // generic type so HiveStore.init()'s Hive.openBox<dynamic> call for it
-      // throws. (Must be a critical box — the lazy ones open unawaited and
-      // their failure is deliberately not surfaced through init().)
       await Hive.openBox<int>('settings');
 
       // No-op binding: Hive.init() above already pointed Hive at a real

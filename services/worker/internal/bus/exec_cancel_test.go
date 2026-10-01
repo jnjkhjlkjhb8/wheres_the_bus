@@ -11,11 +11,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/predict"
 )
 
-// TestBusWriterCancelsDuringExecWithoutAck is the bus arm of the cross-writer
-// invariant the worker's live_test asserts for every other realtime job: a tick
-// cancelled while the Redis pipeline is executing must not acknowledge the TDX
-// fetch, so the next tick re-reads it instead of skipping a lost write. It lives
-// here because busLiveJob is unexported.
 func TestBusWriterCancelsDuringExecWithoutAck(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -59,17 +59,6 @@ type traFareRow struct {
 	Price      int32  `db:"price"`
 }
 
-// _traTicketTypes are the TDX ticket types the app quotes. TDX packs 票種 and
-// 車種 into a single ticket_type string, so the set is the cross product of
-// both axes.
-//
-// 車種 axis (成自 99 / 成莒 76 / 成復 63 / 成普 31 for 桃園→臺北): 自強 (incl.
-// 太魯閣/普悠瑪/EMU3000), 莒光, 復興 — which is also the 區間車 tier — and 普快.
-// The caller matches this to the train it is quoting.
-//
-// 票種 axis: 成 (全票), 孩 (孩童), 敬 (敬老), 愛 (愛心). The app resolves it from
-// the rider's persisted 票種 preference. Excluded are 折 (return-trip discount)
-// and group fares, which belong to a booking flow rather than a fare quote.
 var _traTicketTypes = buildTraTicketTypes()
 
 func buildTraTicketTypes() []string {
@@ -84,14 +73,6 @@ func buildTraTicketTypes() []string {
 	return out
 }
 
-// TRAFarePayload reads a TRA pair's fares from the loaded env schema and
-// returns the marshaled TraFareItems proto, one item per 票種 × 車種 combination
-// the pair prices (see _traTicketTypes), priciest first. The app picks the row
-// matching the train's class and the rider's 票種 preference; a combination TDX
-// never landed simply is not in the response, so the app falls back rather than
-// showing a hole. It returns an empty slice (not an error) when no rows match,
-// so callers treat an unlanded date as NotFound (ADR-0005); it never fetches
-// from TDX.
 func TRAFarePayload(ctx context.Context, db railDB, start, end string) ([]byte, error) {
 	start, err := resolveRailStationID(ctx, db, "tra_stations", start)
 	if err != nil {
@@ -123,9 +104,6 @@ func TRAFarePayload(ctx context.Context, db railDB, start, end string) ([]byte, 
 	return proto.Marshal(&models.TraFareItems{Items: arr})
 }
 
-// TRAStoptimesPayload reads a TRA train's stop times for a date from the loaded
-// env schema and returns the marshaled TraStoptimes proto plus the row count. A
-// zero count signals NotFound (ADR-0005); it never fetches from TDX.
 func TRAStoptimesPayload(ctx context.Context, db railDB, trainno, dateStr string) ([]byte, int, error) {
 	const q = `SELECT stopsequence, stationid,stationname,arrivaltime,departuretime,mask FROM tra_timetable WHERE trainno = $1 AND train_date = $2 ORDER BY stopsequence;`
 	rows, err := db.Query(ctx, q, trainno, dateStr)
@@ -154,14 +132,6 @@ func TRAStoptimesPayload(ctx context.Context, db railDB, trainno, dateStr string
 	return b, len(row), nil
 }
 
-// TRAStationBoardPayload reads every departure from one station on one date in
-// one direction, ordered by departure time. It is the whole day, not a window:
-// the handler slices it, so one cached day serves riders whose clocks differ.
-//
-// Services terminating at the station are excluded — a board answers "what can
-// I board here", and a terminating train has nothing to board. An empty result
-// means the date is not landed for this station; it is never fetched from TDX
-// (ADR-0005).
 func TRAStationBoardPayload(ctx context.Context, db railDB, station string, date time.Time, direction int32) ([]*models.TraStationDeparture, error) {
 	station, err := resolveRailStationID(ctx, db, "tra_stations", station)
 	if err != nil {
@@ -193,10 +163,6 @@ func TRAStationBoardPayload(ctx context.Context, db railDB, station string, date
 	return arr, nil
 }
 
-// TRATimetablePayload reads TRA services calling at both the origin and
-// destination for a date, pairs them into origin/destination legs, and returns
-// the marshaled TraTimetables proto plus the number of paired legs. A zero count
-// signals NotFound (ADR-0005); it never fetches from TDX.
 func TRATimetablePayload(ctx context.Context, db railDB, start, end string, date time.Time) ([]byte, int, error) {
 	start, err := resolveRailStationID(ctx, db, "tra_stations", start)
 	if err != nil {
@@ -285,11 +251,6 @@ func isNumericStationID(s string) bool {
 	return true
 }
 
-// resolveRailStationID maps a station name to its numeric station_id, tolerating
-// the 臺/台 spelling split (TDX data stores 臺, the app's labels use 台). Inputs
-// that are already numeric ids, or that match no station, are returned as-is.
-// Database errors are returned to the caller rather than treated as a miss.
-// table is a caller-supplied constant ("tra_stations"/"thsr_stations").
 func resolveRailStationID(ctx context.Context, db railDB, table, s string) (string, error) {
 	if isNumericStationID(s) {
 		return s, nil

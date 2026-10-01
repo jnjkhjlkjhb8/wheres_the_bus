@@ -9,10 +9,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
 )
 
-// busEtaFastCities and busEtaSlowCities must partition cities exactly: every
-// city in exactly one list, nothing invented or dropped. A future edit to
-// either that silently loses a city would otherwise surface only as that
-// city's ETA cron simply never running.
 func TestBusEtaCityListsPartitionCities(t *testing.T) {
 	seen := make(map[string]int, len(busmodel.Cities))
 	for _, city := range _busEtaFastCities {
@@ -63,12 +59,6 @@ func TestDecodeBusEtaArray(t *testing.T) {
 	}
 }
 
-// Bodies below are verbatim TDX v2 EstimatedTimeOfArrival elements. Asserting on
-// the decoded *values* (not just the element count) is the point: the seconds
-// field is spelled "EstimateTime", and a struct tag reading "EstimatedTime"
-// decodes every arrival to a silent zero — every stop shows a blank ETA while the
-// job still reports a healthy eat_count. Keelung names the subroute; Taipei and
-// NewTaipei identify the arrival by route only.
 func TestDecodeBusEtaArrayFieldNames(t *testing.T) {
 	t.Run("Keelung names the subroute", func(t *testing.T) {
 		body := `[{"PlateNumb":"FAC-156","StopUID":"KEE306194","RouteUID":"KEE0211","SubRouteUID":"KEE021101","Direction":0,"EstimateTime":1118,"StopStatus":0,"UpdateTime":"2026-07-12T20:20:34+08:00"}]`
@@ -102,13 +92,6 @@ func TestDecodeBusEtaArrayFieldNames(t *testing.T) {
 	})
 }
 
-// Every city iterated by the ingestion loops must resolve to a non-empty UID
-// prefix. An empty prefix makes Eta skip the city outright (reason=no_prefix,
-// so it publishes no bus_eta_route keys at all) and degrades the partition
-// patterns built from it into LIKE '%', which deletes every city's rows from
-// bus_station_stop_map and bus_schedule — nationwide ETA loss from one unmapped
-// city. Asserting over `cities` itself, rather than a hand-kept allowlist, is
-// what makes a citymap/cities divergence fail here instead of in production.
 func TestServedCityPrefixesResolve(t *testing.T) {
 	for _, c := range busmodel.Cities {
 		if busmodel.CityPrefix[c] == "" {

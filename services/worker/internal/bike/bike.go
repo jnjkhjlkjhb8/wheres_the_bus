@@ -1,7 +1,3 @@
-// Package bike loads bike-share station data and publishes live dock
-// availability. Availability is polled per city on the live cadence and written
-// to Redis; the cities TDX serves no availability feed for are skipped rather
-// than polled for nothing.
 package bike
 
 import (
@@ -51,10 +47,6 @@ type bikeStation struct {
 	StationAddress struct {
 		ZhTw string `json:"Zh_tw"`
 	} `json:"StationAddress"`
-	// Bike counts are int32, not uint8: a large station's capacity or live
-	// availability exceeds 255 (TDX has returned 321), and a uint8 makes the
-	// whole city's payload fail to unmarshal. ServiceStatus/ServiceType stay
-	// uint8 — they are small enums, not counts.
 	BikesCapacity int32 `json:"BikesCapacity"`
 	ServiceType   uint8 `json:"ServiceType"`
 }
@@ -73,11 +65,6 @@ type bikeAvailability struct {
 	} `json:"AvailableRentBikesDetail"`
 }
 
-// LoadStations upserts one city's bike-share stations into bike_stations via
-// a temp-table COPY then ON CONFLICT (station_uid) upsert. It consumes an
-// already-opened decoder; the "YouBike2.0_" prefix strip, ST_GeomFromText, and
-// the temp_bike COPY/upsert are byte-identical to the legacy transform. part is
-// the partition value, which for this dataset is the city.
 func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, city string) error {
 	if strings.TrimSpace(city) == "" {
 		return errors.New("bike stations: city is required")
@@ -155,15 +142,6 @@ func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 // across Eta rounds, so history sampling survives between 30s ticks.
 var _bikeHistorySampleGate bikeHistorySampler
 
-// Eta refreshes live bike availability into Redis every 30s. For each
-// non-skipped city it fetches TDX Bike/Availability and pipelines a protobuf
-// BikeEta per station under bike_availability:<StationUID> with a 2-minute TTL,
-// so stale data expires if a city stops updating. Alongside the Redis refresh it
-// samples each station's rentable/returnable counts into
-// bike_availability_history at most once per 5 minutes per station
-// (bikeHistorySampleGate), building the training data for future availability
-// prediction. A nil db skips history collection so the realtime path can run
-// without a database.
 func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool) error {
 	zap.S().Infow("start", "component", "bike_eta", "action", "bike_eta", "event", "start")
 	now := time.Now()
@@ -176,11 +154,6 @@ func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink,
 			continue
 		}
 		if !pipeline.LiveDemandGate(ctx, sink, "bike", city) {
-			// Nobody is watching this city and it was fetched within the reduced
-			// cadence. The reduced cadence outlives bikeLiveTTL, so re-arm the
-			// keys this city owns exactly as its 304 path does (bindFetch) —
-			// otherwise an unwatched city's docks would read as "no data" rather
-			// than as data a few minutes old.
 			ownedKey := shared.LiveOwnedKeysKey("bike", city)
 			if err := sink.RefreshOwnedTTL(ctx, ownedKey, pipeline.BikeLiveTTL); err != nil {
 				pipe := sink.Pipe()
@@ -220,10 +193,6 @@ func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink,
 		if err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error {
 			pipe := sink.Pipe()
 			ownedKeys := make([]string, 0)
-			// Availability Set and the interleaved history sampling keep Eta on
-			// the streaming strict decoder rather than the per-item-proto
-			// publisher: the history append is a per-item side effect the publisher
-			// does not model.
 			if err := pipeline.DecodeLiveItems(dec, func(temp bikeAvailability) error {
 				availableRent := int(temp.AvailableRentBikesDetail.GeneralBikes) + int(temp.AvailableRentBikesDetail.ElectricBikes)
 				raw := &models.BikeEta{
@@ -240,6 +209,8 @@ func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink,
 				}
 				key := shared.BikeAvailabilityKey(temp.StationUID)
 				pipe.Set(key, pb, pipeline.BikeLiveTTL)
+				observedAtKey := shared.BikeAvailabilityObservedAtKey(temp.StationUID)
+				pipe.Set(observedAtKey, now.Unix(), pipeline.BikeLiveTTL)
 				ownedKeys = append(ownedKeys, key)
 				// Sample into history at most once per 5 minutes per station.
 				if db != nil && _bikeHistorySampleGate.shouldSample(temp.StationUID, now) {

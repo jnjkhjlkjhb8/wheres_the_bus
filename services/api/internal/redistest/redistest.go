@@ -1,7 +1,3 @@
-// Package redistest serves a fake Redis endpoint that blocks on one command,
-// so tests can pin down how a client behaves while a read is in flight. It
-// lives in its own package because both the router's own tests and the maas
-// package's tests drive it.
 package redistest
 
 import (

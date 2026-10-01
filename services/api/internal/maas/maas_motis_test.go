@@ -9,10 +9,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// The invariant the whole MOTIS geometry path rests on: the geometry slice is
-// built by flattening itineraries in the same order convertRoutes flattens its
-// refs, so index i is the same section in both. If that ever drifts, a rider's
-// map gets another leg's walking path, which looks plausible and is wrong.
 func TestConvertMotisItinerariesPairsGeometryWithSectionsByIndex(t *testing.T) {
 	api, geometry := convertMotisItineraries([]motisItinerary{
 		{
@@ -67,10 +63,6 @@ func TestApplyMotisWalkGeometryRefusesLengthMismatch(t *testing.T) {
 	}
 }
 
-// THSR and TRA are the one pair MOTIS cannot separate on its own: the feed
-// emits route_type 101 for THSR and 2 for TRA so nigiri classifies them
-// differently (gtfs_files.go). If this mapping collapses, a rider filtering to
-// one mode silently gets the other.
 func TestMotisTransitModeSeparatesHighSpeedFromRegionalRail(t *testing.T) {
 	tests := []struct {
 		motis string
@@ -300,10 +292,6 @@ func TestMotisPlanQuerySendsThePreferencesItWasGiven(t *testing.T) {
 	}
 }
 
-// An alternative arrives from MOTIS wrapped in the footpaths it used to prove
-// the swap fits. The rider is being offered the service in the middle, so that
-// is the one leg the section keeps -- and a walk-only alternative is not an
-// answer to "what else runs this?" at all.
 func TestMotisSectionKeepsOnlyTheTransitLegOfEachAlternative(t *testing.T) {
 	section := motisSection(motisLeg{
 		Mode:           "BUS",

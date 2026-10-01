@@ -63,8 +63,6 @@ class JourneySessionState extends Equatable {
 
   bool get isLastLeg => legIndex >= legs.length - 1;
 
-  /// A standalone rail arrival tracker: presented as the riding card (which
-  /// draws the progress line) even though the internal phase stays waiting.
   bool get isRailTrack =>
       trackOnly && (currentLeg?.railSchedule.isNotEmpty ?? false);
 

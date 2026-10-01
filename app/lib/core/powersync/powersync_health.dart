@@ -1,14 +1,5 @@
 import 'dart:async';
 
-/// Owns the single subscription to a PowerSync-style status stream and
-/// forwards de-duplicated errors to [onError].
-///
-/// Generic over the source element type `T` so the dedupe/ownership logic is
-/// testable with a plain `Stream<String?>` fixture instead of the real
-/// `powersync` package's `SyncStatus` (whose constructor is `@internal` and
-/// off-limits outside that package). `PowerSyncService` instantiates this
-/// with `T = SyncStatus` and
-/// `errorOf: (s) => s.downloadError ?? s.uploadError`.
 class PowerSyncHealth<T> {
   PowerSyncHealth({
     required this.errorOf,
@@ -36,10 +27,6 @@ class PowerSyncHealth<T> {
   /// `null` if [freshnessOf] wasn't supplied or no sync has completed yet.
   DateTime? get lastSyncedAt => _lastSyncedAt;
 
-  /// Subscribes to [stream], replacing any subscription owned by this
-  /// instance. Safe to call repeatedly (e.g. on PowerSync re-init): the
-  /// previous subscription is always cancelled first so a reinit never
-  /// leaks a listener.
   void listen(Stream<T> stream) {
     unawaited(_subscription?.cancel());
     _lastErrorKey = null;

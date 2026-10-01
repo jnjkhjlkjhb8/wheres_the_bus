@@ -23,8 +23,6 @@ func TestParseTrtcCountdown(t *testing.T) {
 	}
 }
 
-// 忠孝復興→南港展覽館 exists on both BL and BR: a numbered train resolves by
-// its hundreds digit, a number-less one is judged BR (ADR-0014).
 func TestResolveTrtcStationAmbiguity(t *testing.T) {
 	names := map[string][]string{
 		"忠孝復興":  {"BR10", "BL15"},

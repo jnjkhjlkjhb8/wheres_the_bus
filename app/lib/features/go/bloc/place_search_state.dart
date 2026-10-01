@@ -8,11 +8,6 @@ enum ResolveIntent { pick, save }
 
 enum PlaceSearchErrorKind { location, place }
 
-/// A one-shot outcome for the view to act on — showing a snackbar, handing a
-/// place to the host, or opening the save dialog. It stays in the state after
-/// being consumed; [seq] is what makes two identical consecutive outcomes
-/// distinct, so a second failed tap still reaches the listener. Listen with
-/// `listenWhen: (a, b) => a.effect != b.effect`.
 class PlaceSearchEffect extends Equatable {
   const PlaceSearchEffect({
     required this.seq,

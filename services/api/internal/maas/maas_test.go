@@ -362,7 +362,6 @@ func TestMaasTimeParam(t *testing.T) {
 		assertBoth(t, d, a, "2026-07-11T23:30:00")
 	})
 
-	// A depart at/before now must be bumped into the future to avoid TDX 20001.
 	for _, tt := range []struct{ name, date, tm string }{
 		{"now", "2026-07-11", "23:00"},
 		{"past", "2026-07-11", "22:00"},
@@ -692,12 +691,6 @@ func TestMaasSharedCacheGetAndSetHonorContexts(t *testing.T) {
 	})
 }
 
-// TestMaasServerCloseJoinsFlightAfterCallerCancels covers the case where the
-// RPC caller cancels and Plan returns while the shared singleflight closure
-// is still active in a cache/upstream call. Shutdown (Close) must cancel that
-// flight's lifecycle context so it unblocks promptly, and must join it before
-// returning — otherwise backend cleanup (cache/DB/legacy Redis Close) can run
-// concurrently with the still-active flight.
 func TestMaasServerCloseJoinsFlightAfterCallerCancels(t *testing.T) {
 	getStarted := make(chan struct{})
 	getRelease := make(chan struct{}) // deliberately never closed by the test
@@ -745,13 +738,6 @@ func TestMaasServerCloseJoinsFlightAfterCallerCancels(t *testing.T) {
 	}
 }
 
-// TestMaasServerCloseVersusPlanRaceLeavesNoLeakedPermitOrCacheCommand races
-// concurrent Plan calls against Close. Every call must either complete
-// normally (it started registering before Close observed it) or fail
-// immediately with the closing sentinel (it observed Close first) — starting
-// a new singleflight closure must never race Close's wait. No shared-work
-// permit may leak, and calls made after Close returns must never reach the
-// cache.
 func TestMaasServerCloseVersusPlanRaceLeavesNoLeakedPermitOrCacheCommand(t *testing.T) {
 	cache := newControlledMaasCache()
 	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})

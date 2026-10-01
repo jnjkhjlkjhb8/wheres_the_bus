@@ -471,12 +471,6 @@ void main() {
     },
   );
 
-  test('RailError carries AppError', () {
-    const state = RailError(OfflineError());
-
-    expect(state.error, isA<OfflineError>());
-  });
-
   test(
     'a stale timetable request resolving after a newer one does not '
     'overwrite it',

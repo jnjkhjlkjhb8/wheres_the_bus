@@ -25,12 +25,6 @@ type mqttTopicCfg struct {
 	ttl     time.Duration
 }
 
-// _mqttTopics is the set of TDX MQTT subscriptions and their cache TTLs. TDX
-// publishes only news and alert topics — there is no vehicle-position or
-// near-stop stream — so every subscription here is advisory text on a 5-minute
-// TTL. Bus alerts stay on v2: routeAlerts reads the v2 field names. Bus News
-// (route/timetable notices, as opposed to disruptions) is deliberately not
-// subscribed — Alert is the only bus stream the app carries.
 var _mqttTopics = []mqttTopicCfg{
 	{"v2/Bus/Alert/City/+", 5 * time.Minute},
 	{"v2/Bus/Alert/InterCity", 5 * time.Minute},
@@ -39,17 +33,8 @@ var _mqttTopics = []mqttTopicCfg{
 	{"v2/Rail/THSR/AlertInfo", 5 * time.Minute},
 }
 
-// MQTTArchiver is handed every message as it arrives, before this package makes
-// anything of it. The alert feed is push-only and TDX republishes nothing, so a
-// message not kept here is gone; archive is nil where archiving is off, which is
-// every environment but prod.
 type MQTTArchiver func(topic string, payload []byte)
 
-// StartMQTT connects to the TDX MQTT broker over TLS and (re)subscribes to all
-// topics on every connect. It returns nil when MQTT_CLIENT_ID / MQTT_USERNAME /
-// MQTT_PASSWORD are unset, so MQTT is simply skipped in environments without
-// credentials. Auto-reconnect is on; the initial connect failing is logged but
-// not fatal — the client keeps retrying. Broker: mqtts://mqtt.transportdata.tw:8883
 func StartMQTT(rc *redis.Client, dispatcher *Dispatcher, archive MQTTArchiver) mqtt.Client {
 	clientID := os.Getenv("MQTT_CLIENT_ID")
 	username := os.Getenv("MQTT_USERNAME")
@@ -84,10 +69,6 @@ func StartMQTT(rc *redis.Client, dispatcher *Dispatcher, archive MQTTArchiver) m
 	return c
 }
 
-// mqttsubscribeall subscribes to every mqttTopics entry at QoS 1, routing each
-// message to mqtthandle with that topic's TTL. It runs on every (re)connect, so
-// subscriptions are restored after a dropped connection. Per-topic subscribe
-// failures are logged.
 func mqttsubscribeall(c mqtt.Client, rc *redis.Client, dispatcher *Dispatcher, archive MQTTArchiver) {
 	for _, t := range _mqttTopics {
 		pattern, ttl := t.pattern, t.ttl
@@ -109,18 +90,6 @@ func mqttsubscribeall(c mqtt.Client, rc *redis.Client, dispatcher *Dispatcher, a
 	}
 }
 
-// mqtthandle normalizes one MQTT message into the wire shape the app and the
-// push dispatcher share, caches it in Redis (key derived from the topic, with
-// slashes turned into colons) and republishes it on that key for live
-// streaming. The cached snapshot is what a new subscriber is seeded with, so a
-// payload that cannot be parsed is dropped rather than written: overwriting the
-// last good snapshot with nothing would blank every rider's alert list. A valid
-// but empty payload is written — that is TDX saying the disruption cleared.
-//
-// It then dispatches route alerts, using SetNX on an "fcm:alert:" key as a
-// cross-run dedupe claim so the same alert is not pushed twice within its
-// window. Alert dispatch needs the SetNX claim, so a Redis failure skips it:
-// without the claim the same alert would push on every retry.
 func mqtthandle(rc *redis.Client, msg mqtt.Message, ttl time.Duration, dispatcher *Dispatcher) {
 	key := shared.MQTTChannel(msg.Topic())
 	items, ok := normalizeAlerts(msg.Topic(), msg.Payload())
@@ -160,17 +129,8 @@ func mqtthandle(rc *redis.Client, msg mqtt.Message, ttl time.Duration, dispatche
 	}, dispatcher)
 }
 
-// _alertDedupeWindow is how long one alert's push claim is held. It spans a full
-// day because TDX republishes an ongoing disruption unchanged for as long as it
-// lasts, and every reconnect re-delivers the broker's retained messages; a
-// window shorter than the disruption re-notifies riders who already read it.
 const _alertDedupeWindow = 24 * time.Hour
 
-// dispatchRouteAlerts pushes each alert whose dedupe key claim succeeds, once
-// per route the alert is scoped to. An alert that names no route dispatches
-// under the empty key, which reaches every subscriber of that transit type.
-// claim is injected (Redis SetNX in production) so the dedupe window is
-// testable.
 func dispatchRouteAlerts(ctx context.Context, items []*pb.Alert_Item, claim func(string, time.Duration) bool, dispatcher *Dispatcher) {
 	for _, item := range items {
 		keys := item.RouteKeys
@@ -185,16 +145,6 @@ func dispatchRouteAlerts(ctx context.Context, items []*pb.Alert_Item, claim func
 	}
 }
 
-// normalizeAlerts parses one MQTT disruption payload into the alerts it
-// carries. Each transit type scopes its alerts differently, so route keys come
-// from a per-type extractor; an alert that names no route gets no keys at all,
-// which reads as system-wide. TDX repeats one disruption once per route it
-// scopes, so repeats of a body already seen fold their keys into the first
-// entry instead of becoming separate alerts.
-//
-// The bool reports whether the payload was understood. False means the topic
-// carries no disruptions or the JSON did not parse — distinct from a payload
-// that parsed and legitimately holds no alerts.
 func normalizeAlerts(topic string, payload []byte) ([]*pb.Alert_Item, bool) {
 	routeType := alertRouteType(topic)
 	if routeType == "" {
@@ -243,10 +193,6 @@ func normalizeAlerts(topic string, payload []byte) ([]*pb.Alert_Item, bool) {
 	return out, true
 }
 
-// alertID is one alert's stable identity: the SHA-256 of its body. TDX's own
-// NewsID/AlertID is deliberately unused, and UpdateTime especially so — it
-// changes on every republish of text that has not changed, which is exactly
-// what an identity must not do when it is also the push dedupe key.
 func alertID(body string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(body))) }
 
 // alertLevel grades one alert. TDX publishes Status as a string on some feeds
@@ -308,16 +254,6 @@ func alertRouteType(topic string) string {
 	return ""
 }
 
-// alertRouteKeys returns the route keys one alert applies to, or none when it
-// names no route. Bus alerts scope to routes and TRA alerts to train numbers,
-// both of which the app subscribes by; metro alerts scope to lines, which a
-// 收藏 of a station on that line resolves to. THSR scopes only to line
-// sections of its single line, and a rail alert may name no scope at all —
-// those are system-wide and get no keys.
-//
-// Bus never falls through to system-wide: it spans thousands of routes across
-// every operator, so route-less bus News (fare changes, timetable notices)
-// would otherwise push to every bus subscriber in the country.
 func alertRouteKeys(routeType string, m map[string]any) []string {
 	switch routeType {
 	case "bus":
@@ -331,11 +267,6 @@ func alertRouteKeys(routeType string, m map[string]any) []string {
 	return nil
 }
 
-// alertItems unwraps a decoded MQTT payload into the individual alert objects
-// it carries. Bus news/alerts arrive as a bare JSON array, while metro and TRA
-// wrap several alerts in an authority envelope
-// ({"AuthorityCode":"TRTC","Alerts":[...]}); a lone object is treated as a
-// one-element payload.
 func alertItems(raw any) []map[string]any {
 	var items []any
 	switch v := raw.(type) {
@@ -356,11 +287,6 @@ func alertItems(raw any) []map[string]any {
 	return out
 }
 
-// busRouteKeys returns every route key one bus alert applies to. News payloads
-// carry no scope at all; Alert payloads list the affected routes under
-// Scope.SubRoutes / Scope.Routes, where TDX publishes IDs and UIDs
-// inconsistently across operators. Both are emitted — a key with no
-// subscribers simply pushes nothing — and duplicates are dropped.
 func busRouteKeys(m map[string]any) []string {
 	keys := []string{}
 	if top := firstString(m, "SubRouteUID", "RouteUID"); top != "" {
@@ -371,10 +297,6 @@ func busRouteKeys(m map[string]any) []string {
 	return dedupeStrings(keys)
 }
 
-// scopeKeys reads one Scope list (Scope.SubRoutes, Scope.Trains, …) and
-// returns each entry's first non-empty value among fields. TDX publishes IDs
-// and UIDs inconsistently across operators, so callers pass both: a key with
-// no subscribers simply pushes nothing.
 func scopeKeys(m map[string]any, list string, fields ...string) []string {
 	scope, _ := m["Scope"].(map[string]any)
 	entries, _ := scope[list].([]any)

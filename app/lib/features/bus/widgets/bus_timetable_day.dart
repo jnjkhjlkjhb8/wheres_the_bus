@@ -32,10 +32,6 @@ Set<int> busServiceDays(List<BusServiceEntry> schedules) => {
     if (schedules.any((e) => e.runsOn(day))) day,
 };
 
-/// The board for [weekday]. Today reads from the daily timetable, which is the
-/// authoritative per-date publication (holiday adjustments included); other
-/// days fall back to the weekly pattern. Headway windows always come from the
-/// weekly pattern, since the daily timetable has no equivalent.
 BusDayTimetable busTimetableForDay({
   required int weekday,
   required List<BusServiceEntry> schedules,

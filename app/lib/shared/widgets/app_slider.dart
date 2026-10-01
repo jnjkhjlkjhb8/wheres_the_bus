@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
 class AppSlider extends StatelessWidget {
   const AppSlider({
@@ -38,7 +39,10 @@ class AppSlider extends StatelessWidget {
         Align(
           alignment: Alignment(fraction * 2 - 1, 0),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.space8,
+              vertical: AppTheme.space2,
+            ),
             decoration: BoxDecoration(
               color: cs.primary,
               borderRadius: BorderRadius.circular(4),

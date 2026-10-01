@@ -23,6 +23,9 @@ func loaderTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("DATABASE_URL required for DB integration tests")
+		}
 		t.Skip("DATABASE_URL not set; skipping loader integration test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
@@ -42,6 +45,9 @@ func loaderTestPool(t *testing.T) *pgxpool.Pool {
 	}
 	if !provisioned {
 		pool.Close()
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("raw_tdx schema not provisioned")
+		}
 		t.Skip("raw_tdx schema or landing-cycle migration not provisioned; skipping loader integration test")
 	}
 	return pool
@@ -116,12 +122,6 @@ func TestRawTDXSourceEmptyPartitionIsStale(t *testing.T) {
 	}
 }
 
-// TestRawTDXSourceTHSRTraindateNormalized guards the #1 drift risk: the
-// thsr_dailytimetable.traindate column is timestamptz, so to_jsonb would
-// serialize it as a full timestamp, but the transform's train_date temp column is
-// a date and the original TDX TrainDate was "YYYY-MM-DD". datasetJSON must
-// re-derive the date-only form so rail.LoadThsrTimetable decodes the value it always
-// historically saw.
 func TestRawTDXSourceTHSRTraindateNormalized(t *testing.T) {
 	pool := loaderTestPool(t)
 	defer pool.Close()
@@ -178,7 +178,13 @@ func TestRunLoadThroughRawTDXSource(t *testing.T) {
 		t.Fatalf("probe sink: %v", err)
 	}
 	if !sink {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatalf("tra_stations env table absent; required loader fixture is missing")
+		}
 		t.Skip("tra_stations env table absent; skipping end-to-end loader test")
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE tra_stations ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT NOW()`); err != nil {
+		t.Fatalf("provision tra_stations updated_at: %v", err)
 	}
 
 	const sid = "ZZ_LOAD_STATION"
@@ -208,10 +214,6 @@ func TestRunLoadThroughRawTDXSource(t *testing.T) {
 	}
 }
 
-// provisionBusSinks creates the complete env-schema surface written by the
-// atomic bus snapshot. PostgreSQL/PostGIS semantics are also covered by the
-// isolated BUS_WRITER_DATABASE_URL test; this fixture keeps the raw-source
-// integration useful when DATABASE_URL points at a fully provisioned test DB.
 func provisionBusSinks(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	ddl := []string{
@@ -271,10 +273,6 @@ func provisionBusSinks(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 }
 
-// TestLoadBusEnrichesFromRawTDX lands a synthetic city, reads all eight raw
-// partitions through rawTDXSource, and proves the atomic snapshot committed its
-// operator/fare enrichment. The synthetic prefix prevents an accidentally
-// configured shared database from pruning a real city's target partition.
 func TestLoadBusEnrichesFromRawTDX(t *testing.T) {
 	pool := loaderTestPool(t)
 	defer pool.Close()

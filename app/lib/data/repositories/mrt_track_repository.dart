@@ -4,10 +4,6 @@ import 'package:wheres_the_bus/core/grpc/grpc_client.dart';
 import 'package:wheres_the_bus/data/generated/mrt.pbgrpc.dart';
 import 'package:wheres_the_bus/data/models/mrt_track_models.dart';
 
-/// gRPC seam for the metro alight-reminder session (捷運下車提醒, ADR-0015):
-/// CreateTrack resolves a carriage to a trip, WatchTrack streams the evolving
-/// position, CancelTrack ends it. Install identity travels the same
-/// x-install-id/x-install-secret metadata as the Firebase reminder calls.
 class MrtTrackRepository {
   MrtTrackRepository({Mrt_ServiceClient? client}) : _client = client;
 
@@ -41,10 +37,6 @@ class MrtTrackRepository {
         targetStationId: targetStationId,
         leadStops: leadStops,
         system: _system,
-        // How the card names this ride. The server cannot derive either —
-        // one is a localized line name, the other a colour from a table that
-        // lives here — so they are handed up once and echoed back on every
-        // pushed refresh (ADR-0018).
         vehicleLabel: vehicleLabel,
         lineCode: lineCode,
         lineColorHex: lineColorHex,
@@ -59,13 +51,6 @@ class MrtTrackRepository {
   Stream<MrtTrackSession> watch(String trackId) =>
       _grpc.watchTrack(WatchMrtTrackRequest(trackId: trackId)).map(_decode);
 
-  /// Hands up the iOS Live Activity push token so the server can refresh this
-  /// session's card while the app is suspended (ADR-0018). An empty token
-  /// clears it, which is what ending a session sends.
-  ///
-  /// Best-effort by design: a card that never gets a token simply degrades to
-  /// the local-update behaviour it had before, so a failure here must not take
-  /// the tracking session down with it.
   Future<void> setPushToken(String trackId, String token) async {
     final installId = await InstallIdentity.getOrCreate();
     await _grpc.setTrackPushToken(

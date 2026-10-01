@@ -7,14 +7,6 @@ import 'package:wheres_the_bus/data/repositories/near_repository.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_event.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_state.dart';
 
-/// Drives the home map's nearby-station queries over a single long-lived
-/// bidirectional stream rather than one stream per query.
-///
-/// The router answers that stream latest-wins: a viewport superseded before it
-/// was picked up is dropped server-side, so responses are ordered but not
-/// one-per-request. That makes "the newest response is the current answer" true
-/// by construction — there is no stale result to guard against on arrival, only
-/// a stale *enqueue* when a GPS fix resolves after a newer query was issued.
 class NearbyBloc extends Bloc<NearbyEvent, NearbyState> {
   NearbyBloc({NearRepository? repository})
     : _repository = repository ?? NearRepository.instance,
@@ -42,8 +34,7 @@ class NearbyBloc extends Bloc<NearbyEvent, NearbyState> {
 
   StreamController<NearQuery>? _queries;
 
-  // Cancelled in _detachStream, which both close() and the failure handler go
-  // through; the lint only recognises a cancel in the creating function.
+  // Cancelled by _detachStream when the subscription is replaced or closed.
   // ignore: cancel_subscriptions
   StreamSubscription<List<NearStationViewModel>>? _responses;
 
@@ -79,12 +70,6 @@ class NearbyBloc extends Bloc<NearbyEvent, NearbyState> {
     // A broken gRPC stream stays broken, so drop it here and let the next
     // query open a fresh one.
     _detachStream();
-    // Nothing was waiting on it. The stream sits open across the whole session,
-    // so it is mostly idle — long enough, while the rider is on another page,
-    // for the connection under it to be dropped (the channel's own idle
-    // timeout, a NAT, a server restart). That drop answers no query, so it must
-    // not replace the stations already on screen with an error the rider then
-    // has to dismiss by hand; the next viewport query reopens the stream.
     if (!state.loading) return;
     // A query *was* in flight, and its answer is now never coming. Replay it
     // once on a fresh stream — only a second failure is the backend saying no.

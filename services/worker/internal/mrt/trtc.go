@@ -22,14 +22,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// TrtcEta replaces the TDX Metro LiveBoard job for TRTC (ADR-0014): it polls
-// the Metro Taipei SOAP APIs directly — getTrackInfo for arrival countdowns
-// plus getCarWeightByInfoEx / getCarWeightBRInfo for per-car congestion — pairs
-// congestion onto arrivals at ingest (congestion pairing, CONTEXT.md), and
-// writes the same Redis keys/channels Eta wrote so the router and app are
-// untouched. Empty TRTC_USERNAME/TRTC_PASSWORD skips the job entirely, issuing
-// zero requests (same convention as TDX/MQTT credentials).
-
 const _trtcAPIBase = "https://api.metro.taipei/metroapi/"
 
 // _trtcClient is shared across ticks for connection reuse; per-tick deadlines
@@ -129,12 +121,6 @@ func TrtcLinePrefix(stationID string) string {
 // Wenhu trains never carry numbers.
 var _trtcTrainLine = map[byte]string{'1': "R", '2': "BL", '3': "G", '4': "O"}
 
-// resolveTrtcStation resolves a feed's Chinese station+destination names to
-// (stationID, destStationID, line). A name can map to several IDs (transfer
-// stations sit on multiple lines); the pair must share a line. When both BR and
-// BL fit (忠孝復興→南港展覽館), the TrainNumber hundreds digit decides, and a
-// number-less row is judged BR because Wenhu trains never carry numbers
-// (ADR-0014: rare misattribution accepted).
 func resolveTrtcStation(names map[string][]string, station, dest, trainNumber string) (stationID, destID, line string, ok bool) {
 	sIDs := trtcLookup(names, station)
 	dIDs := trtcLookup(names, dest)
@@ -180,11 +166,6 @@ func trtcLookup(names map[string][]string, name string) []string {
 	return names[strings.TrimSuffix(name, "站")]
 }
 
-// trtcStationNames loads the station-name → IDs map from mrt_station. NTMC
-// (環狀線 Y, 新北捷運) is included because getTrackInfo carries its arrivals too;
-// without it every Y row fails to resolve. Y keys stay in the "TRTC" Redis
-// namespace — that namespace is the Taipei metro map the app renders, and its
-// station detail asks for system TRTC on Y stations as well.
 func trtcStationNames(ctx context.Context, db *pgxpool.Pool) (map[string][]string, error) {
 	rows, err := db.Query(ctx, `SELECT station_id, name FROM mrt_station WHERE system IN ('TRTC', 'NTMC')`)
 	if err != nil {
@@ -221,10 +202,6 @@ func trtcBRNextKey(stationID string, up bool) string {
 	return fmt.Sprintf("BR%02d|%t", n, up)
 }
 
-// trtcSOAP calls one Metro Taipei SOAP method and returns the JSON array
-// embedded in the response. The APIs are inconsistent about where the JSON
-// sits (before the envelope, inside the result element), so extraction is
-// simply first-'['..last-']'.
 func trtcSOAP(ctx context.Context, page, method, user, pass string) ([]byte, error) {
 	esc := func(s string) string {
 		var b strings.Builder
@@ -244,9 +221,6 @@ func trtcSOAP(ctx context.Context, page, method, user, pass string) ([]byte, err
 	if resp.StatusCode() != http.StatusOK {
 		return nil, _oops.With("method", method).With("status_code", resp.StatusCode()).Errorf("status")
 	}
-	// The whole SOAP envelope, not the JSON array carved out of it below: the
-	// carving is this system's reading of the response, and the archive exists to
-	// hold Metro Taipei's (ADR-0023). There is no second source for congestion.
 	history.ArchiveLivePayload(history.DatasetMRT, method, time.Now(), raw)
 	start := strings.IndexByte(string(raw), '[')
 	end := strings.LastIndexByte(string(raw), ']')

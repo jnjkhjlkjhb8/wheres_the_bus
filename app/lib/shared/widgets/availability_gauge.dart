@@ -4,15 +4,6 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 
-/// A bike station's dock rack, drawn as the station itself: one slot per dock,
-/// filled slots are bikes you can borrow, empty ones are spaces you can return
-/// to. The two counts sit under the end of the rack each describes, so they
-/// read as labels of one object rather than two competing headlines.
-///
-/// [capacity] is what makes the rack meaningful — it is the denominator that
-/// separates "3 of 30" from "3 of 4". When it is unknown (0) the rack falls
-/// back to `available + docks`, which is the same number for a healthy
-/// station and merely less precise for a station with bikes out on loan.
 class AvailabilityGauge extends StatelessWidget {
   const AvailabilityGauge({
     required this.available,
@@ -35,10 +26,6 @@ class AvailabilityGauge extends StatelessWidget {
   final int? generalBikes;
   final int? electricBikes;
 
-  /// False until the live availability stream delivers a frame. The counts
-  /// render as `—` rather than a confident `0`, because a station that has
-  /// not reported yet and a station that is genuinely empty are different
-  /// answers and must not look identical.
   final bool hasLiveData;
 
   /// Floor for the "running low" warning, so a tiny station is not permanently
@@ -121,7 +108,7 @@ class AvailabilityGauge extends StatelessWidget {
             filled: hasLiveData ? available : 0,
             total: total,
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: AppTheme.space10),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -145,7 +132,7 @@ class AvailabilityGauge extends StatelessWidget {
             ],
           ),
           if (flag != null) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: AppTheme.space14),
             Text(
               flag.text,
               style: AppTextStyles.bodySmall.copyWith(
@@ -175,11 +162,6 @@ class AvailabilityGauge extends StatelessWidget {
   }
 }
 
-/// The rack: [total] dock slots, the first [filled] of them holding a bike.
-///
-/// The fill boundary is animated as a continuous fraction rather than a slot
-/// count, so a single code path covers both the discrete rack and the solid
-/// bar it degrades into at large capacities.
 class _DockRack extends StatelessWidget {
   const _DockRack({required this.filled, required this.total});
 
@@ -209,11 +191,6 @@ class _DockRack extends StatelessWidget {
               ? AppMotion.instant
               : AppMotion.medium,
           curve: AppMotion.easeInOut,
-          // The tween rebuilds this CustomPaint every frame of the fill
-          // animation. Without a boundary of its own it dirties whatever layer
-          // it was composited into — a bike station card, which repaints for
-          // the gauge and nothing else. The gauge is the only thing moving, so
-          // it is the only thing that should repaint.
           builder: (context, value, _) => RepaintBoundary(
             child: CustomPaint(
               size: Size(width, _height),

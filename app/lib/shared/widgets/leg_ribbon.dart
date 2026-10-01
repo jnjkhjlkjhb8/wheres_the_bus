@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
 class LegRibbonSegment {
   const LegRibbonSegment({
@@ -23,8 +24,8 @@ class LegRibbon extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 4,
-      runSpacing: 4,
+      spacing: AppTheme.space4,
+      runSpacing: AppTheme.space4,
       children: [
         for (final (i, s) in segments.indexed) ...[
           _Leg(segment: s),

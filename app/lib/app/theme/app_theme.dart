@@ -1,12 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/predictive_back.dart';
 
-/// Wraps [CupertinoPageTransitionsBuilder], which ignores the platform
-/// reduce-motion setting, with a short fade when
-/// `MediaQuery.disableAnimationsOf` is true — matching the fallback the
-/// Android [BigPredictiveBackPageTransitionsBuilder] already provides.
 class _ReducedMotionCupertinoPageTransitionsBuilder
     extends PageTransitionsBuilder {
   const _ReducedMotionCupertinoPageTransitionsBuilder();
@@ -64,33 +62,33 @@ class AppTheme {
   static const Color markerBike = Color(0xFFDFE24D);
   static const Color markerRail = Color(0xFF285FF4);
 
-  static const Color statusArriving = Color(0xFF12B76A);
-  static const Color statusArrivingText = Color(0xFF0E7C42);
-  static const Color statusApproach = Color(0xFFF79009);
-  static const Color etaArriving = Color(0xFFB42318);
-  static const Color etaApproaching = Color(0xFFB54708);
-  static const Color trainDelay = Color(0xFFD92D20);
-  static const Color warningBg = Color(0xFFFEF0C7);
-  static const Color warningBorder = Color(0xFFB54708);
+  static const Color statusArriving = positive300;
+  static const Color statusArrivingText = positive500;
+  static const Color statusApproach = warning300;
+  static const Color etaArriving = critical500;
+  static const Color etaApproaching = warning500;
+  static const Color trainDelay = critical400;
+  static const Color warningBg = warning50;
+  static const Color warningBorder = warning500;
 
   // Warning surface, split by role. `warningBorder` used to serve as text,
   // icon, and border at once; as text on `warningBg` it only reaches 4.78:1.
   // `warningInk` carries the reading (8.32:1); the border hue stays the accent.
-  static const Color warningInkLight = Color(0xFF7A2E0E);
-  static const Color warningBgDark = Color(0xFF33230A);
-  static const Color warningInkDark = Color(0xFFFBDFA6);
+  static const Color warningInkLight = warning600;
+  static const Color warningBgDark = warning700;
+  static const Color warningInkDark = warning100;
+
+  // Off-ramp by decision, not by drift: this sits 1.6 L* from `warning300`,
+  // close enough that the two are hard to tell apart, and was kept distinct
+  // anyway. Anything new should take a ramp step instead.
   static const Color warningAccentDark = Color(0xFFE8912B);
 
-  // Critical surface, split by the same three roles as the warning set. Not
-  // `cs.errorContainer`: the M3 container pair is tuned for buttons and reads
-  // heavier than a notice needs, and its dark value drifts from the ramp the
-  // rest of the app uses.
-  static const Color criticalBg = Color(0xFFFDE7E4);
-  static const Color criticalInkLight = Color(0xFF7A1C13);
-  static const Color criticalAccent = Color(0xFFB42318);
-  static const Color criticalBgDark = Color(0xFF3B1512);
-  static const Color criticalInkDark = Color(0xFFFFD9D3);
-  static const Color criticalAccentDark = Color(0xFFF0705E);
+  static const Color criticalBg = critical50;
+  static const Color criticalInkLight = critical600;
+  static const Color criticalAccent = critical500;
+  static const Color criticalBgDark = critical700;
+  static const Color criticalInkDark = critical100;
+  static const Color criticalAccentDark = critical300;
 
   static const double radiusCard = 12;
   static const double radiusModal = 12;
@@ -106,40 +104,123 @@ class AppTheme {
   static const double radiusSlot = 2;
   static const double radiusBottomSheet = 28;
 
+  static const double space2 = 2;
+  static const double space4 = 4;
+  static const double space6 = 6;
+  static const double space8 = 8;
+  static const double space10 = 10;
+  static const double space12 = 12;
+  static const double space14 = 14;
+  static const double space16 = 16;
+  static const double space20 = 20;
+  static const double space24 = 24;
+  static const double space32 = 32;
+  static const double space48 = 48;
+
+  // Neutral ramp — light. 0 is the page's brightest surface, 900 is ink.
+  static const Color ink0Light = Color(0xFFFFFFFF);
+  static const Color ink50Light = Color(0xFFF7F7F7);
+  static const Color ink100Light = Color(0xFFEFEFEF);
+  static const Color ink200Light = Color(0xFFE8E8E8);
+  static const Color ink300Light = Color(0xFFE0E0E0);
+  static const Color ink400Light = Color(0xFFBFBFBF);
+  static const Color ink500Light = Color(0xFFA6A6A6);
+  static const Color ink600Light = Color(0xFF868686);
+  static const Color ink700Light = Color(0xFF636363);
+  static const Color ink800Light = Color(0xFF444444);
+  static const Color ink900Light = Color(0xFF111111);
+
+  // Neutral ramp — dark.
+  static const Color ink0Dark = Color(0xFF111111);
+  static const Color ink50Dark = Color(0xFF1C1C1C);
+  static const Color ink100Dark = Color(0xFF282828);
+  static const Color ink200Dark = Color(0xFF333333);
+  static const Color ink300Dark = Color(0xFF484848);
+  static const Color ink400Dark = Color(0xFF5D5D5D);
+  static const Color ink500Dark = Color(0xFF717171);
+  static const Color ink600Dark = Color(0xFF8C8C8C);
+  static const Color ink700Dark = Color(0xFF9E9E9E);
+  static const Color ink800Dark = Color(0xFFC9C9C9);
+  static const Color ink900Dark = Color(0xFFF5F5F5);
+
+  // Intent ramps. These were already ladders — every value below except the
+  // nine marked new was in the palette under an ad-hoc name that hid the
+  // structure. Roles are picked from the ramp, never invented alongside it.
+  static const Color critical50 = Color(0xFFFDE7E4);
+  static const Color critical100 = Color(0xFFFFD9D3);
+  static const Color critical200 = Color(0xFFFF7D73); // new
+  static const Color critical300 = Color(0xFFF0705E);
+  static const Color critical400 = Color(0xFFD92D20);
+  static const Color critical500 = Color(0xFFB42318);
+  static const Color critical600 = Color(0xFF7A1C13);
+  static const Color critical700 = Color(0xFF3B1512);
+
+  static const Color warning50 = Color(0xFFFEF0C7);
+  static const Color warning100 = Color(0xFFFBDFA6);
+  static const Color warning200 = Color(0xFFFFA673); // new
+  static const Color warning300 = Color(0xFFF79009);
+  static const Color warning400 = Color(0xFFCA6932); // new
+  static const Color warning500 = Color(0xFFB54708);
+  static const Color warning600 = Color(0xFF7A2E0E);
+  static const Color warning700 = Color(0xFF33230A);
+
+  // Positive had only two values, so a "service restored" notice had no
+  // surface to sit on. The ramp is filled to the same eight steps as the
+  // other two intents rather than left as a special case.
+  static const Color positive50 = Color(0xFFCEF5E1); // new
+  static const Color positive100 = Color(0xFFA8F0CA); // new
+  static const Color positive200 = Color(0xFF61D798); // new
+  static const Color positive300 = Color(0xFF12B76A);
+  static const Color positive400 = Color(0xFF25965B); // new
+  static const Color positive500 = Color(0xFF0E7C42);
+  static const Color positive600 = Color(0xFF0C4F2C); // new
+  static const Color positive700 = Color(0xFF062A17); // new
+
   // Pure Achromatic color tokens (Light Mode)
-  static const Color inkLight = Color(0xFF111111);
-  static const Color inkSecondaryLight = Color(0xFF636363);
-  static const Color inkDisabledLight = Color(0xFFBFBFBF);
-  static const Color borderLight = Color(0xFFE0E0E0);
-  static const Color surfaceLight = Color(0xFFF7F7F7);
-  static const Color surfaceCardLight = Color(0xFFFFFFFF);
-  static const Color surfacePressLight = Color(0xFFEFEFEF);
-  static const Color surfaceHighlightLight = Color(0xFFE8E8E8);
+  static const Color inkLight = ink900Light;
+  static const Color inkSecondaryLight = ink700Light;
+  static const Color inkDisabledLight = ink400Light;
+  static const Color borderLight = ink300Light;
+  static const Color surfaceLight = ink50Light;
+  static const Color surfaceCardLight = ink0Light;
+  static const Color surfacePressLight = ink100Light;
+  static const Color surfaceHighlightLight = ink200Light;
+
+  static const Color inkTertiaryLight = ink600Light;
+  static const Color inkTertiaryDark = ink600Dark;
+
+  /// Disabled *content*, split from the disabled border it used to share a
+  /// value with. A border wants to stay quiet; a label has to stay readable.
+  static const Color contentDisabledLight = ink500Light;
+  static const Color contentDisabledDark = ink500Dark;
 
   // Pure Achromatic color tokens (Dark Mode)
-  static const Color inkDark = Color(0xFFF5F5F5);
-  static const Color inkSecondaryDark = Color(0xFF9E9E9E);
-  static const Color inkDisabledDark = Color(0xFF383838);
-  static const Color borderDark = Color(0xFF383838);
-  // Even ~11-step ramp. Dark mode has no usable drop shadow, so each elevation
-  // level must be a legible lightness step on its own.
-  static const Color surfaceDark = Color(0xFF111111);
-  static const Color surfaceCardDark = Color(0xFF1C1C1C);
-  static const Color surfacePressDark = Color(0xFF282828);
-  static const Color surfaceHighlightDark = Color(0xFF333333);
+  static const Color inkDark = ink900Dark;
+  static const Color inkSecondaryDark = ink700Dark;
+  static const Color inkDisabledDark = ink300Dark;
+  static const Color borderDark = ink300Dark;
+  // Dark mode has no usable drop shadow, so each elevation level must be a
+  // legible lightness step on its own.
+  static const Color surfaceDark = ink0Dark;
+  static const Color surfaceCardDark = ink50Dark;
+  static const Color surfacePressDark = ink100Dark;
+  static const Color surfaceHighlightDark = ink200Dark;
 
-  /// The coming-soon highlight fill for the active brightness.
-  ///
-  /// The five surfaces that highlight an imminent arrival — the ETA tile, the
-  /// TRA departure board, the GenUI arrival card, the bus timetable's next
-  /// trip, and navigation's "bus is here" cue — each own their own geometry (a
-  /// card, a table cell, a pill), so only the fill is shared. Resolving it here
-  /// is what keeps the highlight achromatic and identical across all five: the
-  /// emphasis is this surface, never a tinted or pulsing foreground.
   static Color surfaceHighlight(Brightness brightness) =>
       brightness == Brightness.light
       ? surfaceHighlightLight
       : surfaceHighlightDark;
+
+  static Color inkTertiary(Brightness brightness) =>
+      brightness == Brightness.light ? inkTertiaryLight : inkTertiaryDark;
+
+  /// Disabled *content*, as opposed to the disabled boundary `cs.outline`
+  /// paints. Kept separate because a label and a hairline want opposite things
+  /// from the same "inactive" idea.
+  static Color contentDisabled(Brightness brightness) =>
+      brightness == Brightness.light
+      ? contentDisabledLight
+      : contentDisabledDark;
 
   // Custom static schemes ensuring pure neutral surfaces and maximum contrast
   static const ColorScheme lightScheme = ColorScheme(
@@ -160,7 +241,7 @@ class AppTheme {
     surfaceContainerHigh: surfaceCardLight,
     surfaceContainerHighest: surfacePressLight,
     onSurfaceVariant: inkSecondaryLight,
-    outline: inkDisabledLight,
+    outline: contentDisabledLight,
     outlineVariant: borderLight,
   );
 
@@ -172,10 +253,10 @@ class AppTheme {
     onPrimaryContainer: inkDark,
     secondary: inkSecondaryDark,
     onSecondary: inkLight,
-    error: Color(0xFFBA1A1A),
-    onError: Colors.white,
-    errorContainer: Color(0xFFFFDAD6),
-    onErrorContainer: Color(0xFFBA1A1A),
+    error: critical300,
+    onError: ink0Dark,
+    errorContainer: critical700,
+    onErrorContainer: critical100,
     surface: surfaceDark,
     onSurface: inkDark,
     surfaceContainerLow: surfaceCardDark,
@@ -188,17 +269,10 @@ class AppTheme {
     // top of a dialog painted there.
     surfaceContainerHighest: surfaceHighlightDark,
     onSurfaceVariant: inkSecondaryDark,
-    outline: borderDark,
+    outline: contentDisabledDark,
     outlineVariant: borderDark,
   );
 
-  /// Surface treatment for controls floating above the map (settings, alerts,
-  /// recenter, map back button).
-  ///
-  /// A drop shadow reads as depth on the light map but disappears against the
-  /// dark one, so in dark mode elevation is carried by a lighter surface and a
-  /// hairline border instead. Pass exactly one of [borderRadius] or a circular
-  /// [shape]; `BoxDecoration` rejects both together.
   static BoxDecoration floatingControl(
     ColorScheme cs, {
     BorderRadius? borderRadius,
@@ -311,6 +385,19 @@ class AppTheme {
     margin: EdgeInsets.zero,
   );
 
+  static SkeletonizerConfigData _skeleton(ColorScheme cs) =>
+      SkeletonizerConfigData(
+        effect: ShimmerEffect(
+          baseColor: cs.surfaceContainerHighest,
+          highlightColor: cs.surfaceContainer,
+          duration: AppMotion.shimmerLoop,
+        ),
+        textBorderRadius: TextBoneBorderRadius(
+          BorderRadius.circular(radiusChip),
+        ),
+        containersColor: cs.surfaceContainerHighest,
+      );
+
   static ThemeData get light => _build(lightScheme);
 
   static ThemeData get dark => _build(darkScheme);
@@ -319,6 +406,7 @@ class AppTheme {
     useMaterial3: true,
     fontFamily: 'IBMPlexSans',
     colorScheme: cs,
+    extensions: [_skeleton(cs)],
     textTheme: _text(cs),
     cardTheme: _card(cs),
     pageTransitionsTheme: const PageTransitionsTheme(

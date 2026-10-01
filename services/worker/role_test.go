@@ -6,10 +6,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/raw"
 )
 
-// Covers: ROLE="" → legacy prod, ROLE=ingestor → ingestor, ROLE=loader → loader,
-// and that eta/realtime/etl/unknown all error out instead of falling into the
-// legacy prod flow (so they never initialize Firebase / dispatcher / MQTT, which
-// live only in runLegacyProd).
 func TestResolveRole(t *testing.T) {
 	okCases := map[string]appMode{
 		"":         _modeLegacyProd,

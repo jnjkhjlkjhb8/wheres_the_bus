@@ -1,8 +1,3 @@
-/// The unified ETA display status every transit mode maps its live estimate
-/// into. The shared arrival tile (shared/widgets/eta_list_tile.dart) renders it
-/// through one `EtaValue`, so the mono-time and status-colour invariants have a
-/// single owner. The status *labels/colours* are the tile's; the *rules* that
-/// pick a status stay in eta_format.dart, applied by each mode's mapper.
 sealed class EtaStatus {
   const EtaStatus();
   factory EtaStatus.arriving() = EtaArriving;

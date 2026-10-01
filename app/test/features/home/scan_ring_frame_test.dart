@@ -1,10 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/features/home/home_screen.dart';
 
-/// The scan ring's whole claim is that it ends on the radius the nearby query
-/// actually covered, having emerged from the user's own position. These pin
-/// that shape — and the still variant a pan-driven search (or reduce-motion)
-/// gets, which keeps the statement while dropping the travel.
 void main() {
   const radius = 420.0;
 

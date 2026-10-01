@@ -42,12 +42,6 @@ class TraFare extends Equatable {
   List<Object?> get props => [ticketType, price];
 }
 
-/// The 車種 suffix TDX prices a train of [trainTypeName] on.
-///
-/// A TRA fare is per train class, not per O/D pair: 桃園→臺北 costs 63 on a
-/// 區間車 and 99 on a 自強. TDX prices 區間車 on the 復興 (復) tier and groups
-/// 太魯閣/普悠瑪/EMU3000 with 自強 (自). 普快 is matched before 普悠瑪 because
-/// both start with 普.
 String traTrainClassSuffix(String trainTypeName) {
   if (trainTypeName.contains('普快')) return '普';
   if (trainTypeName.contains('區間') || trainTypeName.contains('復興')) {
@@ -57,12 +51,6 @@ String traTrainClassSuffix(String trainTypeName) {
   return '自';
 }
 
-/// The fare for a train of [trainTypeName] at the rider's [type], or null when
-/// the pair prices no ticket of that train class at all.
-///
-/// Walks `FareType.traPrefixes` so a rider on a concession ticket gets their
-/// own price where TDX publishes one and the full fare — reported as such
-/// through `ResolvedFare.matched` — where it does not.
 ResolvedFare? traFareFor(
   List<TraFare> fares,
   String trainTypeName,

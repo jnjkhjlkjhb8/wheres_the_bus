@@ -98,10 +98,6 @@ func TestAppendTransitSegmentEmptyPath(t *testing.T) {
 	}
 }
 
-// TestAppendTransitSegmentNoDedupeWhenDisjoint proves a fallback straight
-// segment (whose first point does not match the running path's last point,
-// e.g. because the previous pair itself fell back to raw stop points from a
-// different source) is appended whole rather than incorrectly truncated.
 func TestAppendTransitSegmentNoDedupeWhenDisjoint(t *testing.T) {
 	path := []*pb.Location{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}}
 	seg := []*pb.Location{{Lat: 9, Lng: 9}, {Lat: 3, Lng: 3}}
@@ -143,10 +139,6 @@ func TestParseWKTLineStringRejectsNonLineString(t *testing.T) {
 	}
 }
 
-// TestClipRailShapeFallsBackWithoutCoordinates proves a stop pair missing
-// coordinates (the zero value TDX sometimes sends) or a nil db reports
-// ok=false immediately, so the caller falls back to a straight line rather
-// than treating (0,0) as a real point off the coast of Africa.
 func TestClipRailShapeFallsBackWithoutCoordinates(t *testing.T) {
 	if _, ok := clipRailShape(context.Background(), nil, "metro", transitStopPoint{1, 1}, transitStopPoint{2, 2}); ok {
 		t.Fatal("clipRailShape should report ok=false for a nil db")

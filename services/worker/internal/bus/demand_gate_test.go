@@ -7,15 +7,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
 )
 
-// TestBusEtaSnapshotTickIgnoresDemandGate covers the interaction the demand
-// gate would otherwise break silently (FDPL-90).
-//
-// snapshotTick is a fixed 30s window per 10 minutes of wall clock, so a
-// reduced-cadence fetch lands inside it only about one time in twenty. Gating
-// snapshot ticks would cost an unwatched city roughly nine tenths of its
-// bus_eta_history rows, and those are the only input segmentsByEstimate
-// reduces into bus_segment_time — the observed running times the ETA
-// prediction leans on hardest in exactly the rural cities nobody streams.
 func TestBusEtaSnapshotTickIgnoresDemandGate(t *testing.T) {
 	ctx := context.Background()
 	sink := &captureLiveSink{}

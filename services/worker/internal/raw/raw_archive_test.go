@@ -51,8 +51,6 @@ func TestArchiveRawPayloadStoresPayloadVerbatimAndRewinds(t *testing.T) {
 	}
 }
 
-// A failed archive write must not surface as an error: ADR-0023 keeps the
-// landing running rather than gating it on the archive host.
 func TestArchiveRawPayloadSwallowsWriteFailure(t *testing.T) {
 	f := &fakeExecer{err: errors.New("archive host down")}
 	ArchivePayload(context.Background(), f, Target{Table: "bus_route"}, "marker", "cycle",

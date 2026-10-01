@@ -125,8 +125,6 @@ func equalStrings(a, b []string) bool {
 }
 
 func TestValidHexColor(t *testing.T) {
-	// Empty is legal: an app that predates ADR-0018 sends no colour, which
-	// leaves the server unable to push a card — exactly the old behaviour.
 	for _, ok := range []string{"", "#0070BD", "#ffdb00"} {
 		if !validHexColor(ok) {
 			t.Errorf("validHexColor(%q) = false", ok)

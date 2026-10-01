@@ -69,7 +69,12 @@ class _MiniBar extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          0,
+          AppTheme.space16,
+          AppTheme.space12,
+        ),
         child: Pressable(
           onTap: () {
             if (GoRouterState.of(context).uri.path == AppRoutes.go) return;
@@ -77,7 +82,10 @@ class _MiniBar extends StatelessWidget {
           },
           semanticLabel: AppI18n.of(context).navBackSemantics(dest),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.space12,
+              vertical: AppTheme.space10,
+            ),
             decoration: AppTheme.floatingControl(
               cs,
               borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -97,7 +105,7 @@ class _MiniBar extends StatelessWidget {
                     size: 20,
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppTheme.space10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,7 +131,7 @@ class _MiniBar extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppTheme.space10),
                 if (arrival.isNotEmpty)
                   Text(
                     arrival,
@@ -133,7 +141,7 @@ class _MiniBar extends StatelessWidget {
                       color: cs.onSurface,
                     ),
                   ),
-                const SizedBox(width: 4),
+                const SizedBox(width: AppTheme.space4),
                 Icon(
                   Icons.chevron_right_rounded,
                   size: 20,

@@ -1,43 +1,4 @@
 #!/usr/bin/env bash
-# check-migration-catalog.sh
-#
-# Catalog/integration tests for the 2026-07-16 "live-informed" migration
-# set (see migrations/README.md). Unlike check-migrations.sh (which applies
-# the FULL migration history to prove no file is individually broken), this
-# script builds a fixture on an ephemeral PostgreSQL container that
-# reproduces the *specific* conditions the live schema audit found, and
-# proves the three new migrations fix them without breaking documented
-# invariants:
-#
-#   1. search_vector has two semantically duplicate HNSW indexes on
-#      embedding (mimics an out-of-band index applied directly to the live
-#      database, alongside the one 2026-07-13-search-vector-hnsw.sql
-#      tracks) -> migrations/2026-07-16-search-vector-hnsw-dedupe.sql must
-#      leave exactly one valid HNSW index.
-#   2. bus_schedule has circular-route duplicate natural keys (two rows,
-#      same sub_route_uid/direction/type/service_day/tripid/stop_uid) and
-#      no UNIQUE constraint over those columns -> that must be preserved
-#      exactly, and migrations/2026-07-16-bus-schedule-scan-index.sql must
-#      add back a NON-unique scan index without ever reintroducing
-#      uniqueness.
-#   3. tra_fares / tra_timetable are missing FK-style supporting indexes on
-#      destination_station_id / starting_station_id / ending_station_id ->
-#      migrations/2026-07-16-tra-fk-indexes.sql must add all three.
-#
-# Runs against a non-public schema to prove schema-aware application (the
-# same PGOPTIONS search_path pattern documented in migrations/README.md),
-# and reapplies the three migrations a second time to prove idempotence.
-#
-# Two extra scenarios exercise the HNSW dedupe migration's edge cases in a
-# second fixture schema:
-#   4. THREE identical HNSW indexes: a typo'd -v survivor_index must fail
-#      loudly before anything is dropped; then a plain run drops exactly
-#      one duplicate, exits 0 and emits a rerun NOTICE; a rerun drops the
-#      next one, leaving exactly one.
-#
-# Requires: docker.
-#
-# Usage: scripts/check-migration-catalog.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -74,10 +35,6 @@ for _ in $(seq 1 30); do
 done
 docker exec "$CONTAINER" pg_isready -U "$USER" -d "$DB" >/dev/null
 
-# Every psql invocation below runs with PGOPTIONS=-c search_path=$SCHEMA,
-# the exact pattern migrations/README.md documents for schema-scoped
-# application (staging: PG_SCHEMA=staging) -- this is what makes the run
-# "schema-aware" rather than relying on the public schema by accident.
 psql() {
   docker exec -i -e PGOPTIONS="-c search_path=$SCHEMA,public" "$CONTAINER" \
     env PGPASSWORD="$PASS" psql -X -v ON_ERROR_STOP=1 -U "$USER" -d "$DB" "$@"

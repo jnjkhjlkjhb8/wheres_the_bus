@@ -62,16 +62,6 @@ class ResilientSubscription<T> {
   bool _notified = false;
   bool _closed = false;
 
-  /// Backgrounding drops the open stream — see [AppForeground]. Resuming
-  /// re-listens with the backoff reset, because coming back on screen is not a
-  /// failure and the user is waiting for a fresh frame.
-  ///
-  /// A terminal error (unauthenticated, permission denied, unimplemented) stops
-  /// the retry loop, but only until the next resume (FDPL-52): a router mid-
-  /// restart and an expired token both produce one, and neither is a permanent
-  /// fact about the endpoint. Retrying once per resume is far from re-hammering
-  /// it, and without that the feed — and the notice it raised — stayed dead for
-  /// the rest of the process.
   void _onForegroundChanged() {
     if (_closed) return;
     if (!_foreground.value) {
@@ -91,11 +81,6 @@ class ResilientSubscription<T> {
     _listen();
   }
 
-  /// The device got an interface back. Whatever backoff is pending was sized
-  /// for a server problem, not for airplane mode, so skip it and dial now
-  /// (FDPL-55). Only a scheduled retry is short-circuited: a live subscription
-  /// is left alone, and a stream stopped by a terminal error stays stopped
-  /// until the next resume.
   void _onOnlineChanged() {
     if (_closed || !_online.value || !_foreground.value) return;
     if (_sub != null || _timer == null) return;
@@ -106,11 +91,6 @@ class ResilientSubscription<T> {
 
   void _listen() {
     if (_closed || !_foreground.value) return;
-    // A source factory can fail synchronously (e.g. a gRPC client that
-    // validates arguments before opening the channel) instead of returning a
-    // stream that later emits an error. Both must be handled identically —
-    // reported, counted, retried with the same backoff — so a bad factory
-    // call doesn't silently stop reconnecting.
     final Stream<T> stream;
     try {
       stream = _source();
@@ -132,20 +112,12 @@ class ResilientSubscription<T> {
         // established, so it proves the endpoint is reachable just as a frame
         // would.
         _markRecovered();
-        // A clean close is normal (server-side stream rotation), but a server
-        // that closes immediately on every connect must not become a hot
-        // reconnect loop: back off like errors do, capped at [_maxDelay], and
-        // never surface a failure. Any received data resets the backoff.
         if (_cleanCloses < 6) _cleanCloses++;
         var delay = _baseDelay * (1 << (_cleanCloses - 1));
         if (delay > _maxDelay) delay = _maxDelay;
         _timer = Timer(_retryDelay(delay), _listen);
       },
     );
-    // Nothing but time proves a reconnect worked on a quiet stream: alerts sit
-    // silent for hours, so waiting for a frame to declare recovery leaves the
-    // offline notice up forever after the network comes back (FDPL-48).
-    // Surviving [_recoveryGrace] without an error is the proof instead.
     if (_failures > 0 || _notified) {
       _graceTimer?.cancel();
       _graceTimer = Timer(_recoveryGrace, _markRecovered);

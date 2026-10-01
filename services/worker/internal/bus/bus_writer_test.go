@@ -16,12 +16,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/predict"
 )
 
-// TestMergeBusFares covers FDPL-67: InterCity (公路客運) prices each direction
-// of a subroute separately, so a canonical subroute's two native SubRouteIDs
-// (e.g. 208801/208802) never carry identical Stage/OD fares — each entry
-// carries its own Direction plus an origin and destination. The merge must
-// union those entries rather than discard one side, or a two-direction
-// InterCity route silently ends up with no fare at all.
 func TestMergeBusFares(t *testing.T) {
 	dir0 := &models.Bus_Fare{
 		FarePricingType: 1, IsFreeBus: false,

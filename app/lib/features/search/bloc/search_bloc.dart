@@ -44,10 +44,6 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     add(const SearchSuggestionsRequested());
   }
 
-  /// Long enough that a steady typist doesn't fire a request per keystroke,
-  /// short enough that the wait isn't what the user is feeling. Every
-  /// in-flight request is superseded by id, so the floor here is about
-  /// request volume, not correctness.
   static const _debounceDelay = Duration(milliseconds: 180);
 
   final SearchRepository _searchRepository;
@@ -147,13 +143,6 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     }
   }
 
-  /// City codes present in [results], most-represented first so the likeliest
-  /// target sits nearest the start of the row; ties break north to south.
-  ///
-  /// derived from the page the router returned, so a city with no row in the
-  /// top results gets no chip. The row's job is naming what the current
-  /// results are mixing together, not listing every city in Taiwan — that
-  /// would be a second aggregate query on every keystroke.
   static List<String> _cityOptions(List<SearchResult> results) {
     final counts = <String, int>{};
     for (final r in results) {
@@ -169,10 +158,6 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     return codes;
   }
 
-  /// Reorders one page of router results by this rider's own signals. The
-  /// router ranks by text relevance alone — it has no idea who is asking —
-  /// so this is where "the stop I use every morning" beats "the stop with the
-  /// marginally better trigram score".
   List<SearchResult> _rank(List<SearchResult> results, String query) =>
       rankSearchResults(
         results,
@@ -193,10 +178,6 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     );
   }
 
-  /// Loads the empty-query screen's recents, and takes the position fix that
-  /// [_rank] weights results by. The fix is read here rather than per
-  /// keystroke: it is the OS's cached one, and a search session is short
-  /// enough that re-reading it mid-query would cost more than it corrects.
   Future<void> _onSuggestionsRequested(
     SearchSuggestionsRequested _,
     Emitter<SearchState> emit,
@@ -222,10 +203,6 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     emit(state.copyWith(recentResults: _recentRepository.all()));
   }
 
-  /// Clearing history clears the ranking signal with it. Leaving the affinity
-  /// record behind would keep putting the rider's old picks first after they
-  /// asked the app to forget them — the list would say forgotten while the
-  /// order said otherwise.
   Future<void> _onRecentsCleared(
     SearchRecentsCleared _,
     Emitter<SearchState> emit,

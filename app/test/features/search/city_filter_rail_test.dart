@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:go_router/go_router.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/data/models/search_models.dart';
@@ -148,14 +149,23 @@ Future<void> _pump(
   double textScale = 1,
 }) async {
   await tester.pumpWidget(
-    MaterialApp(
+    MaterialApp.router(
       locale: const Locale('zh'),
       localizationsDelegates: AppI18n.localizationsDelegates,
       supportedLocales: AppI18n.supportedLocales,
       theme: AppTheme.light,
-      home: MediaQuery(
-        data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
-        child: SearchScreen(bloc: bloc),
+      routerConfig: GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, state) => MediaQuery(
+              data: MediaQueryData(
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: SearchScreen(bloc: bloc),
+            ),
+          ),
+        ],
       ),
     ),
   );
@@ -200,10 +210,6 @@ class _FakeSearchRecentRepository implements SearchRecentRepository {
   Future<void> clear() async {}
 }
 
-/// The subtitle deliberately carries no city text, so an assertion that a raw
-/// TDX code is absent from the screen is about the chip labels and nothing
-/// else. (In the app the subtitle is already the Chinese name — the repository
-/// maps it on the way in.)
 SearchResult _result(String uid, String city) => SearchResult(
   type: SearchResultType.busStation,
   uid: uid,

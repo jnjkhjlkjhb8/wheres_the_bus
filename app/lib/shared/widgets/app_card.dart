@@ -42,7 +42,7 @@ class AppCard extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: padding ?? const EdgeInsets.all(16),
+      padding: padding ?? const EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),

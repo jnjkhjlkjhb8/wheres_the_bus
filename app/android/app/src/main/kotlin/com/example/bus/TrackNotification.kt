@@ -13,26 +13,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
 import kotlin.math.max
 
-/**
- * The alight-tracking Live Update: one card for bus, TRA, THSR and metro.
- *
- * Everything is built through [NotificationCompat], so a single code path
- * serves Android 16's promoted ongoing notification (status-bar chip +
- * segmented [NotificationCompat.ProgressStyle] bar) and degrades on its own to
- * a plain progress notification on older releases. The four bespoke renderers
- * this replaced had drifted into five different card vocabularies for what is
- * one intent: counting down to the stop the rider gets off at.
- *
- * The card is deliberately template-only — promoted notifications forbid
- * `setCustomContentView` and `setColorized(true)`, and that is the point: the
- * system draws it, so it stays legible on the lock screen, always-on display
- * and status bar, at the user's own theme and text size.
- *
- * It needs a [Context] and nothing else, because it has two callers: the
- * MethodChannel path while the app is on screen, and [TrackPushReceiver] when
- * the server refreshes the card of an app that is backgrounded or gone
- * (ADR-0018). The second of those has no Activity, no engine and no Dart.
- */
 class TrackNotification(private val context: Context) {
 
     companion object {
@@ -42,67 +22,32 @@ class TrackNotification(private val context: Context) {
         // Broadcast fired by the card's 取消追蹤 action.
         const val CANCEL_ACTION = "com.wheres.bus.action.CANCEL_TRACK"
 
-        // The session the card belongs to, carried on that broadcast so a
-        // process with no Dart alive can still end it server-side (FDPL-65).
-        // Absent for bus and rail, whose sessions live only on the device.
         const val EXTRA_TRACK_ID = "track_id"
+
+        const val LOCAL_TRACK_PREFIX = "local-"
+
+        private const val METRO_MODE = "metro"
 
         // Stops remaining at or below which the ride reads as "act now",
         // regardless of the rider's own lead. One stop out is the last moment
         // standing up still helps.
         private const val ARRIVING_STOPS = 1
 
-        /**
-         * Stops remaining on the reading the card is currently showing.
-         *
-         * Two writers now reach one card — the app while it is awake, and a
-         * server push while it is not — and they can race. Ordering them by
-         * clock is not available: the two stamps come from two machines, and a
-         * few seconds of skew would silently pick the wrong winner. A ride only
-         * ever moves toward the alight stop, so the reading with fewer stops
-         * left is the later one, whichever writer produced it.
-         *
-         * Process-wide because the push receiver and the plugin run in the same
-         * process; reset by [beginSession] so a new ride is not judged against
-         * the last one's progress.
-         */
         @Volatile
         private var showingStops: Int = Int.MAX_VALUE
 
-        /**
-         * The session the card on screen belongs to, so a cancel that carries no
-         * id — Dart's `stop`, which has no arguments — can still tombstone the
-         * right one. Null after a process death, where the only cancel that can
-         * happen is the receiver's, and that one names its session explicitly.
-         */
         @Volatile
         private var lastTrackId: String? = null
 
-        // Where the cancelled-session tombstone lives. Disk, not a static: the
-        // process that cancels a card may not be the one a push in flight wakes
-        // up, and a tombstone lost to a process death is a tombstone that does
-        // not do its job.
+        @Volatile
+        private var lastMode: String? = null
+
         private const val PREFS = "track_card"
         private const val KEY_CANCELLED_TRACK = "cancelled_track_id"
         private const val KEY_CANCELLED_AT = "cancelled_at_ms"
 
-        /**
-         * How long a cancelled session stays refused.
-         *
-         * Cancelling ends the session server-side, so no *new* refresh is sent —
-         * but one already in flight can still land, and it would repost a card
-         * the rider just dismissed. The window only has to outlive that flight,
-         * and staying short means a session id can never wedge a later ride.
-         */
         private const val TOMBSTONE_MS = 2 * 60 * 1000L
 
-        /**
-         * How long a terminal card (已到站 / 追蹤失效) stays on screen before the
-         * platform takes it down on its own. An ending has to be seen — a card
-         * that just vanishes reads as "still tracking" — but one nobody ever
-         * dismisses is litter. Longer than Dart's own linger, so the app keeps
-         * ownership of the dismissal whenever it is alive.
-         */
         private const val ENDED_LINGER_MS = 8 * 1000L
 
         /** Reads a value that arrives as a number over the channel and as a string over FCM. */
@@ -125,40 +70,32 @@ class TrackNotification(private val context: Context) {
         clearTombstone()
     }
 
-    /**
-     * Draws [data] on the card, unless it describes a ride less far along than
-     * what is already showing — a push that lost its race to a local update.
-     * Returns whether it was drawn, which is what the receiver logs.
-     *
-     * A terminal reading always wins: an ending is never something to discard.
-     */
-    fun post(data: Map<String, Any?>): Boolean {
+    fun post(data: Map<String, Any?>, fromPush: Boolean = false): Boolean {
         val phase = data["phase"] as? String ?: "riding"
         val remaining = max(0, intOf(data, "remainingStops") ?: 0)
         val ended = phase == "arrived" || phase == "lost"
         if (isCancelled(data["trackId"] as? String)) return false
-        if (!ended && remaining > showingStops) return false
+        if (fromPush && !ended && remaining > showingStops) return false
         showingStops = if (ended) Int.MAX_VALUE else remaining
         lastTrackId = data["trackId"] as? String
+        lastMode = data["mode"] as? String
         ensureChannel()
         NotificationManagerCompat.from(context).notify(NOTIF_ID, buildTrack(data))
         return true
     }
 
-    /**
-     * Takes the card down, and refuses [trackId] for a short while afterwards.
-     *
-     * Cancelling ends the session, so nothing new is pushed — but a refresh
-     * already in flight can land a moment later, and reposting a card the rider
-     * just dismissed is worse than never having pushed it. The tombstone is what
-     * makes the dismissal stick through that window.
-     */
     fun cancel(trackId: String? = null) {
         showingStops = Int.MAX_VALUE
         val session = trackId?.takeIf { it.isNotEmpty() } ?: lastTrackId
         lastTrackId = null
+        lastMode = null
         if (!session.isNullOrEmpty()) writeTombstone(session)
         NotificationManagerCompat.from(context).cancel(NOTIF_ID)
+    }
+
+    fun dropUnpushedCard() {
+        if (lastMode == METRO_MODE) return
+        cancel()
     }
 
     /** Whether this session was cancelled recently enough to still be refused. */
@@ -190,10 +127,6 @@ class TrackNotification(private val context: Context) {
     @androidx.annotation.VisibleForTesting
     internal fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        // A promoted ongoing notification may not sit on an IMPORTANCE_MIN
-        // channel. Re-creating an existing channel with the same id only ever
-        // raises importance for installs that still hold the old LOW channel;
-        // the platform treats it as a no-op otherwise.
         val channel = NotificationChannel(
             NOTIF_CHANNEL_ID,
             "下車提醒",
@@ -203,10 +136,6 @@ class TrackNotification(private val context: Context) {
             .createNotificationChannel(channel)
     }
 
-    /**
-     * The one and only card. Bus, TRA, THSR and metro differ in the strings
-     * they put in it — never in its shape.
-     */
     @androidx.annotation.VisibleForTesting
     internal fun buildTrack(data: Map<String, Any?>): Notification {
         val mode = data["mode"] as? String ?: "bus"
@@ -218,8 +147,6 @@ class TrackNotification(private val context: Context) {
         val next = data["nextStation"] as? String ?: ""
         val hopCount = max(1, intOf(data, "hopCount") ?: 1)
         val remaining = max(0, intOf(data, "remainingStops") ?: 0)
-        // 提前站數, 0 = no early warning (ADR-0020). The warm run still spans
-        // one stop at 0, because the 下車站 buzz is unconditional.
         val lead = max(0, intOf(data, "leadStops") ?: 0)
         val etaMinutes = intOf(data, "etaMinutes")
         val departureMs = longOf(data, "scheduledDepartureMs")
@@ -266,30 +193,14 @@ class TrackNotification(private val context: Context) {
         val approach = ContextCompat.getColor(context, R.color.track_approach)
         val arriving = ContextCompat.getColor(context, R.color.track_arriving)
 
-        // Distance to the alight stop, as colour. The amber threshold is the
-        // rider's own 提前站數 — the same number that decides when the
-        // reminder buzzes — so the warm bar is the visual residue of that
-        // buzz rather than a second rule to learn. A finished ride goes back
-        // to Ink: red would demand an action that no longer exists.
         val warmColor = if (remaining <= ARRIVING_STOPS) arriving else approach
         // The station the warm run starts after — the rider's own 提前站數.
         // Pushed past the end while there is nothing to warn about, so a
         // waiting or finished card has no warm run at all.
         val warmFrom = if (riding) hopCount - lead - 1 else hopCount
-        // Tints the notification header. Measured on a Pixel 8 / Android 17:
-        // this does NOT reach the status-bar chip (system neutral surface) nor
-        // the action text (device accent) — promoted cards forbid custom views
-        // and setColorized, so those two colours are the platform's to choose,
-        // not ours. Distance therefore lives in the progress bar, which
-        // Segment.setColor does honour, and in the chip's wording.
         val accent = if (riding && remaining <= ARRIVING_STOPS) arriving else ink
 
         val builder = NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
-            // The small icon is what the status-bar chip shows next to its
-            // 剩N站, at about 16dp. It is the only place the card names the
-            // network, so it carries the transit mode rather than a generic
-            // mark: a rider glancing at the chip should know which reminder is
-            // running before reading a character.
             .setSmallIcon(chipIcon(mode))
             .setColor(accent)
             .setOngoing(live)
@@ -305,47 +216,10 @@ class TrackNotification(private val context: Context) {
             // collapses to a bare icon, and a card that never says who posted
             // it is a card the rider cannot place.
             .setShowWhen(true)
-            // Requests the status-bar chip. Only asked for while the session
-            // is live, so a terminal card settles into an ordinary
-            // notification for its last few seconds instead of holding the
-            // chip on something that has stopped moving.
             .setRequestPromotedOngoing(live)
 
-        // The time slot in that row is the last-updated stamp, not a countdown
-        // to arrival: every station hop re-posts the card, so `now` is exactly
-        // "as of when". A chronometer counting down to the ETA would compete
-        // with the chip for the same job and keep running even after the feed
-        // behind it went quiet.
-        //
-        // Stamped from this device's clock even for a pushed refresh: the
-        // reading did just arrive, and the server's own clock would put a few
-        // seconds of skew into a row the rider reads as "just now".
         builder.setWhen(System.currentTimeMillis())
 
-        // Retirement window: how long a silence this card may sit through
-        // before the platform takes it down. A metro card is refreshed by push
-        // while the app sleeps (ADR-0018), but every other mode is local-only,
-        // so a process the system killed mid-ride leaves an un-swipeable
-        // ongoing card whose numbers never move again, and the as-of stamp
-        // above is the only hint — one the rider has to notice and do
-        // arithmetic on.
-        //
-        // This is the Android half of iOS's per-mode `staleDate`
-        // (LiveActivityPlugin.swift), with one difference that sets the
-        // numbers: ActivityKit *marks* a stale card, the platform here
-        // *cancels* it. Cancelling a card the rider is still riding behind is
-        // the worse error of the two, so the windows are double the iOS ones —
-        // long enough that no live session can be cut off (every mode re-posts
-        // at least once a minute while the app runs), short enough that a dead
-        // process is cleaned up in minutes rather than sitting there until the
-        // next launch.
-        //
-        // A terminal card gets the short one instead. Dart dismisses it after
-        // its own linger, but a card pushed to a process that is gone has no
-        // Dart to do that, and 已到站 would then sit in the shade until the
-        // rider swiped it away. This is the same job iOS's `dismissal-date`
-        // does, and it is deliberately longer than Dart's linger so the app
-        // still owns the dismissal whenever it is alive to.
         builder.setTimeoutAfter(if (live) staleWindowMs(mode) else ENDED_LINGER_MS)
 
         // Below Android 16 there is no chip, so the reading has to live in the
@@ -367,29 +241,6 @@ class TrackNotification(private val context: Context) {
         return builder.build()
     }
 
-    /**
-     * The progress bar: one continuous run from the board stop to the alight
-     * stop, a square at every station along it, a hollow ring where the rider
-     * got on, a flag on the stop they want, and the map's own user puck as the
-     * tracker.
-     *
-     * Stations are **points**, not segments. A segment renders as a rounded
-     * bar and a point as a square tick, and a station is a discrete event on a
-     * continuous ride — so the ride is the segments and each station is a mark
-     * on them. The station the reminder fires at is the one square in the warm
-     * colour, which makes the bar answer three questions at a glance: where am
-     * I, where will I be warned, where do I get off.
-     *
-     * Colour rides on what is **left**, not on what is done: the travelled
-     * stretch greys out behind the tracker and the run still to come carries
-     * the distance colour. Stops already passed cannot be acted on.
-     *
-     * Both halves are coloured explicitly rather than through
-     * `setStyledByProgress(true)`. Measured on a Pixel 8 / Android 17, that
-     * flag fades everything past the tracker to a bare grey rule: upcoming
-     * stations lose their squares and the reminder marker vanishes — which is
-     * precisely the one it exists to show *before* the rider reaches it.
-     */
     private fun progressStyle(
         hopCount: Int,
         progress: Int,
@@ -402,18 +253,6 @@ class TrackNotification(private val context: Context) {
 
         return NotificationCompat.ProgressStyle()
             .setProgress(progress)
-            // One segment per hop, so every station divides the bar on both
-            // halves of the ride. Not two long runs split at the tracker: the
-            // platform stops drawing points past the current progress, so with
-            // one long segment ahead the whole run to come collapses into an
-            // unbroken rule (verified on a Pixel 8 / Android 17).
-            //
-            // The reminder's station is marked by where the colour turns
-            // rather than by a marker on it — for the same reason. Everything
-            // past it is warm, so the bar reads as "black while there is
-            // nothing to do, warm from the stop you asked to be warned at".
-            // As the ride goes on the warm run is all that is left, which is
-            // exactly the state it describes.
             .setProgressSegments(
                 (1..hopCount).map { at ->
                     NotificationCompat.ProgressStyle.Segment(1).setColor(
@@ -445,42 +284,18 @@ class TrackNotification(private val context: Context) {
             .setStyledByProgress(false)
     }
 
-    /**
-     * TRA and THSR share the rail glyph: at chip size the useful distinction
-     * is rail-versus-bus-versus-metro, and the card's text already says which
-     * train.
-     */
     private fun chipIcon(mode: String): Int = when (mode) {
         "metro" -> R.drawable.ic_track_metro
         "tra", "thsr" -> R.drawable.ic_track_rail
         else -> R.drawable.ic_track_bus
     }
 
-    /**
-     * How long this mode's card may go without an update before the platform
-     * retires it — twice the matching iOS `staleDate` window, because these
-     * windows delete rather than annotate. The feeds are not one cadence: bus
-     * ETA lands every 30 s, a metro card moves once per station hop, and a
-     * train can sit between two rural stations for a long time with nothing
-     * wrong.
-     */
     private fun staleWindowMs(mode: String): Long = when (mode) {
         "metro" -> 12 * 60 * 1000L
         "tra", "thsr" -> 40 * 60 * 1000L
         else -> 6 * 60 * 1000L
     }
 
-    /**
-     * The line shown while the rider is still on the platform.
-     *
-     * A train they have not caught is described by its timetable — the printed
-     * departure and, named separately, the slip against it — because that is
-     * what they are comparing the app to on the station board. Folding the
-     * delay into the time silently would make the card disagree with the board
-     * for no visible reason. Everything else (metro, and any train with no
-     * timetable to hand) falls back to naming the stop they board at, with the
-     * chip carrying the minutes.
-     */
     private fun boardingLine(
         vehicle: String,
         board: String,
@@ -504,14 +319,6 @@ class TrackNotification(private val context: Context) {
         else -> "${etaMinutes}分"
     }
 
-    // Broadcast PendingIntent the 取消追蹤 action fires. Two receivers answer
-    // it: TrackCancelReceiver, which is declared in the manifest and so is
-    // reached even by a process the system already killed, and the plugin's own
-    // dynamic receiver while Dart is alive to hear about it.
-    //
-    // FLAG_UPDATE_CURRENT is what keeps the track id current: the same request
-    // code is reused across sessions, so without it a second ride would fire
-    // the first ride's id.
     private fun cancelIntent(trackId: String?): PendingIntent {
         val intent = Intent(CANCEL_ACTION)
             .setPackage(context.packageName)

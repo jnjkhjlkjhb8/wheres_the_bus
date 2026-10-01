@@ -35,11 +35,6 @@ func firebaseEnabled() bool {
 	return strings.EqualFold(os.Getenv("FIREBASE_ENABLED"), "true") && !strings.EqualFold(os.Getenv("APP_ENV"), "dev")
 }
 
-// NewFirebaseSender builds the FCM sender, or returns (nil, nil) when push is
-// disabled — a nil sender is a valid "notifications off" state that
-// NewDispatcher treats as no dispatcher. It errors only on
-// misconfiguration when push is enabled: a missing FIREBASE_PROJECT_ID, absent
-// default credentials, or Admin SDK init failure.
 func NewFirebaseSender(ctx context.Context) (Sender, error) {
 	if !firebaseEnabled() {
 		return nil, nil

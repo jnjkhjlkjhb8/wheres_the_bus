@@ -1,7 +1,3 @@
-// Package rail loads TRA and THSR static data — stations, fares, timetables and
-// shapes — and publishes the live feeds the router streams: TRA delays and THSR
-// available seats. Timetables land per service date, so a date outside the
-// landed window has no rows rather than a stale answer.
 package rail
 
 import (
@@ -304,11 +300,6 @@ func validateThsrTimetable(timetable rawThsrTimetable, partitionDate string) err
 	return nil
 }
 
-// LoadTraTimetable upserts one day's TRA daily timetable stop rows into
-// tra_timetable via a temp-table COPY. Stop times are validated and parsed as
-// "15:04" before any sink call. It consumes an already-opened decoder; the
-// temp_tra_timetable drain upserts by (train_date,trainno,stationid), with the
-// train-wide and stop-wide suspension flags combined in the stored stop mask.
 func LoadTraTimetable(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, date string) error {
 	if _, err := time.Parse(time.DateOnly, date); err != nil {
 		return _oops.With("date", date).Wrapf(err, "TRA timetable partition date")
@@ -419,11 +410,6 @@ func LoadTraTimetable(ctx context.Context, dec *json.Decoder, sink pipeline.Copy
 	}, row)
 }
 
-// LoadThsrTimetable upserts one day's THSR daily timetable stop rows into
-// thsr_timetable via a temp-table COPY. Stop times are validated and parsed as
-// "15:04" before any sink call. It consumes an already-opened decoder;
-// the temp_thsr_timetable COPY and ON CONFLICT (train_date,trainno,stationid)
-// upsert are byte-identical to the legacy transform.
 func LoadThsrTimetable(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, date string) error {
 	if _, err := time.Parse(time.DateOnly, date); err != nil {
 		return _oops.With("date", date).Wrapf(err, "THSR timetable partition date")
@@ -512,11 +498,6 @@ func LoadThsrTimetable(ctx context.Context, dec *json.Decoder, sink pipeline.Cop
 	}, row)
 }
 
-// LoadTraStation upserts TRA stations into tra_stations via a temp-table COPY,
-// resolving the city from the station's LocationCityCode prefix. It consumes an
-// already-opened decoder (the raw_tdx loader reconstructs it); the temp-table
-// COPY and ON CONFLICT (station_id) upsert are byte-identical to the legacy
-// transform. It returns the first hard error instead of logging-and-returning.
 func LoadTraStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
 	stations, err := pipeline.DecodeLoadArray[railStation](dec, "TRA stations", func(_ int, station railStation) error {
 		return validateRailStation(station, false /* requireStationCode */)
@@ -639,11 +620,6 @@ func validateRailStation(station railStation, requireStationCode bool) error {
 	return nil
 }
 
-// LoadTraFare upserts the TRA OD fare table into tra_fares via a temp-table COPY,
-// flattening each station pair's per-ticket-type fares into rows. It consumes an
-// already-opened decoder; the temp_tra_fare COPY and ON CONFLICT
-// (origin_station_id, destination_station_id, ticket_type) upsert are
-// byte-identical to the legacy transform.
 func LoadTraFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
 	fares, err := pipeline.DecodeLoadArray[traFare](dec, "TRA fares", func(_ int, fare traFare) error {
 		if strings.TrimSpace(fare.OriginStationID) == "" {
@@ -705,11 +681,6 @@ func LoadTraFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpser
 	}, row)
 }
 
-// LoadThsrFare upserts the THSR OD fare table into thsr_fares via a temp-table
-// COPY, keyed by station pair plus ticket/fare/cabin class. It consumes an
-// already-opened decoder; the temp_thsr COPY and ON CONFLICT
-// (origin,destination,ticket_type,fare_class,cabin_class) upsert are
-// byte-identical to the legacy transform.
 func LoadThsrFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
 	fares, err := pipeline.DecodeLoadArray[thsrFare](dec, "THSR fares", func(_ int, fare thsrFare) error {
 		if strings.TrimSpace(fare.OriginStationID) == "" {
@@ -808,10 +779,6 @@ func TraEta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSi
 			delay := int32(temp.DelayTime)
 			data.Delay[temp.TrainNo] = delay
 			pipe.HSet(shared.TraDelayHashKey, temp.TrainNo, temp.DelayTime)
-			// Where the delay was observed. The GTFS-RT feed places the delay on
-			// that stop rather than on the train as a whole, so that a consumer
-			// propagates it forward from there instead of applying it to calls the
-			// train has already made on time.
 			if temp.StationID != "" {
 				pipe.HSet(shared.TraDelayStationKey, temp.TrainNo, temp.StationID)
 			}

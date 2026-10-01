@@ -26,27 +26,14 @@ const (
 	_maxSearchQueryRunes  = 128
 	_searchRequestTimeout = 5 * time.Second
 
-	// _maxSearchCityRunes bounds the city filter. Values are TDX city codes
-	// ("Taipei", "HsinchuCounty"); anything longer is not one, and the cap
-	// keeps a caller from growing the response cache's keys without bound.
-	// An unknown-but-short code is passed through and simply matches
-	// nothing, which is the honest answer for a city we hold no rows for.
 	_maxSearchCityRunes = 32
 
-	// _searchCacheTTL is how long a rendered response stays served from
-	// memory. search_vector is rewritten once a day by the loader, so the
-	// underlying rows are static across any plausible session; the ceiling
-	// exists so a same-day reload is picked up without a restart.
 	_searchCacheTTL = 10 * time.Minute
 
 	// _searchCacheMaxEntries bounds the response cache. Keys are user query
 	// text, so the keyspace is unbounded and the cache must be too.
 	_searchCacheMaxEntries = 500
 
-	// _textSearchBranchCap bounds how many rows each UNION ALL branch in
-	// _textSearchSQL may return before ranking/dedup, independent of the
-	// caller's requested result limit. This keeps every branch a capped,
-	// indexable scan instead of one unbounded all-fields OR predicate.
 	_textSearchBranchCap = 200
 
 	// _textSearchBranchScale sizes the per-branch cap relative to the
@@ -55,22 +42,7 @@ const (
 	_textSearchBranchScale = 5
 )
 
-// _textSearchSQL splits exact, prefix/trigram, and contains matching into
-// separate capped UNION ALL branches instead of one all-fields OR predicate.
-// The exact branch (uid = $1) stays a single indexable equality predicate.
-// Each branch orders its candidates by the same relevance signal the outer
-// sort uses (trigram similarity with stable tiebreakers) before applying
-// its cap, so the LIMIT keeps the best candidates rather than truncating in
-// arbitrary scan order. Ranking (CASE) and similarity are then computed
-// once over the unioned candidates; textSearch deduplicates by (type, uid)
-// and applies the final result cap in Go so exactly one place enforces it.
-//
-// $3 is the optional city filter, empty when the caller wants every city.
-// It sits inside each branch rather than outside the UNION because the
-// branch LIMITs come first: filtering the unioned candidates afterwards
-// would search the branch caps for the chosen city instead of searching
-// that city, and a city that placed no rows in the top $2 would come back
-// empty even when it holds hundreds.
+// Capping each UNION branch preserves indexable scans.
 const _textSearchSQL = `
 SELECT type, uid, name, city, depart, destin, ST_Y(geom), ST_X(geom),
        CASE
@@ -183,14 +155,6 @@ func HandleSearch(db searchDB) gin.HandlerFunc {
 			return
 		}
 		results := mergeSearchResults(limit, trainResults, textResults)
-		// semantic fallback only when text search found nothing — the embedQuery
-		// call + vector scan are expensive; skip them whenever trigram/ILIKE
-		// already matched. Loosen this if typo-tolerance suffers.
-		//
-		// A city filter also skips it: the HNSW index orders by embedding
-		// distance alone, so honouring the filter would mean post-filtering
-		// an approximate neighbour set — which returns fewer rows the more
-		// selective the city is, exactly backwards.
 		if len(results) == 0 && city == "" && shouldUseVector(q) {
 			// the fallback is a bonus on an already-empty result, so a
 			// failing embedder or vector scan degrades to the empty
@@ -237,10 +201,6 @@ func embeddingURL() string {
 	return strings.TrimSpace(os.Getenv("EMBED_URL"))
 }
 
-// _embedClient is process-wide so every search reuses one connection pool. A
-// per-call resty.New() builds its own http.Transport, so each query opened a
-// fresh connection and left an unreachable pool behind for the GC. Per-call
-// deadlines come from the request context, not a client timeout.
 var _embedClient = resty.New().SetHeader("Content-Type", "application/json")
 
 func embedQuery(ctx context.Context, text string) ([]float32, error) {
@@ -345,10 +305,6 @@ func textSearch(ctx context.Context, q, city string, limit int, db searchDB) ([]
 	return dedupeTextSearchCandidates(candidates, limit), nil
 }
 
-// dedupeTextSearchCandidates orders candidates by rank, then similarity, then
-// name — matching the original single-query ORDER BY — before collapsing
-// duplicate (type, uid) hits from separate UNION ALL branches to their
-// best-ranked occurrence and applying the one final result cap.
 func dedupeTextSearchCandidates(candidates []textSearchCandidate, limit int) []searchResult {
 	if limit <= 0 {
 		return nil

@@ -1,18 +1,5 @@
 package maas
 
-// GET /api/planner — which planner is live, and what it can be asked for.
-//
-// The app renders a different set of planning options per backend, because the
-// two backends genuinely differ: MOTIS accepts a wheelchair profile, a transfer
-// cap and a "no reservation required" filter that TDX has no equivalent for,
-// while TDX takes the price/time preference as a search input rather than a
-// ranking. Hardcoding one set in the app would mean shipping controls that
-// silently do nothing whenever the other backend is live.
-//
-// So the capability list is served rather than assumed. The app polls this,
-// renders the options the live planner actually honours, and shows the operator
-// -- and only the operator -- why the backend is what it is.
-
 import (
 	"net/http"
 	"strconv"
@@ -22,11 +9,7 @@ import (
 
 const (
 	// PlannerStatusPath is what the app polls.
-	PlannerStatusPath = "/api/planner"
-	// _plannerStatusMaxAge lets the app cache the answer briefly. Shorter than
-	// the health interval so a backend change surfaces within roughly one
-	// check, and long enough that opening the planner twice in a minute does
-	// not ask twice.
+	PlannerStatusPath    = "/api/planner"
 	_plannerStatusMaxAge = 20
 )
 
@@ -58,11 +41,6 @@ const (
 	_capIgnoreRealtime    = "ignoreRealtime"
 )
 
-// plannerCapabilities lists what the given backend honours.
-//
-// The shared five are first and in the same order for both, so the options
-// sheet does not reshuffle under the rider when the backend changes -- only the
-// advanced section appears or disappears.
 func plannerCapabilities(backend PlannerBackend) []string {
 	shared := []string{
 		_capTransitModes,

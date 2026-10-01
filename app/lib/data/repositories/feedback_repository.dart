@@ -33,13 +33,6 @@ class FeedbackRepository {
 
   static String _defaultOsVersion() => Platform.operatingSystemVersion;
 
-  /// Gathers what the app knows about itself. [screen] is where the rider came
-  /// from and [locale] their resolved language tag; both are read
-  /// from the widget tree by the caller, since neither is available here.
-  ///
-  /// Every lookup is guarded independently: a platform channel that fails costs
-  /// its own field, not the rider's ability to report the very failure they are
-  /// trying to describe.
   Future<FeedbackDiagnostics> collect({
     required String screen,
     required String locale,

@@ -3,11 +3,6 @@ import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 
-/// Shared full-screen modal transition: fade + scale (0.92 → 1) on
-/// [AppMotion.easeOut], with the exit curve mirrored via `.flipped`, and
-/// reduce-motion gated (no transition when the platform disables
-/// animations). Backs [AppDialog.show] and the TRA/THSR station pickers so
-/// every full-screen dialog opens and closes the same way.
 Future<T?> showAppModal<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -89,7 +84,7 @@ class AppDialog extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppTheme.radiusModal),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -101,7 +96,7 @@ class AppDialog extends StatelessWidget {
               ),
             ),
             if (content != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               Text(
                 content!,
                 style: AppTextStyles.bodyRegular.copyWith(
@@ -109,15 +104,18 @@ class AppDialog extends StatelessWidget {
                 ),
               ),
             ],
-            if (body != null) ...[const SizedBox(height: 16), body!],
+            if (body != null) ...[
+              const SizedBox(height: AppTheme.space16),
+              body!,
+            ],
             if (actions != null) ...[
-              const SizedBox(height: 24),
+              const SizedBox(height: AppTheme.space24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: actions!
                     .map(
                       (a) => Padding(
-                        padding: const EdgeInsets.only(left: 8),
+                        padding: const EdgeInsets.only(left: AppTheme.space8),
                         child: a,
                       ),
                     )

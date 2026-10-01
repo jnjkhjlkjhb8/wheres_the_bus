@@ -49,17 +49,6 @@ final class RailTimetableLoaded extends RailState {
   final List<ThsrTimetableItem> thsrItems;
   final Map<String, int> delays;
 
-  /// Every fare this O/D pair prices, across fare class and cabin class; null
-  /// when the fare query had no data.
-  ///
-  /// THSR only: a THSR pair prices one journey, while a TRA pair is priced per
-  /// train class (桃園→臺北 is 63 on a 區間車, 99 on a 自強), so no single set
-  /// describes a mixed TRA list — those fares are quoted on the train detail
-  /// screen, which knows which train the user picked.
-  ///
-  /// Held unresolved so the view can apply the rider's ticket type at render
-  /// time; narrowing it here would freeze the quote to whatever the preference
-  /// was when the request ran.
   final RailFareQuote? fareQuote;
 
   RailTimetableLoaded copyWith({

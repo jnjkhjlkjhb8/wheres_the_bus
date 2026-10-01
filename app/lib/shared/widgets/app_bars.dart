@@ -15,9 +15,14 @@ abstract final class AppBarMetrics {
   static const double icon = 20;
   static const double gap = 12;
   static const double barHeight = 56;
-  static const EdgeInsets floatingInsets = EdgeInsets.symmetric(
-    horizontal: 16,
-    vertical: 8,
+
+  static const double floatingTop = AppTheme.space16;
+
+  static const EdgeInsets floatingInsets = EdgeInsets.fromLTRB(
+    AppTheme.space16,
+    floatingTop,
+    AppTheme.space16,
+    AppTheme.space8,
   );
 }
 
@@ -92,35 +97,49 @@ class AppBarBackButton extends StatelessWidget {
   }
 }
 
-/// Chrome for screens whose content runs edge to edge underneath it (maps,
-/// full-bleed lists). Nothing is reserved in the layout — it floats.
-///
-/// With a [middle] the row is leading · middle (flexible) · trailing; without
-/// one the leading and trailing slots push to the outer edges.
 class FloatingAppBar extends StatelessWidget {
-  const FloatingAppBar({this.leading, this.middle, this.trailing, super.key});
+  const FloatingAppBar({
+    this.leading,
+    this.middle,
+    this.trailing,
+    this.automaticallyImplyLeading = true,
+    this.crossAxisAlignment = CrossAxisAlignment.center,
+    super.key,
+  });
 
-  /// Defaults to the shared back button.
+  /// Defaults to the shared back button — see [automaticallyImplyLeading].
   final Widget? leading;
   final Widget? middle;
   final Widget? trailing;
 
+  final bool automaticallyImplyLeading;
+
+  final CrossAxisAlignment crossAxisAlignment;
+
   @override
   Widget build(BuildContext context) {
-    final start = leading ?? const AppBarBackButton(floating: true);
+    final start =
+        leading ??
+        (automaticallyImplyLeading
+            ? const AppBarBackButton(floating: true)
+            : null);
     return SafeArea(
       bottom: false,
       child: Padding(
         padding: AppBarMetrics.floatingInsets,
         child: middle == null
             ? Row(
+                crossAxisAlignment: crossAxisAlignment,
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [start, ?trailing],
+                children: [?start, ?trailing],
               )
             : Row(
+                crossAxisAlignment: crossAxisAlignment,
                 children: [
-                  start,
-                  const SizedBox(width: AppBarMetrics.gap),
+                  if (start != null) ...[
+                    start,
+                    const SizedBox(width: AppBarMetrics.gap),
+                  ],
                   Expanded(child: middle!),
                   if (trailing != null) ...[
                     const SizedBox(width: AppBarMetrics.gap),
@@ -146,7 +165,10 @@ class AppBarTitlePill extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Container(
       constraints: const BoxConstraints(minHeight: AppBarMetrics.tapTarget),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space14,
+        vertical: AppTheme.space6,
+      ),
       decoration: AppTheme.floatingControl(
         cs,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -249,7 +271,12 @@ class _DetailAppBarState extends State<DetailAppBar> {
         child: SizedBox(
           height: AppBarMetrics.barHeight,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space4,
+              AppTheme.space4,
+              AppTheme.space8,
+              AppTheme.space4,
+            ),
             child: NavigationToolbar(
               leading: AppBarBackButton(onTap: widget.onBack),
               middle: widget.title != null

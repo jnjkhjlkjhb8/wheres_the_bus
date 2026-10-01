@@ -2,7 +2,6 @@ part of '../view/bus_route_screen.dart';
 
 const List<FontFeature> _tnum = AppTextStyles.tabularFigures;
 
-typedef _BusVehicle = ({String afterStopUid, double progress, String plate});
 typedef _DepartureInfo = ({String time, bool isNext});
 
 // Memoize the timeline-stop derivation per state instance so both eta-scoped
@@ -28,11 +27,6 @@ List<TimelineStop> _stopsFor(AppI18n i18n, BusRouteState s) {
   return derived;
 }
 
-// Strip is capped small for a horizontal glance, but the cap is a window
-// around "now" rather than the first N trips of the day — otherwise a route
-// opened at midday would show only its early-morning departures forever.
-// The cap only applies while the window has a "now" to sit around; after the
-// day's last departure the strip shows the full schedule instead.
 const int _dtDepartureWindow = 12;
 
 List<_DepartureInfo> _departuresFor(BusRouteState state) {
@@ -101,10 +95,6 @@ List<String> _dtWeekdayLabels(AppI18n i18n) => [
   i18n.weekdaySun,
 ];
 
-// TDX marks many 公路客運 routes 一段票 (flat fare) even when their decoded OD
-// table carries genuine per-stop price variation. Showing that label next to
-// a real 票價範圍 reads as self-contradictory, so a genuine range (min != max)
-// wins over the raw enum instead of being labelled "flat".
 String _farePricingTypeLabel(
   AppI18n i18n,
   int type, {
@@ -120,13 +110,6 @@ String _farePricingTypeLabel(
   };
 }
 
-// TDX county code → display name, mirroring the mapping already used
-// server-side (services/functions/vector.go) so a route's operating city
-// doesn't leak an English identifier into the UI. Built per call rather than
-// held in a const map: the names follow the rider's language.
-//
-// TDX spells several counties both with and without the `County` suffix, so
-// both spellings are listed and resolve to the same name.
 String _dtCityLabel(AppI18n i18n, String city) =>
     <String, String>{
       'Taipei': i18n.cityTaipei,

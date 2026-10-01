@@ -1,8 +1,3 @@
-// Package dataset is the catalogue of every TDX dataset the pipeline touches:
-// which raw table it lands in, how it partitions, what its IMS cache identity
-// is, and which loader consumes it. The ingestor, the loader and the GTFS
-// export all read the same entries, so a dataset cannot be landed without a
-// declared target or loaded without a declared source.
 package dataset
 
 import (
@@ -11,25 +6,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
 )
 
-// This file is the single source of truth for the raw_tdx datasets. Three
-// consumers derive from Registry so the three lists can no longer drift:
-//   - the ingestor fetch loop (ingestRaw) — every fetched dataset × partition,
-//   - the raw-landing target map + whitelist (rawDumpTarget, rawTDXTables) in
-//     main.go, which resolve a fetched URL back to its table/partition and guard
-//     the SQL-injection barrier,
-//   - the loader registry (loaderRegistry) in loader.go, which attaches a
-//     transform to each dataset that has one, in this file's slice order.
-//
-// Intentional asymmetries are explicit fields, not comments the code cannot
-// enforce: LandOnly tables are whitelisted (their DDL may still exist on Azure)
-// but never fetched; FoldedInto tables are fetched and consumed by another
-// dataset's multi-table loader rather than a standalone transform; LoadParts
-// lets a dataset load a subset of what it lands.
-
-// LandFamily classifies a dataset's TDX endpoint shape, which drives both the
-// landing URL (Spec.url) and the reverse URL→table resolution
-// (rawDumpTarget). familyNone means the table is never fetched — whitelist and
-// DDL only.
 type LandFamily int
 
 const (
@@ -41,17 +17,6 @@ const (
 	FamilyRailDate
 )
 
-// Spec is one raw_tdx table's full recipe. RawTable is also its whitelist
-// entry. Partitions enumerates the values landed (and, unless LoadParts is set,
-// loaded); the loader consumes LoadParts when it loads a subset of what the
-// ingestor lands. family+APISeg build the landing URL and identify the table on
-// the reverse path. name is the If-Modified-Since cache identity per partition.
-// LoadKey names the standalone loader transform ("" when none). LandOnly marks a
-// whitelisted-but-never-fetched table; FoldedInto names the loader that consumes
-// a fetched table without a standalone transform of its own. ExportOnly marks a
-// table landed for the GTFS export path, which reads raw_tdx directly: it is
-// fetched and consumed, but by no loader, so it carries neither LoadKey nor
-// FoldedInto.
 type Spec struct {
 	RawTable   string
 	PartCol    string
@@ -108,10 +73,6 @@ func (d Spec) URL(part string) string {
 // loader-local closures before the registry unified them.
 func AllCities() []string { return busmodel.Cities }
 
-// BusLoadCities is deliberately load-only: raw landing keeps the TDX fetch
-// order above, while target assembly excludes unsupported Lienchiang and loads
-// every municipality before InterCity. InterCity station grouping may consult
-// committed municipal groups in its own target transaction.
 func BusLoadCities() []string {
 	out := make([]string, 0, len(busmodel.Cities)-1)
 	for _, city := range busmodel.Cities {
@@ -123,11 +84,6 @@ func BusLoadCities() []string {
 	return append(out, "InterCity")
 }
 
-// _displayStopCities is the whole set TDX serves Bus/DisplayStopOfRoute for.
-// Every other city answers HTTP 400 naming these five, and the InterCity
-// endpoint answers 404 on both v2 and v3 (verified 2026-08-09). Only the cities
-// that define a linearised display list have one, which is the point of the
-// dataset: it exists where a route's branches need folding into one page.
 var _displayStopCities = []string{"Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan"}
 
 func DisplayStopCities() []string { return _displayStopCities }
@@ -192,10 +148,6 @@ func railSingle(apiSeg, rawTable, loadKey, imsName string) Spec {
 	}
 }
 
-// railSingleExport and metroExport build the GTFS-export datasets: landed for
-// the feed builder, which reads raw_tdx directly, and therefore bound to no
-// loader transform. They are separate constructors rather than a flag on the
-// existing ones so an export dataset can never acquire a LoadKey by accident.
 func railSingleExport(apiSeg, rawTable, imsName string) Spec {
 	spec := railSingle(apiSeg, rawTable, "", imsName)
 	spec.ExportOnly = true
@@ -212,10 +164,6 @@ func metroExport(apiSeg, rawTable, imsPrefix string, systems func() []string) Sp
 	}
 }
 
-// Registry is the ordered dataset table. Slice order is the load order:
-// filtering to LoadKey-bearing entries yields the loaderRegistry order. The
-// bus_route owns the one atomic bus snapshot load. Operator and the other seven
-// correlated inputs remain adjacent raw landing datasets but are folded into it.
 func Registry() []Spec {
 	return []Spec{
 		busDataset("Operator", "bus_operator", "", "bus"),
@@ -226,9 +174,6 @@ func Registry() []Spec {
 		busDataset("Station", "bus_station", "", "bus"),
 		busDataset("StationGroup", "bus_stationgroup", "", "bus"),
 		busDataset("RouteFare", "bus_routefare", "", "bus"),
-		// The route-level linearised stop list (FDPL-84). Landed for the five
-		// cities TDX serves it for, and loaded by its own transform rather than
-		// folded into the bus city snapshot — see loadBusDisplayStops.
 		{RawTable: "bus_displaystopofroute", PartCol: "city", Partitions: DisplayStopCities,
 			Family: FamilyBusCity, APISeg: "DisplayStopOfRoute",
 			Name: busName("DisplayStopOfRoute"), LoadKey: "bus_displaystop"},
@@ -254,10 +199,6 @@ func Registry() []Spec {
 		{RawTable: "metro_odfare", PartCol: "system", Partitions: func() []string { return MetroODFare },
 			Family: FamilyMetroSystem, APISeg: "ODFare",
 			Name: func(p string) string { return "metro_od_" + p }, LoadKey: "mrt_odfare"},
-		// Drives both metro travel-graph loaders. metro_linetransfer is landed for
-		// fewer systems, which is not a constraint here: readDatasetJSON returns an
-		// empty array for an unlanded partition, and no interchange is the correct
-		// graph for a single-line system.
 		{RawTable: "metro_s2straveltime", PartCol: "system", Partitions: func() []string { return MetroS2STravelTime },
 			Family: FamilyMetroSystem, APISeg: "S2STravelTime",
 			Name: func(p string) string { return "metro_s2s_" + p }, LoadKey: "mrt_traveltime"},
@@ -284,13 +225,6 @@ func Registry() []Spec {
 		// train-type data arrives inside the daily-timetable payloads.
 		{RawTable: "tra_traintype", Family: FamilyRailSingle, APISeg: "TRA/TrainType", LandOnly: true},
 
-		// GTFS export datasets. These land for the feed builder only — no loader
-		// reads them, so they appear after the load-ordered entries above and
-		// carry ExportOnly. Metro/Route is the route source rather than
-		// Metro/Line: branches and short-turn services (Xinbeitou, Xiaobitan, the
-		// Daan-Beitou short working) exist only at the Route level, so building
-		// routes from Line would drop them. Metro/Line is landed alongside it
-		// purely for LineColor, which Route does not carry.
 		metroExport("Route", "metro_route", "metro_route_", func() []string { return MetroSystemsAll }),
 		metroExport("StationOfRoute", "metro_stationofroute", "metro_sor_", func() []string { return MetroSystemsAll }),
 		metroExport("Line", "metro_line", "metro_line_", func() []string { return MetroSystemsAll }),
@@ -308,10 +242,6 @@ type FamSeg struct {
 	Seg    string
 }
 
-// RawTargetIndex resolves a parsed landing URL back to its dataset. It includes
-// every reverse-mappable dataset (family != familyNone), so LandOnly-but-mappable
-// tables like tra_traintype still resolve while the unfetched bus_stop
-// (familyNone) does not — matching the legacy rawDumpTarget maps exactly.
 var RawTargetIndex = buildRawTargetIndex()
 
 func buildRawTargetIndex() map[FamSeg]Spec {
@@ -351,22 +281,8 @@ func RailDateWindow(n int) []string {
 	return out
 }
 
-// DataTaipeiCity is the only city GetSpecTimeTable — the daily timetable feed
-// landed in datataipei_static.go — can join to; New Taipei's blob does not
-// publish that endpoint at all. The live feeds in this file are broader and
-// use dataTaipeiDynamicCities instead.
 const DataTaipeiCity = "Taipei"
 
-// Metro system codes to land per endpoint. Each list is every system its
-// endpoint accepts, so coverage is as wide as TDX allows; the lists differ only
-// because TDX publishes a different system set per dataset, and answers an
-// unsupported system with HTTP 400 rather than an empty payload.
-//
-// The lists are the endpoints' own answers, not a guess: TDX enumerates every
-// accepted value in the 400 body, so one request with an invalid system returns
-// the authoritative set. Re-probe that way when a system is added:
-//
-//	GET /v2/Rail/Metro/<Endpoint>/ZZZZ
 var (
 	// MetroSystemsAll is every rail system TDX serves. Station, Shape, ODFare,
 	// Route, StationOfRoute and Line all accept the full set.
@@ -377,30 +293,9 @@ var (
 	MetroStationSystems = MetroSystemsAll
 	MetroODFare         = MetroSystemsAll
 	// FirstLastTimetable omits the two newest light-rail lines.
-	MetroFirstLast = []string{"TRTC", "KRTC", "TYMC", "KLRT", "TMRT", "NTMC", "TRTCMG"}
-	// S2STravelTime and LineTransfer feed the travel graph. Both consumers
-	// (mrt_traveltime, mrt_adjacency) run over the S2STravelTime set; a system
-	// with no LineTransfer partition reads as an empty array, which is the right
-	// answer for a single-line system that has no line-to-line interchange.
+	MetroFirstLast     = []string{"TRTC", "KRTC", "TYMC", "KLRT", "TMRT", "NTMC", "TRTCMG"}
 	MetroS2STravelTime = []string{"TRTC", "KRTC", "TYMC", "KLRT", "TMRT", "NTMC"}
-	// LineTransfer is narrower than the four systems TDX accepts, because TYMC
-	// serves an empty array and sends no Last-Modified header with it. The
-	// landing path requires a marker (raw_land.go), so that partition fails every
-	// run and never self-heals — it cannot record the state that would let a
-	// later 304 pass. Airport MRT is single-line and genuinely has no interchange,
-	// so there is nothing to lose by not asking. Restore TYMC here if it ever
-	// gains a second line.
-	MetroLineTransfer = []string{"TRTC", "KRTC", "NTMC"}
-	// The GTFS export endpoints. Frequency is narrower than the systems TDX
-	// serves it for because it is only what the feed can express: TRTCMG (Maokong
-	// Gondola) has routes, stations and exits but no service data at all, so the
-	// builder skips it (FDPL-6).
-	//
-	// Metro/StationTimeTable used to be landed alongside these and is not any
-	// more. Nothing ever read it: the metro half of the feed is built from routes,
-	// stations and headways, so a per-station timetable had no consumer, and the
-	// real per-train times are coming from TDX's published GTFS instead
-	// (FDPL-69).
-	MetroFrequency = []string{"TRTC", "KRTC", "TYMC", "TMRT", "NTMC"}
-	MetroExit      = []string{"TRTC", "KRTC", "TYMC", "TMRT", "NTMC", "TRTCMG"}
+	MetroLineTransfer  = []string{"TRTC", "KRTC", "NTMC"}
+	MetroFrequency     = []string{"TRTC", "KRTC", "TYMC", "TMRT", "NTMC"}
+	MetroExit          = []string{"TRTC", "KRTC", "TYMC", "TMRT", "NTMC", "TRTCMG"}
 )

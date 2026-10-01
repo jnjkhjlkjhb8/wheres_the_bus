@@ -4,19 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('no generated proto imports leak outside data/', () {
-    // The seam rule (CONTEXT.md): generated proto types never leave
-    // app/lib/data/. Features and shared widgets consume validated domain
-    // types from repositories/decoders. This scans everything under lib/
-    // except data/ itself; data/generated is the only place proto may live.
     final root = Directory('lib');
     final offenders = <String>[];
     final pattern = RegExp(r'''import\s+['"][^'"]*data/generated/[^'"]*\.pb''');
     for (final entity in root.listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      // data/ owns the proto boundary; skip it wholesale (generated code,
-      // decoders, and repositories all legitimately touch proto there).
-      // core/grpc/ is the transport seam that holds the generated gRPC service
-      // stubs; it is the one sanctioned proto touchpoint outside data/.
       final normalized = entity.path.replaceAll(r'\', '/');
       if (normalized.startsWith('lib/data/')) continue;
       if (normalized.startsWith('lib/core/grpc/')) continue;
@@ -38,12 +30,6 @@ void main() {
   });
 
   test('no repository public method returns a generated proto type', () {
-    // The import-grep above cannot see a proto type that reaches features by
-    // type inference: a repository whose public method returns a proto type
-    // lets a bloc bind it (`final fare = await repo.fare(...)`) and read proto
-    // fields without ever importing data/generated. This closes that gap by
-    // reading the actual return-type token of every public repository method
-    // and rejecting any that names a class declared in data/generated.
     final protoNames = _generatedProtoClassNames();
     expect(
       protoNames,
@@ -124,7 +110,5 @@ Set<String> _generatedProtoClassNames() {
   return names;
 }
 
-/// Splits a return-type expression into its identifier tokens, e.g.
-/// `Future<List<TraFareItem>>` → {Future, List, TraFareItem}.
 Iterable<String> _identifiers(String type) =>
     RegExp(r'[A-Za-z_$][\w$]*').allMatches(type).map((m) => m.group(0)!);

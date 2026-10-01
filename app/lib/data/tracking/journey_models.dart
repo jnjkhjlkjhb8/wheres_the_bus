@@ -33,10 +33,6 @@ JourneyLegKind _kindOf(PlanSection s) => switch (s.identity.routeType) {
   },
 };
 
-/// One transit leg of a navigation session. Leading walk sections are folded
-/// into the following transit leg (walkers see 「步行至X」 inside the waiting
-/// card, matching the Google Maps pattern) so the session state machine only
-/// ever points at a transit leg.
 class JourneyLeg extends Equatable {
   const JourneyLeg({
     required this.kind,
@@ -99,12 +95,6 @@ class JourneyLeg extends Equatable {
   final DateTime? scheduledArrival;
   final PlanPoint boardLocation;
 
-  /// Intermediate stop locations plus the arrival location, in travel order —
-  /// used for riding-mode progress by nearest-upcoming-stop.
-  ///
-  /// `stopNames + alightStop` and `stopLocations` are index-aligned (both
-  /// intermediateStops+arrival in travel order); three renderers (Swift LA,
-  /// PiP card, in-app caption) index both with nextStopIndex.
   final List<PlanPoint> stopLocations;
 
   /// Board→alight scheduled stop times for a rail trackOnly leg (empty for

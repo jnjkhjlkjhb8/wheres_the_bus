@@ -26,11 +26,6 @@ const _kWalkStepAdvanceRadiusMeters = 20.0;
 /// What the autopilot decided to do with one GPS fix.
 enum NavAction { none, board, alight, advance }
 
-/// Pure: (active PlanBloc section, autopilot's own boarded flag, position) ->
-/// action. Keyed off the coordinator's own `_lastAutoBoardedLeg` rather than
-/// `JourneySession.phase` so the autopilot advances transit legs on GPS alone
-/// even when Live Activity is off (JourneySession never leaves `idle` then).
-/// No side effects; unit-tested exhaustively in isolation from the blocs.
 NavAction decideNavAction({
   required PlanSection section,
   required bool boarded,
@@ -88,20 +83,9 @@ int advanceWalkStep({
   return distance <= _kWalkStepAdvanceRadiusMeters ? current + 1 : current;
 }
 
-// compass-throttle tunables for shouldApplyHeading. A heading only reaches
-// the camera when it turns the map by more than _kHeadingMinDeltaDeg AND
-// at least _kHeadingMinInterval has elapsed since the last applied one —
-// enough to read as continuous rotation without flooding moveCamera (~5/sec
-// ceiling). Widen the delta if the map jitters while the phone sits still;
-// shorten the interval if in-place rotation feels laggy.
 const _kHeadingMinDeltaDeg = 3.0;
 const _kHeadingMinInterval = Duration(milliseconds: 200);
 
-/// Pure: whether a fresh compass [next] heading should be pushed to the camera,
-/// given the [last] applied bearing (null if none yet) and [sinceLast] elapsed
-/// since the last applied heading. The first heading always applies; after
-/// that it must clear both the rate limit and the angular threshold. The delta
-/// is measured on the circle, so 359°→1° is 2° (below threshold), not 358°.
 bool shouldApplyHeading({
   required double? last,
   required double next,
@@ -130,12 +114,11 @@ class NavigationCoordinator {
     required JourneySessionBloc journeySessionBloc,
     required bool Function() liveActivityEnabled,
     Stream<Position> Function()? positions,
-    // `arrived` mirrors advance()'s NavigationAdvanceResult.arrived; keeping
-    // the callback shape a plain positional trio matches the other two args.
+    // Callback signature follows the event producer.
     // ignore: avoid_positional_boolean_parameters
     void Function(NavAction action, PlanPoint? cameraTarget, bool arrived)?
     onAutoAction,
-    // A lone status flag reads fine positionally; matches onAutoAction's shape.
+    // Callback signature follows the event producer.
     // ignore: avoid_positional_boolean_parameters
     void Function(bool driving)? onAutopilotStatus,
     void Function(Position fix)? onFollowUpdate,
@@ -151,11 +134,11 @@ class NavigationCoordinator {
   final JourneySessionBloc _journeySessionBloc;
   final bool Function() _liveActivityEnabled;
   final Stream<Position> Function()? _positions;
-  // Mirrors the constructor parameter's positional trio; see its comment.
+  // Callback signature follows the event producer.
   // ignore: avoid_positional_boolean_parameters
   final void Function(NavAction action, PlanPoint? cameraTarget, bool arrived)?
   _onAutoAction;
-  // Mirrors the constructor parameter's positional flag; see its comment.
+  // Callback signature follows the event producer.
   // ignore: avoid_positional_boolean_parameters
   final void Function(bool driving)? _onAutopilotStatus;
   // Raw fix passed to the UI on every tick so the camera can follow the user;
@@ -174,14 +157,6 @@ class NavigationCoordinator {
   /// the trigger radius.
   int? _lastAutoAdvancedLeg;
 
-  /// The autopilot's own record of which leg it has boarded — one of two
-  /// sources `decideNavAction` reads (as `boarded`, alongside the live
-  /// `JourneySession.phase`) to flip a transit leg from board-eligible to
-  /// alight-eligible. Primary rather than sole source of truth: with Live
-  /// Activity off, `JourneySession.phase` never leaves `idle`, so this flag
-  /// is what keeps auto board/alight working at all. `BoardConfirmed` is
-  /// still dispatched to keep the Live Activity in sync when it's on; it
-  /// safely no-ops otherwise.
   int? _lastAutoBoardedLeg;
 
   Future<PlanPoint?> start({
@@ -197,11 +172,6 @@ class NavigationCoordinator {
     }
     _lastAutoAdvancedLeg = null;
     _lastAutoBoardedLeg = null;
-    // Location is forced, so optimistically assume the autopilot is driving
-    // as navigation starts — this keeps the manual buttons hidden from frame
-    // one instead of flashing on before the first GPS fix arrives. Reset the
-    // dedupe field first so this always re-emits, even if a prior navigation
-    // last emitted `true` too.
     _driving = null;
     _setDriving(true);
     _subscribePositions();
@@ -253,11 +223,6 @@ class NavigationCoordinator {
         _planBloc.add(WalkStepAdvanced(index: next));
       }
     }
-    // A manual 我上車了 tap dispatches BoardConfirmed straight to
-    // JourneySessionBloc, bypassing this coordinator, so `_lastAutoBoardedLeg`
-    // alone would stay stale until the next auto-board. Honoring the live
-    // phase too reflects a manual board immediately and avoids re-entering
-    // the `board` branch (and its haptic) once already riding.
     final boarded =
         _lastAutoBoardedLeg == activeLeg ||
         _journeySessionBloc.state.phase == JourneyPhase.riding;
@@ -315,14 +280,9 @@ class NavigationCoordinator {
   Future<void> end() async {
     unawaited(_posSub?.cancel());
     _planBloc.add(const NavigationEnded());
-    _journeySessionBloc.add(const JourneyCancelled());
+    _journeySessionBloc.add(const JourneyCancelled(userInitiated: true));
   }
 
-  /// Called when JourneySession reaches `done` on its own (last transit leg
-  /// alighted, or the ActivityKit cap). Route structure — not the live active
-  /// index — decides whether that also ends the whole navigation: a trailing
-  /// walk section after the last transit leg must keep running so the
-  /// autopilot (or the manual button) can finish it.
   Future<bool> reconcileJourneyDone() async {
     final activeLeg = _planBloc.state.activeLegIndex;
     if (activeLeg == null) {
@@ -331,10 +291,6 @@ class NavigationCoordinator {
     }
     final route = _currentRoute();
     if (route != null && _hasTrailingWalk(route)) {
-      // Last transit leg done but a final walk remains: keep navigating so
-      // the walk finishes (autopilot on arrival, or the 完成此段 button). Do
-      // NOT end, do NOT reset the camera, and KEEP the position subscription
-      // alive.
       return false;
     }
     unawaited(_posSub?.cancel());
@@ -360,11 +316,6 @@ class NavigationCoordinator {
     return lastTransit != -1 && lastTransit < route.sections.length - 1;
   }
 
-  /// Releases the GPS subscription without touching app-scoped blocs. Call
-  /// this from the owning widget's `dispose()` so a screen torn down without
-  /// going through `end()`/`reconcileJourneyDone()` (e.g. a route
-  /// replacement that isn't a back-pop) doesn't keep polling GPS or
-  /// dispatching autopilot transitions into blocs that outlive the screen.
   void dispose() {
     unawaited(_posSub?.cancel());
   }

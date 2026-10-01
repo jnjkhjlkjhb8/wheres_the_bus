@@ -1,10 +1,5 @@
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 
-/// Local mirror of active arrival reminders, keyed by route then stop.
-///
-/// The reminder server has no list RPC, so the app keeps its own copy of the
-/// armed reminder ids to restore the bell after navigation or restart. This
-/// repository owns that persistence; Blocs no longer touch [HiveStore].
 class RemindersRepository {
   RemindersRepository({RemindersStore? store})
     : _store = store ?? const _HiveRemindersStore();

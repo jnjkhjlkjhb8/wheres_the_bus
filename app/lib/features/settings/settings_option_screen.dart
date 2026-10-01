@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_card.dart';
@@ -40,15 +41,20 @@ class _SettingsOptionScreenState extends State<SettingsOptionScreen> {
     return Scaffold(
       appBar: DetailAppBar(title: widget.title),
       body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          0,
+          AppTheme.space16,
+          AppTheme.space16,
+        ),
         child: AppCard(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(AppTheme.space10),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               for (int i = 0; i < widget.options.length; i++) ...[
-                if (i > 0) const SizedBox(height: 10),
+                if (i > 0) const SizedBox(height: AppTheme.space10),
                 _OptionRow(
                   label: widget.options[i],
                   selected: widget.options[i] == _selected,
@@ -89,7 +95,7 @@ class _OptionRow extends StatelessWidget {
         semanticLabel: label,
         child: Padding(
           padding: const EdgeInsets.symmetric(
-            vertical: (_minTapTarget - _visualHeight) / 2,
+            vertical: (_minTapTarget - _visualHeight) / AppTheme.space2,
           ),
           child: Row(
             children: [

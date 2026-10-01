@@ -16,27 +16,15 @@ import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_input.dart';
+import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 
 /// Remaining-character threshold below which the counter appears. Above it the
 /// limit is not information the rider needs, so it stays out of the way.
 const _counterThreshold = 200;
 
-/// The 回報問題 composer: pick what kind of problem it is, describe it, see
-/// exactly what the app will attach, send.
-///
-/// A pushed page rather than a modal sheet. Writing a report is a task the
-/// rider stops to do — it wants the whole screen, a keyboard that doesn't
-/// fight a draggable surface, and a back gesture that means "not now" rather
-/// than a swipe that might mean either. It is also reachable by shaking the
-/// phone from anywhere, so it needs a real address of its own.
 class FeedbackScreen extends StatelessWidget {
   const FeedbackScreen({this.fromScreen, super.key});
 
-  /// The screen the rider came from — its location plus whatever station or
-  /// route it was showing — resolved by the router
-  /// from the `from` query parameter. Read at the call site rather than here:
-  /// once this page is on the navigator, `GoRouterState` describes this page,
-  /// so a report from a bus route would say it came from the report form.
   final String? fromScreen;
 
   @override
@@ -182,13 +170,18 @@ class _Composer extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
+        const SizedBox(height: AppTheme.space16),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space20,
+              0,
+              AppTheme.space20,
+              AppTheme.space8,
+            ),
             children: [
               _CategoryPicker(value: category, onChanged: onCategoryChanged),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppTheme.space20),
               AppInput(
                 label: AppI18n.of(context).feedbackBodyLabel,
                 hint: category.hintOf(AppI18n.of(context)),
@@ -203,19 +196,24 @@ class _Composer extends StatelessWidget {
               // Counted in runes, matching what the server counts, so the
               // number the rider sees is the one that will be enforced.
               _Counter(length: controller.text.runes.length),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppTheme.space16),
               _DiagnosticsDisclosure(diagnostics: state.diagnostics),
             ],
           ),
         ),
         if (state.error != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space20,
+              AppTheme.space4,
+              AppTheme.space20,
+              0,
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.error_outline_rounded, size: 16, color: cs.error),
-                const SizedBox(width: 6),
+                const SizedBox(width: AppTheme.space6),
                 Expanded(
                   child: Text(
                     state.error!.messageOf(AppI18n.of(context)),
@@ -229,10 +227,10 @@ class _Composer extends StatelessWidget {
           // The button sits on the bottom edge of the page, so it has to clear
           // the gesture bar itself.
           padding: EdgeInsets.fromLTRB(
-            20,
-            12,
-            20,
-            20 + MediaQuery.paddingOf(context).bottom,
+            AppTheme.space20,
+            AppTheme.space12,
+            AppTheme.space20,
+            AppTheme.space20 + MediaQuery.paddingOf(context).bottom,
           ),
           child: _SubmitButton(
             enabled: _canSubmit,
@@ -267,10 +265,10 @@ class _CategoryPicker extends StatelessWidget {
             color: cs.onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: AppTheme.space10),
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
+          spacing: AppTheme.space8,
+          runSpacing: AppTheme.space8,
           children: [
             for (final category in FeedbackCategory.values)
               _CategoryChip(
@@ -310,7 +308,10 @@ class _CategoryChip extends StatelessWidget {
         child: AnimatedContainer(
           duration: reduceMotion ? Duration.zero : AppMotion.press,
           curve: AppMotion.easeOut,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space14,
+            vertical: 9,
+          ),
           decoration: BoxDecoration(
             // Selection is carried by the ink fill, not by a second hue: the
             // accent is the only one this interface has.
@@ -341,10 +342,12 @@ class _Counter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final remaining = feedbackBodyLimit - length;
-    if (remaining > _counterThreshold) return const SizedBox(height: 8);
+    if (remaining > _counterThreshold) {
+      return const SizedBox(height: AppTheme.space8);
+    }
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.only(top: AppTheme.space6),
       child: Align(
         alignment: Alignment.centerRight,
         child: Text(
@@ -372,7 +375,7 @@ class _DiagnosticsDisclosure extends StatelessWidget {
     final summary = diagnostics?.summary ?? const <String>[];
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(AppTheme.space12),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -387,7 +390,7 @@ class _DiagnosticsDisclosure extends StatelessWidget {
               color: cs.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppTheme.space4),
           Text(
             summary.isEmpty
                 ? AppI18n.of(context).feedbackReadingDevice
@@ -460,7 +463,12 @@ class _ReceiptPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space8,
+        AppTheme.space20,
+        AppTheme.space20,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -469,17 +477,17 @@ class _ReceiptPanel extends StatelessWidget {
           // and below instead of pooling all of it under the text.
           const Spacer(),
           Icon(Icons.check_circle_rounded, size: 32, color: cs.onSurface),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           Text(AppI18n.of(context).feedbackSent, style: AppTextStyles.heading1),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Text(
             AppI18n.of(context).feedbackThanks,
             style: AppTextStyles.bodyLarge.copyWith(color: cs.onSurface),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppTheme.space16),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(AppTheme.space12),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -494,7 +502,7 @@ class _ReceiptPanel extends StatelessWidget {
                     color: cs.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppTheme.space4),
                 SelectableText(
                   receipt.reference,
                   style: AppTextStyles.memo.copyWith(
@@ -505,7 +513,7 @@ class _ReceiptPanel extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           Text(
             AppI18n.of(context).feedbackNoReplyNote,
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
@@ -536,6 +544,11 @@ class _DoneButton extends StatelessWidget {
                 Clipboard.setData(ClipboardData(text: reference)),
               );
               unawaited(HapticService.instance.lightTap());
+              AppSnackbar.show(
+                context,
+                AppI18n.of(context).feedbackReceiptCopied,
+                type: SnackType.success,
+              );
             },
             semanticLabel: AppI18n.of(context).feedbackCopyReceiptSemantics,
             child: Container(
@@ -554,7 +567,7 @@ class _DoneButton extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppTheme.space12),
         Expanded(
           child: Pressable(
             onTap: () => context.pop(),

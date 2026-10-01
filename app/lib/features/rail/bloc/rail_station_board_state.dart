@@ -18,15 +18,12 @@ final class RailStationBoardLoading extends RailStationBoardState {
   const RailStationBoardLoading({required super.direction});
 }
 
-/// The board. An empty [departures] is a real answer, not a failure: the
-/// service day is landed and its trains have all gone. A day that was never
-/// landed arrives as [RailStationBoardFailure] with a `NotFoundError` instead,
-/// and the two say different things to the rider.
 final class RailStationBoardLoaded extends RailStationBoardState {
   const RailStationBoardLoaded({
     required super.direction,
     required this.departures,
     this.delays = const {},
+    this.delaysUpdatedAt,
   });
 
   final List<RailStationDeparture> departures;
@@ -34,15 +31,25 @@ final class RailStationBoardLoaded extends RailStationBoardState {
   /// Live 誤點 minutes by train number, TRA only. Absent means on time.
   final Map<String, int> delays;
 
-  RailStationBoardLoaded copyWith({Map<String, int>? delays}) =>
-      RailStationBoardLoaded(
-        direction: direction,
-        departures: departures,
-        delays: delays ?? this.delays,
-      );
+  final DateTime? delaysUpdatedAt;
+
+  RailStationBoardLoaded copyWith({
+    Map<String, int>? delays,
+    DateTime? delaysUpdatedAt,
+  }) => RailStationBoardLoaded(
+    direction: direction,
+    departures: departures,
+    delays: delays ?? this.delays,
+    delaysUpdatedAt: delaysUpdatedAt ?? this.delaysUpdatedAt,
+  );
 
   @override
-  List<Object?> get props => [direction, departures, delays];
+  List<Object?> get props => [
+    direction,
+    departures,
+    delays,
+    delaysUpdatedAt,
+  ];
 }
 
 final class RailStationBoardFailure extends RailStationBoardState {

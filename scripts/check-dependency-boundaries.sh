@@ -1,34 +1,4 @@
 #!/usr/bin/env bash
-# check-dependency-boundaries.sh
-#
-# Enforces the three dependency boundaries the architecture relies on:
-#
-#   (a) Flutter feature isolation — a file under app/lib/features/<X>/ must
-#       not import package:wheres_the_bus/features/<Y>/ for a different
-#       feature Y. Importing shared/, core/, data/, and app/ is always fine;
-#       those are the approved seams. Pre-existing cross-feature couplings
-#       are ratcheted in scripts/testdata/dependency-boundary-allowlist.txt
-#       as "<file>|<imported-feature>" pairs: existing pairs pass, any NEW
-#       pair fails. The ratchet is enforced in both directions: an allowlist
-#       line whose import no longer exists also fails, so removing a coupling
-#       forces its line out and the ratchet only ever tightens.
-#
-#   (b) Generated protobuf confinement — Dart files outside app/lib/data/
-#       must not import data/generated/ (protoc output). Existing offenders
-#       are ratcheted in scripts/testdata/proto-confinement-allowlist.txt.
-#
-#   (c) Go service layering — services/api must not import
-#       services/worker (or its subpackages) and vice versa;
-#       services/shared, services/obs, and models are the approved seams.
-#       Detection is a per-file import-block scan, so it works on a tree
-#       where generated pb.go stubs are absent.
-#
-# Only tracked files (git ls-files) are scanned, matching what CI sees.
-#
-# Usage: scripts/check-dependency-boundaries.sh [--self-test]
-#   --self-test  builds synthetic violating trees in a temp dir, asserts the
-#                scanner flags each one (RED), then runs the real check
-#                (GREEN). Never mutates the repository.
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

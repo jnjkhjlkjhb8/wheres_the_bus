@@ -50,14 +50,6 @@ class MetroSvgMap extends StatefulWidget {
   final Map<String, String> stationLabels;
   final bool animate;
 
-  /// Stations the boarded train still calls at, when a 下車站 is being chosen.
-  /// Null means no pick is open and the map behaves normally.
-  ///
-  /// The base map is a rasterized SVG, so its own station dots cannot be
-  /// restyled one by one. Pick-mode therefore lays a light wash over the whole
-  /// bitmap and redraws just these stations as rings above it — the station
-  /// names printed into the map stay readable, which is the only thing the
-  /// rider has to identify a station by.
   final Set<String>? pickAheadIds;
 
   /// The station the rider boarded at, marked with a single ring.
@@ -78,15 +70,6 @@ class MetroSvgMap extends StatefulWidget {
   /// sight instead of filling the viewport edge to edge.
   static const double _initialScale = .8;
 
-  /// Blank canvas above the map, so it opens clear of the floating app bar
-  /// instead of starting at the viewport's top edge with the northern end of
-  /// the network (淡水/北投) behind the status bar and the system pill.
-  ///
-  /// Part of the canvas rather than a translation in the transform: it grows
-  /// the pan boundary with it, so the gap can't be dragged away and the map
-  /// can't slide back under the bar. Measured in map pixels — on screen it is
-  /// this times the current zoom, which is the top inset plus one bar at
-  /// [_initialScale].
   static double _topGutter(BuildContext context) =>
       (MediaQuery.paddingOf(context).top + AppBarMetrics.barHeight) /
       _initialScale;
@@ -116,12 +99,6 @@ class MetroSvgMap extends StatefulWidget {
 }
 
 class _MetroSvgMapState extends State<MetroSvgMap> {
-  /// The 120 per-station Semantics nodes (accessibility only — hit-testing
-  /// itself is handled by the single map-spanning GestureDetector in
-  /// [_StationHitLayer], which is always live) are built one frame after the
-  /// route transition instead of during it — their one-time ~80ms build
-  /// would stutter the push animation. Ordinary taps are never dropped: only
-  /// screen-reader activation depends on this flag.
   bool _semanticsReady = false;
   Timer? _deferTimer;
 
@@ -177,10 +154,6 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
         return (dist * 0.25).toInt().clamp(0, 600);
       }
 
-      // Selecting a station never moves the map: the user tapped where the
-      // station already is, and at high zoom a reframe would throw away the
-      // area they deliberately framed. The sheet drops to `peek` instead —
-      // the panel yields, not the content (see MetroScreen._selectStation).
       return InteractiveViewer(
         transformationController: _transform,
         minScale: .45,
@@ -281,22 +254,6 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
   );
 }
 
-/// Station tap targets, sized to the 44×44 logical-pixel HIG minimum. Dense
-/// clusters (interchanges) put adjacent stations' 44px regions well within
-/// overlapping distance of each other, so a single [GestureDetector] spans
-/// the whole map and resolves each tap to the *nearest* station center
-/// within its 22px radius instead of relying on z-order between overlapping
-/// per-station regions (which would make the topmost — an arbitrary paint
-/// order — always win, not the one the user actually meant to hit).
-///
-/// This detector is always live, from the very first frame: only the
-/// per-station [Semantics] nodes below are deferred (see [semanticsReady] on
-/// [MetroSvgMap]) since building 120 of them is what costs ~80ms, not the
-/// single hit-test region. Screen-reader activation bypasses the nearest-hit
-/// arbitration entirely: each station's [Semantics] node carries its own
-/// `onTap`, invoked directly by the accessibility service through the
-/// semantics tree rather than through coordinate-based hit testing, so
-/// overlapping regions there are harmless.
 class _StationHitLayer extends StatefulWidget {
   const _StationHitLayer({
     required this.stations,
@@ -395,12 +352,6 @@ class _StationHitLayerState extends State<_StationHitLayer> {
   }
 }
 
-/// Draws the metro map SVG as a pre-rasterized [ui.Image] instead of a live
-/// vector picture. The ~600-path SVG costs >100ms per frame to rasterize
-/// under [InteractiveViewer] pan/zoom (Impeller has no picture raster cache);
-/// a texture pans at full frame rate. Nothing is painted while rasterization
-/// runs (painting the live SVG as a placeholder costs 300-500ms raster frames
-/// mid-transition); [MetroSvgMap.precache] hides even that gap.
 class _RasterSvg extends StatefulWidget {
   const _RasterSvg({required this.asset});
 
@@ -411,19 +362,6 @@ class _RasterSvg extends StatefulWidget {
 }
 
 class _RasterSvgState extends State<_RasterSvg> {
-  // Each entry is a GPU-resident texture, ~20-30MB (one per theme × width
-  // bucket). A new bucket appears every time the effective width changes —
-  // rotation, split-view, or a precache() from a screen with a different
-  // MediaQuery — so an entry that is no longer painted anywhere has to be
-  // disposed rather than left for the GC finaliser.
-  //
-  // Eviction is by liveness, not by key shape: the rasterised image is handed
-  // straight to a RawImage, so disposing one a mounted _RasterSvg still holds
-  // would paint a released texture. [_holders] counts those mounted holders
-  // per key, and only an unheld entry that isn't the one just requested can
-  // go. That keeps a theme toggle at a stable width free (the outgoing state
-  // is still mounted mid-transition, so its entry survives the incoming
-  // ensure) without letting old width buckets accumulate.
   static final Map<String, Future<ui.Image>> _cache = {};
   static final Map<String, int> _holders = {};
 
@@ -598,9 +536,6 @@ class _AnimatedLabelState extends State<_AnimatedLabel>
     );
   }
 
-  // MediaQuery.disableAnimationsOf requires an inherited-widget lookup,
-  // which is unsafe in initState (no ancestor established yet); the first
-  // entry play is deferred to here instead, mirroring _SelectedMarkerState.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -661,11 +596,6 @@ class _AnimatedLabelState extends State<_AnimatedLabel>
   }
 }
 
-/// Line-coloured selection marker: a soft halo fill plus a ring drawn around
-/// the station glyph (never over it), tinted the station's line colour. A
-/// locate-me-style ping expands out on each selection. All radii are expressed
-/// in SVG map units and multiplied by [scale] so the marker tracks the glyph
-/// through zoom instead of floating at a fixed pixel size.
 class _SelectedMarker extends StatefulWidget {
   const _SelectedMarker({
     required this.x,
@@ -842,11 +772,6 @@ class _RingPainter extends CustomPainter {
       old.strokeWidth != strokeWidth;
 }
 
-/// A station marked on the map while a 下車站 is being chosen.
-///
-/// Hollow by construction: the base map prints the station's name right next
-/// to its dot, and a filled marker would cover it. The 下車站 earns a second
-/// ring rather than a fill.
 class _PickRing extends StatelessWidget {
   const _PickRing({
     required this.x,

@@ -50,10 +50,6 @@ class _ClockDialState extends State<ClockDial>
   /// momentum. Consumed (zeroed) by [_sweepHandTo].
   double _releaseAngularVel = 0;
 
-  /// The hand's raw angle at the last release, before [_settle] snaps it to a
-  /// sector centre. The set-swap sweep starts from here so it continues
-  /// smoothly from where the finger left off (no jump at the switch). Consumed
-  /// (nulled) by [_sweepHandTo].
   double? _releaseAngle;
 
   double get _radius => widget.size / 2 - 24;
@@ -102,10 +98,6 @@ class _ClockDialState extends State<ClockDial>
     _controller.value = _unwrapNear(target, _controller.value);
   }
 
-  /// Sweep the hand from its current angle to [target], taking the shortest
-  /// path (no multi-turn spin). Used on a set swap so the hand glides to the
-  /// new layer's selection instead of teleporting — seeded with the last
-  /// release's angular velocity, so a flick carries momentum into the sweep.
   void _sweepHandTo(double target) {
     final start = _releaseAngle ?? _controller.value;
     _releaseAngle = null;
@@ -147,11 +139,6 @@ class _ClockDialState extends State<ClockDial>
     super.dispose();
   }
 
-  /// Sector-crossing commit: fires the haptic and reports the new index the
-  /// instant the pointer crosses a sector midpoint, independent of whether
-  /// the hand itself has finished tracking there yet. Returns the sector the
-  /// pointer is over now (whether or not it was newly committed), so callers
-  /// don't have to wait a frame for `widget.selectedIndex` to catch up.
   int? _commitSector(Offset local) {
     if (widget.items.isEmpty) return null;
     final center = widget.size / 2;

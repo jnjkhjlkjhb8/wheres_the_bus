@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# check-govulncheck.sh
-#
-# SCA gate: govulncheck (pinned version, hermetic `go install pkg@version`
-# into .tools/bin — never @latest) over every Go package. govulncheck only
-# reports vulnerabilities on a reachable call path, so a hit means the
-# vulnerable symbol is actually called; treat findings as blocking and fix
-# by upgrading the module.
-#
-# Requires network access to https://vuln.go.dev (the same class of network
-# dependency `make proto-go` already has for module downloads).
-#
-# Usage: scripts/check-govulncheck.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

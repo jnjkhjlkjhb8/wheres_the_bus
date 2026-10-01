@@ -31,7 +31,7 @@ class _Fares extends StatelessWidget {
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          spacing: 12,
+          spacing: AppTheme.space12,
           children: [
             _SectionLabel(AppI18n.of(context).busFareInfo, cs: cs),
             if (fare == null)
@@ -148,12 +148,15 @@ class _AllFareClasses extends StatelessWidget {
         for (final (i, group) in groups.indexed) ...[
           if (i > 0)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
+              padding: EdgeInsets.symmetric(vertical: AppTheme.space12),
               child: DividerLine(),
             ),
           if (group.segment case final segment?)
             Padding(
-              padding: EdgeInsets.only(top: i > 0 ? 0 : 4, bottom: 2),
+              padding: EdgeInsets.only(
+                top: i > 0 ? 0 : AppTheme.space4,
+                bottom: AppTheme.space2,
+              ),
               child: Text(
                 segment,
                 style: AppTextStyles.bodySmall.copyWith(
@@ -164,7 +167,7 @@ class _AllFareClasses extends StatelessWidget {
             ),
           for (final row in group.rows)
             Padding(
-              padding: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.only(top: AppTheme.space10),
               child: Row(
                 children: [
                   Expanded(
@@ -211,7 +214,7 @@ class _FareRangeLine extends StatelessWidget {
         ? 'NT\$${range.min}'
         : 'NT\$${range.min} – NT\$${range.max}';
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: AppTheme.space12),
       child: Row(
         children: [
           Expanded(
@@ -311,10 +314,10 @@ class _OdFareTableState extends State<_OdFareTable> {
           ),
           onChanged: (v) => setState(() => _query = v),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppTheme.space8),
         if (matches.isEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
+            padding: const EdgeInsets.symmetric(vertical: AppTheme.space16),
             child: Text(
               AppI18n.of(context).busNoStopMatch(q),
               style: AppTextStyles.bodyRegular.copyWith(
@@ -326,7 +329,7 @@ class _OdFareTableState extends State<_OdFareTable> {
           ...blocks,
           if (truncated)
             Padding(
-              padding: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.only(top: AppTheme.space12),
               child: Text(
                 AppI18n.of(context).busFareTruncated(_maxRows),
                 style: AppTextStyles.bodySmall.copyWith(
@@ -348,7 +351,10 @@ class _OdFareTableState extends State<_OdFareTable> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(top: 12, bottom: 2),
+          padding: const EdgeInsets.only(
+            top: AppTheme.space12,
+            bottom: AppTheme.space2,
+          ),
           child: Row(
             children: [
               Text(
@@ -358,7 +364,7 @@ class _OdFareTableState extends State<_OdFareTable> {
                   color: cs.onSurface,
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: AppTheme.space4),
               Text(
                 AppI18n.of(context).busDepart,
                 style: AppTextStyles.bodySmall.copyWith(
@@ -433,12 +439,15 @@ class _FareGroupBlock extends StatelessWidget {
         // each origin→destination block reads as its own fare panel.
         if (showDivider)
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
+            padding: EdgeInsets.symmetric(vertical: AppTheme.space12),
             child: DividerLine(),
           ),
         if (group.segment case final segment?)
           Padding(
-            padding: EdgeInsets.only(top: showDivider ? 0 : 12, bottom: 4),
+            padding: EdgeInsets.only(
+              top: showDivider ? 0 : AppTheme.space12,
+              bottom: AppTheme.space4,
+            ),
             child: Text(
               segment,
               style: AppTextStyles.bodySmall.copyWith(
@@ -449,7 +458,7 @@ class _FareGroupBlock extends StatelessWidget {
           ),
         if (picked != null)
           Padding(
-            padding: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.only(top: AppTheme.space12),
             child: Row(
               children: [
                 Expanded(

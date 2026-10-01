@@ -6,10 +6,6 @@ import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 
-/// A page whose list sits under a top inset that ramps in over the tall..full
-/// band — the shape of the home sheet root. Driving that inset off the raw
-/// controller instead of [CurrentPageSheetTicks] is what used to hijack a drag
-/// running on the page above it.
 Widget _rootPage(SheetController controller, Listenable insetTicks) => Column(
   mainAxisSize: MainAxisSize.min,
   children: [
@@ -19,10 +15,11 @@ Widget _rootPage(SheetController controller, Listenable insetTicks) => Column(
         final metrics = controller.metrics;
         final viewport = metrics?.viewportSize.height ?? 0;
         final offset = metrics?.offset ?? 0;
-        final progress = viewport <= 0
+        final progress = metrics == null || viewport <= 0
             ? 0.0
-            : ((offset / viewport - AppSheetSnap.tallFrac) /
-                      (AppSheetSnap.fullFrac - AppSheetSnap.tallFrac))
+            : ((offset - viewport * AppSheetSnap.tallFrac) /
+                      (AppSheetSnap.full.resolve(metrics) -
+                          viewport * AppSheetSnap.tallFrac))
                   .clamp(0.0, 1.0);
         return Padding(
           padding: EdgeInsets.only(top: 47 * progress),

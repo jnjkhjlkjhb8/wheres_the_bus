@@ -13,22 +13,6 @@ const kAltRouteColor = Color(0xFF9AA0A6);
 /// One layer handed to the `GoogleMap`.
 typedef GoMapLayer = ({Set<Marker> markers, Set<Polyline> polylines});
 
-/// The Go planner's map layer, as one module.
-///
-/// A projection: a plan result plus the rider's selection and navigation
-/// progress become polylines and markers. It used to be ~310 lines spread over
-/// eleven private methods on the screen's `State`, entangled with the async
-/// bitmap cache, so none of it could be reached without mounting a `GoogleMap`.
-///
-/// Bitmaps resolve asynchronously but the layer is built synchronously. A
-/// marker whose bitmap has not rendered yet is simply absent from this frame;
-/// when it lands, [onBitmapReady] fires, the memo is dropped, and the marker
-/// joins the next frame. That is why nothing here awaits — building the layer
-/// must not block a repaint.
-///
-/// Markers stay bitmaps on purpose. Flutter widgets positioned over a
-/// `GoogleMap` shake while the map pans, so everything pinned to a coordinate
-/// here is rasterised through [MapMarkers].
 class GoPlanOverlay {
   GoPlanOverlay({
     required this.onAlternateTap,
@@ -72,15 +56,6 @@ class GoPlanOverlay {
   /// Stops pending bitmap callbacks from firing after the screen is gone.
   void dispose() => _disposed = true;
 
-  /// The layer for a resolved plan.
-  ///
-  /// [activeLeg] is the leg navigation is currently on; legs before it dim in
-  /// step, lines and markers together, and the alternates stop drawing
-  /// entirely — during navigation there is one route, not a choice.
-  ///
-  /// [fix] and [puckHeading] add the directional user puck; a null fix leaves
-  /// it off, which is the whole gate (it shows for the entire navigation
-  /// regardless of follow state).
   GoMapLayer forPlan({
     required PlanResult result,
     required int selectedIndex,
@@ -119,11 +94,6 @@ class GoPlanOverlay {
     );
   }
 
-  /// What the map can honestly show before the router answers: the two ends and
-  /// the straight line between them.
-  ///
-  /// It is not a route and does not pretend to be one — dotted, muted, and
-  /// replaced the moment real geometry arrives.
   GoMapLayer pending({
     required LatLng? origin,
     required LatLng? destination,
@@ -262,11 +232,6 @@ class GoPlanOverlay {
     );
   }
 
-  /// Markers for the selected route only. Origin and destination anchor the
-  /// ends; each transit leg's board and alight get a leg-coloured ring
-  /// (transfers dedupe by position); intermediate stops get tiny neutral dots.
-  /// While navigating, markers of already-passed legs dim in step with their
-  /// lines.
   Set<Marker> _planMarkers(PlanRoute route, int? activeLeg, ColorScheme cs) {
     final sections = route.sections;
     if (sections.isEmpty) return const {};
@@ -323,14 +288,6 @@ class GoPlanOverlay {
     return markers;
   }
 
-  /// Directional user puck during navigation: an ink arrow on a white disc at
-  /// the latest fix, replacing the default blue dot.
-  ///
-  /// Flat and centre-anchored; its rotation is the north-referenced compass
-  /// heading and the map holds a fixed bearing, so the arrow points at the
-  /// device's true heading on the map. Rebuilt on each fix (position) and each
-  /// applied heading (rotation), both throttled upstream, so never at raw
-  /// compass rate.
   Marker? _navPuck(ColorScheme cs, {required double heading, LatLng? fix}) {
     if (fix == null) return null;
     // Card colour matches the nav header's card (white in light, elevated
@@ -370,12 +327,6 @@ List<LatLng> routePoints(PlanRoute route) => [
   ],
 ];
 
-/// Full per-mode colour rendering of one route.
-///
-/// Walk sections trace the real OSRM foot path when it resolved; rail transit
-/// sections trace the line geometry the router clipped to this section's stops
-/// when it resolved. Either way, an unresolved path falls back to a straight
-/// line through departure → intermediateStops → arrival.
 @visibleForTesting
 Set<Polyline> routePolylines(
   PlanRoute route,

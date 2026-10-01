@@ -66,14 +66,6 @@ abstract final class AppMotion {
   static bool reduced(BuildContext context) =>
       MediaQuery.disableAnimationsOf(context);
 
-  /// `transitionBuilder` for an [AnimatedSwitcher] whose children carry a key.
-  ///
-  /// Same crossfade as the switcher's default, minus the key it copies from
-  /// the child. The switcher keys each entry by `child.key ?? childNumber`, so
-  /// a key that comes back before the outgoing child finished fading — `error
-  /// → loading → error` when a retry fails inside the transition — puts two
-  /// children with the same key in one Stack and trips the duplicate-key
-  /// assert. Unkeyed, every entry falls back to the switcher's own counter.
   static Widget switchFade(Widget child, Animation<double> animation) =>
       FadeTransition(opacity: animation, child: child);
 }

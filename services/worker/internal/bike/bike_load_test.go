@@ -53,10 +53,6 @@ func TestLoadBikeStationsRejectsInvalidIdentityOrPosition(t *testing.T) {
 	}
 }
 
-// ServiceType is an opaque smallint the loader never switches on, so a value
-// TDX adds later must flow through rather than reject the whole city. A
-// hardcoded 1-or-2 allowlist took Changhua and Yunlin offline the day a third
-// operator appeared.
 func TestLoadBikeStationsAcceptsUnknownServiceType(t *testing.T) {
 	sink := &fakeLoadSink{}
 	err := LoadStations(context.Background(), decodeInto(
@@ -70,10 +66,6 @@ func TestLoadBikeStationsAcceptsUnknownServiceType(t *testing.T) {
 	}
 }
 
-// Bike counts must decode past 255. They were uint8, so one large station
-// (TDX returned GeneralBikes 321) failed the whole city's payload with
-// "cannot unmarshal number 321 into Go struct field ... of type uint8" —
-// silently dropping every station in that city from the live cache.
 func TestBikeCountsDecodeAbove255(t *testing.T) {
 	var avail bikeAvailability
 	if err := pipeline.DecodeLiveItems(decodeInto(

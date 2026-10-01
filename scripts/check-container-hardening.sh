@@ -1,20 +1,4 @@
 #!/usr/bin/env bash
-# check-container-hardening.sh
-#
-# Static + compose-config policy checks for container hardening:
-#   - non-root USER in final images we build (router, functions)
-#   - no-new-privileges, dropped capabilities, read-only root FS, pids/cpu
-#     limits on every long-running compose service
-#   - per-service secret file mounts (never the whole ./secrets directory)
-#   - images pinned by digest (no bare :latest, no unpinned tags)
-#   - OSRM PBF fetched atomically with checksum verification, and a
-#     preprocessing marker derived from the PBF checksum + routing profile
-#
-# Compose-level checks read `docker compose config` output (same technique
-# as scripts/check-compose-isolation.sh) rather than hand-rolling YAML
-# parsing. Dockerfile and osrm command checks are plain text greps and need
-# no daemon. If `docker` is unavailable, the compose-config section is
-# skipped with a note rather than failing the whole script.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,9 +12,6 @@ bad() {
   fail=1
 }
 
-# ---------------------------------------------------------------------------
-# 1. Non-root USER in Dockerfiles we control
-# ---------------------------------------------------------------------------
 note "== Non-root USER in final image stage =="
 check_dockerfile_user() {
   local name="$1" file="$2"
@@ -51,19 +32,11 @@ check_dockerfile_user() {
 check_dockerfile_user "router" services/api/Dockerfile
 check_dockerfile_user "functions" services/worker/Dockerfile
 
-# ---------------------------------------------------------------------------
-# 2. .dockerignore exists and is allowlist-style (excludes the big/sensitive
-#    stuff rather than trying to enumerate everything to include)
-# ---------------------------------------------------------------------------
 note ""
 note "== .dockerignore present and excludes secrets/build output =="
 if [ ! -f .dockerignore ]; then
   bad ".dockerignore missing at repo root"
 elif grep -qE '^\*$' .dockerignore; then
-  # Allowlist-style: a bare `*` denies everything by default, so anything
-  # not explicitly un-ignored (git, env/secrets, build output, osrm-data,
-  # caches, local tooling) is excluded automatically. Only flag a problem if
-  # one of those sensitive/huge paths was explicitly re-included.
   reincluded=""
   for pattern in '^!\.git' '^!env/' '^!secrets' '^!osrm-data' '^!app/build' '^!\.dart_tool'; do
     grep -qE "$pattern" .dockerignore && reincluded="$reincluded $pattern"
@@ -85,9 +58,6 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# 3. OSRM fetch: atomic download + checksum verification
-# ---------------------------------------------------------------------------
 note ""
 note "== OSRM PBF fetch: atomic download + checksum =="
 osrm_fetch_cmd=$(awk '/^  osrm-fetch:/{f=1} f{print} f && /restart:/{exit}' docker/docker-compose.yaml)
@@ -102,17 +72,9 @@ else
   bad "osrm-fetch does not download-then-rename atomically (no .tmp path + mv)"
 fi
 
-# ---------------------------------------------------------------------------
-# 4. MOTIS import is content-addressed on both of its inputs
-# ---------------------------------------------------------------------------
 note ""
 note "== MOTIS import directory is content-addressed =="
 motis_import_cmd=$(awk '/^  motis-import:/{f=1} f{print} f && /restart:/{exit}' docker/docker-compose.yaml)
-# Both inputs, not one: a data set rebuilt only when the PBF moves would serve
-# yesterday's timetable, and one rebuilt only when gtfs.zip moves would route
-# over a stale street graph. The directory name is derived from both, so its
-# existence is the marker and there is no separate file to survive a partial
-# build.
 if echo "$motis_import_cmd" | grep -q 'gtfs_sha=' && echo "$motis_import_cmd" | grep -q 'pbf_sha='; then
   ok "motis-import derives its data directory from both input checksums"
 else
@@ -124,9 +86,6 @@ else
   bad "motis-import does not build into .build/ and rename (a running motis could read a half-built set)"
 fi
 
-# ---------------------------------------------------------------------------
-# 5. MOTIS healthcheck hits a real endpoint
-# ---------------------------------------------------------------------------
 note ""
 note "== MOTIS healthcheck uses a real MOTIS HTTP endpoint =="
 motis_healthcheck_test=$(awk '
@@ -134,10 +93,6 @@ motis_healthcheck_test=$(awk '
   f && /^  [a-zA-Z0-9_-]+:$/ { exit }
   f && /^ *test:/ { print }
 ' docker/docker-compose.yaml | grep -v '^ *#')
-# /api/v1/health is the one endpoint that reports feed state rather than
-# liveness: 200 only after a full update cycle over every configured feed, 400
-# before. A probe against a routing endpoint would pass while the realtime feed
-# had been failing all day, which is the failure worth catching.
 if echo "$motis_healthcheck_test" | grep -q '/api/v1/health'; then
   ok "motis healthcheck asserts feed freshness via /api/v1/health"
 elif echo "$motis_healthcheck_test" | grep -qE '/api/v1/geocode|/api/v1/reverse-geocode|/api/v6/'; then
@@ -145,10 +100,6 @@ elif echo "$motis_healthcheck_test" | grep -qE '/api/v1/geocode|/api/v1/reverse-
 else
   bad "motis healthcheck does not reference a documented MOTIS endpoint"
 fi
-# The endpoint being right is not enough -- the probe binary must exist in the
-# image. ghcr.io/motis-project/motis is Alpine-based, so busybox wget is
-# present and curl is not. (The OSRM image this replaced shipped neither, which
-# is why its probe had to go through bash's /dev/tcp.)
 if echo "$motis_healthcheck_test" | grep -q 'curl'; then
   bad "motis healthcheck invokes curl, which the Alpine-based MOTIS image does not ship"
 elif echo "$motis_healthcheck_test" | grep -q 'wget'; then
@@ -157,9 +108,6 @@ else
   bad "motis healthcheck does not use wget -- verify its probe binary exists in the pinned image"
 fi
 
-# ---------------------------------------------------------------------------
-# 6. Compose-config-derived checks (need docker compose)
-# ---------------------------------------------------------------------------
 note ""
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
   note "== Compose-config checks SKIPPED (docker/compose not available) =="
@@ -244,11 +192,6 @@ else
   note "-- pinned images (digest, not :latest) --"
   for s in $services; do
     blk=$(service_block "$s" "$cfg")
-    # Locally built services (router/functions/ingestor/loader) have
-    # no meaningful pre-build digest to pin -- the digest is an OUTPUT of
-    # `docker build`, not an input. What matters for them is that their
-    # Dockerfile's FROM base image is pinned; that's covered separately
-    # below.
     if echo "$blk" | grep -q '^    build:'; then
       ok "$s: locally built (build: present) -- base image pin checked via Dockerfile"
       continue

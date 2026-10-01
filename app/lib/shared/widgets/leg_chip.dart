@@ -72,7 +72,7 @@ class LegChip extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         icon,
-        const SizedBox(height: 2),
+        const SizedBox(height: AppTheme.space2),
         Text(label, style: AppTextStyles.bodyVerySmall),
       ],
     );
@@ -94,7 +94,7 @@ class _BusIconWithBadge extends StatelessWidget {
           right: -6,
           bottom: -4,
           child: Container(
-            padding: const EdgeInsets.all(2),
+            padding: const EdgeInsets.all(AppTheme.space2),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(AppTheme.radiusChip),

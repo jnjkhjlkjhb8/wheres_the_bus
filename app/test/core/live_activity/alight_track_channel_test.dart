@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
@@ -12,7 +14,10 @@ void main() {
     calls.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-          calls.add(call);
+          // The permission ask is not a card command: it fires at most once per
+          // process, so recording it would make every assertion below depend on
+          // which test happened to run first.
+          if (call.method != 'requestNotificationPermission') calls.add(call);
           return call.method == 'start' ? 'activity-1' : null;
         });
   });
@@ -120,10 +125,6 @@ void main() {
       final startFuture = la.start(content);
       await Future.wait([stopFuture, startFuture]);
 
-      // Commands are serialized in call order, so the stale stop (still
-      // holding the then-current lease) runs before the new start mints
-      // its own — it is not stale relative to itself, so it does reach the
-      // platform. The important guarantee is what happens next.
       final leaseB = await startFuture;
       calls.clear();
       await la.stop(leaseA); // now definitely stale
@@ -132,4 +133,36 @@ void main() {
       expect(calls.single.method, 'stop');
     },
   );
+
+  test(
+    'start resolves and the queue keeps moving when the platform never '
+    'answers (a hung start used to leave the card unposted, unupdatable and '
+    'un-cancellable)',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            // Never completes: the shape of a `start` whose permission
+            // callback never arrived.
+            return Completer<Object?>().future;
+          });
+      final la = AlightTrackChannel();
+
+      await la.start(content); // must not hang forever
+      // The rider's cancel is behind the same serial queue, so this is the
+      // half that actually broke: it has to run despite the start above.
+      await la.stopAny();
+
+      expect(calls.map((c) => c.method), contains('stop'));
+    },
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
+
+  test('stopAny takes the card down without a lease', () async {
+    final la = AlightTrackChannel();
+    // No start: nothing ever handed this owner a lease, which is exactly the
+    // state a rider pressing 取消追蹤 can be in.
+    await la.stopAny();
+    expect(calls.single.method, 'stop');
+  });
 }

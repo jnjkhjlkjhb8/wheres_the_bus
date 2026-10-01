@@ -5,14 +5,6 @@ import 'package:wheres_the_bus/data/models/subscription_scope.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/data/repositories/firebase_repository.dart';
 
-/// Keeps the server's copy of this device's 訂閱範圍 equal to what 收藏
-/// currently resolves to. It is the single write path — no screen syncs a
-/// subscription of its own — so a 收藏 removed from the favourites list, or
-/// restored onto a fresh install, converges on the next push instead of
-/// leaving the server pushing alerts for routes the rider no longer has.
-///
-/// The collaborators are plain functions rather than the repositories so the
-/// loop can be exercised without Hive or gRPC.
 class SubscriptionSync {
   SubscriptionSync({
     required Stream<void> Function() changes,
@@ -50,10 +42,6 @@ class SubscriptionSync {
     _sub = null;
   }
 
-  /// Sends the current scope unless the server already has it. Sends are
-  /// serialized: two replaces racing could land out of order and leave the
-  /// server holding the older set, so a change arriving mid-flight re-runs the
-  /// loop rather than starting a second call.
   @visibleForTesting
   Future<void> push() async {
     if (_sending) {

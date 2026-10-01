@@ -16,10 +16,6 @@ import 'package:wheres_the_bus/features/metro/data/metro_line_names.dart';
 import 'package:wheres_the_bus/features/metro/data/mrt_board_eta.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-/// Owns the single metro alight-reminder session (捷運下車提醒, ADR-0015):
-/// CreateTrack, the resilient WatchTrack stream, CancelTrack, terminal cleanup,
-/// Hive persistence, Live Activity driving, and the lead-fired vibration. The
-/// metro station detail view reads this for the bell state.
 class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
   MrtTrackBloc({
     required AppI18n i18n,
@@ -76,11 +72,6 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
   final bool Function() _liveActivityEnabled;
   final Future<void> Function(String trackId, AlightEvent event) _vibrate;
 
-  /// Stops remaining on the previous frame, so a buzz fires on the crossing
-  /// rather than on every frame that happens to sit at the threshold. Metro
-  /// reads it from the session feed rather than from the server's own
-  /// `leadFired` status: that status names one event, and a 下車提醒 has two
-  /// (ADR-0020).
   int? _lastRemaining;
 
   ResilientSubscription<MrtTrackSession>? _watch;
@@ -110,9 +101,6 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
       state.copyWith(creating: true, createError: MrtTrackCreateError.none),
     );
     try {
-      // Handed up once so a server-pushed refresh can name the line the way
-      // the rider reads it (ADR-0018): the backend knows the trip, not that
-      // it is 板南線 or which blue that is.
       final line = mrtLineOfStation(e.boardStationId);
       final session = await _repository.createTrack(
         carId: e.carId,
@@ -124,10 +112,6 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
         lineCode: line,
         lineColorHex: _lineColors[line] ?? _defaultLineColor,
       );
-      // Seeded from the arrival the rider tapped so the card opens on the
-      // right reading rather than briefly claiming they are already riding.
-      // The pick is answered the moment a session exists; leaving it open
-      // would keep the map in pick-mode behind the running reminder.
       emit(state.copyWith(boardEtaSeconds: e.boardEtaSeconds, clearPick: true));
       await _adopt(session, emit);
       _subscribeBoardEta(e);
@@ -215,10 +199,6 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     _pushActivity(session);
   }
 
-  /// How long the watch stream may stay down before the ride is called off.
-  /// A metro rider spends most of the trip underground, and the subscription
-  /// keeps reconnecting the whole time, so a reported failure is a tunnel far
-  /// more often than an ending (FDPL-54).
   static const _watchLostAfter = Duration(minutes: 2);
 
   Timer? _watchLostTimer;
@@ -323,14 +303,6 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     );
   }
 
-  /// Hands an ActivityKit push token to the server, which is what lets this
-  /// session's card keep counting while the app is suspended (ADR-0018).
-  ///
-  /// A token that arrives for no session is dropped: iOS issues it against the
-  /// card, and a card with no session behind it is already on its way out.
-  /// Failures are swallowed — the card then simply degrades to local updates,
-  /// which is what it did before push existed, and a tracking session must
-  /// never fall over because a refresh channel could not be set up.
   Future<void> _onPushToken(
     MrtTrackPushTokenReceived e,
     Emitter<MrtTrackBlocState> emit,
@@ -403,10 +375,6 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     // The bar runs board→target, one segment per hop.
     final hopCount = max(1, s.targetIndex);
     final remaining = s.remainingStops.clamp(0, hopCount);
-    // Armed from the platform: the train is still on its way in, so the card
-    // counts minutes to it rather than stops to the alight. Counting 還剩 N 站
-    // at someone who has not boarded misstates where they are, and the number
-    // would not move for the whole wait.
     final waiting = ended == null && state.waitingToBoard;
     return AlightTrackContent(
       mode: AlightTrackMode.metro,

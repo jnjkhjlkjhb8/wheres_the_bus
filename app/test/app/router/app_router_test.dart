@@ -110,10 +110,6 @@ void main() {
     });
 
     test('the train page is declared outside the shell', () {
-      // Structural rather than rendered: the screen fetches stop times on
-      // open, which a route test has no business waiting on. Being a
-      // top-level route is exactly what keeps it off the shell's navigator,
-      // so it covers the banners instead of sitting under them.
       final topLevel = buildAppRoutes().whereType<GoRoute>().map((r) => r.path);
       expect(topLevel, contains(AppRoutes.railTrainPattern));
     });
@@ -171,10 +167,6 @@ void main() {
     testWidgets('selecting a station keeps the same line map alive', (
       tester,
     ) async {
-      // The reason both metro locations share one page key. A rebuilt page
-      // would reset the rider's pan and zoom, so selecting a station has to
-      // reach the *same* State — which is what makes writing the selection to
-      // the location affordable in the first place.
       final router = await pumpAt(tester, AppRoutes.metro);
       final before = tester.state(find.byType(MetroScreen));
 

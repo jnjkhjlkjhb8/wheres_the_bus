@@ -4,10 +4,6 @@ part of '../view/bus_route_screen.dart';
 // (TimelineVehicleMarker): one marker, one look, whichever axis it is on.
 const _arrowSize = 17.0;
 
-// The sheet's collapsed detent (_RouteSheet) hosts this timeline inside a
-// Positioned box of the same height: both must agree or the fare-zone band
-// silently clips (see finding 1, docs/audit-2026-07-18.md). Named once here
-// so the two can't drift apart again.
 const _tlCellHeight = 120.0;
 
 // Vertical centre of the stop dot / rail; shared by the painter and the
@@ -24,7 +20,6 @@ const _tlBandLabelTop = 102.0;
 class _HorizontalRouteTimeline extends StatelessWidget {
   const _HorizontalRouteTimeline({
     required this.stops,
-    required this.vehicles,
     required this.direction,
     required this.controller,
     required this.flashStopUid,
@@ -32,10 +27,11 @@ class _HorizontalRouteTimeline extends StatelessWidget {
     this.pinnedNextStopIndex,
     this.targetUid,
     this.onPickStop,
+    this.onStopTap,
+    this.onVehicleTap,
   });
 
   final List<TimelineStop> stops;
-  final List<_BusVehicle> vehicles;
   final int direction;
   final ScrollController controller;
 
@@ -49,23 +45,25 @@ class _HorizontalRouteTimeline extends StatelessWidget {
   final String? targetUid;
   final void Function(String uid)? onPickStop;
 
-  _BusVehicle? _vehicleBetween(String currentUid, String? nextUid) {
-    if (nextUid == null) return null;
-    for (final v in vehicles) {
-      if (v.afterStopUid == currentUid) return v;
-    }
-    return null;
-  }
+  /// Outside pick-mode a cell tap is a "show me this one": the map centres on
+  /// that stop's marker. Same for the vehicle arrow, which also selects the
+  /// bus so its bubble opens.
+  final void Function(String uid)? onStopTap;
+  final void Function(String plate)? onVehicleTap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Same derivation the vertical stop list uses: a marker at index i means
+    // the vehicle sits in the segment between stop i-1 and stop i. The feed
+    // carries no position along that segment, so it rides the middle.
+    final markers = busVehicleMarkerIndices(stops);
     return SizedBox(
       height: _tlCellHeight,
       child: ListView.builder(
         controller: controller,
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: _kTlPadding),
         itemCount: stops.length,
         itemBuilder: (context, i) {
           final stop = stops[i];
@@ -94,7 +92,8 @@ class _HorizontalRouteTimeline extends StatelessWidget {
           final isBandEnd =
               showBand && (nextStop == null || !nextStop.isBuffer);
 
-          final vehicle = _vehicleBetween(stop.uid, nextStop?.uid);
+          final hasVehicle = markers.contains(i);
+          final vehiclePlate = hasVehicle ? stop.plate : '';
 
           // cs.outline is ~1.7:1 against the sheet surface, under the 3:1 WCAG
           // 1.4.11 floor for a meaningful graphical object; onSurfaceVariant
@@ -110,7 +109,7 @@ class _HorizontalRouteTimeline extends StatelessWidget {
           if (isTarget) dotColor = cs.onSurface;
 
           final cell = SizedBox(
-            width: 120,
+            width: _kTlCellWidth,
             child: Stack(
               children: [
                 Positioned(
@@ -131,9 +130,6 @@ class _HorizontalRouteTimeline extends StatelessWidget {
                       dotColor: dotColor,
                       surfaceColor: cs.surface,
                       activeColor: cs.primary,
-                      vehicleProgress: vehicle?.progress,
-                      vehiclePlate: vehicle?.plate,
-                      vehicleColor: AppTheme.trainRangecar,
                       isLeftActive:
                           stop.active && (i > 0 && stops[i - 1].active),
                       isRightActive:
@@ -141,17 +137,20 @@ class _HorizontalRouteTimeline extends StatelessWidget {
                       stopState: stop.state,
                       isActiveStop: stop.active,
                       isTarget: isTarget,
-                      plateTextColor: cs.onSurface,
-                      textScaler: MediaQuery.textScalerOf(context),
                     ),
                   ),
                 ),
 
-                if (vehicle != null && !isLast)
+                if (hasVehicle)
                   Positioned(
-                    left: 60 + 60 * vehicle.progress - _arrowSize / 2,
+                    left: 0,
                     top: _tlDotCenterY - _arrowSize / 2,
-                    child: IgnorePointer(
+                    child: Pressable(
+                      // A marker the feed gave no plate for has nothing to
+                      // select — same rule the stop list's swipe row applies.
+                      enabled: !picking && vehiclePlate.isNotEmpty,
+                      onTap: () => onVehicleTap?.call(vehiclePlate),
+                      semanticLabel: AppI18n.of(context).busVehicleHere,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           color: cs.onSurface,
@@ -166,6 +165,38 @@ class _HorizontalRouteTimeline extends StatelessWidget {
                             Icons.arrow_forward_rounded,
                             size: 11,
                             color: cs.surface,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Plate rides just above its own arrow. It used to be painted
+                // by the CustomPaint underneath, which put it behind the stop
+                // name — on a two-line name it was never visible.
+                if (hasVehicle && vehiclePlate.isNotEmpty)
+                  Positioned(
+                    left: 0,
+                    top: _tlDotCenterY - _arrowSize / 2 - 13,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: cs.surface,
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusChip,
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: Text(
+                            vehiclePlate,
+                            style: AppTextStyles.memo.copyWith(
+                              fontSize: 9,
+                              height: 1.2,
+                              fontWeight: FontWeight.w700,
+                              color: cs.onSurface,
+                              fontFeatures: _tnum,
+                            ),
                           ),
                         ),
                       ),
@@ -232,7 +263,11 @@ class _HorizontalRouteTimeline extends StatelessWidget {
             ),
           );
 
-          if (!picking) return cell;
+          if (!picking) {
+            return onStopTap == null
+                ? cell
+                : Pressable(onTap: () => onStopTap!(stop.uid), child: cell);
+          }
           if (isPassed) {
             return Opacity(
               opacity: 0.35,
@@ -315,15 +350,10 @@ class _HorizontalTimelinePainter extends CustomPainter {
     required this.dotColor,
     required this.surfaceColor,
     required this.activeColor,
-    required this.vehicleProgress,
-    required this.vehiclePlate,
-    required this.vehicleColor,
     required this.isLeftActive,
     required this.isRightActive,
     required this.stopState,
     required this.isActiveStop,
-    required this.plateTextColor,
-    required this.textScaler,
     this.isTarget = false,
   });
 
@@ -338,17 +368,10 @@ class _HorizontalTimelinePainter extends CustomPainter {
   /// the ring reads correctly in both light and dark themes.
   final Color surfaceColor;
   final Color activeColor;
-  final double? vehicleProgress;
-  final String? vehiclePlate;
-  final Color vehicleColor;
   final bool isLeftActive;
   final bool isRightActive;
   final TimelineStopState stopState;
   final bool isActiveStop;
-
-  /// Theme-aware plate-label color and the current text scale factor.
-  final Color plateTextColor;
-  final TextScaler textScaler;
 
   /// Whether this stop is the chosen alight target in pick-mode; draws an ink
   /// ring around the dot.
@@ -425,33 +448,6 @@ class _HorizontalTimelinePainter extends CustomPainter {
           ..color = dotColor,
       );
     }
-
-    if (vehicleProgress != null && !isLast) {
-      final vx = cx + (size.width - cx) * vehicleProgress!;
-      // Vehicle body is drawn as a sprite widget in the Stack above;
-      // only the plate label is painted here.
-      if (vehiclePlate != null && vehiclePlate!.isNotEmpty) {
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: vehiclePlate,
-            style: TextStyle(
-              color: plateTextColor,
-              fontSize: 9,
-              fontWeight: FontWeight.bold,
-              height: 1,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-          textScaler: textScaler,
-        );
-        textPainter
-          ..layout()
-          ..paint(
-            canvas,
-            Offset(vx - textPainter.width / 2, cy - 18.0),
-          );
-      }
-    }
   }
 
   @override
@@ -464,14 +460,9 @@ class _HorizontalTimelinePainter extends CustomPainter {
       old.dotColor != dotColor ||
       old.surfaceColor != surfaceColor ||
       old.activeColor != activeColor ||
-      old.vehicleProgress != vehicleProgress ||
-      old.vehiclePlate != vehiclePlate ||
-      old.vehicleColor != vehicleColor ||
       old.isLeftActive != isLeftActive ||
       old.isRightActive != isRightActive ||
       old.stopState != stopState ||
       old.isActiveStop != isActiveStop ||
-      old.isTarget != isTarget ||
-      old.plateTextColor != plateTextColor ||
-      old.textScaler != textScaler;
+      old.isTarget != isTarget;
 }

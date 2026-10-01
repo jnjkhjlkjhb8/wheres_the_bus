@@ -15,15 +15,6 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 
-/// The contextual notice layer: a disruption about *this* route, shown in the
-/// page's own content.
-///
-/// The predecessor took `visibleAlerts.first` and rendered it on every transit
-/// page, so a stop screen could sit under a headline about a line it does not
-/// serve. This matches on identity instead: same [routeType], and either a
-/// shared key or no key at all (a system-wide notice is about every route in
-/// its domain). No match means no strip — the empty state is correct, not a
-/// gap to fill with the loudest global alert.
 class InlineNotice extends StatelessWidget {
   const InlineNotice({
     required this.routeType,
@@ -92,12 +83,20 @@ class _NoticeCard extends StatelessWidget {
           );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space12,
+        AppTheme.space10,
+        AppTheme.space12,
+        0,
+      ),
       child: Pressable(
         onTap: () => unawaited(showNotificationSheet(context)),
         semanticLabel: notice.title ?? notice.message,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space12,
+            vertical: AppTheme.space10,
+          ),
           decoration: BoxDecoration(
             color: colors.background,
             borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -131,7 +130,7 @@ class _NoticeCard extends StatelessWidget {
                         height: 1.3,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: AppTheme.space2),
                     Text(
                       footer,
                       style: AppTextStyles.memo.copyWith(

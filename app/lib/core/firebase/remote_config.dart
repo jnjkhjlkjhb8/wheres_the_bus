@@ -4,12 +4,6 @@ import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
 
-/// Thin read accessor over Firebase Remote Config.
-///
-/// Callers never touch [FirebaseRemoteConfig.instance] directly: on the
-/// dev/test flavor Firebase is disabled ([FirebaseGate.enabled] is false) and
-/// touching the instance throws. Every getter falls back to [defaults] when
-/// Firebase is off or a read fails, so a read is always safe from any layer.
 class AppConfig {
   AppConfig._();
 
@@ -43,12 +37,6 @@ class AppConfig {
     // whose cost and latency come from a third party, so it needs to be
     // switchable off without a release.
     genUiEnabledKey: true,
-    // The model's only instructions. Tunable without a release so a prompt
-    // regression (bad tool-call shape, invented arrival times) can be fixed
-    // the moment it's caught instead of waiting on a store review. The tool
-    // names and node shape it describes (searchTransit / renderUI / heading,
-    // text, route, step, chip, divider) are wired in code — a remote edit
-    // that renames or drops one breaks the answer, not just its wording.
     genUiSystemPromptKey:
         '你是大眾運輸 App 的搜尋助理,涵蓋公車、捷運、台鐵、高鐵與 YouBike。 '
         '使用者用自然語言提問,你必須先呼叫 searchTransit 工具向後端查詢真實的路線與站點資料, '
@@ -66,16 +54,8 @@ class AppConfig {
   /// default map and the read site have to agree.
   static const genUiEnabledKey = 'genui_enabled';
 
-  /// The ask lane's system prompt key. Same agreement requirement as
-  /// [genUiEnabledKey].
   static const genUiSystemPromptKey = 'genui_system_prompt';
 
-  /// Bridges [version] into a broadcast [Stream] for consumers that want to
-  /// react to each activated revision instead of polling a
-  /// `ValueListenableBuilder` (e.g. `AlertBloc`'s dynamic `alert_sources`
-  /// subscription). Each event only signals "a revision happened" — read the
-  /// value you care about with a getter afterwards, since Remote Config may
-  /// have activated several keys at once.
   static Stream<void> revisions() {
     late final StreamController<void> controller;
     void listener() => controller.add(null);
@@ -86,16 +66,6 @@ class AppConfig {
     return controller.stream;
   }
 
-  /// Pulls a fresh revision on demand and activates it, bumping [version] so
-  /// every listener re-reads. For the one place a rider explicitly asks for
-  /// current data (Settings → 檢查更新); everything else rides the launch
-  /// fetch and Realtime updates.
-  ///
-  /// Returns false when the refresh could not happen (Firebase off, offline,
-  /// fetch timeout) so the caller can say so instead of reporting a stale
-  /// read as a successful check. Still subject to `minimumFetchInterval`,
-  /// which is a minute — short enough that a throttled answer is a current
-  /// one.
   static Future<bool> refresh() async {
     if (!FirebaseGate.enabled) return false;
     try {

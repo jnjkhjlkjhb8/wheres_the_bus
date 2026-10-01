@@ -56,11 +56,17 @@ class _NavHeader extends StatelessWidget {
     required this.route,
     required this.activeLeg,
     required this.walkStepIndex,
+    required this.onEnd,
   });
 
   final PlanRoute route;
   final int activeLeg;
   final int walkStepIndex;
+
+  /// Ends the journey. The header is navigation's only chrome, so it carries
+  /// the way out: system back does the same thing (PopScope), but a
+  /// full-screen map has to show one.
+  final VoidCallback onEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -74,10 +80,6 @@ class _NavHeader extends StatelessWidget {
     final hasSteps = walk && steps.isNotEmpty;
     final index = hasSteps ? walkStepIndex.clamp(0, steps.length - 1) : 0;
     final step = hasSteps ? steps[index] : null;
-    // OSRM banner convention: while traversing step i the header announces
-    // step i+1's maneuver, and the distance to it is step i's own length (a
-    // maneuver sits at the START of its step). The final (arrive) step
-    // announces itself; `arrived` then drops the distance for 即將抵達.
     final announced = hasSteps
         ? steps[(index + 1).clamp(0, steps.length - 1)]
         : null;
@@ -100,11 +102,11 @@ class _NavHeader extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(AppTheme.space12),
             child: Row(
               children: [
                 _leading(context, section, announced, reduce),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppTheme.space12),
                 Expanded(
                   child: step != null
                       ? _stepPrimary(
@@ -116,13 +118,23 @@ class _NavHeader extends StatelessWidget {
                         )
                       : _titlePrimary(context, section, walk),
                 ),
-                // The right column reacts to the transit-only session phase, so
-                // it watches JourneySessionBloc (phase + boarding ETA) rather
-                // than PlanBloc. It always shows the time value.
                 BlocBuilder<JourneySessionBloc, JourneySessionState>(
                   buildWhen: (p, c) => p.phase != c.phase || p.eta != c.eta,
                   builder: (context, js) =>
                       _headerTrailing(context, section, js, reduce),
+                ),
+                const SizedBox(width: AppTheme.space8),
+                Pressable(
+                  onTap: onEnd,
+                  semanticLabel: AppI18n.of(context).goEndNavigation,
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppTheme.space4),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 20,
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -200,7 +212,7 @@ class _NavHeader extends StatelessWidget {
         children: [
           _stepDistanceLine(context, metersToManeuver),
           if (metersToManeuver != null) ...[
-            const SizedBox(height: 2),
+            const SizedBox(height: AppTheme.space2),
             Text(
               announced.instruction,
               maxLines: 1,
@@ -287,7 +299,7 @@ class _NavHeader extends StatelessWidget {
             color: cs.onSurface,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: AppTheme.space2),
         Text(
           sub,
           maxLines: 1,
@@ -338,7 +350,7 @@ class _NavHeader extends StatelessWidget {
     }
     if (value.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(left: 12),
+      padding: const EdgeInsets.only(left: AppTheme.space12),
       child: AnimatedSwitcher(
         duration: reduce ? Duration.zero : AppMotion.micro,
         child: Column(
@@ -397,7 +409,10 @@ class _NextStrip extends StatelessWidget {
       child: Container(
         key: ValueKey('${step.instruction}|$distanceMeters'),
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space14,
+          vertical: 7,
+        ),
         decoration: BoxDecoration(
           color: cs.surfaceContainerHighest,
           border: Border(top: BorderSide(color: cs.outlineVariant)),
@@ -411,9 +426,9 @@ class _NextStrip extends StatelessWidget {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             Icon(_maneuverIcon(step), size: 16, color: cs.onSurfaceVariant),
-            const SizedBox(width: 6),
+            const SizedBox(width: AppTheme.space6),
             Flexible(
               child: Text.rich(
                 TextSpan(
@@ -438,277 +453,6 @@ class _NextStrip extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _NavSheet extends StatelessWidget {
-  const _NavSheet({
-    required this.controller,
-    required this.initialOffset,
-    required this.route,
-    required this.activeLeg,
-    required this.onAdvance,
-    required this.onEnd,
-    required this.showManualControls,
-  });
-
-  final SheetController controller;
-  final SheetOffset initialOffset;
-  final PlanRoute route;
-  final int activeLeg;
-  final VoidCallback onAdvance;
-  final VoidCallback onEnd;
-  final bool showManualControls;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final sections = route.sections;
-    final progress = sections.isEmpty
-        ? 0.0
-        : ((activeLeg + 1) / sections.length).clamp(0.0, 1.0);
-    // The leading walk departs the user's live location (no place name) and the
-    // final walk ends on a bare destination coordinate (no place name either);
-    // fall back so the header never renders a lone arrow.
-    final origin = sections.isEmpty || sections.first.departure.name.isEmpty
-        ? AppI18n.of(context).goCurrentLocation
-        : sections.first.departure.name;
-    final dest = _lastNamedArrival(AppI18n.of(context), sections);
-    final isLast = activeLeg >= sections.length - 1;
-    return AppSheet(
-      controller: controller,
-      initialOffset: initialOffset,
-      color: cs.surface,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SheetDragHandle(),
-          _NavSheetHeader(
-            origin: origin,
-            dest: dest,
-            progress: progress,
-            activeLeg: activeLeg,
-            total: sections.length,
-            arrival: formatClock(route.endTime),
-          ),
-          const DividerLine(),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
-              children: [
-                for (final (i, s) in sections.indexed)
-                  _StepRow(
-                    section: s,
-                    waitMinutes: waitMinutesBefore(sections, i),
-                    isFirst: i == 0,
-                    isLast: i == sections.length - 1,
-                    status: i < activeLeg
-                        ? _StepStatus.done
-                        : i == activeLeg
-                        ? _StepStatus.active
-                        : _StepStatus.upcoming,
-                  ),
-              ],
-            ),
-          ),
-          _NavFooter(
-            onAdvance: onAdvance,
-            onEnd: onEnd,
-            isLast: isLast,
-            showManualControls: showManualControls,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Board / alight controls driven by the [JourneySessionBloc], shown inside the
-/// active-navigation sheet. Waiting → 我上車了 (+ static 車來了 banner when the
-/// bus is due); riding → 我下車了 with a remaining-stops caption. Rendered as a
-/// standalone widget (not a private helper) so it can be pumped in isolation.
-///
-/// Two state machines advance independently by design: PlanBloc's step list
-/// (完成此段 → activeLegIndex over all sections) and JourneySessionBloc
-/// (我上車了/我下車了 over transit legs). They reconcile only at journey end
-/// (done-listener / last-leg advance); mid-journey drift between them is
-/// expected, not a bug.
-class JourneyControls extends StatelessWidget {
-  const JourneyControls({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return BlocListener<JourneySessionBloc, JourneySessionState>(
-      // One medium tap on the false→true edge of suggestBoarding; the banner
-      // itself is static (no animation) per the design invariants.
-      listenWhen: (p, c) => !p.suggestBoarding && c.suggestBoarding,
-      listener: (context, _) => HapticFeedback.mediumImpact(),
-      child: BlocBuilder<JourneySessionBloc, JourneySessionState>(
-        // The controls never render eta, so the 30 s ETA tick must not rebuild
-        // them; rebuild only on the fields this subtree actually shows.
-        buildWhen: (p, c) =>
-            p.phase != c.phase ||
-            p.suggestBoarding != c.suggestBoarding ||
-            p.legIndex != c.legIndex ||
-            p.nextStopIndex != c.nextStopIndex ||
-            !identical(p.legs, c.legs),
-        builder: (context, state) {
-          switch (state.phase) {
-            case JourneyPhase.waiting:
-              return _waiting(context, cs, state);
-            case JourneyPhase.riding:
-              return _riding(context, cs, state);
-            case JourneyPhase.idle:
-            case JourneyPhase.done:
-              return const SizedBox.shrink();
-          }
-        },
-      ),
-    );
-  }
-
-  Widget _waiting(
-    BuildContext context,
-    ColorScheme cs,
-    JourneySessionState state,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (state.suggestBoarding) ...[
-          const _DueCue(),
-          const SizedBox(height: 10),
-        ],
-        _SheetButton(
-          label: AppI18n.of(context).goBoarded,
-          onTap: () =>
-              context.read<JourneySessionBloc>().add(const BoardConfirmed()),
-        ),
-        const SizedBox(height: 12),
-      ],
-    );
-  }
-
-  Widget _riding(
-    BuildContext context,
-    ColorScheme cs,
-    JourneySessionState state,
-  ) {
-    final leg = state.currentLeg;
-    final remaining = leg == null
-        ? 0
-        : (leg.stopLocations.length - state.nextStopIndex).clamp(
-            0,
-            leg.stopLocations.length,
-          );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (leg != null) ...[
-          Text(
-            AppI18n.of(
-              context,
-            ).alightAtRemaining(leg.alightStop, remaining),
-            textAlign: TextAlign.center,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: cs.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-        _SheetButton(
-          label: AppI18n.of(context).goAlighted,
-          onTap: () =>
-              context.read<JourneySessionBloc>().add(const AlightConfirmed()),
-        ),
-        const SizedBox(height: 12),
-      ],
-    );
-  }
-}
-
-/// Sheet action button. [filled] → ink primary; otherwise a hairline-outlined
-/// secondary. Both share the sheet's button radius and 50 px height so the
-/// primary / secondary pair reads as one control stack.
-class _SheetButton extends StatelessWidget {
-  const _SheetButton({
-    required this.label,
-    required this.onTap,
-    this.filled = true,
-  });
-
-  final String label;
-  final VoidCallback onTap;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Pressable(
-      onTap: onTap,
-      semanticLabel: label,
-      child: Container(
-        width: double.infinity,
-        height: 50,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: filled ? cs.onSurface : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-          border: filled
-              ? null
-              : Border.all(color: cs.outlineVariant, width: 1.5),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: AppTextStyles.bodyRegular.copyWith(
-            fontWeight: FontWeight.w700,
-            color: filled ? cs.surface : cs.onSurface,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Static "the bus is here" cue. A quiet surface-highlight pill with a solid
-/// ink dot — deliberately *not* a filled slab and *not* pulsing, per the
-/// calm-confidence and no-pulse design invariants.
-class _DueCue extends StatelessWidget {
-  const _DueCue();
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceHighlight(cs.brightness),
-        borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: cs.onSurface,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            AppI18n.of(context).goVehicleArrived,
-            style: AppTextStyles.bodyRegular.copyWith(
-              fontWeight: FontWeight.w700,
-              color: cs.onSurface,
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -1,10 +1,5 @@
 import 'package:equatable/equatable.dart';
 
-/// Which way a station board's trains run.
-///
-/// The wire value is what both rail RPCs take, and the two systems name the
-/// same two values differently — 台鐵 順行/逆行, 高鐵 南下/北上 — so the label is
-/// resolved at the view rather than baked in here.
 enum RailBoardDirection {
   forward(0),
   reverse(1);
@@ -14,13 +9,6 @@ enum RailBoardDirection {
   final int wire;
 }
 
-/// One departure on a station board: a train leaving *this* station, with no
-/// destination the rider had to pick first.
-///
-/// Deliberately smaller than `TraTimetableItem`: a board answers "when does the
-/// next train leave and where does it go", so there is no arrival time, no
-/// travel time and no fare — those belong to the O/D query, which is still one
-/// tap away.
 class RailStationDeparture extends Equatable {
   const RailStationDeparture({
     required this.trainNo,

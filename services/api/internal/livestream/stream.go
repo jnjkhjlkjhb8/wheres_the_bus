@@ -1,7 +1,3 @@
-// Package livestream is the router's Redis-to-gRPC fan-out. One hub multiplexes
-// every subscriber of a channel onto a single Redis subscription, seeds a new
-// stream from the current keys before live updates start, and evicts a
-// subscriber that falls too far behind rather than stalling the others.
 package livestream
 
 import (
@@ -24,10 +20,6 @@ type LiveSource interface {
 	// ScanKeys returns every key matching pattern; best-effort, a failed
 	// scan returns what was collected so far.
 	ScanKeys(ctx context.Context, pattern string) []string
-	// Subscribe returns a channel of live payloads for channel and a close
-	// func the caller must invoke. A closed payload channel means the
-	// subscription died. ctx covers establishing the subscription only: the
-	// returned channel outlives it and is torn down through the close func.
 	Subscribe(ctx context.Context, channel string) (<-chan []byte, func(), error)
 	// Touch writes key with ttl, replacing any existing TTL. It carries the
 	// demand signal to functions and nothing reads it back here, so a failure
@@ -38,20 +30,13 @@ type LiveSource interface {
 // LiveStreamSpec describes one gRPC live stream: which channel to follow,
 // which keys seed a new subscriber, and which payloads are worth sending.
 type LiveStreamSpec struct {
-	Channel  string
-	SeedKeys []string
-	SeedScan string            // optional SCAN pattern; matches seed in key order returned
-	Usable   func([]byte) bool // nil means non-empty
-	// DemandKey, when set, is touched for as long as this stream is open so
-	// functions keeps the city it names on its full polling cadence
-	// (FDPL-90). Empty leaves the stream with no effect on polling.
+	Channel   string
+	SeedKeys  []string
+	SeedScan  string // optional SCAN pattern; matches seed in key order returned
+	Usable    func([]byte) bool
 	DemandKey string
 }
 
-// _demandTTL is how long one touch keeps a city on its full cadence, and
-// _demandRefresh how often an open stream renews that. Both mirror
-// functions/live.go: the TTL must match liveDemandTTL there, and the refresh
-// must stay well under it so a renewal is never the one that arrives late.
 const (
 	_demandTTL     = 10 * time.Minute
 	_demandRefresh = 4 * time.Minute
@@ -59,18 +44,10 @@ const (
 
 var errLiveSourceClosed = errors.New("live source subscription closed")
 
-// liveSourceCloseCause is implemented by sources that can explain a
-// specific, reconnectable reason a subscription channel closed — e.g. a
-// per-subscriber overflow eviction — distinct from the generic upstream
-// disconnect reported as errLiveSourceClosed.
 type liveSourceCloseCause interface {
 	subscriptionCloseCause(ch <-chan []byte) error
 }
 
-// StreamLive runs a live stream to completion: subscribe first (so nothing
-// published during seeding is lost), seed from current values, then forward
-// updates until ctx is done, send fails, or the subscription closes.
-// Payloads failing usable are skipped everywhere, seed and live alike.
 func StreamLive(ctx context.Context, src LiveSource, spec LiveStreamSpec, send func([]byte) error) error {
 	usable := spec.Usable
 	if usable == nil {
@@ -89,13 +66,6 @@ func StreamLive(ctx context.Context, src LiveSource, spec LiveStreamSpec, send f
 		return err
 	}
 	defer closeSub()
-	// grpc-go withholds the response headers until the first Send, so a stream
-	// that seeds nothing and waits on a quiet channel returns no bytes at all.
-	// Cloudflare answers the app with 524 after 100 s of that, which the client
-	// reports as UNKNOWN and retries into a reconnect loop. Flushing the headers
-	// here makes the response start immediately regardless of when data arrives.
-	// It fails only off a real gRPC stream (tests), where there is nothing to
-	// flush.
 	_ = grpc.SendHeader(ctx, nil)
 	// Every return past this point ends an established stream (client
 	// disconnect, upstream close, or send failure); a subscribe failure above

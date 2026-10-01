@@ -14,12 +14,6 @@ import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/eta_list_tile.dart';
 
-/// How many route cards may open a live ETA stream for one answer.
-///
-/// a flat cap, not a viewport check — `stationEta` is one gRPC
-/// stream per stop, and an answer that names five stops would otherwise open
-/// five. Swap for a visibility-driven subscription if answers ever get long
-/// enough that the cap starts hiding real arrivals.
 const int _kLiveEtaCards = 2;
 
 /// Arrivals shown inside one route card. The full board is one tap away.
@@ -75,7 +69,7 @@ class GenUiRenderer extends StatelessWidget {
         _StaggerIn(
           index: i,
           child: Padding(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.only(bottom: AppTheme.space12),
             child: _node(context, node, ref, live: live),
           ),
         ),
@@ -131,7 +125,10 @@ class GenUiRenderer extends StatelessWidget {
           semanticLabel: ref?.name ?? node.label,
           minTapSize: 44,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.space14,
+              vertical: 9,
+            ),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(AppTheme.radiusStadium),
@@ -146,7 +143,7 @@ class GenUiRenderer extends StatelessWidget {
                   size: 15,
                   color: cs.onSurfaceVariant,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: AppTheme.space6),
                 Text(
                   node.label,
                   style: AppTextStyles.bodySmall.copyWith(
@@ -186,7 +183,7 @@ class _RouteCard extends StatelessWidget {
     final stop = live ? ref : null;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(AppTheme.space14),
       decoration: BoxDecoration(
         color: cs.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -217,7 +214,7 @@ class _RouteCard extends StatelessWidget {
             ],
           ),
           if (ref?.subtitle.isNotEmpty ?? false) ...[
-            const SizedBox(height: 2),
+            const SizedBox(height: AppTheme.space2),
             Text(
               ref!.subtitle,
               maxLines: 1,
@@ -228,10 +225,10 @@ class _RouteCard extends StatelessWidget {
             ),
           ],
           if (node.badges.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: AppTheme.space8),
             Wrap(
-              spacing: 6,
-              runSpacing: 6,
+              spacing: AppTheme.space6,
+              runSpacing: AppTheme.space6,
               children: [
                 for (final badge in node.badges) _Badge(text: badge),
               ],
@@ -256,7 +253,10 @@ class _Badge extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space8,
+        vertical: 3,
+      ),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(AppTheme.radiusChip),
@@ -272,11 +272,6 @@ class _Badge extends StatelessWidget {
   }
 }
 
-/// The live board for a bus stop the answer named.
-///
-/// Every number here comes from `stationEta`, never from the model — the
-/// search tool the model calls returns names only, so a time it wrote could
-/// only be invented.
 class _StopArrivals extends StatefulWidget {
   const _StopArrivals({required this.stop, required this.etaSource});
 
@@ -294,10 +289,6 @@ class _StopArrivalsState extends State<_StopArrivals> {
   @override
   void initState() {
     super.initState();
-    // a plain subscription, not ResilientStream — the card lives for as long
-    // as one answer is on screen, so a dropped stream leaves the last frame
-    // rather than reconnecting. Move to ResilientStream if answers ever
-    // become a surface people sit on.
     _sub = widget.etaSource(widget.stop).listen(
       (arrivals) {
         if (mounted) setState(() => _arrivals = arrivals);
@@ -325,15 +316,15 @@ class _StopArrivalsState extends State<_StopArrivals> {
     final shown = displays.take(_kArrivalsPerCard).toList();
 
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.only(top: AppTheme.space10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Divider(height: 1, thickness: 0.5, color: cs.outlineVariant),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           for (final (i, d) in shown.indexed)
             Padding(
-              padding: EdgeInsets.only(top: i == 0 ? 0 : 6),
+              padding: EdgeInsets.only(top: i == 0 ? 0 : AppTheme.space6),
               child: _ArrivalRow(
                 display: d,
                 // At most one per card, and only when it really is imminent.
@@ -358,7 +349,10 @@ class _ArrivalRow extends StatelessWidget {
     // Both variants carry the same inset, so the highlight can appear and
     // disappear as the board updates without the rows shifting sideways.
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space8,
+        vertical: AppTheme.space4,
+      ),
       // Static highlight: background only, never a pulse.
       decoration: highlighted
           ? BoxDecoration(
@@ -389,7 +383,7 @@ class _StepRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Icon(_icon, size: 18, color: cs.onSurfaceVariant),
-        const SizedBox(width: 10),
+        const SizedBox(width: AppTheme.space10),
         Expanded(
           child: Text(
             node.text,

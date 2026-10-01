@@ -22,8 +22,16 @@ class ComingSoonStopBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        AppTheme.space8,
+        AppTheme.space16,
+        0,
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space16,
+        vertical: AppTheme.space12,
+      ),
       decoration: BoxDecoration(
         color: cs.primaryContainer,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -36,7 +44,7 @@ class ComingSoonStopBanner extends StatelessWidget {
               color: cs.onPrimaryContainer,
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppTheme.space8),
           Expanded(
             child: Text(
               name,

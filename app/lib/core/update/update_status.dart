@@ -14,14 +14,6 @@ enum UpdateStatus {
   blocked,
 }
 
-/// Resolves the update posture for the running build.
-///
-/// [UpdateStatus.blocked] wins over [UpdateStatus.available]: a build below
-/// the floor is also below the latest, and the rider must not be offered a
-/// dismissible nudge for a condition that is actually fatal.
-///
-/// Every comparison fails OPEN (see [isBelowVersion]), so a malformed remote
-/// value degrades to [UpdateStatus.upToDate] rather than locking or nagging.
 UpdateStatus resolveUpdateStatus({
   required String current,
   required String minSupported,
@@ -32,11 +24,6 @@ UpdateStatus resolveUpdateStatus({
   return UpdateStatus.upToDate;
 }
 
-/// True when [current] is strictly below [other] (both dotted numeric, e.g.
-/// "1.2.3"). Build metadata / pre-release suffixes are dropped.
-///
-/// Fails OPEN: any unparseable segment returns false, so a malformed remote
-/// version can never lock users out of the app nor nag them forever.
 bool isBelowVersion(String current, String other) {
   final a = _segments(current);
   final b = _segments(other);
@@ -64,20 +51,9 @@ List<int>? _segments(String v) {
 /// allowed to point at.
 const _allowedStoreHosts = {'apps.apple.com', 'play.google.com'};
 
-/// True when [url] is safe to open as a store link: https and an official
-/// Apple/Google store host (F44). Remote Config is server-controlled but not
-/// a trusted boundary for arbitrary URL schemes — a compromised or
-/// misconfigured console value must never reach `launchUrl` with e.g. an
-/// `intent:` or `javascript:` scheme.
 bool isAllowedStoreUrl(Uri url) =>
     url.scheme == 'https' && _allowedStoreHosts.contains(url.host);
 
-/// This platform's store link, or null when the configured value is missing
-/// or fails [isAllowedStoreUrl].
-///
-/// Null is the signal every caller acts on: render the "search the store"
-/// copy instead of a button that no-ops on tap. [isIOS] is injectable so the
-/// choice can be tested on a host that is neither platform.
 Uri? storeUrl({bool? isIOS}) {
   final raw = (isIOS ?? Platform.isIOS)
       ? AppConfig.getString('store_url_ios')

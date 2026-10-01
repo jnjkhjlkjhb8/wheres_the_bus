@@ -12,10 +12,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-// AlertServer streams service alerts that the functions/MQTT subscriber
-// publishes into Redis. Each alert channel is also mirrored to a plain Redis
-// key holding the latest payload, so a new subscriber can be sent the current
-// state before live updates begin.
 type AlertServer struct {
 	pb.UnimplementedAlert_ServiceServer
 
@@ -48,14 +44,6 @@ func (s *AlertServer) ThsrAlert(_ *pb.Alert_Ask, stream grpc.ServerStreamingServ
 	return streamAlert(s.live, shared.AlertThsrChannel, stream)
 }
 
-// streamAlert bridges one alert channel to a gRPC stream: the mirrored
-// latest-payload key seeds new subscribers, then live updates follow. Unlike
-// the old loop, client disconnect is noticed while idle.
-//
-// Payloads are the normalized snapshot the MQTT subscriber wrote as protojson;
-// the router only re-types them. A snapshot that fails to decode is skipped
-// rather than surfaced, since tearing down a live stream over one bad message
-// would cost the rider every later alert too.
 func streamAlert(live livestream.LiveSource, key string, stream grpc.ServerStreamingServer[pb.Alert_Msg]) error {
 	return livestream.StreamLive(stream.Context(), live, livestream.LiveStreamSpec{
 		Channel:  key,

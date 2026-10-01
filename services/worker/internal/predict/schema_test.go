@@ -8,12 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// provisionBusSinks builds the bus tables these DB tests read. The loader tests
-// keep their own copy: a schema fixture is cheaper to duplicate than to share.
-// provisionBusSinks creates the complete env-schema surface written by the
-// atomic bus snapshot. PostgreSQL/PostGIS semantics are also covered by the
-// isolated BUS_WRITER_DATABASE_URL test; this fixture keeps the raw-source
-// integration useful when DATABASE_URL points at a fully provisioned test DB.
 func provisionBusSinks(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	ddl := []string{

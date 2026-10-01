@@ -1,19 +1,3 @@
-/// TDX city codes and their Chinese display names.
-///
-/// `search_vector.city` stores the raw TDX code (`NewTaipei`), which is what
-/// the search API filters on and returns. Nothing user-facing should show
-/// that code, so every display path goes through [cityName].
-///
-/// The backend keeps its own copy in `services/functions/vector.go`, where the
-/// names are folded into the embedding text rather than rendered. The two
-/// lists are the same data for different jobs; a code missing here degrades to
-/// the raw code rather than to a blank, so an unmapped city is visible instead
-/// of silent.
-///
-/// Insertion order is north to south — the order Taiwanese transit signage,
-/// timetables, and route lists use — and is the tiebreak for anything ranking
-/// cities, so a list of them never comes out alphabetised by an English code
-/// the reader never sees.
 const Map<String, String> kCityNames = {
   'Keelung': '基隆市',
   'Taipei': '台北市',

@@ -59,8 +59,6 @@ func TestPlannerHealthRequiresConsecutiveChecksBeforeSwitching(t *testing.T) {
 	}
 }
 
-// A run of failures separated by a success is not a run. Without the reset an
-// intermittent MOTIS would eventually trip the switch on unrelated blips.
 func TestPlannerHealthResetsTheStreakOnDisagreement(t *testing.T) {
 	var fail atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -22,14 +22,6 @@ class ThsrRepository {
   Thsr_Detain_serviceClient get _detain =>
       _detainClient ?? GrpcClient.instance.thsrDetain;
 
-  /// Every fare the pair prices, across fare class and cabin class. The caller
-  /// picks one with [thsrFareFor]; the router no longer decides which fare is
-  /// "the" fare, because that choice depends on the rider's ticket type.
-  // Keyed without [date]: a THSR fare is a property of the origin/destination
-  // pair, and the request carries a date only because the RPC shares one
-  // message with the timetable. Dropping it from the key means a rider who
-  // looks up a future trip offline still gets the fare, instead of a miss on
-  // a date nobody has queried before.
   Future<List<ThsrFare>> fares(String date, String originId, String destId) =>
       offlineCached(
         key: 's:thsr:fare:$originId:$destId',

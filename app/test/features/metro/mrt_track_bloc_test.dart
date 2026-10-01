@@ -57,9 +57,6 @@ void main() {
     );
     await bloc.stream.firstWhere((s) => s.session != null);
 
-    // The backend knows the trip, not that it is 板南線 or which blue that is,
-    // so a card it pushes while the app sleeps can only say so if these
-    // travelled up at create time (ADR-0018).
     expect(repo.createdCards.single[1], 'BL');
     expect(repo.createdCards.single[0], isNotEmpty);
     expect(repo.createdCards.single[2], '#0070BD');
@@ -182,10 +179,6 @@ void main() {
     },
   );
 
-  // ADR-0020: one session buzzes twice, short at the 提前提醒站 and long at the
-  // 目標站, and each fires on the crossing rather than on every frame sitting
-  // past the threshold. leadStops is 1 here, so the two land at remaining 2
-  // and remaining 1.
   test('each stops-remaining crossing fires its own vibration once', () async {
     final vibrated = <String>[];
     final repo = _FakeRepo()..createResult = _session();
@@ -302,9 +295,6 @@ void main() {
       await bloc.stream.firstWhere((s) => s.session == null);
       await Future<void>.delayed(Duration.zero);
 
-      // The terminal reading is pushed to the activity; dismissal is
-      // deferred so the ending is visible (a silent vanish would read as
-      // still tracking).
       expect(channel.updates.last.phase, AlightTrackPhase.arrived);
       expect(channel.stopped, isEmpty);
     },
@@ -531,6 +521,7 @@ class _FakeRepo extends MrtTrackRepository {
   }) async {
     createdCards.add([vehicleLabel, lineCode, lineColorHex]);
     final err = createError;
+    // The fake reproduces the supplied failure object.
     // ignore: only_throw_errors — mirrors the gRPC errors the seam surfaces.
     if (err != null) throw err;
     return createResult!;
@@ -539,6 +530,7 @@ class _FakeRepo extends MrtTrackRepository {
   @override
   Future<void> setPushToken(String trackId, String token) async {
     final err = pushTokenError;
+    // The fake reproduces the supplied failure object.
     // ignore: only_throw_errors — mirrors the gRPC errors the seam surfaces.
     if (err != null) throw err;
     pushTokens.add((trackId, token));

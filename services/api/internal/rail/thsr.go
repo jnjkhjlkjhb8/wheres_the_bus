@@ -45,19 +45,6 @@ type thsrFareRow struct {
 	Price      int32 `db:"price"`
 }
 
-// QueryTHSRFares reads a THSR fare from the loaded env schema. It is a pure
-// read: an unlanded fare comes back empty and the router never fetches from TDX
-// (ADR-0005); thsrFare turns an empty result into NotFound.
-//
-// TDX prices each pair across three axes: ticket type, fare class (1 全票 /
-// 9 半票 — 孩童, 敬老 and 愛心 all ride at 半票) and cabin class (1 標準對號 /
-// 2 商務 / 3 自由座), so 南港→左營 alone lands eight rows from 740 to 2500.
-//
-// Only ticket_type is pinned, to 1 (單程): the return-trip types belong to a
-// booking flow, not a fare quote. The fare-class and cabin-class axes are left
-// open so the app can quote the rider's own 票種 and seat. The app selects the
-// row; leaving these axes open is only safe because no caller quotes Items[0]
-// as "the" fare (services/api/handlers_core.go returns the whole set).
 func QueryTHSRFares(ctx context.Context, db railDB, start, end string) ([]*models.ThsaFare, error) {
 	start, err := resolveRailStationID(ctx, db, "thsr_stations", start)
 	if err != nil {
@@ -88,9 +75,6 @@ func QueryTHSRFares(ctx context.Context, db railDB, start, end string) ([]*model
 	return arr, rows.Err()
 }
 
-// THSRStoptimesPayload reads a THSR train's stop times for a date from the loaded
-// env schema and returns the marshaled ThsrStoptimes proto plus the row count. A
-// zero count signals NotFound (ADR-0005); it never fetches from TDX.
 func THSRStoptimesPayload(ctx context.Context, db railDB, trainno, dateStr string) ([]byte, int, error) {
 	const q = `SELECT stopsequence, stationid,stationname,arrivaltime,departuretime FROM thsr_timetable WHERE trainno = $1 AND train_date = $2 ORDER BY stopsequence;`
 	rows, err := db.Query(ctx, q, trainno, dateStr)
@@ -118,10 +102,6 @@ func THSRStoptimesPayload(ctx context.Context, db railDB, trainno, dateStr strin
 	return b, len(row), nil
 }
 
-// THSRStationBoardPayload is traStationBoardPayload's THSR half: the whole day
-// of departures from one station in one direction, terminating services
-// excluded, sliced by the handler rather than here. Never fetched from TDX
-// (ADR-0005).
 func THSRStationBoardPayload(ctx context.Context, db railDB, station string, date time.Time, direction int32) ([]*models.ThsrStationDeparture, error) {
 	station, err := resolveRailStationID(ctx, db, "thsr_stations", station)
 	if err != nil {
@@ -150,10 +130,6 @@ func THSRStationBoardPayload(ctx context.Context, db railDB, station string, dat
 	return arr, nil
 }
 
-// THSRTimetablePayload reads THSR services calling at both the origin and
-// destination for a date, pairs them into origin/destination legs, and returns
-// the marshaled ThsrTimetables proto plus the number of paired legs. A zero count
-// signals NotFound (ADR-0005); it never fetches from TDX.
 func THSRTimetablePayload(ctx context.Context, db railDB, start, end string, date time.Time) ([]byte, int, error) {
 	start, err := resolveRailStationID(ctx, db, "thsr_stations", start)
 	if err != nil {

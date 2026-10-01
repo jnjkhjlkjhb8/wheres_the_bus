@@ -17,6 +17,7 @@ BusStopEtaViewModel _eta({
   int estimateSeconds = -1,
   String nextBusTime = '',
   int stopStatus = 1,
+  String plate = '',
 }) => BusStopEtaViewModel(
   stopUid: stopUid,
   direction: direction,
@@ -25,6 +26,7 @@ BusStopEtaViewModel _eta({
   nextBusTime: nextBusTime,
   stopStatus: stopStatus,
   vehiclePlates: const [],
+  plate: plate,
 );
 
 BusStopModel _stop(String uid, int sequence, {String? name}) =>
@@ -72,6 +74,56 @@ void main() {
 
     test('not-departed stop with no estimate is none', () {
       expect(timelineStopState(_eta()), TimelineStopState.none);
+    });
+  });
+
+  group('retireStaleArriving', () {
+    BusStopEtaViewModel arriving({String plate = ''}) =>
+        _eta(estimateSeconds: 0, stopStatus: 0, plate: plate);
+
+    TimelineStopState stateAt(List<BusStopEtaViewModel?> etas, int i) =>
+        timelineStopState(retireStaleArriving(etas)[i]);
+
+    test('same plate arriving twice keeps only the frontmost stop', () {
+      final etas = [
+        arriving(plate: 'ABC-123'),
+        null,
+        arriving(plate: 'ABC-123'),
+      ];
+      expect(stateAt(etas, 0), TimelineStopState.none);
+      expect(stateAt(etas, 2), TimelineStopState.arriving);
+    });
+
+    test('different plates each keep their own arriving', () {
+      final etas = [arriving(plate: 'ABC-123'), arriving(plate: 'XYZ-789')];
+      expect(stateAt(etas, 0), TimelineStopState.arriving);
+      expect(stateAt(etas, 1), TimelineStopState.arriving);
+    });
+
+    test('a plateless run collapses to its front', () {
+      final etas = [arriving(), arriving(), arriving()];
+      expect(stateAt(etas, 0), TimelineStopState.none);
+      expect(stateAt(etas, 1), TimelineStopState.none);
+      expect(stateAt(etas, 2), TimelineStopState.arriving);
+    });
+
+    test('non-adjacent plateless arrivals are both kept', () {
+      final etas = [arriving(), _eta(estimateSeconds: 600), arriving()];
+      expect(stateAt(etas, 0), TimelineStopState.arriving);
+      expect(stateAt(etas, 2), TimelineStopState.arriving);
+    });
+
+    test('a retired entry shows no label rather than a service state', () {
+      final retired = retireStaleArriving([
+        arriving(plate: 'ABC-123'),
+        arriving(plate: 'ABC-123'),
+      ]);
+      expect(retired.first!.displayLabelOf(zhStrings), isNull);
+    });
+
+    test('countdowns are untouched', () {
+      final etas = [_eta(estimateSeconds: 120, stopStatus: 0)];
+      expect(retireStaleArriving(etas), same(etas));
     });
   });
 

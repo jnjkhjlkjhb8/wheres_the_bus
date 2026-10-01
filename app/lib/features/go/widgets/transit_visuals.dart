@@ -5,10 +5,6 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-// A section is a walk when TDX types it as anything other than transit
-// (pedestrian legs). Keying off `type` — not `transport.mode` — because TDX
-// still attaches a transport block to pedestrian sections, so a mode check
-// misclassifies them as transit. Mirrors journey_models' `type != 'transit'`.
 bool isWalk(PlanSection s) => s.type.toLowerCase() != 'transit';
 
 // Walk sections carry a (non-walk) transport mode, so branch on isWalk before
@@ -16,10 +12,6 @@ bool isWalk(PlanSection s) => s.type.toLowerCase() != 'transit';
 IconData sectionIcon(PlanSection s) =>
     isWalk(s) ? Icons.directions_walk_rounded : transitIcon(s.transport.mode);
 
-// TDX MaaS reports modes in its own vocabulary (BUS/HighwayBus/MRT/SUBWAY/
-// TRA/THSR) and the router forwards them verbatim, so every branch has to
-// accept those spellings alongside the generic ones. Kept in step with the Go
-// side's isBusMode/isMetroMode/isRailMode/isThsrMode.
 IconData transitIcon(String mode) => switch (mode.toLowerCase()) {
   'walk' || 'pedestrian' => Icons.directions_walk_rounded,
   'subway' || 'metro' || 'mrt' || 'tram' => Icons.directions_subway_rounded,
@@ -49,19 +41,6 @@ Color transitColor(PlanTransport t, ColorScheme cs) {
   };
 }
 
-/// [line] adjusted until a 14px glyph of it is legible on [background].
-///
-/// A line colour used to survive on its own area — a chip filled edge to edge
-/// with 環狀線 yellow reads as yellow whatever sits behind it. A 1.7px stroke
-/// does not: the same yellow on `surface-press` lands at 1.3:1, well under the
-/// 3:1 WCAG asks of a non-text graphic, and the glyph simply disappears. So the
-/// colour is walked toward the far end of the ramp — darker on a light surface,
-/// lighter on a dark one — until it clears the bar.
-///
-/// The hue is kept; only lightness moves, so 環狀線 stays recognisably yellow
-/// and 文湖線 recognisably orange. A line that already clears 3:1 is returned
-/// untouched, which is most of them, so the map and the card agree on almost
-/// every line and diverge only where the alternative is an invisible icon.
 Color legibleLineColor(Color line, Color background) {
   const minimumContrast = 3.0;
   if (_contrast(line, background) >= minimumContrast) return line;

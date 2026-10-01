@@ -1,26 +1,4 @@
 #!/usr/bin/env bash
-# deploy-transaction.sh <staging|prod> <router-image-ref> <functions-image-ref>
-#
-# Runs on the deploy host (invoked over SSH by .github/workflows/
-# deploy-staging.yaml and deploy-prod.yaml, never on the GitHub runner).
-# Promotes the exact CI-built digests build-images.yaml published for one
-# commit -- it never builds an image itself. ROUTER_IMAGE/FUNCTIONS_IMAGE
-# override the `image:` keys docker/docker-compose.yaml declares for
-# router/functions/ingestor/loader (ingestor and loader share the functions
-# image, differentiated only by ROLE), so `docker compose pull` fetches the
-# named registry digest instead of anything the tracked `build:` block would
-# produce -- `docker compose pull` disregards `build:` and always pulls
-# `image:` when both are present.
-#
-# Transaction: verify the migration ledger (every dated migrations/*.sql
-# recorded in this environment's schema_migrations with a matching checksum
-# -- never applies SQL itself; migrations stay hand-applied, ADR-0010) ->
-# capture the digests currently running (for rollback) -> pull
-# the new digests -> up --wait (blocks on every service's healthcheck,
-# docker/docker-compose.yaml) -> smoke-test the router -> on any failure,
-# revert to the captured digests and exit 1. A successful run records its
-# own digests as the new last-known-good for the next deploy's rollback
-# target.
 set -euo pipefail
 
 env_name="${1:?usage: deploy-transaction.sh <staging|prod> <router-image-ref> <functions-image-ref>}"
@@ -49,17 +27,19 @@ cd "$repo_root"
 
 state_dir="/var/lib/bus"
 state_file="$state_dir/last-known-good-${env_name}.json"
+release_dir="$state_dir/releases/$env_name"
 
 log() { printf '[deploy-transaction] %s\n' "$*"; }
 
-# Per-service env allowlist (O7 / review_results.md P1-15): render the five
-# per-service env files from the operator's single env/<env>.env before any
-# compose call, exactly as Makefile's render-env-% targets do for
-# `make up-staging`/`make up-prod`. Without this, every container on a real
-# deploy would fall back to the full ${ENV_FILE} and see every credential --
-# silently defeating the allowlist on the one path that runs in production.
-# Fail loudly: a failed render or a missing rendered file aborts the deploy
-# before anything is pulled or restarted.
+check_secret_file() {
+  local file="$1" mode owner
+  [ -f "$file" ] || { log "FATAL: required secret file is missing: $file"; return 1; }
+  mode=$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file")
+  owner=$(stat -c '%u' "$file" 2>/dev/null || stat -f '%u' "$file")
+  [ "$mode" = 600 ] || { log "FATAL: secret file $file must be mode 0600 (found $mode)"; return 1; }
+  [ "$owner" = "$(id -u)" ] || { log "FATAL: secret file $file is not owned by the deploy user"; return 1; }
+}
+
 rendered_dir="env/.rendered/${env_name}"
 if ! ./scripts/render-env.sh "$env_file" "$rendered_dir"; then
   log "FATAL: scripts/render-env.sh failed for $env_file -- refusing to deploy with un-scoped env files"
@@ -72,16 +52,10 @@ for svc in router functions ingestor loader powersync; do
   fi
 done
 log "rendered per-service env files into $rendered_dir"
+for rendered in "$rendered_dir"/*.env; do
+  check_secret_file "$rendered"
+done
 
-# Migration guard: refuse to promote code whose schema prerequisites are not
-# in place. Diffs migrations/*.sql against this environment's
-# schema_migrations ledger (written only by scripts/apply-migration.sh) and
-# blocks on (a) a dated file the ledger has no record of and (b) a checksum
-# mismatch (the file was edited after being applied). Files whose first line
-# is `-- REPLAY: skip` (superseded or one-shot cleanups, migrations/README.md)
-# are exempt from the missing-check but still checksum-verified when
-# recorded. The guard only reads; applying migrations remains a manual
-# operator step (ADR-0010).
 verify_migration_ledger() {
   local db_url pg_schema
   db_url=$(grep -m1 '^DATABASE_URL=' "$env_file" | cut -d= -f2-)
@@ -131,10 +105,6 @@ if ! verify_migration_ledger; then
   exit 1
 fi
 
-# compose <args...> -- one invocation shape shared by every call below, mirroring
-# Makefile's COMPOSE_STAGING/COMPOSE_PROD (same project name, env file, per-
-# service rendered env files, and overlay list) so this script and
-# `make up-staging`/`make up-prod` never target different stacks.
 compose() {
   local image_router="$1" image_functions="$2"
   shift 2
@@ -149,14 +119,6 @@ compose() {
     -f docker/docker-compose.yaml -f "$overlay" "$@"
 }
 
-# running_image <service> -- the exact image reference (as passed to
-# `image:` when the container was created) of the currently running
-# container for one service, or empty if none is running. Config.Image
-# records the string docker was given to create the container, which for a
-# compose service with `image: ${ROUTER_IMAGE:-router}` is exactly the
-# digest ref a previous deploy-transaction.sh run supplied -- so this reads
-# ground truth from the host instead of trusting a state file that could
-# have drifted from a manual `docker compose` invocation.
 running_image() {
   local service="$1" cid
   cid=$(compose "$router_image" "$functions_image" ps -q "$service" 2>/dev/null || true)
@@ -172,10 +134,50 @@ else
   log "no currently running router/functions image found (first deploy?) -- rollback unavailable this run"
 fi
 
-# router_endpoint -- host_ip:port docker publishes router's HTTP API on,
-# read from the actual compose config instead of assuming a fixed port
-# (staging remaps ROUTER_HTTP_PORT to avoid colliding with prod on the same
-# host; see scripts/check-compose-isolation.sh).
+snapshot_release() {
+  local destination="$1" manifest="$destination/release.json"
+  mkdir -p "$destination"
+  chmod 700 "$destination"
+  cp docker/docker-compose.yaml "$destination/docker-compose.yaml"
+  cp "$overlay" "$destination/overlay.yaml"
+  cp -R "$rendered_dir" "$destination/env"
+  chmod -R go-rwx "$destination/env"
+  # Keep the fully resolved graph, including bind mounts and every service
+  # image, beside the source inputs. It is the reviewable rollback contract;
+  # it is never printed because env_file values can contain credentials.
+  compose "$router_image" "$functions_image" config >"$destination/compose-resolved.yaml"
+  # Resolve non-secret repository mounts to immutable copies in this release.
+  # Secret mounts deliberately remain operator-owned paths and are never copied.
+  mkdir -p "$destination/powersync" "$destination/motis" "$destination/cloudflared"
+  cp powersync/config.yaml powersync/sync-rules.yaml "$destination/powersync/"
+  cp motis/config.yml "$destination/motis/"
+  cp cloudflared/config."$env_name".yml "$destination/cloudflared/config.yml"
+  sed -i.bak \
+    -e "s|$repo_root/powersync/|$destination/powersync/|g" \
+    -e "s|$repo_root/motis/|$destination/motis/|g" \
+    -e "s|$repo_root/cloudflared/config.$env_name.yml|$destination/cloudflared/config.yml|g" \
+    "$destination/compose-resolved.yaml"
+  rm -f "$destination/compose-resolved.yaml.bak"
+  chmod 600 "$destination/compose-resolved.yaml"
+  local images
+  images=$(compose "$router_image" "$functions_image" config --images)
+  {
+    printf '{\n  "environment": "%s",\n  "commit": "%s",\n  "router": "%s",\n  "functions": "%s",\n  "images": [' "$env_name" "$(git rev-parse HEAD)" "$router_image" "$functions_image"
+    printf '%s' "$images" | awk 'BEGIN { first=1 } NF { gsub(/"/, "\\\""); if (!first) printf ","; printf "\"%s\"", $0; first=0 }'
+    printf ']\n}\n'
+  } >"$manifest"
+  chmod 600 "$manifest"
+}
+
+previous_release=""
+if [ -f "$state_file" ]; then
+  previous_release=$(sed -n 's/.*"release": "\([^"]*\)".*/\1/p' "$state_file" | head -1)
+fi
+
+mkdir -p "$release_dir"
+current_release="$release_dir/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+snapshot_release "$current_release"
+
 router_endpoint() {
   compose "$router_image" "$functions_image" port router 8080 2>/dev/null || true
 }
@@ -207,6 +209,19 @@ deploy_digests() {
   compose "$router_ref" "$functions_ref" up -d --wait --no-build
 }
 
+rollback_release() {
+  local release="$1"
+  [ -n "$release" ] && [ -s "$release/compose-resolved.yaml" ] || {
+    log "rollback REFUSED: last-known-good release snapshot is missing or incomplete"
+    return 1
+  }
+  chmod 600 "$release/compose-resolved.yaml"
+  docker compose --project-directory "$release" -p "$project" \
+    -f "$release/compose-resolved.yaml" pull
+  docker compose --project-directory "$release" -p "$project" \
+    -f "$release/compose-resolved.yaml" up -d --wait --no-build
+}
+
 record_last_known_good() {
   mkdir -p "$state_dir"
   cat > "$state_file" <<EOF
@@ -214,6 +229,8 @@ record_last_known_good() {
   "environment": "$env_name",
   "router": "$router_image",
   "functions": "$functions_image",
+  "release": "$current_release",
+  "images_manifest": "$current_release/release.json",
   "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
@@ -228,14 +245,14 @@ if deploy_digests "$router_image" "$functions_image" && smoke_test; then
 fi
 
 log "deploy FAILED"
-if [ -n "$prev_router" ] && [ -n "$prev_functions" ]; then
-  log "rolling back to router=$prev_router functions=$prev_functions"
-  if deploy_digests "$prev_router" "$prev_functions"; then
-    log "rollback SUCCEEDED -- $env_name is back on the previously running images"
+if [ -n "$previous_release" ]; then
+  log "rolling back to the complete last-known-good release snapshot"
+  if rollback_release "$previous_release"; then
+    log "rollback SUCCEEDED -- $env_name is back on the previous complete release"
   else
-    log "rollback FAILED -- $env_name may be left in a partially-updated state; manual intervention required"
+    log "rollback FAILED -- snapshot could not be re-enabled; manual intervention required"
   fi
 else
-  log "no previous image captured -- nothing to roll back to; manual intervention required"
+  log "no previous release snapshot -- refusing image-only rollback; manual intervention required"
 fi
 exit 1

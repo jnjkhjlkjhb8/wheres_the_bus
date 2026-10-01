@@ -14,11 +14,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// BookingProxy exchanges rail booking parameters for a short-lived TDX deeplink
-// redirect URL. It is the router's second deliberate TDX carve-out alongside
-// MaaS (ADR-0005 amendment, ADR-0012): a request/response proxy, not a
-// cacheable read, so it cannot be pre-materialised into Redis. The returned URL
-// is HMAC-signed by TDX and expires in minutes, so it must be minted per click.
 type BookingProxy struct {
 	tra  *resty.Client
 	thsr *resty.Client
@@ -46,10 +41,6 @@ type tdxBookingResponse struct {
 // flooding the line.
 const _bookingDetailLimit = 240
 
-// bookingDetail renders an upstream failure as a single log-safe token: status,
-// the envelope's `result`, and a truncated body. Without it a failed exchange
-// logged nothing at all and 502 could not be told apart from a rejected station
-// name, an unsubscribed API, or an expired token.
 func bookingDetail(res *resty.Response, body tdxBookingResponse) string {
 	raw := strings.TrimSpace(string(res.Body()))
 	raw = strings.Join(strings.Fields(raw), " ")
@@ -67,10 +58,6 @@ var (
 // _maxTicketsPerCategory is TDX's documented per-category ceiling.
 const _maxTicketsPerCategory = 10
 
-// queryIntInRange reads an integer query parameter, returning fallback when it
-// is absent and an error when it is present but outside [lo, hi]. An
-// out-of-range value is rejected rather than clamped: silently booking one
-// ticket when nine were asked for is worse than saying no.
 func queryIntInRange(c *gin.Context, name string, fallback, lo, hi int) (int, error) {
 	raw := strings.TrimSpace(c.Query(name))
 	if raw == "" {
@@ -83,10 +70,6 @@ func queryIntInRange(c *gin.Context, name string, fallback, lo, hi int) (int, er
 	return n, nil
 }
 
-// parseTicketCounts reads the passenger-category counts, defaulting a missing
-// category to 0. It rejects out-of-range values here rather than letting TDX
-// reject the whole exchange, and requires at least one passenger so a booking
-// for nobody never reaches upstream.
 func parseTicketCounts(c *gin.Context) (map[string]int, error) {
 	counts := make(map[string]int, len(_thsrTicketParams))
 	total := 0
@@ -169,21 +152,6 @@ var _thsrTicketParams = map[string]string{
 	"student":  "student_ticket",
 }
 
-// bookingParams renders a request into its variant's upstream query string. The
-// variants genuinely disagree, which is why one shared parameter set kept
-// failing:
-//
-//   - /web/hsr: departure_date as yyyymmdd, a 4-digit zero-padded
-//     departure_number, ticket_type (trip type, S = one-way), carriage_type,
-//     and one count parameter per passenger category.
-//   - /direct/hsr: train_date (yyyy-mm-dd) plus a required train_time.
-//   - /web/tra: departure_date (yyyy-mm-dd, unlike THSR's) and
-//     departure_number, plus a single ticket_count (1-9) and a ticket_type
-//     that means the booking class, not THSR's trip type.
-//   - /direct/tra: train_date and train_number, and no train_time.
-//
-// train_time is a THSR-only field: TRA takes none, so sending it there is at
-// best ignored and at worst another rejected exchange.
 func bookingParams(r bookingRequest) map[string]string {
 	q := make(map[string]string, 2)
 	q["start_station"] = r.start
@@ -245,10 +213,6 @@ func (b *BookingProxy) exchange(ctx context.Context, client *resty.Client, resou
 	return body.Data.Deeplink, body.Data.Expired, nil
 }
 
-// HandleBookingDeeplink proxies a rail booking exchange to TDX. The app picks
-// `kind` from a client-side install probe (ADR-0012); a missing-credentials
-// upstream (non-prod) surfaces as 503 so the app falls back to a plain booking
-// site link.
 func HandleBookingDeeplink(booking *BookingProxy) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if booking == nil {

@@ -2,15 +2,6 @@ package searchalias
 
 import "strings"
 
-// syllableZhuyin renders one toneless Hanyu Pinyin syllable as Bopomofo, so a
-// rider typing on a 注音 keyboard matches before the IME commits any Chinese.
-//
-// Empty for anything that is not a pinyin syllable — the digits and Latin
-// runes SearchAlias carries through are already what such a rider types.
-//
-// Pinyin is used as the pivot rather than reading Bopomofo off the character
-// directly because go-pinyin is the only reading table in the build; the
-// mapping below is exact, so nothing is lost by going through it.
 func syllableZhuyin(syllable string) string {
 	if syllable == "" {
 		return ""

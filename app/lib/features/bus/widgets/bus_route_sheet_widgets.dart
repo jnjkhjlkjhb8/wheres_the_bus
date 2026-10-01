@@ -7,7 +7,6 @@ class _RouteSheet extends StatelessWidget {
     required this.scrollController,
     required this.timelineController,
     required this.flashStopUid,
-    required this.vehicles,
     required this.direction,
     required this.isLoading,
     required this.onDirectionChanged,
@@ -23,6 +22,8 @@ class _RouteSheet extends StatelessWidget {
     required this.onPickStop,
     required this.onSwipeVehicle,
     required this.onCancelPick,
+    required this.onTapStop,
+    required this.onTapVehicle,
   });
 
   final TabController tabController;
@@ -30,7 +31,6 @@ class _RouteSheet extends StatelessWidget {
   final ScrollController scrollController;
   final ScrollController timelineController;
   final String? flashStopUid;
-  final List<_BusVehicle> vehicles;
   final int direction;
   final bool isLoading;
   final ValueChanged<int> onDirectionChanged;
@@ -63,6 +63,11 @@ class _RouteSheet extends StatelessWidget {
   /// Leaves pick-mode with nothing started.
   final VoidCallback onCancelPick;
 
+  /// Outside pick-mode: aiming the map from the sheet. Tapping a stop centres
+  /// on its marker; tapping a bus centres on it and selects it.
+  final ValueChanged<String> onTapStop;
+  final ValueChanged<String> onTapVehicle;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -78,7 +83,6 @@ class _RouteSheet extends StatelessWidget {
           selector: (s) => _stopsFor(AppI18n.of(context), s),
           builder: (context, stops) => _HorizontalRouteTimeline(
             stops: stops,
-            vehicles: vehicles,
             direction: direction,
             controller: timelineController,
             flashStopUid: flashStopUid,
@@ -86,6 +90,8 @@ class _RouteSheet extends StatelessWidget {
             pinnedNextStopIndex: pinnedNextStopIndex,
             targetUid: targetStopUid,
             onPickStop: onPickStop,
+            onStopTap: onTapStop,
+            onVehicleTap: onTapVehicle,
           ),
         );
 
@@ -104,7 +110,7 @@ class _RouteSheet extends StatelessWidget {
             controller: tabController,
             children: [
               if (isLoading)
-                const _ShimmerStopList()
+                _ShimmerStopList(scrollController: scrollController)
               else if (routeState.error != null)
                 ErrorStateView(
                   error: routeState.error!,
@@ -129,6 +135,8 @@ class _RouteSheet extends StatelessWidget {
                     boundPlate: boundPlate,
                     onPickStop: onPickStop,
                     onSwipeVehicle: onSwipeVehicle,
+                    onTapStop: onTapStop,
+                    onTapVehicle: onTapVehicle,
                   ),
                 ),
               _RouteDetailTab(state: routeState),
@@ -141,10 +149,6 @@ class _RouteSheet extends StatelessWidget {
     return AppSheet(
       controller: sheetController,
       initialOffset: AppSheetSnap.peek,
-      // Picking pins the sheet open. The gesture that starts the flow happens
-      // in the full-detent list and the stop tapped next is in that same
-      // list — a sheet that could drop would take the rows the rider is
-      // reaching for with it. The way out is 完成/略過/取消, not a drag.
       snapGrid: pickingStop
           ? const SheetSnapGrid(
               snaps: [AppSheetSnap.full],
@@ -153,11 +157,6 @@ class _RouteSheet extends StatelessWidget {
           : _kRouteSnapGrid,
       child: Column(
         children: [
-          // Scoped to just the handle + identity strip so a drag frame
-          // doesn't also rebuild the (static, per-frame-unchanging) segment
-          // and pick bar below — same rationale as `timeline`'s own
-          // BlocSelector further down. The status-bar clearance the handle
-          // needs at the full detent comes from AppSheet's own padding.
           AnimatedBuilder(
             animation: sheetAnimation,
             builder: (context, _) {
@@ -175,7 +174,12 @@ class _RouteSheet extends StatelessWidget {
                     Opacity(
                       opacity: identityOpacity,
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                        padding: const EdgeInsets.fromLTRB(
+                          AppTheme.space16,
+                          AppTheme.space4,
+                          AppTheme.space16,
+                          0,
+                        ),
                         child: Row(
                           children: [
                             Text(
@@ -186,7 +190,7 @@ class _RouteSheet extends StatelessWidget {
                               ),
                             ),
                             if (dirName.isNotEmpty) ...[
-                              const SizedBox(width: 6),
+                              const SizedBox(width: AppTheme.space6),
                               Expanded(
                                 child: Text(
                                   dirName,
@@ -205,19 +209,11 @@ class _RouteSheet extends StatelessWidget {
               );
             },
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            // Picking takes the direction slider's slot rather than adding a
-            // band of its own: switching direction mid-pick would invalidate
-            // the pinned bus's position snapshot, so the control that must not
-            // be touched is exactly the one the capsule replaces.
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
             child: pickingStop
                 ? Center(child: AlightPickCapsule(onCancel: onCancelPick))
-                // A loop/one-way route carries stops in one direction only; a
-                // two-slot slider with a blank half would render, so a static
-                // pill carries the single headsign instead. The populated side
-                // is either one — TDX publishes return-only sub-routes.
                 : sole != null
                 ? AppStaticSegment(
                     label: dirNames[sole].isNotEmpty
@@ -241,7 +237,7 @@ class _RouteSheet extends StatelessWidget {
                     onChanged: onDirectionChanged,
                   ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           Expanded(
             child: AnimatedBuilder(
               animation: sheetAnimation,

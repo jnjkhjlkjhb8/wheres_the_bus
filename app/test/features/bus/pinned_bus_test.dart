@@ -6,7 +6,7 @@ BusStopEtaViewModel _eta(
   String uid, {
   required int direction,
   required int sequence,
-  List<String> plates = const [],
+  String plate = '',
 }) => BusStopEtaViewModel(
   stopUid: uid,
   direction: direction,
@@ -14,17 +14,20 @@ BusStopEtaViewModel _eta(
   estimateSeconds: 0,
   nextBusTime: '',
   stopStatus: 0,
-  vehiclePlates: plates,
+  // The whole route's fleet, identical on every stop — deliberately set on
+  // every entry, since matching it is exactly the bug this guards.
+  vehiclePlates: const ['KAA-1', 'OTHER'],
+  plate: plate,
 );
 
 void main() {
   group('pinnedBusNextStopIndex', () {
     const order = ['A', 'B', 'C', 'D'];
 
-    test('returns the lowest-order stop that still lists the plate', () {
+    test('returns the lowest-order stop this vehicle is estimated at', () {
       final etas = [
-        _eta('B', direction: 0, sequence: 2, plates: ['KAA-1']),
-        _eta('C', direction: 0, sequence: 3, plates: ['KAA-1']),
+        _eta('B', direction: 0, sequence: 2, plate: 'KAA-1'),
+        _eta('C', direction: 0, sequence: 3, plate: 'KAA-1'),
       ];
       expect(
         pinnedBusNextStopIndex(
@@ -39,8 +42,8 @@ void main() {
 
     test('ignores the other travel direction', () {
       final etas = [
-        _eta('A', direction: 1, sequence: 1, plates: ['KAA-1']),
-        _eta('C', direction: 0, sequence: 3, plates: ['KAA-1']),
+        _eta('A', direction: 1, sequence: 1, plate: 'KAA-1'),
+        _eta('C', direction: 0, sequence: 3, plate: 'KAA-1'),
       ];
       expect(
         pinnedBusNextStopIndex(
@@ -55,7 +58,7 @@ void main() {
 
     test('returns null when no frame mentions the plate', () {
       final etas = [
-        _eta('B', direction: 0, sequence: 2, plates: ['OTHER']),
+        _eta('B', direction: 0, sequence: 2, plate: 'OTHER'),
       ];
       expect(
         pinnedBusNextStopIndex(
@@ -85,8 +88,6 @@ void main() {
   });
 
   group('clampLeadStops', () {
-    // 0 is the default and means 不提前提醒 (ADR-0020), so it must survive the
-    // clamp; only a negative lead is nonsense.
     test('floors at zero stops', () {
       expect(clampLeadStops(0), 0);
       expect(clampLeadStops(-2), 0);

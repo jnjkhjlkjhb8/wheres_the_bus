@@ -11,24 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TrackCancelPath ends an alight-tracking session from the card itself, for the
-// one caller that cannot use the gRPC CancelTrack: the Android broadcast
-// receiver behind 取消追蹤 (FDPL-65).
-//
-// That receiver runs with no Flutter engine, so it has neither the install id
-// (a Hive box) nor the install secret (EncryptedSharedPreferences) the gRPC call
-// authenticates with, and no gRPC stack to make the call on. Since a pushed card
-// refresh can now put a card in front of a rider whose app process is gone
-// (ADR-0018), that button had become reachable in a state where it could only
-// hide the card and leave the session — and its remaining 下車提醒 buzzes —
-// running.
-//
-// **The track id is the credential.** It is a server-minted UUIDv4 that only
-// ever travels to the device that owns the session, so holding one is proof of
-// having been shown that card. The endpoint therefore takes nothing else: no
-// install id to spoof, and no way to enumerate. What it grants is exactly one
-// irreversible-but-minor act — ending your own reminder — and it answers the
-// same way whether or not the session existed, so it cannot be used to probe.
 const TrackCancelPath = "/api/track/cancel"
 
 // HTTPTrackCancelRateLimit bounds the endpoint. One press ends one ride, so a
@@ -45,13 +27,6 @@ type trackCancelStore interface {
 	CancelArrivalReminderByID(ctx context.Context, reminderID string) (bool, error)
 }
 
-// HandleTrackCancel cancels a session's two reminder rows (the 下車站 row named
-// after the session and its 提前提醒站 sibling) and publishes a terminal state so
-// a watching app sees the ending.
-//
-// It always answers 204 for a well-formed id. Reporting whether the row existed
-// would turn an unguessable identifier into an oracle, and the caller cannot act
-// on the difference anyway: the card is already gone from its screen.
 func HandleTrackCancel(store trackCancelStore, rc *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var request trackCancelRequest
@@ -89,10 +64,6 @@ func HandleTrackCancel(store trackCancelStore, rc *redis.Client) gin.HandlerFunc
 	}
 }
 
-// validUUIDv4 accepts exactly the shape NewUUIDv4 produces. Anything else is
-// rejected before it reaches the database: this endpoint's whole security
-// argument is that its input is unguessable, and a lookup by arbitrary string
-// would not be.
 func validUUIDv4(value string) bool {
 	if len(value) != 36 {
 		return false

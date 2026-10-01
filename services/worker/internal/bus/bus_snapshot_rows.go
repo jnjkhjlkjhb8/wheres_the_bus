@@ -71,11 +71,6 @@ func (s *busCitySnapshot) buildWriteRows() error {
 	return nil
 }
 
-// busStopAliasRows pairs a discarded operator's stop list against the kept one
-// by stop sequence — the position in the run is what the two lists agree on,
-// since the whole point is that their StopUIDs differ — and returns one alias
-// row per position whose UID actually differs. Positions the kept list does not
-// have are skipped: an alias may only point at a stop the ETA join can reach.
 func busStopAliasRows(uid string, dir uint8, kept, discarded busmodel.RawStopOfRoute) [][]any {
 	keptBySequence := make(map[uint8]string, len(kept.Stops))
 	for _, stop := range kept.Stops {
@@ -100,11 +95,6 @@ func buildScheduleRows(uid string, dir uint8, schedule busmodel.RawSchedule) ([]
 			return nil, nil, errors.New("timetable has empty TripID")
 		}
 		service := pipeline.Mask2(timetable.ServiceDay.Monday, timetable.ServiceDay.Tuesday, timetable.ServiceDay.Wednesday, timetable.ServiceDay.Thursday, timetable.ServiceDay.Friday, timetable.ServiceDay.Saturday, timetable.ServiceDay.Sunday)
-		// The DB keeps every stop of the trip (segment times and ETA prediction
-		// read them); the proto payload carries only the origin, since the app's
-		// timetable board lists departures. TDX does not promise StopTimes are
-		// sorted, so the origin is the lowest StopSequence rather than the first
-		// element.
 		var origin *models.Bus_Schedule
 		var originSeq int
 		for _, stop := range timetable.StopTimes {
@@ -168,12 +158,6 @@ func decodeStrictJSONArray(body []byte, target any) error {
 	return _oops.Wrapf(err, "malformed trailing JSON")
 }
 
-// normalizeClock accepts the two wall-clock shapes TDX publishes for a bus
-// first/last time — "HH:MM" and bare "HHMM" — and returns the canonical
-// "HH:MM" form. Hours run to 29 because a transit service day extends past
-// midnight, so "25:30" is a real last-bus time that time.Parse("15:04")
-// rejects. Callers that re-parse the value with time.Parse (rail and bus
-// timetable stop times) must keep using validClock instead.
 func normalizeClock(value string) (string, bool) {
 	v := strings.TrimSpace(value)
 	if len(v) == 4 && v[2] != ':' {
@@ -206,10 +190,6 @@ func uidBelongsToPrefix(uid, prefix string) bool {
 	return uid != "" && prefix != "" && strings.HasPrefix(uid, prefix)
 }
 
-// applySubrouteEndpoints lifts the outbound direction's endpoints onto the
-// subroute, falling back to inbound for a subroute published in one direction
-// only. Called again whenever a direction is pruned, so the subroute-level names
-// never outlive the direction they came from.
 func applySubrouteEndpoints(sub *models.BusSubroute) {
 	direction := sub.Directions[0]
 	if direction == nil {
@@ -222,12 +202,6 @@ func applySubrouteEndpoints(sub *models.BusSubroute) {
 	sub.DestinationStopName = direction.DestinationStopName
 }
 
-// normalizeStationName strips TDX's "(市區公車)" station-name suffix. Keelung
-// tags its city-bus stations with it while the InterCity dataset names the same
-// physical pole without it, which breaks the same-name fold in the group-member
-// upsert (bus_writer.go) and surfaces one stop twice in the nearby list.
-// one known-noise suffix, not a general parenthesis strip — "(往北)",
-// "(捷運站)" and friends distinguish real stops.
 func normalizeStationName(name string) string {
 	return strings.TrimSuffix(name, "(市區公車)")
 }

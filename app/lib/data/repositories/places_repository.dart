@@ -23,36 +23,6 @@ class PlaceSuggestion {
   final String secondaryText;
 }
 
-/// Place lookup for the planner's origin/destination picker: our own
-/// MOTIS-backed geocoder first, Google Places when it comes up empty.
-///
-/// The order is not an optimisation, it is a coverage split (ADR-0022). MOTIS
-/// reads OpenStreetMap, which covers Taiwan addresses and transit stops well
-/// and named businesses poorly; Google covers the businesses. Riders type both.
-/// Trying ours first means the common address/stop query costs no Google
-/// billing and resolves without the second details round trip Google needs —
-/// MOTIS returns coordinates with the suggestion — while a search for 鼎泰豐
-/// still finds it.
-///
-/// An empty MOTIS result falls through. An *error* also falls through, which
-/// is why the endpoint answers 503 rather than an empty list when it cannot
-/// reach MOTIS: "nothing matched" and "I could not look" have to stay
-/// distinguishable here, and only one of them should stop the search.
-///
-/// Google Places API (New), reached two different ways.
-///
-/// Android goes through the native SDK: an Android-restricted key is bound to
-/// the package name *and* the signing SHA-1, and only the native request can
-/// prove the signature. The SDK also owns the session token that bills
-/// autocomplete plus the follow-up details lookup as one session.
-///
-/// iOS goes over REST. `flutter_google_places_sdk`'s iOS plugin is pinned to
-/// the GooglePlaces 8.5.0 pod — the legacy SDK — and ignores `useNewApi`, so
-/// it calls the legacy Places API, which this Cloud project cannot enable;
-/// every native call comes back `API_ERROR ... invalid (malformed or missing)
-/// API key`. REST keeps the key's iOS-app restriction intact by sending the
-/// bundle id in `X-Ios-Bundle-Identifier`, and the session token is passed
-/// explicitly instead.
 class PlacesRepository {
   PlacesRepository._();
   static final PlacesRepository instance = PlacesRepository._();
@@ -107,10 +77,6 @@ class PlacesRepository {
   /// it, so Google bills them as a single session. Cleared in [details].
   String? _sessionToken;
 
-  /// Coordinates MOTIS already resolved, keyed by the suggestion id handed to
-  /// the view. [details] reads this before reaching for Google, which is what
-  /// lets a MOTIS pick skip the round trip entirely. Replaced wholesale on each
-  /// MOTIS lookup so it cannot grow for the life of the app.
   Map<String, PlannedPlace> _motisPlaces = const {};
 
   Future<List<PlaceSuggestion>> autocomplete(
@@ -274,13 +240,6 @@ class PlacesRepository {
   /// Unwraps a Places `LocalizedText` (`{"text": ...}`) node.
   static String? _text(Object? node) => (node as Map?)?['text'] as String?;
 
-  /// Pure mapper (unit-tested): a `/api/geocode` response -> suggestion rows
-  /// plus the coordinates each one already carries.
-  ///
-  /// The ids are positional and namespaced (`motis:0`), not the upstream OSM
-  /// id: they only have to be unique within one response and never collide with
-  /// a Google place id, because [details] tells the two apart by looking the id
-  /// up in this map first.
   static MotisPlaceResults motisSuggestionsFromJson(Map<String, dynamic> json) {
     final suggestions = <PlaceSuggestion>[];
     final places = <String, PlannedPlace>{};

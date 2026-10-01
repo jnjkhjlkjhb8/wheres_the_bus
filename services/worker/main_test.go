@@ -59,16 +59,6 @@ func TestRunLegacyProdRoutesBootLoadThroughStaticGuard(t *testing.T) {
 	}
 }
 
-// TestChangeToVectorBoundToLoader guards the ownership move: changetovector must
-// run in the loader and must no longer be hosted by the functions service
-// (runLegacyProd). If someone re-adds it to runLegacyProd or drops it from the
-// loader, the load->vector path silently depends on functions again.
-//
-// The chain now runs through runLoadStage, which both the 03:30 cron and the
-// LOAD_ON_BOOT path drive, so the guard is two assertions: the stage owns the
-// vector refresh, and both entry points go through the stage. Asserting the
-// refresh appears twice in registerLoaderCrons would only re-pin the duplication
-// the stage was extracted to remove.
 func TestChangeToVectorBoundToLoader(t *testing.T) {
 	countCalls := func(file, fnName, callee string) int {
 		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
@@ -149,10 +139,6 @@ func TestMask2(t *testing.T) {
 	}
 }
 
-// TestDrainShutdownWaitsForBootJobBeforeReturning proves drainShutdown does
-// not return the instant shutdown is signaled: a boot goroutine still running
-// must be waited for (up to the grace period) before the caller is allowed to
-// close shared dependencies.
 func TestDrainShutdownWaitsForBootJobBeforeReturning(t *testing.T) {
 	var boot sync.WaitGroup
 	var jobFinished atomic.Bool
@@ -202,10 +188,6 @@ func TestDrainShutdownBoundedByGraceTimeout(t *testing.T) {
 	}
 }
 
-// TestAddStaticCronSkipsOverlappingEntry exercises addStaticCron itself (the
-// wrapper every realtime and daily cron entry in main.go/live.go now goes
-// through) against a real *cron.Cron, invoking the registered entry's Job
-// twice concurrently the way two ticks racing would.
 func TestAddStaticCronSkipsOverlappingEntry(t *testing.T) {
 	r := cron.New(cron.WithSeconds())
 	var runs atomic.Int64
@@ -248,10 +230,6 @@ func TestAddStaticCronSkipsOverlappingEntry(t *testing.T) {
 	}
 }
 
-// TestLiveTickDeadlineStaysUnderCadence locks in the whole-tick deadline
-// contract: every deadline must be strictly less than its cadence's period, so
-// a tick's jobs cannot bleed into the next tick under ordinary conditions
-// (SkipIfStillRunning is the backstop for when they still do).
 func TestLiveTickDeadlineStaysUnderCadence(t *testing.T) {
 	tests := []struct {
 		cadence string

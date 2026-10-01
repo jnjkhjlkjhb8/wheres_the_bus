@@ -5,10 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
-/// Guards the two design invariants that used to be re-derived per surface:
-/// time values are mono with tabular figures, and the coming-soon highlight is
-/// one achromatic fill. Both now have a single owner in the theme, and these
-/// tests fail if a new surface goes back to hand-rolling either.
 void main() {
   test('timeValue always carries tabular figures', () {
     // Digits that change width make a ticking countdown twitch. This is the one
@@ -35,13 +31,6 @@ void main() {
   });
 
   test('no surface hand-rolls a time style or the highlight fill', () {
-    // A ratchet, not a style preference: every hand-rolled copy is a place the
-    // mono-for-time rule or the achromatic highlight can silently drift.
-    //
-    // Scoped to the mono base on purpose. Tabular figures on a sans style are a
-    // different thing — slider values, counts, and app-bar dates want stable
-    // digit widths without being time values, and routing them through
-    // timeValue would silently switch them to the mono face.
     final offenders = <String>[];
     final tabular = RegExp(
       r'AppTextStyles\.memo\.copyWith\((?:[^()]|\([^()]*\))*'

@@ -4,10 +4,6 @@ import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/data/models/near_models.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 
-/// Every location is built by one helper and read back by one parser. These
-/// tests pin the two together: a builder that renames a parameter without its
-/// parser is a link that silently opens the wrong thing, which no screen test
-/// would catch because both halves still compile.
 void main() {
   group('AppRoutes.busRoute', () {
     test('encodes the subRouteUid path segment', () {
@@ -474,7 +470,10 @@ void main() {
 
   group('deep links', () {
     test('leaves an in-app location alone', () {
-      expect(normalizeDeepLink(Uri.parse('/metro/station/BL12?mode=map')), null);
+      expect(
+        normalizeDeepLink(Uri.parse('/metro/station/BL12?mode=map')),
+        null,
+      );
     });
 
     test('strips the scheme from the canonical three-slash form', () {
@@ -486,7 +485,9 @@ void main() {
 
     test('keeps query parameters and decodes path segments', () {
       expect(
-        normalizeDeepLink(Uri.parse('$appLinkScheme:///rail/train/152?sys=tra')),
+        normalizeDeepLink(
+          Uri.parse('$appLinkScheme:///rail/train/152?sys=tra'),
+        ),
         '/rail/train/152?sys=tra',
       );
     });

@@ -1,10 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Google's night-mode style JSON.
-///
-/// `GoogleMap.colorScheme` is accepted by the Dart API but neither
-/// google_maps_flutter_android nor _ios implements it as of 2.19.12, so the
-/// map stays light. Styling via JSON is the supported path on both.
 const _darkMapStyle = '''
 [
   {"elementType":"geometry","stylers":[{"color":"#242f3e"}]},

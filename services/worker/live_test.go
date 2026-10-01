@@ -21,11 +21,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// fakeLiveSource is the pipeline.LiveSource seam's in-memory adapter: it serves committed
-// fixture bytes for names it was seeded with, and reports a 304 Not-Modified
-// (modified=false, err=nil) for every other name. That lets a test drive a job
-// that loops over many partitions (cities/systems) while asserting on only the
-// seeded one, and exercise the 304→TTL path for the rest.
 type fakeLiveSource struct {
 	fixtures      map[string][]byte // Key: fetch name → raw TDX JSON array
 	calls         []string
@@ -97,14 +92,6 @@ type expireWrite struct {
 	ttl time.Duration
 }
 
-// captureLiveSink is the pipeline.LiveSink seam's recording adapter. It captures every
-// pipelined write and every refreshTTL call so a test can assert on exact keys,
-// channels, TTLs, and decoded protobuf payloads without a real Redis.
-//
-// runBusEtaCities runs several cities' jobs concurrently against one shared
-// sink (a bounded worker pool, not sequential), so every accessor below takes
-// mu — a real Redis client tolerates that concurrency by construction, and a
-// fake standing in for one has to as well.
 type captureLiveSink struct {
 	mu       sync.Mutex
 	sets     []setWrite
@@ -181,10 +168,6 @@ func (s *captureLiveSink) setFor(key string) *setWrite {
 	return nil
 }
 
-// capturePipe records writes into its sink; Exec is a no-op that never errors.
-// Each call to captureLiveSink.pipeline() returns its own capturePipe, but
-// every one shares the same underlying sink, so its methods lock like the
-// sink's own do.
 type capturePipe struct {
 	sink                *captureLiveSink
 	pendingOwnedKey     string
@@ -317,10 +300,6 @@ var _trtcTestNames = map[string][]string{
 // has a congestion reading, train 222 does not.
 
 func TestTraSpecCachesDelays(t *testing.T) {
-	// The tra spec caches the delay hash + all-snapshot from the delay feed.
-	// Per-station live boards are no longer built here (the liveboard write path
-	// was removed with the TRA read-path migration), so no tra:liveboard key may
-	// be written.
 	src := &fakeLiveSource{fixtures: map[string][]byte{
 		"tra_delay": readFixture(t, "tdx_tra_delay.json"),
 	}}
@@ -409,12 +388,6 @@ func TestBikeSpecWritesAvailability(t *testing.T) {
 }
 
 func TestThsrSeatsSpecWritesSeats(t *testing.T) {
-	// The thsr_seats spec, run against a fixture source and capture sink, must
-	// aggregate the OD segments per train into one ThsrAvailableSeats, SET it under
-	// the per-train key with the 15-minute TTL, and PUBLISH each train to the
-	// per-date channel so connected router streams get the update. The job fetches
-	// under the fixed "thsr_availableseats" name for today's Taipei date, so the
-	// keys/channel are computed the same way here.
 	src := &fakeLiveSource{fixtures: map[string][]byte{
 		"thsr_availableseats": readFixture(t, "tdx_thsr_availableseats.json"),
 	}}

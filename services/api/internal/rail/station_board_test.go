@@ -68,10 +68,6 @@ func TestDeparturesAfterKeepsTheWindow(t *testing.T) {
 	}
 }
 
-// TestDeparturesAfterDoesNotAliasTheDay guards the cached day against the
-// caller's append: departuresAfter returns the whole slice when the bound is
-// empty, and appending the next day onto a shared backing array would write
-// tomorrow's trains into the cached entry for today.
 func TestDeparturesAfterDoesNotAliasTheDay(t *testing.T) {
 	day := make([]*models.TraStationDeparture, 2, 8)
 	day[0] = &models.TraStationDeparture{DepartureTime: "06:15:00"}

@@ -1,32 +1,14 @@
 part of '../view/rail_screen.dart';
 
-/// The timetable's column widths, in logical pixels at text scale 1.
-///
-/// The columns are fixed rather than sized to content because the whole point
-/// of a timetable is that the times form a column the eye can run down. Let
-/// the arrival column start wherever the row's own content happens to end and
-/// a row with three service marks pushes its arrival time ~40px right of the
-/// row above it, which is exactly the alignment the old per-train cards were
-/// replaced to get.
 class _Cols {
   const _Cols._();
 
-  /// Sized for the *emphasised* departure ("05:00" at 24px, mono's 0.6em
-  /// advance ≈ 72px), not the 21px the other rows use. A column sized to the
-  /// common case clips the one row it exists to draw attention to — the next
-  /// departure wrapped to "05:0 / 0" before this was widened.
   static const depart = 74.0;
 
-  /// Arrivals never take the emphasised size, so 15px × 5 glyphs is the whole
-  /// requirement; the slack goes to the connector instead.
   static const arrive = 52.0;
 
   static const number = 36.0;
 
-  /// Height of the service-mark line under the train type. Reserved on every
-  /// row, including rows with no marks: letting it collapse makes marked rows
-  /// taller than unmarked ones, and a timetable is only scannable while the
-  /// rows keep an even rhythm.
   static const markLine = 17.0;
 
   /// Scaled so the slots still fit their text in the app's large-text mode,
@@ -35,12 +17,6 @@ class _Cols {
       MediaQuery.textScalerOf(context).scale(base);
 }
 
-/// One train in the timetable list.
-///
-/// The list answers "which departure do I take", so the departure time is the
-/// heaviest thing in the row and everything else ranks below it. The O/D pair
-/// and the fare are properties of the query, not of the train, so they live in
-/// the screen's context bar and are not repeated here.
 class _TrainRow extends StatelessWidget {
   const _TrainRow({
     required this.row,
@@ -73,7 +49,9 @@ class _TrainRow extends StatelessWidget {
     // would leave an unexplained gap where the user expects a train — but it
     // must never read as a candidate, so the whole row goes quiet.
     final suspended = row.isSuspended;
-    final timeColor = suspended ? cs.outline : cs.onSurface;
+    final timeColor = suspended
+        ? AppTheme.inkTertiary(cs.brightness)
+        : cs.onSurface;
 
     return Pressable(
       onTap: () {
@@ -106,13 +84,9 @@ class _TrainRow extends StatelessWidget {
       },
       semanticLabel: _semanticLabel(AppI18n.of(context)),
       child: Container(
-        // The rows carry the list's surface themselves rather than sitting in
-        // a card: a rounded card around a lazily-built sliver would have to
-        // clip, and the highlighted row's fill would bleed past the corner
-        // whenever the next departure happens to be first or last.
         color: isNext ? cs.surfaceContainerHighest : cs.surfaceContainerLow,
         padding: EdgeInsets.symmetric(
-          horizontal: 16,
+          horizontal: AppTheme.space16,
           vertical: isNext ? 13 : 11,
         ),
         child: Row(
@@ -131,7 +105,7 @@ class _TrainRow extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             Expanded(
               child: _DurationConnector(
                 duration: row.duration,
@@ -139,7 +113,7 @@ class _TrainRow extends StatelessWidget {
                 dimmed: suspended,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             SizedBox(
               width: _Cols.scaled(context, _Cols.arrive),
               child: Text(
@@ -148,12 +122,14 @@ class _TrainRow extends StatelessWidget {
                 style: AppTextStyles.timeValue(
                   size: 15,
                   weight: FontWeight.w500,
-                  color: suspended ? cs.outline : cs.onSurfaceVariant,
+                  color: suspended
+                      ? AppTheme.inkTertiary(cs.brightness)
+                      : cs.onSurfaceVariant,
                   decoration: suspended ? TextDecoration.lineThrough : null,
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: AppTheme.space10),
             _TrainIdentity(row: row, dimmed: suspended),
           ],
         ),
@@ -273,11 +249,6 @@ class _Footnote {
 
 enum _FootnoteTone { critical, neutral, emphasis }
 
-/// The hairline between departure and arrival, carrying the travel time.
-///
-/// It replaces the vertical station timeline the old card drew: with the O/D
-/// pair stated once in the context bar, the only thing the connector still has
-/// to say is how long the ride takes.
 class _DurationConnector extends StatelessWidget {
   const _DurationConnector({
     required this.duration,
@@ -303,12 +274,14 @@ class _DurationConnector extends StatelessWidget {
       children: [
         line,
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
           child: Text(
             duration,
             style: AppTextStyles.timeValue(
               size: 11,
-              color: dimmed ? cs.outline : cs.onSurfaceVariant,
+              color: dimmed
+                  ? AppTheme.inkTertiary(cs.brightness)
+                  : cs.onSurfaceVariant,
             ),
           ),
         ),
@@ -337,7 +310,12 @@ class _TimetableHeader extends StatelessWidget {
       // Carries the same surface as the rows below so the list reads as one
       // continuous table rather than a heading floating above a separate one.
       color: cs.surfaceContainerLow,
-      padding: const EdgeInsets.fromLTRB(16, 11, 16, 9),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        11,
+        AppTheme.space16,
+        9,
+      ),
       child: Row(
         children: [
           SizedBox(
@@ -353,7 +331,7 @@ class _TimetableHeader extends StatelessWidget {
               style: style,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: AppTheme.space10),
           SizedBox(
             width: _Cols.scaled(context, _Cols.number),
             child: Text(
@@ -362,7 +340,7 @@ class _TimetableHeader extends StatelessWidget {
               style: style,
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: AppTheme.space6),
           // Reserves the train-type chip's slot so the heading above the
           // number column lines up with the numbers rather than with the chip.
           const Opacity(
@@ -375,11 +353,6 @@ class _TimetableHeader extends StatelessWidget {
   }
 }
 
-/// Train number, type, and service marks — the right-hand column.
-///
-/// The marks sit on their own line under the type chip, and that line is
-/// reserved whether or not the train has any: the alternative is rows of two
-/// different heights down a list whose whole job is an even column of times.
 class _TrainIdentity extends StatelessWidget {
   const _TrainIdentity({required this.row, required this.dimmed});
 
@@ -403,11 +376,13 @@ class _TrainIdentity extends StatelessWidget {
                 textAlign: TextAlign.right,
                 style: AppTextStyles.timeValue(
                   size: 12,
-                  color: dimmed ? cs.outline : cs.onSurfaceVariant,
+                  color: dimmed
+                      ? AppTheme.inkTertiary(cs.brightness)
+                      : cs.onSurfaceVariant,
                 ),
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: AppTheme.space6),
             // A suspended train's type still identifies it, but the operator
             // colour would make the row look like a live option; grey it.
             Opacity(

@@ -11,14 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TDX's DisplayStopOfRoute is the route-level companion to StopOfRoute: where
-// StopOfRoute records how each subroute actually runs — the shape an estimate
-// needs — this is the whole route linearised across its branches, so a page can
-// show 307 once instead of once per variant.
-//
-// Landed and loaded only. Nothing reads bus_display_stop_map yet; the route
-// screen that would is a separate piece of work.
-
 // rawBusDisplayStopOfRoute decodes one element: a route direction and its
 // linearised stop list.
 type rawBusDisplayStopOfRoute struct {
@@ -34,12 +26,6 @@ type rawBusDisplayStopOfRoute struct {
 	} `json:"Stops"`
 }
 
-// LoadDisplayStops replaces one city's linearised route stop lists.
-//
-// It is a standalone loader rather than a ninth input to the bus city snapshot
-// on purpose: the snapshot requires every correlated partition to have landed in
-// the same ingest cycle, so folding this in would make a city's whole static
-// load depend on a list nothing reads yet.
 func LoadDisplayStops(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, city string) error {
 	if strings.TrimSpace(city) == "" {
 		return errors.New("bus display stops: city is required")
@@ -97,10 +83,6 @@ func LoadDisplayStops(ctx context.Context, dec *json.Decoder, sink pipeline.Copy
 	}, rows)
 }
 
-// busDisplayStopRows flattens the decoded routes into copy rows, dropping the
-// entries that cannot be joined or ordered: a stop with no UID, no station, no
-// name, or no sequence identifies nothing. Split out so the flattening is
-// testable without a database.
 func busDisplayStopRows(routes []rawBusDisplayStopOfRoute) [][]any {
 	var rows [][]any
 	for _, route := range routes {

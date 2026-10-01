@@ -1,7 +1,3 @@
-// Package predict fills the ETA gaps TDX leaves blank. It combines the landed
-// schedule, observed segment travel times, and an XGBoost model over weather and
-// time-of-day features, and propagates an observed upstream delay down the rest
-// of a route.
 package predict
 
 import (
@@ -49,13 +45,6 @@ func DedupRouteDirPairs(keys []RouteDirKey) []RouteDirKey {
 	return out
 }
 
-// BatchNextDepartures returns, per route/Direction, the next scheduled
-// departure at or after todTime (today's local time-of-day), considering only
-// rows whose service_day mask includes dayBit. Timetable rows (type=false)
-// contribute their trip's origin-stop time; frequency rows (type=true) have no
-// per-trip departures, so an open service window contributes the window start
-// clamped to now. Timetable wins over frequency when both exist. An empty key
-// set or a query error yields an empty map.
 func BatchNextDepartures(ctx context.Context, db *pgxpool.Pool, keys []RouteDirKey, todTime string, dayBit int) map[RouteDirKey]time.Time {
 	out := make(map[RouteDirKey]time.Time, len(keys))
 	if len(keys) == 0 {
@@ -125,20 +114,6 @@ func BatchNextDepartures(ctx context.Context, db *pgxpool.Pool, keys []RouteDirK
 	return out
 }
 
-// BatchStopOffsets loads each stop's running seconds from its subroute's origin
-// for the given subroutes, in one query. The result feeds ETA prediction the
-// expected time from departure to a stop. An empty uid set or a query error
-// yields an empty map.
-//
-// The offsets are accumulated from bus_segment_time, the observed running time
-// between consecutive stops, over busPatternSQL — the same statement the GTFS
-// export lays a trip out with, so a predicted arrival and a published stop time
-// cannot disagree about the same journey.
-//
-// Only directions busPatternSQL calls complete are returned. Accumulating past
-// an unobserved hop silently compresses every stop after it, so a Direction
-// missing one segment yields nothing and the caller falls back to the bare
-// scheduled departure.
 func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[StopOffsetKey]int {
 	out := make(map[StopOffsetKey]int)
 	if len(uids) == 0 {
@@ -158,10 +133,6 @@ func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[
 		return out
 	}
 	defer rows.Close()
-	// Every queried uid gets an entry, including the ones the query returns
-	// nothing for. A Direction busPatternSQL does not call complete is the common
-	// case, not an error, and caching only the hits would leave those re-running
-	// the statement on every tick — which is most of the cost being avoided.
 	fetched := make(map[string][]stopOffset, len(missing))
 	for _, uid := range missing {
 		fetched[uid] = nil
@@ -190,12 +161,6 @@ func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[
 // model build their own local *predictor instead of mutating this one.
 var _predictor *predictor
 
-// predictor holds the loaded XGBoost ensemble that predicts a residual
-// correction on the schedule+running-time ETA, and the categorical-to-integer
-// encodings it was trained with, so runtime features match training. A nil
-// *predictor, or one with a nil model, means no model is loaded, which
-// disables prediction (NextBusTime returns ""). Only City is currently
-// applied; PlateNumb is loaded but unused at prediction time.
 type predictor struct {
 	model    *leaves.Ensemble
 	encoders struct {
@@ -204,11 +169,6 @@ type predictor struct {
 	}
 }
 
-// newPredictor loads the XGBoost ETA model and its encoders from
-// BUS_ETA_MODEL_PATH (default ./model/bus_eta.json, encoders at
-// <path>_encoders.json). A missing or unreadable model yields a *predictor
-// with a nil model, which disables prediction — this is a tolerated state, not
-// a fatal error, so the service runs without the model.
 func newPredictor() *predictor {
 	path := os.Getenv("BUS_ETA_MODEL_PATH")
 	if path == "" {
@@ -252,13 +212,6 @@ type Inputs struct {
 	HasOffset bool
 }
 
-// BaselineArrival computes the schedule+running-time arrival for a stop, with no
-// model correction: today's scheduled departure plus the stop's offset from the
-// origin. Without an offset it returns the bare departure — the stop's Direction
-// has an unobserved hop somewhere, and a guessed offset would be worse than
-// admitting the journey is unknown. It returns the zero time when there is no
-// upcoming scheduled departure. This is the delay-propagation baseline and the
-// pre-correction basis inside NextBusTime.
 func BaselineArrival(inputs Inputs) time.Time {
 	if inputs.NextDep.IsZero() {
 		return time.Time{}
@@ -272,22 +225,10 @@ func BaselineArrival(inputs Inputs) time.Time {
 	return dep.Add(time.Duration(inputs.OffsetSec) * time.Second)
 }
 
-// NextBusTime calls _predictor's method of the same name. It exists so
-// callers elsewhere in the package do not need to reference the package-level
-// predictor directly; the prediction logic itself lives on *predictor so tests
-// can exercise it against a local instance instead of the shared global.
 func NextBusTime(wx *weather.Data, stop StopCtx, inputs Inputs) string {
 	return _predictor.NextBusTime(wx, stop, inputs)
 }
 
-// NextBusTime estimates a NextBusTime for a stop TDX left blank. It bases
-// the estimate on the next scheduled departure plus the stop's running-time
-// offset from the origin, then adds the XGBoost residual correction. Without an
-// offset it falls back to the bare departure time, uncorrected: the correction is
-// a residual on a journey estimate, and there is no journey estimate to correct.
-// Returns "" when the model is not loaded (including a nil receiver, which
-// happens before NewPredictor has run) or there is no upcoming scheduled
-// departure. Result is an RFC3339 timestamp.
 func (p *predictor) NextBusTime(wx *weather.Data, stop StopCtx, inputs Inputs) string {
 	if p == nil || p.model == nil || inputs.NextDep.IsZero() {
 		return ""

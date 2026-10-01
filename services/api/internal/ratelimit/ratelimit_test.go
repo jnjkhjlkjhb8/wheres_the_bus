@@ -3,11 +3,13 @@ package ratelimit
 import (
 	"context"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -19,6 +21,19 @@ func (a limiterTestAddr) String() string  { return string(a) }
 
 func limiterContext(address string) context.Context {
 	return peer.NewContext(context.Background(), &peer.Peer{Addr: limiterTestAddr(address)})
+}
+
+func TestForwardedCallerUsesRightmostUntrustedHop(t *testing.T) {
+	rl := NewWithTrustedProxies([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: limiterTestAddr("10.0.0.2:443")})
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("x-forwarded-for", "198.51.100.9, 203.0.113.7"))
+	if !Allow(ctx, rl, "scope", 1, time.Minute) {
+		t.Fatal("first caller denied")
+	}
+	spoof := metadata.NewIncomingContext(ctx, metadata.Pairs("x-forwarded-for", "192.0.2.55, 203.0.113.7"))
+	if Allow(spoof, rl, "scope", 1, time.Minute) {
+		t.Fatal("spoofed prefix changed caller identity")
+	}
 }
 
 func TestRateLimiterExpiresBucketsIndependently(t *testing.T) {

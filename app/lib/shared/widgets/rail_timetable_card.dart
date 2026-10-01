@@ -46,14 +46,14 @@ class RailTimetableCard extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppTheme.space16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   TrainTypeChip(type: _trainType),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Text(_trainNo, style: theme.textTheme.titleSmall),
                   const Spacer(),
                   Text(
@@ -68,11 +68,11 @@ class RailTimetableCard extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppTheme.space16),
               Row(
                 children: [
                   Text(_departureTime, style: theme.textTheme.titleLarge),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Expanded(
                     child: Column(
                       children: [
@@ -81,11 +81,11 @@ class RailTimetableCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Text(_arrivalTime, style: theme.textTheme.titleLarge),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               Text(
                 '$_origin → $_destination',
                 maxLines: 1,

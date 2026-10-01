@@ -17,18 +17,6 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 
-/// Listens for a deliberate shake anywhere in the app and offers to open the
-/// report form.
-///
-/// Wraps the shell rather than each screen: something goes wrong on the screen
-/// the rider is already looking at, and asking them to find 設定 › 回報問題
-/// first means the screen they wanted to report is gone by the time the form
-/// opens. The gesture is the one input that is always available and never
-/// competes with anything on the page.
-///
-/// The stream is attached only while the app is in the foreground *and* the
-/// rider has the setting on, so a phone in a pocket is never sampling the
-/// accelerometer.
 class ShakeReportHost extends StatefulWidget {
   const ShakeReportHost({required this.child, this.samples, super.key});
 
@@ -75,10 +63,6 @@ class _ShakeReportHostState extends State<ShakeReportHost> {
         _sync();
       },
     );
-    // Guarded rather than assumed: production only builds the shell once the
-    // settings box is open, but a screen mounted without it (widget tests) must
-    // get a listener that does nothing, not a thrown box lookup. Without the
-    // listenable the gesture simply keeps whatever state it starts in.
     if (HiveStore.settingsReady) {
       _setting = HiveStore.settings.listenable(
         keys: const [SettingsRepository.shakeToReportKey],
@@ -169,11 +153,6 @@ class _ShakeReportHostState extends State<ShakeReportHost> {
   Widget build(BuildContext context) => widget.child;
 }
 
-/// The question a shake asks: report a problem with this screen, or not.
-///
-/// Opens at content height rather than a viewport detent — it is one sentence
-/// and two buttons, and a half-screen surface would claim more of the rider's
-/// attention than a question they did not necessarily mean to ask.
 class ShakeReportSheet extends StatelessWidget {
   const ShakeReportSheet({super.key});
 
@@ -197,17 +176,17 @@ class ShakeReportSheet extends StatelessWidget {
     final i18n = AppI18n.of(context);
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        20,
-        4,
-        20,
-        20 + MediaQuery.paddingOf(context).bottom,
+        AppTheme.space20,
+        AppTheme.space4,
+        AppTheme.space20,
+        AppTheme.space20 + MediaQuery.paddingOf(context).bottom,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(i18n.shakeReportTitle, style: AppTextStyles.heading1),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           // Says why the sheet appeared before it says what it wants. A rider
           // who shook the phone by accident needs the cause named first,
           // otherwise the sheet reads as the app malfunctioning.
@@ -219,14 +198,14 @@ class ShakeReportSheet extends StatelessWidget {
           ),
           // Wide enough to read as an aside rather than a third line of the
           // same paragraph — it answers a question the sheet did not ask.
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           // bodySmall, not the mono memo style: mono is reserved for times and
           // reference numbers, and this is a sentence.
           Text(
             i18n.shakeReportOptOutHint,
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: AppTheme.space20),
           Row(
             children: [
               Expanded(
@@ -235,7 +214,7 @@ class ShakeReportSheet extends StatelessWidget {
                   onTap: () => Navigator.of(context).pop(false),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppTheme.space12),
               Expanded(
                 child: _SheetButton(
                   label: i18n.feedbackTitle,

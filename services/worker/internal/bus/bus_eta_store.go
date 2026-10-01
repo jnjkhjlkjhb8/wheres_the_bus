@@ -48,12 +48,6 @@ func (s pgBusEtaStore) saveHistory(_ context.Context, rows [][]any) {
 	})
 }
 
-// saveStopEvents archives observed stop arrivals and departures (TDX A2). Same
-// background flusher and same fire-and-forget contract as saveHistory: the rows
-// describe a tick that has already been published, so a slow archive host must
-// not spend the live tick's budget. The table's natural key makes the INSERT
-// idempotent, which is what lets every tick re-submit the records TDX keeps
-// republishing.
 func (s pgBusEtaStore) saveStopEvents(_ context.Context, rows [][]any) {
 	if len(rows) == 0 {
 		return
@@ -74,10 +68,6 @@ func (s pgBusEtaStore) recordPredictions(_ context.Context, rows []history.Predi
 	})
 }
 
-// busstaticmp loads the per-stop station map for a city prefix: every stop of
-// every subroute joined to its station group and coordinates. Eta uses it to
-// attach live ETAs to stops and to group stops under a shared station. Rows that
-// fail to scan are logged and skipped rather than aborting the whole load.
 func busstaticmp(ctx context.Context, db *pgxpool.Pool, city string) ([]busmodel.StationMap, error) {
 	query := `SELECT bssm.station_id, bssm.station_name,
 	                 COALESCE(bsgm.group_uid, bssm.station_id),

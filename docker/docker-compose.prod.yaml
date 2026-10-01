@@ -45,6 +45,21 @@ services:
   # below are relative to the repo root (--project-directory .), not to this
   # file.
   cloudflared:
+    networks:
+      frontend:
+        ipv4_address: 172.30.20.2
     volumes:
       - ./cloudflared/config.prod.yml:/etc/cloudflared/config.yml:ro
       - ./secrets/cloudflared.prod.json:/etc/cloudflared/creds.json:ro
+
+  motis:
+    networks:
+      routing:
+        aliases:
+          - prod-motis
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.30.20.0/24

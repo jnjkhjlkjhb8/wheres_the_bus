@@ -54,11 +54,6 @@ func TestRunLiveFiltersByKey(t *testing.T) {
 	}
 }
 
-// TestLiveDemandGateSkipsUnwatchedCityUntilColdCadence covers the whole point
-// of the gate (FDPL-90): an unwatched city must be fetched once per cold
-// cadence, not once per tick, and a watched one must never be skipped. It runs
-// ticks against one sink so the cold marker written by the first tick is the
-// one later ticks read back.
 func TestLiveDemandGateSkipsUnwatchedCityUntilColdCadence(t *testing.T) {
 	ctx := context.Background()
 

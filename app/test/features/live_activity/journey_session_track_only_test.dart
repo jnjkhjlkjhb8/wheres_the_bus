@@ -8,6 +8,7 @@ import 'package:wheres_the_bus/data/tracking/journey_models.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
+import 'package:wheres_the_bus/data/tracking/tracking_session.dart';
 
 /// Captures the last content pushed through the platform channel so tests
 /// can assert on `_content()`'s output without the method channel firing.
@@ -29,6 +30,27 @@ class _CapturingChannel extends AlightTrackChannel {
   @override
   Future<void> stop(int lease) async {}
 }
+
+final _route = BusRouteViewModel(
+  subRouteUid: 'sub-307',
+  routeName: '307',
+  subRouteName: '307',
+  departureStopName: '第一站',
+  destinationStopName: '終點',
+  city: 'Taipei',
+  headsignGo: '板橋',
+  headsignReturn: '昆陽',
+  stopsGo: [
+    for (var seq = 1; seq <= 5; seq++)
+      BusStopModel(
+        stopUid: 'stop-$seq',
+        stopName: ['第一站', '第二站', '第三站', '第四站', '終點'][seq - 1],
+        sequence: seq,
+        lat: 25,
+        lon: 121.5,
+      ),
+  ],
+);
 
 bool _alwaysEnabled() => true;
 
@@ -95,8 +117,6 @@ void main() {
   test('trackOnly ignores board confirmations', () async {
     final b = bloc()..add(JourneyStarted(legs: [_leg()], trackOnly: true));
     await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
-    // A cancel still lands after the ignored board event, proving the phase
-    // never left waiting.
     b
       ..add(const BoardConfirmed())
       ..add(const JourneyCancelled());
@@ -209,6 +229,112 @@ void main() {
       );
       expect(second.pinnedStopsRemaining, 1);
 
+      await b.close();
+    },
+  );
+
+  test('a pinned bus card names the picked stop and walks its bar', () async {
+    final channel = _CapturingChannel();
+    final b = bloc(channel: channel)
+      ..add(
+        JourneyStarted(
+          legs: [
+            busTrackingLeg(
+              route: _route,
+              stops: _route.stopsGo,
+              boardIndex: 0,
+              targetIndex: 3,
+              direction: 0,
+            ),
+          ],
+          trackOnly: true,
+          plate: 'KKA-1288',
+        ),
+      );
+    await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+
+    List<BusStopEtaViewModel> frame(int plateAtSequence) => [
+      for (var seq = 1; seq <= 4; seq++)
+        BusStopEtaViewModel(
+          stopUid: 'stop-$seq',
+          direction: 0,
+          sequence: seq,
+          estimateSeconds: 0,
+          nextBusTime: '',
+          stopStatus: 0,
+          vehiclePlates: const ['KKA-1288'],
+          plate: seq == plateAtSequence ? 'KKA-1288' : '',
+        ),
+    ];
+
+    // The rider picked stop-4, which is not the route's terminus.
+    routeEtaCtrl.add(frame(2));
+    await b.stream.firstWhere((s) => s.pinnedStopsRemaining == 2);
+    expect(channel.last?.targetStation, '第四站');
+    expect(channel.last?.hopCount, 3);
+    expect(channel.last?.currentIndex, 1);
+    expect(channel.last?.nextStation, '第三站');
+
+    // One stop on: the bar walks, the denominator does not move.
+    routeEtaCtrl.add(frame(3));
+    await b.stream.firstWhere((s) => s.pinnedStopsRemaining == 1);
+    expect(channel.last?.hopCount, 3);
+    expect(channel.last?.currentIndex, 2);
+    expect(channel.last?.nextStation, '第四站');
+
+    await b.close();
+  });
+
+  test(
+    'the buzz is filed under the card session, not a process counter',
+    () async {
+      final channel = _CapturingChannel();
+      final fired = <String>[];
+      final b =
+          JourneySessionBloc(
+            etaStream: (_) => etaCtrl.stream,
+            routeEtaStream: (_) => routeEtaCtrl.stream,
+            channel: channel,
+            liveActivityEnabled: _alwaysEnabled,
+            vibrate: (id, _) async => fired.add(id),
+          )..add(
+            JourneyStarted(
+              legs: [
+                busTrackingLeg(
+                  route: _route,
+                  stops: _route.stopsGo,
+                  boardIndex: 0,
+                  targetIndex: 3,
+                  direction: 0,
+                ),
+              ],
+              trackOnly: true,
+              plate: 'KKA-1288',
+            ),
+          );
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+
+      List<BusStopEtaViewModel> frame(int plateAtSequence) => [
+        for (var seq = 1; seq <= 4; seq++)
+          BusStopEtaViewModel(
+            stopUid: 'stop-$seq',
+            direction: 0,
+            sequence: seq,
+            estimateSeconds: 0,
+            nextBusTime: '',
+            stopStatus: 0,
+            vehiclePlates: const ['KKA-1288'],
+            plate: seq == plateAtSequence ? 'KKA-1288' : '',
+          ),
+      ];
+
+      routeEtaCtrl.add(frame(2));
+      await b.stream.firstWhere((s) => s.pinnedStopsRemaining == 2);
+      // 還剩 1 站: 下車站 is next, which is the long buzz.
+      routeEtaCtrl.add(frame(3));
+      await b.stream.firstWhere((s) => s.pinnedStopsRemaining == 1);
+
+      expect(fired, [channel.last!.trackId]);
       await b.close();
     },
   );

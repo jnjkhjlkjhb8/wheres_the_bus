@@ -5,10 +5,6 @@ import 'package:wheres_the_bus/data/tracking/journey_models.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/data/tracking/tracking_session.dart';
 
-/// The 追蹤 construction and ownership seam. Before it existed, both halves
-/// lived inside widget State — the leg builders in three private methods, the
-/// ownership predicates in two more — so none of this was reachable without
-/// pumping a screen that mounts a GoogleMap.
 void main() {
   BusStopModel stop(int seq, String uid, String name) => BusStopModel(
     stopUid: uid,
@@ -44,21 +40,63 @@ void main() {
   });
 
   group('busTrackingLeg', () {
-    test('targets the board stop and names the terminus', () {
+    test('names the alight stop the rider picked, not the terminus', () {
       final leg = busTrackingLeg(
         route: route,
         stops: route.stopsGo,
-        boardIndex: 1,
+        boardIndex: 0,
+        targetIndex: 1,
         direction: 0,
       );
       expect(leg.kind, JourneyLegKind.bus);
       expect(leg.routeLabel, '307 往板橋');
-      expect(leg.boardStop, '第二站');
-      // The terminus, not the board stop: the card says where the bus is
-      // headed.
-      expect(leg.alightStop, '終點');
+      // Where the rider got on, and where they get off. The terminus is not
+      // either of them.
+      expect(leg.boardStop, '第一站');
+      expect(leg.alightStop, '第二站');
       expect(leg.identity.departureStopKey, 'S2');
       expect(leg.identity.routeKey, 'TPE1234');
+    });
+
+    test('carries the hops from 上車站 to 下車站', () {
+      // The card's progress bar divides by these, so they must span that
+      // stretch and nothing else: one entry per stop after the 上車站.
+      final leg = busTrackingLeg(
+        route: route,
+        stops: route.stopsGo,
+        boardIndex: 0,
+        targetIndex: 2,
+        direction: 0,
+      );
+      expect(leg.stopNames, ['第二站', '終點']);
+      expect(leg.stopLocations, hasLength(2));
+    });
+
+    test('spans nothing when 上車站 and 下車站 are the same stop', () {
+      final leg = busTrackingLeg(
+        route: route,
+        stops: route.stopsGo,
+        boardIndex: 2,
+        targetIndex: 2,
+        direction: 0,
+      );
+      expect(leg.stopNames, isEmpty);
+      expect(leg.stopLocations, isEmpty);
+    });
+
+    test('falls back to the route start when no 上車站 was resolved', () {
+      // -1 is what the caller passes when the screen never snapshotted the
+      // stop the bus was heading for: the bar then spans the whole run to the
+      // target rather than collapsing to zero hops and freezing.
+      final leg = busTrackingLeg(
+        route: route,
+        stops: route.stopsGo,
+        boardIndex: -1,
+        targetIndex: 2,
+        direction: 0,
+      );
+      expect(leg.boardStop, '第一站');
+      expect(leg.stopNames, ['第二站', '終點']);
     });
 
     test('takes the return headsign for direction 1', () {
@@ -66,23 +104,22 @@ void main() {
         route: route,
         stops: route.stopsGo,
         boardIndex: 0,
+        targetIndex: 0,
         direction: 1,
       );
       expect(leg.routeLabel, '307 往撫遠街');
       expect(leg.identity.direction, '1');
     });
 
-    test('leaves the riding lists empty and the identity unsupported', () {
-      // A trackOnly leg is never ridden, so riding progress has nothing to walk
-      // and the identity is not a bookable plan section.
+    test('leaves the identity unsupported', () {
+      // A trackOnly identity is not a bookable plan section.
       final leg = busTrackingLeg(
         route: route,
         stops: route.stopsGo,
         boardIndex: 0,
+        targetIndex: 1,
         direction: 0,
       );
-      expect(leg.stopNames, isEmpty);
-      expect(leg.stopLocations, isEmpty);
       expect(leg.identity.supported, isFalse);
     });
   });
@@ -91,7 +128,8 @@ void main() {
     final leg = busTrackingLeg(
       route: route,
       stops: route.stopsGo,
-      boardIndex: 1,
+      boardIndex: 0,
+      targetIndex: 1,
       direction: 0,
     );
 
@@ -188,6 +226,7 @@ void main() {
           route: route,
           stops: route.stopsGo,
           boardIndex: 0,
+          targetIndex: 0,
           direction: 0,
         ),
       );

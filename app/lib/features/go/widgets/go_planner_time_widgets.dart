@@ -1,10 +1,5 @@
 part of '../view/go_screen.dart';
 
-/// How far ahead the planner accepts a date. Mirrors `num_days` in
-/// motis/config.yml: the backend loads 15 days of timetable, so day 16 has no
-/// answer to give. Kept as a constant rather than fetched, because the two only
-/// change together and a mismatch shows up at the first query rather than
-/// silently.
 const _kPlannerHorizon = Duration(days: 15);
 
 class _GoMessage extends StatelessWidget {
@@ -28,12 +23,17 @@ class _GoMessage extends StatelessWidget {
     return Align(
       alignment: Alignment.topCenter,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space24,
+          AppTheme.space48,
+          AppTheme.space24,
+          AppTheme.space24,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 40, color: cs.outline),
-            const SizedBox(height: 16),
+            Icon(icon, size: 40, color: AppTheme.inkTertiary(cs.brightness)),
+            const SizedBox(height: AppTheme.space16),
             Text(
               title,
               textAlign: TextAlign.center,
@@ -42,7 +42,7 @@ class _GoMessage extends StatelessWidget {
                 color: cs.onSurface,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppTheme.space6),
             Text(
               hint,
               textAlign: TextAlign.center,
@@ -51,14 +51,14 @@ class _GoMessage extends StatelessWidget {
               ),
             ),
             if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 20),
+              const SizedBox(height: AppTheme.space20),
               Pressable(
                 onTap: onAction,
                 semanticLabel: actionLabel,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
+                    horizontal: AppTheme.space20,
+                    vertical: AppTheme.space12,
                   ),
                   decoration: BoxDecoration(
                     color: cs.primaryContainer,
@@ -81,19 +81,13 @@ class _GoMessage extends StatelessWidget {
   }
 }
 
-/// Plan-entry phase: the map-less landing surface, and the search itself. The
-/// destination row *is* the search field and takes focus on arrival, so a rider
-/// who opened the planner to type somewhere can type immediately instead of
-/// tapping through to a second, near-identical screen.
-///
-/// The list below answers with the most complete thing first: a saved route is
-/// a whole trip in one tap, a saved place is half of one, a recent search is
-/// the weakest of the three.
 class _PlannerEntry extends StatelessWidget {
   const _PlannerEntry({
     required this.origin,
     required this.originStatus,
     required this.savedRoutes,
+    required this.savedRoutesReady,
+    required this.savedRoutesLoadError,
     required this.onEditOrigin,
     required this.onSwap,
     required this.onPickDestination,
@@ -101,12 +95,15 @@ class _PlannerEntry extends StatelessWidget {
     required this.onToggleSave,
     required this.onBack,
     required this.onEnableLocation,
+    required this.onRetrySavedRoutes,
     super.key,
   });
 
   final PlannedPlace? origin;
   final OriginStatus originStatus;
   final List<PlanRoute> savedRoutes;
+  final bool savedRoutesReady;
+  final bool savedRoutesLoadError;
   final VoidCallback onEditOrigin;
   final VoidCallback onSwap;
   final ValueChanged<PlannedPlace> onPickDestination;
@@ -114,17 +111,58 @@ class _PlannerEntry extends StatelessWidget {
   final void Function(PlanRoute) onToggleSave;
   final VoidCallback onBack;
   final VoidCallback onEnableLocation;
+  final VoidCallback onRetrySavedRoutes;
 
   // 路線箱: the saved-route cards. Kept out of PlaceSearchView (which only knows
   // places) by passing it in as the list header.
   Widget? _savedRoutesHeader(BuildContext context) {
+    if (!savedRoutesReady && savedRoutesLoadError) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space20,
+          AppTheme.space16,
+          AppTheme.space20,
+          AppTheme.space12,
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 20),
+            const SizedBox(width: AppTheme.space8),
+            Expanded(child: Text('路線箱暫時無法讀取')),
+            TextButton(onPressed: onRetrySavedRoutes, child: const Text('重試')),
+          ],
+        ),
+      );
+    }
+    if (!savedRoutesReady) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(
+          AppTheme.space20,
+          AppTheme.space16,
+          AppTheme.space20,
+          AppTheme.space12,
+        ),
+        child: SizedBox(
+          height: 24,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
     if (savedRoutes.isEmpty) return null;
     final cs = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space20,
+            AppTheme.space16,
+            AppTheme.space20,
+            AppTheme.space6,
+          ),
           child: Text(
             AppI18n.of(context).goRouteBox,
             style: AppTextStyles.bodySmall.copyWith(
@@ -134,12 +172,17 @@ class _PlannerEntry extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space16,
+            0,
+            AppTheme.space16,
+            AppTheme.space4,
+          ),
           child: Column(
             children: [
               for (final route in savedRoutes)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.only(bottom: AppTheme.space10),
                   child: RouteOptionCard(
                     route: route,
                     highlighted: false,
@@ -171,7 +214,12 @@ class _PlannerEntry extends StatelessWidget {
           header: _savedRoutesHeader(context),
           onPicked: onPickDestination,
           headerBuilder: (context, input) => Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 16, 4),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space4,
+              AppTheme.space4,
+              AppTheme.space16,
+              AppTheme.space4,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -200,7 +248,12 @@ class _PlannerEntry extends StatelessWidget {
                   ],
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 0, 4),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppTheme.space12,
+                    AppTheme.space4,
+                    0,
+                    AppTheme.space4,
+                  ),
                   child: _ODFields(
                     origin: origin,
                     originStatus: originStatus,
@@ -251,7 +304,10 @@ class _TimeChip extends StatelessWidget {
       onTap: onTap,
       semanticLabel: AppI18n.of(context).goChooseDepartTime,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space12,
+          vertical: AppTheme.space8,
+        ),
         decoration: BoxDecoration(
           color: cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -260,7 +316,7 @@ class _TimeChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.schedule_rounded, size: 16, color: cs.onSurface),
-            const SizedBox(width: 6),
+            const SizedBox(width: AppTheme.space6),
             if (suffix == null)
               Text(AppI18n.of(context).goLeaveNow, style: sansStyle)
             else ...[
@@ -336,19 +392,15 @@ class _TimeModeSheetState extends State<_TimeModeSheet> {
       builder: (context) => SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppTheme.space16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const SheetDragHandle(),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               AppDatePicker(
                 selectedDay: _at,
                 firstDay: DateTime.now(),
-                // The planner can only answer inside the timetable
-                // window MOTIS has loaded (ADR-0022). Offering a date
-                // past it returns an empty result the rider cannot
-                // tell from "no route exists".
                 lastDay: DateTime.now().add(_kPlannerHorizon),
                 onDaySelected: (date) => Navigator.pop(context, date),
               ),
@@ -409,14 +461,19 @@ class _TimeModeSheetState extends State<_TimeModeSheet> {
           children: [
             const SheetDragHandle(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space20,
+                AppTheme.space4,
+                AppTheme.space20,
+                AppTheme.space12,
+              ),
               child: Text(
                 AppI18n.of(context).goDepartAt,
                 style: AppTextStyles.heading2.copyWith(color: cs.onSurface),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space20),
               child: AppSlidingSegment<_TimeMode>(
                 options: {
                   _TimeMode.leaveNow: AppI18n.of(context).goLeaveNow,
@@ -428,7 +485,7 @@ class _TimeModeSheetState extends State<_TimeModeSheet> {
               ),
             ),
             if (timed) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               _TimeRow(
                 icon: Icons.event_rounded,
                 label: AppI18n.of(context).commonDate,
@@ -445,7 +502,12 @@ class _TimeModeSheetState extends State<_TimeModeSheet> {
               ),
             ],
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space20,
+                AppTheme.space16,
+                AppTheme.space20,
+                AppTheme.space12,
+              ),
               child: SizedBox(
                 width: double.infinity,
                 child: AppButton(
@@ -482,11 +544,14 @@ class _TimeRow extends StatelessWidget {
       onTap: onTap,
       semanticLabel: '$label $value',
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space14,
+        ),
         child: Row(
           children: [
             Icon(icon, size: 20, color: cs.onSurfaceVariant),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Text(
               label,
               style: AppTextStyles.bodyLarge.copyWith(
@@ -496,7 +561,10 @@ class _TimeRow extends StatelessWidget {
             ),
             const Spacer(),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTheme.space14,
+                vertical: AppTheme.space8,
+              ),
               decoration: BoxDecoration(
                 color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(AppTheme.radiusButton),

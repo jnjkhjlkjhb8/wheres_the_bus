@@ -20,10 +20,6 @@ int _travelMinutesFor(String travelTime) {
 void main() {
   group('_parseTravelMinutes via decodeTimetable', () {
     test("'1:30' is read as hours:minutes -> 90", () {
-      // travelTime.split(':') -> ['1', '30'], so this is h*60+m = 90, not a
-      // hours-only truncation. Pinning the correct behavior; the plan
-      // flagged this as a candidate bug, but the current code does take
-      // both parts.
       expect(_travelMinutesFor('1:30'), 90);
     });
 
@@ -31,11 +27,6 @@ void main() {
       expect(_travelMinutesFor('90分'), 90);
     });
 
-    // '1時30分' has no ':' so it falls to the '分'-stripping branch, which
-    // only strips '分' and leaves '1時30' -- int.tryParse fails on that and
-    // the fallback `?? 0` fires. This silently drops a valid travel time to
-    // 0 rather than parsing the hour. Pinning current (wrong-looking)
-    // behavior -- see findings, not fixed here.
     test(
       "'1時30分' (hour+minute suffix form) is not parsed and falls back to 0",
       () {
@@ -100,10 +91,6 @@ void main() {
   });
 
   group('mask bits via decodeTimetable', () {
-    // Bit positions are set by railMask() in services/functions/rail.go, in
-    // struct field order: wheel, pack, dining, bike, breast, daily, service,
-    // suspended. Reading one bit off by one silently mislabels every train in
-    // the list — 停駛 shown as 每日行駛 — so pin the whole map, not a sample.
     TraTimetableItem decodeWithMask(int mask) => _decoder
         .decodeTimetable(
           tra_timetables(

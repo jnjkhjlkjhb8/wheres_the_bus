@@ -7,18 +7,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/mrt"
 )
 
-// TestLoadMrtFirstlastCollapsesDuplicateNaturalKeys is the regression guard for
-// the "TRTC has no schedule" bug: TDX FirstLastTimetable repeats the natural key
-// (station_id, lineid, destinationstaionid, serviceday, system) within one
-// system's payload, and mrt_schedule carries a UNIQUE constraint on that tuple
-// A plain INSERT of the duplicates trips the constraint, aborts the copyUpsert
-// transaction, and rolls back the partition DELETE — leaving the system's schedule
-// permanently empty. The loader must DISTINCT ON the natural key so the duplicates
-// collapse to one row instead.
-//
-// Drives LoadFirstlast directly through pgLoadSink because runLoad only
-// iterates the real metro systems; a synthetic system exercises the transform
-// without touching production partitions.
 func TestLoadMrtFirstlastCollapsesDuplicateNaturalKeys(t *testing.T) {
 	pool := loaderTestPool(t)
 	defer pool.Close()

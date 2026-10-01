@@ -1,32 +1,5 @@
 package maas
 
-// Which planner is answering, and why (ADR-0022).
-//
-// ADR-0022 chose a manual kill switch with no automatic fallback, on the
-// grounds that falling back on error covers only a hard MOTIS failure -- the
-// least likely mode -- while hiding the likely one, MOTIS answering 200 with a
-// worse route.
-//
-// `/api/v1/health` changes half of that calculation. It answers 200 only once a
-// full update cycle has completed over every configured feed, and 400 before,
-// so it distinguishes "MOTIS is up" from "MOTIS is up and has actually consumed
-// the GTFS-RT and GBFS feeds the router serves it". A MOTIS that has been
-// quietly 401ing against the realtime endpoint all day is a real failure this
-// can see, and leaving riders with no plan until an operator notices is worse
-// than answering from TDX.
-//
-// What has not changed is the other half: a MOTIS that is healthy and routing
-// badly still looks healthy here. So the automatic switch is narrow on purpose
-// -- it fires on an explicit unhealthy verdict and nothing else -- and it is
-// loud: the switch raises an error-level event, and /api/planner reports which
-// backend is live and when it last changed. The operator's manual override
-// still wins outright.
-//
-// The reason this exists as a poller rather than a per-request check: the app
-// renders a different set of planning options for each backend, so it needs a
-// stable answer to "what can I ask for right now", not one that can differ
-// between two requests a second apart.
-
 import (
 	"context"
 	"net/http"
@@ -46,11 +19,7 @@ const (
 	// _plannerHealthTimeout bounds one check. Generous relative to the endpoint,
 	// which reads two booleans out of memory, because a slow answer here must
 	// not itself be read as a failure.
-	_plannerHealthTimeout = 5 * time.Second
-	// _plannerHealthThreshold is how many consecutive checks must agree before
-	// the live backend changes. Two, so a single dropped packet or a restart
-	// mid-deploy does not move riders onto TDX and back inside a minute --
-	// switching is the expensive, visible action, not observing.
+	_plannerHealthTimeout   = 5 * time.Second
 	_plannerHealthThreshold = 2
 )
 
@@ -85,11 +54,6 @@ type PlannerStatus struct {
 	Reason string `json:"reason"`
 }
 
-// PlannerHealthMonitor watches MOTIS and decides which backend is live.
-//
-// The zero value is not usable; construct one with newPlannerHealthMonitor. A
-// monitor with a nil client is pinned to TDX, which is what MAAS_BACKEND=tdx
-// produces: no MOTIS client is built at all, so there is nothing to watch.
 type PlannerHealthMonitor struct {
 	client    *resty.Client
 	interval  time.Duration

@@ -22,10 +22,6 @@ class ThsrTimetableItem extends Equatable {
   final int travelMinutes;
   final int delayMinutes;
 
-  /// 備註 from the operator, e.g. "本車次不停靠苗栗、彰化、雲林站". THSR
-  /// publishes no per-train amenity flags — every high-speed train carries the
-  /// same business and non-reserved cars — so this free text and [isOvernight]
-  /// are the only train-specific details its timetable carries.
   final String remark;
   final ThsrSeatStatus seatStatus;
 
@@ -67,12 +63,6 @@ class ThsrFare extends Equatable {
   List<Object?> get props => [fareClass, cabinClass, price];
 }
 
-/// The standard reserved-seat (標準對號) fare at the rider's [type], or null when
-/// the pair prices no standard seat at all.
-///
-/// Only 標準對號 is quoted: 商務 and 自由座 are a seat choice made at booking, not
-/// a property of the journey the timetable is showing. The cabin class is on
-/// [ThsrFare] so a seat selector can be added without another wire change.
 ResolvedFare? thsrFareFor(List<ThsrFare> fares, FareType type) {
   for (final fareClass in type.thsrFareClasses) {
     for (final fare in fares) {

@@ -22,22 +22,8 @@ class SearchRepository {
 
   final SearchHttpFetch _httpFetch;
 
-  /// Insertion-ordered, so the oldest key is always the first one — enough to
-  /// evict by without tracking access order. Backspacing to a query typed two
-  /// keystrokes ago is the case this exists for, and that key is still recent
-  /// by insertion too.
   final LinkedHashMap<String, List<SearchResult>> _memo = LinkedHashMap();
 
-  /// Queries the router. [city] is a TDX city code (see [kCityNames]); null
-  /// searches every city.
-  ///
-  /// The filter is applied by the router rather than over the returned list:
-  /// the response is capped at [limit], so filtering here would show a city's
-  /// share of that page instead of what the city actually has.
-  ///
-  /// A failure is rethrown as [AppError] — there is no local mirror to fall
-  /// back to, and an empty list would render as "no results found", which is
-  /// a different claim than "we couldn't reach the server".
   Future<List<SearchResult>> search(
     String query, {
     int limit = 20,

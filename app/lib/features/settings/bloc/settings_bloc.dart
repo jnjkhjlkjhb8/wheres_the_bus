@@ -58,10 +58,6 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
   final Future<bool> Function() _refreshConfig;
   final String Function() _latestVersionOf;
 
-  /// Reads the real app version and PowerSync freshness (F46) and emits them
-  /// once both are known. Each loader is guarded independently so, e.g., a
-  /// `PackageInfo` platform-channel failure doesn't also blank out a freshly
-  /// read sync timestamp.
   Future<void> _loadMetadata() async {
     var version = '';
     try {
@@ -188,16 +184,6 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     }
   }
 
-  /// Pulls a fresh Remote Config revision, then re-resolves the running build
-  /// against the `latest_version` it carries.
-  ///
-  /// The refresh also bumps `AppConfig.version`, so `UpdateGate` re-runs its
-  /// own check off the same fetch — a rider who finds an update here gets the
-  /// rail nudge for it too, instead of two surfaces disagreeing.
-  ///
-  /// Only compares against `latest_version`: a build below the *floor* never
-  /// reaches this screen, because the gate has already replaced the whole app
-  /// with the blocking interstitial.
   Future<void> _onUpdateCheckRequested(
     UpdateCheckRequested e,
     Emitter<SettingsState> emit,

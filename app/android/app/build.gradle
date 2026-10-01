@@ -8,14 +8,6 @@ plugins {
 
 import java.util.Base64
 
-// Decodes the Flutter tool's `-Pdart-defines=<base64,...>` Gradle property
-// (comma-separated, base64-encoded `KEY=VALUE` pairs, same encoding as the
-// iOS `DART_DEFINES` env var consumed by `ios/Flutter/extract_dart_defines.sh`)
-// so native Android config can read values from the flavor JSON the
-// documented build command passes via
-// `--dart-define-from-file=env/<flavor>.json`. Entries whose key starts with
-// `flutter` (Flutter's own internal defines) are dropped, mirroring the iOS
-// script.
 static def decodeDartDefines(String raw) {
     def result = [:]
     if (raw == null || raw.trim().isEmpty()) {
@@ -49,12 +41,6 @@ def dartDefines = decodeDartDefines(project.findProperty('dart-defines')?.toStri
 
 def localPropertiesFile = rootProject.file('local.properties')
 
-// Resolution order for a given define name: Flutter dart-defines (the
-// documented `--dart-define-from-file=env/<flavor>.json` path) > an
-// explicit `-P<name>` Gradle property > local.properties
-// (developer-machine convenience, gitignored). Deliberately `null` (not
-// `""`) when nothing supplied a value, so "missing" and "configured but
-// blank" stay distinguishable for the fail-closed check below.
 def resolveDefine = { String name ->
     def value = dartDefines.get(name)
     if (!value) {
@@ -73,18 +59,10 @@ def resolveDefine = { String name ->
     return value ?: null
 }
 
-// Google Cloud restricts a Maps key to one platform (Android needs package
-// name + signing SHA-1, iOS needs the bundle id), so the two platforms
-// generally need separate keys. GOOGLE_MAPS_API_KEY_ANDROID wins here;
-// GOOGLE_MAPS_API_KEY remains the fallback for single-key setups.
 def googleMapsApiKey = resolveDefine('GOOGLE_MAPS_API_KEY_ANDROID') ?: resolveDefine('GOOGLE_MAPS_API_KEY')
 
 def appEnv = dartDefines.get('APP_ENV') ?: 'test'
 def isTestFlavor = appEnv == 'test'
-// Explicit sentinel used only for the test flavor when no key was
-// supplied at all, so a missing key never silently resolves to an empty
-// string (F06 fail-closed, matching the iOS bridge's debug-only escape
-// hatch).
 def TEST_ONLY_MAPS_KEY = 'TEST_ONLY_MAPS_KEY_NOT_FOR_PRODUCTION'
 
 def resolvedGoogleMapsApiKey = googleMapsApiKey
@@ -96,11 +74,6 @@ def dartEnvironmentVariables = [
     GOOGLE_MAPS_API_KEY: resolvedGoogleMapsApiKey ?: '',
 ]
 
-// Release signing: read only from a gitignored key.properties file
-// (app/android/key.properties) or environment variables — never hardcoded
-// and never falling back to the debug keystore. Presence is resolved here,
-// at configuration time, so it is available both to declare the signing
-// config below and to the fail-closed task-graph check further down.
 def keystorePropertiesFile = rootProject.file('key.properties')
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
@@ -122,7 +95,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId "com.wheres.bus"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -131,10 +103,6 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         resValue("string", "google_maps_api_key", dartEnvironmentVariables.GOOGLE_MAPS_API_KEY)
-        // Bridged the same way as the Maps key, for the same reason: 取消追蹤 on
-        // a card whose process is gone is handled in Kotlin (FDPL-65), and a
-        // bare BroadcastReceiver cannot read a dart-define. Blank is safe — the
-        // receiver then only takes the card down, which is the old behaviour.
         resValue("string", "api_base_url", dartEnvironmentVariables.API_BASE_URL ?: "")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -165,11 +133,6 @@ android {
         }
     }
     testOptions {
-        // Kotlin classes under src/test that happen to touch Android SDK
-        // stubs (indirectly, via a class under test) get harmless defaults
-        // instead of "not mocked" exceptions; unrelated to the tests today,
-        // which are pure-Kotlin, but keeps the next Android-facing unit test
-        // from being a surprise.
         unitTests.returnDefaultValues = true
     }
 }
@@ -178,41 +141,12 @@ flutter {
 }
 
 dependencies {
-    // Pinned explicitly rather than inherited from the Flutter embedding:
-    // the alight-tracking Live Update is built entirely through
-    // NotificationCompat (ProgressStyle, setRequestPromotedOngoing,
-    // setShortCriticalText), which needs core 1.16+. Letting the transitive
-    // version decide would silently drop the promoted card back to a plain
-    // notification on a Flutter upgrade.
-    // 1.17.0, not the newest: core 1.18+ requires compileSdk 37 / AGP 9.1,
-    // which Flutter's pinned toolchain does not reach yet. 1.17 is the last
-    // line that builds against compileSdk 36 and still carries ProgressStyle
-    // (added in 1.16.0).
     implementation "androidx.core:core-ktx:1.17.0"
-    // Already in the APK, dragged in by firebase_messaging — declared here only
-    // so TrackPushReceiver can compile against RemoteMessage. Unversioned: the
-    // Firebase BoM the plugin applies picks the version, so this cannot drift
-    // away from the copy actually shipping.
     implementation "com.google.firebase:firebase-messaging"
     testImplementation "junit:junit:4.13.2"
-    // The tracking card can only be judged on a real Android 16+ device: the
-    // promotion decision (hasPromotableCharacteristics) lives in the platform,
-    // not in our builder.
-    // Pinned to 1.3.0 by integration_test (Flutter's consistent resolution
-    // rejects anything newer), and deliberately just the runner: the
-    // androidx.test:core that androidx.test.ext:junit drags in at this
-    // version declares activities without android:exported and fails the
-    // manifest merge on target 12+.
     androidTestImplementation "androidx.test:runner:1.3.0"
 }
 
-// Fail closed before any release task executes: neither a missing/blank
-// Maps key for a non-test flavor, nor a missing release signing config, may
-// silently produce a blank-keyed or debug-signed release artifact.
-// `taskGraph.whenReady` runs after the task graph is assembled but before
-// any task action executes, so this check (and its GradleException) fires
-// ahead of unrelated task-execution-time failures such as a missing
-// google-services.json.
 gradle.taskGraph.whenReady { taskGraph ->
     def buildingRelease = taskGraph.allTasks.any { task ->
         def path = task.path
@@ -224,11 +158,6 @@ gradle.taskGraph.whenReady { taskGraph ->
     if (!buildingRelease) {
         return
     }
-    // A release build must state its flavor explicitly. Without this,
-    // forgetting --dart-define-from-file would default APP_ENV to 'test'
-    // and silently ship a signed release carrying the test-only Maps key
-    // sentinel. Using the sentinel on a release build therefore requires
-    // an explicit APP_ENV=test dart-define.
     if (!dartDefines.get('APP_ENV')) {
         throw new GradleException(
             "Release builds require Flutter dart-defines with an explicit APP_ENV. " +

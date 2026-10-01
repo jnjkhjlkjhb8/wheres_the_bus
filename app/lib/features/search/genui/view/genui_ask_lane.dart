@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
@@ -13,12 +14,6 @@ import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 
-/// The conversational lane inside the search results.
-///
-/// It replaces the modal sheet the feature shipped with: one search field, and
-/// an answer that opens in place above the keyword results instead of covering
-/// them. Keyword search is instant and offline; the question is a second lane
-/// beside it, never a gate in front of it.
 class GenUiAskLane extends StatelessWidget {
   const GenUiAskLane({
     required this.query,
@@ -73,11 +68,6 @@ class GenUiLane extends StatelessWidget {
   Widget _lane(BuildContext context, GenUiState state) {
     final q = query.trim();
     final idle = state.status == GenUiStatus.idle;
-    // Idle means nothing is on screen, so the offer always comes back — a
-    // stopped request that never produced an answer has to leave a way to ask
-    // again. Otherwise the offer returns only once the field has moved on from
-    // the question the answer above belongs to, which is what lets an answer
-    // survive the rider typing something else instead of forcing a collapse.
     final canAskNew =
         q.isNotEmpty &&
         (idle ||
@@ -91,16 +81,12 @@ class GenUiLane extends StatelessWidget {
         else if (canAskNew)
           _AskRow(query: q, onAsk: onAsk),
         if (!idle) ...[
-          if (canAskNew) const SizedBox(height: 8),
+          if (canAskNew) const SizedBox(height: AppTheme.space8),
           _Answered(state: state, onAsk: onAsk, onOpen: onOpen),
         ],
       ],
     );
 
-    // The lane sits above the results rather than inside their scroll, so a
-    // long answer is capped and scrolls in place instead of pushing the
-    // keyword results — the thing that is always right and always instant —
-    // off the screen. Short answers still shrink-wrap.
     return ConstrainedBox(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * 0.55,
@@ -116,7 +102,12 @@ class GenUiLane extends StatelessWidget {
 /// The lane hangs on the same 16px gutter as the search field above it, so
 /// every block and card in it shares one left edge with the field rather than
 /// floating on a third column of its own.
-const _laneInset = EdgeInsets.fromLTRB(16, 6, 16, 6);
+const _laneInset = EdgeInsets.fromLTRB(
+  AppTheme.space16,
+  AppTheme.space6,
+  AppTheme.space16,
+  AppTheme.space6,
+);
 
 class _Block extends StatelessWidget {
   const _Block({required this.child, this.onTap, this.semanticLabel});
@@ -129,7 +120,10 @@ class _Block extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final box = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space12,
+        vertical: 11,
+      ),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -187,8 +181,8 @@ class _Invite extends StatelessWidget {
           ),
           const SizedBox(height: 9),
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
+            spacing: AppTheme.space6,
+            runSpacing: AppTheme.space6,
             children: [
               for (final example in examples)
                 Pressable(
@@ -198,7 +192,7 @@ class _Invite extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 11,
-                      vertical: 6,
+                      vertical: AppTheme.space6,
                     ),
                     decoration: BoxDecoration(
                       color: cs.surfaceContainerLow,
@@ -304,19 +298,24 @@ class _Answered extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   _TrailingAction(loading: loading),
                 ],
               ),
               if (loading) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: AppTheme.space8),
                 _PhaseLine(state: state),
               ],
             ],
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space16,
+            AppTheme.space6,
+            AppTheme.space16,
+            AppTheme.space4,
+          ),
           child: switch (state.status) {
             GenUiStatus.loading => const _AnswerSkeleton(),
             GenUiStatus.error => _ErrorRow(state: state, onAsk: onAsk),
@@ -361,7 +360,10 @@ class _TrailingAction extends StatelessWidget {
       semanticLabel: label,
       minTapSize: 44,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space10,
+          vertical: AppTheme.space4,
+        ),
         decoration: BoxDecoration(
           color: loading ? cs.surfaceContainerLow : null,
           borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -422,55 +424,48 @@ class _PhaseLine extends StatelessWidget {
   }
 }
 
-/// Two card outlines, so the answer lands without the list reflowing under
-/// the reader's thumb. Skeleton over spinner is the house rule for content.
 class _AnswerSkeleton extends StatelessWidget {
   const _AnswerSkeleton();
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // A fraction of the card's own width rather than a fixed pixel count —
-    // the card is full-bleed (matching _RouteCard), so a hardcoded width
-    // would sit at an arbitrary, screen-size-dependent fraction of it instead
-    // of the varied-but-proportional line lengths this is meant to suggest.
-    Widget bar(double widthFactor, double height) => FractionallySizedBox(
-      alignment: Alignment.centerLeft,
-      widthFactor: widthFactor,
-      child: Container(
-        height: height,
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(AppTheme.radiusChip),
-        ),
-      ),
-    );
     return ExcludeSemantics(
-      child: Column(
-        // Stretched to match _RouteCard's width: double.infinity — otherwise
-        // these shrink-wrap to their bar width and the real card snaps wider
-        // the moment content replaces the skeleton.
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < 2; i++)
-            Container(
-              margin: EdgeInsets.only(bottom: i == 0 ? 10 : 0),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-                border: Border.all(color: cs.outlineVariant, width: 0.5),
+      child: Skeletonizer.zone(
+        child: Column(
+          // Stretched to match _RouteCard's width: double.infinity — otherwise
+          // these shrink-wrap to their bar width and the real card snaps wider
+          // the moment content replaces the skeleton.
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < 2; i++)
+              Container(
+                margin: EdgeInsets.only(bottom: i == 0 ? AppTheme.space10 : 0),
+                padding: const EdgeInsets.all(AppTheme.space14),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+                  border: Border.all(color: cs.outlineVariant, width: 0.5),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    FractionallySizedBox(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: i == 0 ? 0.48 : 0.6,
+                      child: const Bone(height: 12),
+                    ),
+                    const SizedBox(height: AppTheme.space8),
+                    FractionallySizedBox(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: i == 0 ? 0.3 : 0.36,
+                      child: const Bone(height: 10),
+                    ),
+                  ],
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  bar(i == 0 ? 0.48 : 0.6, 12),
-                  const SizedBox(height: 8),
-                  bar(i == 0 ? 0.3 : 0.36, 10),
-                ],
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -487,7 +482,12 @@ class _ErrorRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final i18n = AppI18n.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space14,
+        AppTheme.space12,
+        AppTheme.space8,
+        AppTheme.space12,
+      ),
       decoration: BoxDecoration(
         color: cs.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -508,7 +508,10 @@ class _ErrorRow extends StatelessWidget {
             semanticLabel: i18n.commonRetryShort,
             minTapSize: 44,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTheme.space8,
+                vertical: AppTheme.space4,
+              ),
               child: Text(
                 i18n.commonRetryShort,
                 style: AppTextStyles.bodySmall.copyWith(
@@ -535,7 +538,7 @@ class _NothingToShow extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -543,7 +546,7 @@ class _NothingToShow extends StatelessWidget {
             i18n.genuiNoResults,
             style: AppTextStyles.bodyRegular.copyWith(color: cs.onSurface),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppTheme.space4),
           Text(
             i18n.genuiNoResultsHint,
             style: AppTextStyles.bodySmall.copyWith(

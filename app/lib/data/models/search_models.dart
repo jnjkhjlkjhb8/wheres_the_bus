@@ -31,10 +31,6 @@ class SearchResult extends Equatable {
   final double? lat;
   final double? lon;
 
-  /// Identity of the place this result points at, independent of the
-  /// coordinates or subtitle a given response happened to carry. Local
-  /// history and ranking key on this so the same stop reached through two
-  /// queries is one entry, not two.
   String get storageKey => '${type.name}:$uid';
 
   /// Round-trips through the settings box. Shared by every local store that

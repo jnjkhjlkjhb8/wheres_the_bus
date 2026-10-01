@@ -1,28 +1,4 @@
 #!/usr/bin/env bash
-# check-migrations.sh
-#
-# Real replay gate (ADR-0010; review_results.md P1-03). Against a disposable
-# PostgreSQL container, applies migrations/baseline/0000-baseline.sql plus
-# every migrations/*.sql file (in filename order, skipping files whose first
-# line is `-- REPLAY: skip` — superseded or one-shot-already-applied files;
-# see ADR-0010) in two rounds:
-#
-#   1. public  — default search_path, empty database.
-#   2. staging — CREATE SCHEMA staging, then the same sequence again with
-#      PGOPTIONS='-c search_path=staging', mirroring how staging is actually
-#      applied against the shared Azure database (ADR-0004).
-#
-# Any error in either round is a hard failure (exit 1). There is no BLOCKED
-# classification: migrations/baseline/0000-baseline.sql closed the schema
-# gap that classification used to paper over, so every file is expected to
-# apply cleanly on a fresh database now.
-#
-# Requires: docker. When docker is unavailable (or the daemon cannot be
-# reached), this prints SKIPPED and exits 0 — CI always provides docker, so
-# the gate is not weakened there; it is only made non-blocking on machines
-# that structurally cannot run it.
-#
-# Usage: scripts/check-migrations.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,14 +9,6 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     exit 0
 fi
 
-# pgvector/pgvector:pg16 matches migrations' postgres major version (16) and
-# ships pgvector prebuilt; postgis is layered on top at container start via
-# apt (network available in CI and this environment) since no single
-# upstream image ships both extensions.
-# Digest pin (resolve a fresh one with: docker manifest inspect --verbose
-# pgvector/pgvector:pg16 | grep -m1 digest, or the registry HTTP API) so a
-# tag repoint upstream can't silently change what this gate validates
-# against.
 IMAGE="pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb"
 CONTAINER="bus-check-migrations-$$"
 PORT="${CHECK_MIGRATIONS_PORT:-15433}"
@@ -71,10 +39,6 @@ docker exec -u root "$CONTAINER" bash -c \
     >/tmp/check-migrations-apt.log 2>&1 \
     || { echo "FAIL: could not install postgis in the check container; see /tmp/check-migrations-apt.log"; exit 1; }
 
-# psql_round runs one file with a given search_path (schema) and, for files
-# that declare a `target_schema` psql variable (the 2026-07-16+ schema-aware
-# migrations and the ledger migration), forwards it too — harmless for files
-# that ignore the variable.
 psql_round() {
     local schema="$1" file="$2"
     docker exec -i -e PGOPTIONS="-c search_path=${schema},public" "$CONTAINER" \

@@ -188,11 +188,6 @@ void main() {
   });
 
   test('closing during load does not add to a closed bloc', () async {
-    // Leaving the train screen mid-load closes the bloc while _onStarted is
-    // still awaiting stops/fares — before _delaySub is assigned, so close()
-    // cancels nothing. When the handler resumes it must not open a live delay
-    // subscription that then add()s onto the closed bloc (root-zone crash:
-    // "Cannot add new events after calling close").
     final repo = _FakeTraRepository(
       stopsResult: const [
         TraStopTime(

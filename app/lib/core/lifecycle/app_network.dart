@@ -3,21 +3,6 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 
-/// Whether the device currently has a network path.
-///
-/// This reports the *link*, not reachability: `true` only means an interface is
-/// up, so a captive portal or a dead backend still reads as online. The
-/// trustworthy direction is `false` — with no interface, nothing will succeed —
-/// and both consumers use it that way:
-///
-/// - `ResilientSubscription` skips its remaining backoff on the false→true
-///   edge, so flipping airplane mode off reconnects now instead of up to 30
-///   seconds later.
-/// - `offlineCached` serves the cache without a doomed round-trip while it is
-///   false, rather than spending a 10-second deadline first.
-///
-/// Defaults to `true` so a platform that never answers (or a widget test with
-/// no plugin binding) behaves exactly as it did before this signal existed.
 class AppNetwork {
   AppNetwork._();
 

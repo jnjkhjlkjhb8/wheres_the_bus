@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
@@ -24,19 +25,12 @@ import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
+import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';
-import 'package:wheres_the_bus/shared/widgets/state_cards.dart';
 import 'package:wheres_the_bus/shared/widgets/train_type_chip.dart';
 
 part '../widgets/rail_station_board_widgets.dart';
 
-/// Home sheet second-level view for a TRA/THSR station: the next departures
-/// from this station, in the direction the rider picks.
-///
-/// It answers the question a rider taps a station to ask — "when does the next
-/// train leave here" — without making them name a destination first. The
-/// origin/destination query it used to be is still one tap away at the bottom,
-/// because fares, arrival times and other dates only exist on that path.
 class RailStationDetailView extends StatelessWidget {
   const RailStationDetailView({
     required this.system,
@@ -50,9 +44,6 @@ class RailStationDetailView extends StatelessWidget {
   final String stationId;
   final String name;
 
-  /// An already-provided board, for callers that drive it themselves (tests,
-  /// and any future screen that needs the board's state outside this sheet).
-  /// Omitted, this widget builds and owns one.
   final RailStationBoardBloc? bloc;
 
   @override
@@ -134,7 +125,12 @@ class _StationBoard extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space20,
+            AppTheme.space4,
+            AppTheme.space20,
+            0,
+          ),
           child: BlocBuilder<RailStationBoardBloc, RailStationBoardState>(
             buildWhen: (p, n) => p.direction != n.direction,
             builder: (context, state) => AppSlidingSegment<RailBoardDirection>(

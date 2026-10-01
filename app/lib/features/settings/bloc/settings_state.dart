@@ -25,10 +25,6 @@ enum Appearance {
   };
 }
 
-/// Language options shown in the settings picker.
-///
-/// [key] is the value persisted through [SettingsRepository.languageCode], and
-/// for everything but [system] it doubles as the locale's language code.
 enum Language {
   system('system'),
   zh('zh'),
@@ -61,11 +57,6 @@ enum Language {
   };
 }
 
-/// Walking paces offered in 設定 › 路線規劃, in centimetres per second.
-///
-/// [standard] is 0 on purpose: it hands the pace back to the planner's own
-/// default rather than asserting a number of our own, the same way
-/// [Language.system] hands locale resolution back to the device.
 enum WalkPace {
   slower(100),
   standard(0),
@@ -84,11 +75,6 @@ enum WalkPace {
   };
 }
 
-/// What 設定 › 檢查更新 is currently showing.
-///
-/// [failed] is a first-class outcome rather than a silent fall back to
-/// [upToDate]: an offline check that reported "已是最新版本" would be a lie,
-/// and this is the one row a rider taps precisely because they doubt it.
 enum UpdateCheck { idle, checking, upToDate, available, failed }
 
 class SettingsState extends Equatable {

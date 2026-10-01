@@ -2,10 +2,6 @@ import XCTest
 
 @testable import Runner
 
-/// Covers the pure decoding/resolution logic in `DartDefines.swift`
-/// (findings F07 / P0-05): the base64 comma-separated `DART_DEFINES`
-/// parsing that mirrors `Flutter/extract_dart_defines.sh`, and the
-/// fail-closed behavior for a missing Google Maps API key.
 final class DartDefinesTests: XCTestCase {
 
   private func base64(_ s: String) -> String {
@@ -72,10 +68,6 @@ final class DartDefinesTests: XCTestCase {
     XCTAssertEqual(key, "abc123")
   }
 
-  /// Debug/local builds must not crash just because the key was never
-  /// configured (e.g. a contributor running `flutter run` without Maps
-  /// configured) — `failClosed: false` returns an empty string instead of
-  /// calling `fatalError`.
   func testMapsAPIKeyReturnsEmptyWhenMissingAndNotFailClosed() {
     let key = DartDefines.mapsAPIKey(from: [:], failClosed: false)
     XCTAssertEqual(key, "")

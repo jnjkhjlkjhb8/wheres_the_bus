@@ -5,14 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 
-/// The ways [MapMarkers.busMark] can be wrong without looking wrong.
-///
-/// The mark is published with `Marker.rotation`, which turns the bitmap about
-/// its anchor — so the body has to sit dead centre in a square canvas. Get that
-/// wrong and a bus doesn't point wrong, it *orbits* its own position as it
-/// turns, which only shows up on a vehicle that is actually changing heading.
-/// An incomplete cache key serves the bitmap built for another state, so a bus
-/// that has just broken down keeps painting its plain ink body.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -67,10 +59,6 @@ void main() {
     });
 
     test('leaves room for the halo and the shadow', () async {
-      // 24 units of half-extent around a 14-unit radius: body + the halo's 4 +
-      // the shadow's offset and blur. Trimmed any tighter and the shadow clips
-      // along the bottom edge; every transparent pixel past it is texture the
-      // map uploads per vehicle. 28pt body at dpr 3 => 48 units * 3.
       expect(await sizeOf(await build()), const ui.Size(144, 144));
     });
 

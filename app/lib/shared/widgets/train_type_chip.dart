@@ -5,11 +5,6 @@ import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-/// The train classes the app gives a chip of its own.
-///
-/// An identity, not a label: the backend spells one class several ways
-/// ('區間'/'區間車', '自強(EMU3000)'/'新自強'), and callers need to compare
-/// classes without going through display text that changes with the locale.
 enum TrainType {
   newTzeChiang,
   localExpress,
@@ -21,12 +16,6 @@ enum TrainType {
   thsr,
   other;
 
-  /// Matches on substrings, not exact strings: the backend labels a class as
-  /// '區間'/'區間車', '自強'/'自強號', or '自強(EMU3000)' interchangeably, and every
-  /// variant has to collapse to the same case. Order matters — the more
-  /// specific variant (區間快, EMU3000) must be tested before its base type,
-  /// and '新自強' is tested alongside the EMU3000 spellings so an
-  /// already-canonical label doesn't fall through to '自強' and downgrade.
   static TrainType of(String type) {
     final t = type.trim();
     if (t.contains('EMU3000') || t.contains('3000') || t.contains('新自強')) {
@@ -92,19 +81,9 @@ class TrainTypeChip extends StatelessWidget {
   /// where the full name would squeeze the columns beside it.
   final bool compact;
 
-  /// The canonical display name for a backend train type label, for callers
-  /// that show the type as text rather than as a chip. Goes through the same
-  /// [TrainType] table as the chip, so a screen's title can't drift from the
-  /// chip beside it.
   static String canonicalLabel(AppI18n i18n, String type) =>
       TrainType.of(type).labelOf(i18n, type);
 
-  // A fixed luminance threshold (the ~0.18 crossover between white and ink
-  // contrast) misclassifies the saturated operator oranges/reds (自強,
-  // 太魯閣, 高鐵): their luminance sits well above that crossover, yet white
-  // still can't reach the 4.5:1 small-text minimum against them. Comparing
-  // the two actual contrast ratios instead of thresholding luminance holds
-  // for every background, including ones added later.
   static Color _labelColorFor(Color background) {
     final bgLuminance = background.computeLuminance();
     double contrastWith(Color foreground) {
@@ -126,12 +105,6 @@ class TrainTypeChip extends StatelessWidget {
     final color = trainType.color;
     final labelColor = _labelColorFor(color);
     return Container(
-      // Compact drops the fixed height as well as the label: at large text
-      // scales a 20px box would clip the glyphs it is meant to shrink around,
-      // so the padding sets the size and the text decides the rest. It does
-      // take a minimum width, so that a three-glyph label (區間快, 太魯閣) does
-      // not widen the chip and shove the train number out of the column the
-      // rows above it established.
       height: compact ? null : 28,
       constraints: compact
           ? BoxConstraints(
@@ -139,8 +112,8 @@ class TrainTypeChip extends StatelessWidget {
             )
           : null,
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 6 : 12,
-        vertical: compact ? 2 : 0,
+        horizontal: compact ? AppTheme.space6 : AppTheme.space12,
+        vertical: compact ? AppTheme.space2 : 0,
       ),
       alignment: Alignment.center,
       decoration: BoxDecoration(

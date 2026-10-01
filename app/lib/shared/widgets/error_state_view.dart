@@ -15,15 +15,6 @@ class ErrorStateView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // A bottom sheet's height can be as short as its peek detent, so this
-    // must scroll rather than overflow when content + text scale exceed
-    // the available space; ConstrainedBox(minHeight:) keeps it centred
-    // when there's room to spare.
-    //
-    // Callers also place this inside unbounded-height contexts (a sliver via
-    // SliverToBoxAdapter, a ListView child), where maxHeight is infinite.
-    // Forcing that as a minimum would size the box infinitely, so fall back
-    // to sizing to content and let the host scroll.
     return LayoutBuilder(
       builder: (context, constraints) {
         final minHeight = constraints.maxHeight.isFinite
@@ -33,13 +24,18 @@ class ErrorStateView extends StatelessWidget {
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: minHeight),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 48, 24, 48),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space24,
+                AppTheme.space48,
+                AppTheme.space24,
+                AppTheme.space48,
+              ),
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(error.icon, size: 40, color: cs.onSurfaceVariant),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppTheme.space16),
                     Text(
                       error.titleOf(AppI18n.of(context)),
                       textAlign: TextAlign.center,
@@ -48,7 +44,7 @@ class ErrorStateView extends StatelessWidget {
                         color: cs.onSurface,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: AppTheme.space6),
                     Text(
                       error.hintOf(AppI18n.of(context)),
                       textAlign: TextAlign.center,
@@ -57,14 +53,14 @@ class ErrorStateView extends StatelessWidget {
                       ),
                     ),
                     if (onRetry != null) ...[
-                      const SizedBox(height: 20),
+                      const SizedBox(height: AppTheme.space20),
                       Pressable(
                         onTap: onRetry,
                         semanticLabel: AppI18n.of(context).commonRetryShort,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 10,
+                            horizontal: AppTheme.space20,
+                            vertical: AppTheme.space10,
                           ),
                           decoration: BoxDecoration(
                             color: cs.surfaceContainerHighest,

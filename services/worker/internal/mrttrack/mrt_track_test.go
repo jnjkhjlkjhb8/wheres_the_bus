@@ -42,10 +42,8 @@ func TestAdvanceMrtTrack(t *testing.T) {
 			reading:       mrtReading{nextIndex: 3, resolved: true, gotInfo: true, hasCountdown: true, countdown: 60 * time.Second},
 			wantCurrent:   2,
 			wantRemaining: 2,
-			// lead 1 means "buzz me when the stop before mine is next", which is
-			// remaining 2 — one stop earlier than the pre-ADR-0020 `<= lead`.
-			wantStatus: _mrtStatusLeadFired,
-			wantFire:   _mrtAlightEventLead,
+			wantStatus:    _mrtStatusLeadFired,
+			wantFire:      _mrtAlightEventLead,
 		},
 		{
 			name:          "reach lead, fire once",

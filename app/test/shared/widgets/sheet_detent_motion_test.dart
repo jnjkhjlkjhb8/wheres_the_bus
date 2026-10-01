@@ -31,12 +31,14 @@ Future<SheetController> _pumpSheet(WidgetTester tester) async {
 void main() {
   testWidgets('animateToDetent travels to the target detent', (tester) async {
     final controller = await _pumpSheet(tester);
-    final viewport = controller.metrics!.viewportSize.height;
 
     unawaited(controller.animateToDetent(AppSheetSnap.full, reduced: false));
     await tester.pumpAndSettle();
 
-    expect(controller.metrics!.offset, closeTo(viewport, 0.5));
+    expect(
+      controller.metrics!.offset,
+      closeTo(AppSheetSnap.full.resolve(controller.metrics!), 0.5),
+    );
   });
 
   // Reduce-motion used to pass Duration.zero here, which trips smooth_sheets'
@@ -45,11 +47,13 @@ void main() {
     tester,
   ) async {
     final controller = await _pumpSheet(tester);
-    final viewport = controller.metrics!.viewportSize.height;
 
     unawaited(controller.animateToDetent(AppSheetSnap.full, reduced: true));
     await tester.pumpAndSettle();
 
-    expect(controller.metrics!.offset, closeTo(viewport, 0.5));
+    expect(
+      controller.metrics!.offset,
+      closeTo(AppSheetSnap.full.resolve(controller.metrics!), 0.5),
+    );
   });
 }

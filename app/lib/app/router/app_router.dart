@@ -28,11 +28,7 @@ import 'package:wheres_the_bus/shared/widgets/main_scaffold.dart';
 
 Page<T> _page<T>(Widget child) => MaterialPage<T>(child: child);
 
-/// Identity of the home page across every location it serves.
-///
-/// The same key on all of them is what makes `/` → `/near/bus/1` an update to
-/// the running screen instead of a new one: a fresh page would dispose the map
-/// and reload it, which is exactly what opening a station must not do.
+// A stable page key preserves the map instance.
 const _homePageKey = ValueKey<String>('home');
 
 Page<void> _homePage(GoRouterState state) => NoTransitionPage(
@@ -53,13 +49,6 @@ String _railDate(DateTime? date) {
       '${d.day.toString().padLeft(2, '0')}';
 }
 
-/// Identity of the line map across both of its locations.
-///
-/// Same reasoning as [_homePageKey], and the same requirement: selecting a
-/// station rewrites the location, and a page rebuilt on that rewrite would
-/// reset the rider's pan and zoom on the map they were reading. It also means
-/// only one line map may ever be on a navigator at a time — which the app
-/// enforces by never opening `/metro*` from the line map itself.
 const _metroPageKey = ValueKey<String>('metro');
 
 /// Shared by `/metro` and `/metro/station/:id` — the same screen, differing
@@ -143,11 +132,6 @@ List<RouteBase> buildAppRoutes({
             path: AppRoutes.home,
             pageBuilder: (_, state) => _homePage(state),
           ),
-          // Siblings of `/`, all rendering the same keyed home page: the sheet
-          // is home's own navigator, so its second layer has to arrive as an
-          // update to the live screen. Nested routes would stack a second map
-          // over the first, and an unkeyed page would rebuild — and reload —
-          // the one underneath.
           GoRoute(
             path: AppRoutes.nearStationPattern,
             pageBuilder: (_, state) {

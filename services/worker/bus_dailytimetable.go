@@ -20,18 +20,6 @@ import (
 // landing_state query and the full-refresh hour stays well inside this budget.
 const _busDailyHourlyTimeout = 15 * time.Minute
 
-// registerBusDailyTimetableCron schedules the hourly bus_dailytimetable load
-// that pairs with the ingestor's hourly landing (:00 lands, :10 loads). The
-// 03:30 full load still covers this dataset; this cron only shortens the gap
-// between a TDX revision and Redis.
-//
-// loaded is the in-process record of the landing marker each city was last
-// loaded from, and is what keeps an hourly cadence affordable: without it every
-// tick would rebuild ~17 cities of timetable JSON out of Azure raw_tdx whether
-// or not anything changed. It is deliberately not durable — a loader restart
-// costs one redundant full pass, which is cheaper than owning shared state for
-// it. Only this cron entry touches the map, and addStaticCron's
-// SkipIfStillRunning keeps one entry from overlapping itself.
 func registerBusDailyTimetableCron(r *cron.Cron, rawPool, db *pgxpool.Pool, rc *redis.Client) {
 	src := rawTDXSource{pool: rawPool}
 	runner := newStaticPipelineRunner(rawPool, _busDailyHourlyTimeout)
@@ -57,10 +45,6 @@ type rawMarkerQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// busDailyLandingMarkers returns each landed city's durable Last-Modified
-// marker for bus_dailytimetable. last_modified is the only change signal
-// available: a 304 still advances landing_state.fetched_at (it records that the
-// landing ran), so freshness cannot stand in for "the payload changed".
 func busDailyLandingMarkers(ctx context.Context, q rawMarkerQuerier) (map[string]string, error) {
 	rows, err := q.Query(ctx, `
 		SELECT partition_value, last_modified
@@ -84,10 +68,6 @@ func busDailyLandingMarkers(ctx context.Context, q rawMarkerQuerier) (map[string
 	return markers, nil
 }
 
-// busDailyPendingCities returns the cities to transform this tick, sorted: those
-// whose landing marker differs from the one they were last loaded from, minus
-// the cities with no landed partition at all. An empty loaded map (fresh
-// process) yields every landed city, which is the intended first pass.
 func busDailyPendingCities(markers, loaded map[string]string) []string {
 	pending := make([]string, 0, len(markers))
 	for city, marker := range markers {
@@ -100,10 +80,6 @@ func busDailyPendingCities(markers, loaded map[string]string) []string {
 	return pending
 }
 
-// loadChangedBusDailyTimetables transforms one city per changed landing marker.
-// Each city runs as its own single-partition spec so a failure is recorded per
-// city: its marker stays unrecorded and the next tick retries it, while the
-// cities that succeeded are not reloaded.
 func loadChangedBusDailyTimetables(
 	ctx context.Context,
 	q rawMarkerQuerier,

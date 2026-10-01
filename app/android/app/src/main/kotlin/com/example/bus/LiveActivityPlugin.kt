@@ -4,37 +4,22 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.provider.Settings
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 
-/**
- * Bridges Dart's `AlightTrackChannel` to the tracking card.
- *
- * The card itself is [TrackNotification]'s, which needs only a [Context] so the
- * same builder serves this Activity-bound path and the server-pushed refresh a
- * dead process receives (ADR-0018). What is left here is the part that genuinely
- * needs an engine: the notification-permission prompt and the 取消追蹤 round trip
- * back to whichever bloc owns the session.
- */
 class LiveActivityPlugin(
     private val context: Context,
     private val notificationPermission: NotificationPermissionCoordinator,
 ) {
 
     companion object {
+        private const val TAG = "LiveActivity"
         private const val CHANNEL_NAME = "com.wheres.bus/live_activity"
 
-        /**
-         * Whether an engine is listening for 取消追蹤 right now.
-         *
-         * Both receivers answer that broadcast, and when Dart is alive its
-         * CancelTrack is the authoritative path — install-bound, and it tears
-         * the session down in the app too. TrackCancelReceiver's HTTP fallback
-         * would only duplicate it, so it reads this first. False on a fresh
-         * process, which is exactly the state the fallback exists for.
-         */
         @Volatile
         var dartIsListening: Boolean = false
             private set
@@ -61,12 +46,6 @@ class LiveActivityPlugin(
 
     fun register(messenger: BinaryMessenger) {
         channel = MethodChannel(messenger, CHANNEL_NAME)
-        // A card on screen at registration time cannot belong to this engine —
-        // no Dart code has run yet — so it is a leftover from a process the
-        // system killed mid-session. On metro it may still be refreshed by
-        // push, but no other mode can be, and its 取消追蹤 broadcast would reach
-        // a dead dynamic receiver. Clear it before Dart starts: the session the
-        // app restores will post its own.
         NotificationManagerCompat.from(context).cancel(TrackNotification.NOTIF_ID)
         ContextCompat.registerReceiver(
             context,
@@ -82,24 +61,40 @@ class LiveActivityPlugin(
             when (call.method) {
                 "start" -> {
                     card.beginSession()
-                    // Android 13+ POST_NOTIFICATIONS is a runtime permission
-                    // whose grant/deny decision only reaches the app
-                    // asynchronously, through onRequestPermissionsResult (see
-                    // MainActivity), so `start` must not report completion to
-                    // Dart until that callback has fired (whether it resolves
-                    // immediately — already granted, or pre-13 — or after the
-                    // user responds to the system prompt).
-                    notificationPermission.request { _ ->
-                        // Post regardless of the outcome: a denial makes
-                        // NotificationManagerCompat.notify a silent no-op on
-                        // the platform side, and tracking must never block on
-                        // the user's notification choice.
+                    try {
                         card.post(data)
-                        result.success("${TrackNotification.NOTIF_ID}")
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "could not post the tracking card", e)
+                        throw e
                     }
+                    result.success("${TrackNotification.NOTIF_ID}")
+                }
+                "requestNotificationPermission" -> {
+                    notificationPermission.request { granted -> result.success(granted) }
+                }
+                // Whether anything this app posts can be seen at all. Asked
+                // rather than remembered: the rider can revoke it in system
+                // settings at any time, and the app is not told.
+                "notificationsEnabled" -> {
+                    result.success(NotificationManagerCompat.from(context).areNotificationsEnabled())
+                }
+                // Once the runtime prompt has been refused, the system stops
+                // showing it, and the only way back is the settings screen —
+                // so the app has to be able to point at it.
+                "openNotificationSettings" -> {
+                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    result.success(null)
                 }
                 "update" -> {
-                    card.post(data)
+                    try {
+                        card.post(data)
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "could not refresh the tracking card", e)
+                        throw e
+                    }
                     result.success(null)
                 }
                 "stop" -> {
@@ -111,15 +106,11 @@ class LiveActivityPlugin(
         }
     }
 
-    /**
-     * Undoes [register]. The receiver holds the Activity context and the
-     * channel handler holds this plugin, so both outlive the engine that
-     * created them unless they are released with it — one process serving two
-     * engines in sequence would otherwise stack a receiver per engine, each
-     * pushing onCancelTrack at a dead Dart isolate.
-     */
     fun dispose() {
         dartIsListening = false
+        // The session behind a bus or rail card is this engine's; it does not
+        // outlive it, so neither should the card.
+        card.dropUnpushedCard()
         if (receiverRegistered) {
             context.unregisterReceiver(cancelReceiver)
             receiverRegistered = false

@@ -6,11 +6,6 @@ import WidgetKit
 // MARK: - Widget
 
 struct AlightTrackWidget: Widget {
-    // Deliberately not carrying `supplementalActivityFamilies` for the Apple
-    // Watch Smart Stack: it is iOS 18 only, and `WidgetConfigurationBuilder`
-    // has no `buildEither`, so the modifier cannot sit behind an `#available`
-    // branch. Adopting it means raising this extension's minimum to 18, which
-    // costs every earlier device the card entirely.
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: AlightTrackAttributes.self) { context in
             AlightTrackCard(
@@ -77,13 +72,6 @@ struct AlightTrackWidget: Widget {
 
 // MARK: - The card
 
-/// The one card. Three rows that never change count: identity plus the
-/// headline reading, the progress bar, then what to do next.
-///
-/// Takes plain values rather than an `ActivityViewContext` so the same views
-/// render in previews and in a plain SwiftUI host — `ActivityViewContext` has
-/// no public initialiser, and a card that can only be seen by starting a real
-/// journey is a card nobody checks.
 struct AlightTrackCard: View {
     let attributes: AlightTrackAttributes
     let state: AlightTrackAttributes.ContentState
@@ -107,13 +95,6 @@ struct AlightTrackCard: View {
 
 // MARK: - Copy
 
-/// Every string the card says, in one place.
-///
-/// The lock screen and the expanded Dynamic Island distribute these three lines
-/// differently — the island's leading region is about a third of the width, so
-/// stacking title over subtitle there truncates both — but they must never
-/// *word* the same session differently. Layout adapts to the surface; copy does
-/// not.
 private struct TrackCopy {
     let title: String
     let subtitle: String
@@ -239,15 +220,6 @@ private struct Reading: View {
 
 // MARK: - Row 2: progress
 
-/// One native bar for the whole ride. No per-station dots: SwiftUI has no
-/// segmented progress style, and hand-drawing twenty ticks at this width buys
-/// noise — the headline count already states how many stops are left.
-///
-/// Absent entirely before boarding. A bar at zero renders as a full-width
-/// hairline, which on the real card reads as a divider between rows rather than
-/// an empty track — it describes structure instead of progress. The card
-/// growing a third row at the moment the rider boards is a truthful transition,
-/// and it happens once per session.
 private struct TrackBar: View {
     let state: AlightTrackAttributes.ContentState
     let tone: TrackTone
@@ -278,12 +250,6 @@ private struct TrackFoot: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             if isStale, state.phase.isLive {
-                // The exact distance is only worth space once the system has
-                // decided the reading is old. A metro card is refreshed by push
-                // while the app sleeps (ADR-0018), but a device that refuses
-                // push — or any other mode — still freezes when the app is
-                // suspended; saying so is the difference between an honest card
-                // and one that pretends.
                 Text(state.asOfDate, style: .relative)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -299,10 +265,6 @@ private struct TrackFoot: View {
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
                     .controlSize(.small)
-                    // Ink label on the platform's own low-opacity fill. Tinting
-                    // this `.secondary` dims the label too, which reads as a
-                    // disabled control — the one thing an action cannot look
-                    // like.
                     .tint(.primary)
                 }
             }
@@ -372,12 +334,6 @@ private struct MinimalReading: View {
 
 // MARK: - Badge
 
-/// Identity, and the only place on this card a saturated colour that is not a
-/// status lives: the metro's line roundel.
-///
-/// Bus, TRA and THSR carry an achromatic glyph instead. Their payload has no
-/// line colour — `lineCode` and `lineColorHex` are metro-only — and inventing
-/// one here would duplicate the design system inside a widget.
 private struct TrackBadge: View {
     let mode: AlightTrackAttributes.Mode
     let lineCode: String?
@@ -404,13 +360,6 @@ private struct TrackBadge: View {
 
 // MARK: - Tone
 
-/// Distance to the alight stop, as colour.
-///
-/// The warm threshold is the rider's own 提前站數 — the same number the
-/// reminder fires on — so the warm card is the visual residue of that alert
-/// rather than a second rule to learn. It derives from the stop count rather
-/// than from `phase` alone, so a phase that disagrees with its own numbers
-/// cannot show a calm card one stop from the door.
 enum TrackTone {
     case calm, warm, go, spent
 
@@ -431,13 +380,6 @@ enum TrackTone {
         }
     }
 
-    /// `calm` and `spent` are the platform's own semantics: on a system surface
-    /// `.primary` *is* Ink, and it inverts for both appearances for free. Only
-    /// the two status colours need literals, and those are transit semantics,
-    /// not UI accents.
-    ///
-    /// Red is deliberately absent. Reaching the door is the moment to act, not
-    /// an alarm, and an arrived card has no action left to demand.
     var color: Color {
         switch self {
         case .calm: return .primary
@@ -451,10 +393,6 @@ enum TrackTone {
 // MARK: - Helpers
 
 private extension View {
-    /// Rolling digits on a decrementing count — a station hop is a state
-    /// change, which is the one thing this card animates. `countsDown:` sets
-    /// the roll direction and arrived in iOS 17; the 16.2 floor keeps the
-    /// transition without it.
     @ViewBuilder
     func countdownDigits() -> some View {
         if #available(iOS 17.0, *) {

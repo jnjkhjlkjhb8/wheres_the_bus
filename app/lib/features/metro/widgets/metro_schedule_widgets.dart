@@ -1,16 +1,5 @@
 part of '../view/metro_station_detail_view.dart';
 
-/// The station's first/last-train times, as a two-column table.
-///
-/// 「首班」/「末班」 are column headers rather than a marker repeated on every
-/// value: written once, they stop competing with the times, and the two mono
-/// columns line up into something readable straight down. 首班 is the quieter
-/// of the two — the question that brings a rider to this section after dark is
-/// whether they can still get out, not when the day started.
-///
-/// Line grouping appears only at interchange stations. Everywhere else the
-/// sheet header already names the line, and repeating it per row would be
-/// noise.
 class MetroScheduleSection extends StatelessWidget {
   const MetroScheduleSection({
     required this.schedule,
@@ -65,15 +54,18 @@ class MetroScheduleSection extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           header,
-          const SizedBox(height: 6),
+          const SizedBox(height: AppTheme.space6),
           Divider(height: 1, thickness: 1, color: hairline),
-          SkeletonFade(
+          Skeletonizer(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 for (var i = 0; i < 2; i++) ...[
                   if (i > 0) Divider(height: 1, thickness: 1, color: hairline),
-                  _ScheduleSkeletonRow(columnWidth: columnWidth),
+                  _ScheduleRow(
+                    schedule: _skeletonSchedule,
+                    columnWidth: columnWidth,
+                  ),
                 ],
               ],
             ),
@@ -87,7 +79,7 @@ class MetroScheduleSection extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           title,
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Text(
             AppI18n.of(context).metroFirstLastUnavailable,
             style: AppTextStyles.bodySmall.copyWith(
@@ -117,7 +109,7 @@ class MetroScheduleSection extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         header,
-        const SizedBox(height: 6),
+        const SizedBox(height: AppTheme.space6),
         Divider(height: 1, thickness: 1, color: hairline),
         ...rows,
       ],
@@ -125,77 +117,12 @@ class MetroScheduleSection extends StatelessWidget {
   }
 }
 
-/// One loading row of the first/last-train table, on [_ScheduleRow]'s exact
-/// geometry: same vertical padding, same two fixed time columns.
-///
-/// The bones are laid over a real but invisible [_ScheduleRow]. A row of mono
-/// times baseline-aligned against sans destination text is markedly taller
-/// than either of its parts, and a height derived by hand would drift the
-/// first time one of those styles moves; the row underneath keeps the skeleton
-/// exactly as tall as the thing it stands in for, at any text scale.
-class _ScheduleSkeletonRow extends StatelessWidget {
-  const _ScheduleSkeletonRow({required this.columnWidth});
-
-  final double columnWidth;
-
-  /// Never read — it exists to be measured, so every cell carries a glyph in
-  /// the style whose line box it contributes.
-  static const _metrics = MetroSchedule(
-    line: '',
-    destination: '站',
-    firstTime: '00:00',
-    lastTime: '00:00',
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    final scaler = MediaQuery.textScalerOf(context);
-    Widget timeBone() => SizedBox(
-      width: columnWidth,
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: SkeletonBone(
-          width: scaler.scale(38),
-          height: scaler.scale(AppTextStyles.memo.fontSize!),
-        ),
-      ),
-    );
-    return ExcludeSemantics(
-      child: Stack(
-        children: [
-          Opacity(
-            opacity: 0,
-            child: _ScheduleRow(schedule: _metrics, columnWidth: columnWidth),
-          ),
-          Positioned.fill(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 11),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: FractionallySizedBox(
-                        widthFactor: 0.45,
-                        child: SkeletonBone(
-                          height: scaler.scale(
-                            AppTextStyles.bodyRegular.fontSize!,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  timeBone(),
-                  timeBone(),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+const MetroSchedule _skeletonSchedule = MetroSchedule(
+  line: '',
+  destination: '囗囗囗',
+  firstTime: '00:00',
+  lastTime: '00:00',
+);
 
 class _ScheduleColumnLabel extends StatelessWidget {
   const _ScheduleColumnLabel({required this.label, required this.width});
@@ -239,7 +166,10 @@ class _ScheduleLineHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: EdgeInsets.only(top: first ? 12 : 18, bottom: 4),
+      padding: EdgeInsets.only(
+        top: first ? AppTheme.space12 : 18,
+        bottom: AppTheme.space4,
+      ),
       child: Row(
         children: [
           LineBadge(
@@ -374,10 +304,6 @@ class _MetroRoundel extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Glyph-like line badges: the 30x30 box is fixed by the map's
-          // visual language, so these opt out of the user's text-scale
-          // setting rather than overflow (and lose the number) at large
-          // font sizes.
           Text(
             letters,
             textScaler: TextScaler.noScaling,

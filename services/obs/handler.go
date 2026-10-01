@@ -18,12 +18,6 @@ type sentryCore struct {
 	fields []zapcore.Field
 }
 
-// NewCore wraps inner so that entries at Error level or above are also
-// forwarded to Sentry as a captured message, with fields copied onto the scope
-// as tags (the "err" field becomes an error context instead). Forwarding is
-// skipped when Sentry has no active client, so with no DSN this behaves as a
-// pass-through to inner, and for entries whose "err" reads as transient (see
-// transientErr). Init installs this around a JSON core.
 func NewCore(inner zapcore.Core) zapcore.Core {
 	return &sentryCore{Core: inner}
 }
@@ -103,12 +97,6 @@ func valueText(v any) string {
 	}
 }
 
-// transientErr reports whether an error string describes a self-healing
-// condition — a timeout or a backend still coming up — rather than a defect.
-// These stay on stderr at their logged level but raise no Sentry issue, so a
-// single nightly-batch hiccup does not page anyone. A sustained outage still
-// surfaces through the startup connect panic; add a consecutive-failure
-// counter here if that proves too quiet.
 func transientErr(val string) bool {
 	lower := strings.ToLower(val)
 	for _, s := range []string{"context deadline exceeded", "timeout", "connection refused", "connection reset", "loading redis"} {

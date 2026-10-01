@@ -116,13 +116,6 @@ Widget metroDetailPreview() {
 class MetroScreen extends StatefulWidget {
   const MetroScreen({super.key, this.stationId, this.mode = MetroMapMode.time});
 
-  /// The selected station's TDX code, from `/metro/station/:id`; null is the
-  /// bare map.
-  ///
-  /// The location leads and the selection follows: a tap replaces the location
-  /// and [_MetroScreenState.didUpdateWidget] moves the selection. Both routes
-  /// render one keyed page, so the replace updates this screen in place rather
-  /// than rebuilding it — which is what keeps the rider's pan and zoom.
   final String? stationId;
 
   /// What the map labels stations with, from `?mode=`.
@@ -161,13 +154,6 @@ class _MetroScreenState extends State<MetroScreen> {
     });
   }
 
-  /// A rider opening the bare map is usually standing at one of these stations,
-  /// so the one they are at is selected for them — once, on entry.
-  ///
-  /// The line map carries artwork coordinates, not WGS-84 ones, so the nearest
-  /// station comes from the router's nearby query. It is matched back by
-  /// *name*: an interchange is one combined id here (`BL15_BR10`) and one id
-  /// per line on the wire.
   Future<void> _autoFocusNearest() async {
     try {
       final fix = await LocationService.instance.lastKnownPosition();
@@ -200,10 +186,7 @@ class _MetroScreenState extends State<MetroScreen> {
       _autoSelecting = true;
       _goToStation(_stationFor(id)!);
     } on Object {
-      // Auto-focus is a head start, not a feature the rider asked for: the
-      // usual failure here is the nearby query being offline, which the map
-      // itself already shows and which home already reports. Losing the head
-      // start leaves the bare map — the screen's normal opening state.
+      // Manual station selection remains available if location lookup fails.
     }
   }
 
@@ -331,24 +314,11 @@ class _MetroScreenState extends State<MetroScreen> {
   Widget _buildBottomSheetWidget(BuildContext context, ColorScheme cs) {
     return AppSheet(
       controller: _sheetController,
-      // Capped at `tall`, not `full`: keeps the line map peeking above the
-      // sheet (metro is not a map-front page — the map is the content). Not
-      // content-capped: the station detail card must reach the same max as
-      // the station list, even on a station whose own card is short.
-      snapGrid: const SheetSnapGrid(
-        snaps: [AppSheetSnap.peek, AppSheetSnap.half, AppSheetSnap.tall],
-        minFlingSpeed: AppSheetSnap.flingSpeed,
-      ),
-      // The status-bar padding ramp targets `full`; this sheet never reaches
-      // it, so the ramp would never finish closing and leaves a permanent gap
-      // above the drag handle at `tall`.
-      padStatusBar: false,
-      // Sizes to its content (no Expanded, and the pages inside shrink-wrap).
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const SheetDragHandle(),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           Flexible(
             child: BlocBuilder<MetroBloc, MetroState>(
               builder: (context, state) => AnimatedSwitcher(
@@ -365,13 +335,6 @@ class _MetroScreenState extends State<MetroScreen> {
                     child: child,
                   ),
                 ),
-                // Only the incoming page sizes the sheet: the outgoing one is
-                // positioned, so it fills whatever height the new page asks
-                // for instead of holding the sheet at its own. The station
-                // list fills the viewport, so leaving it unpositioned kept the
-                // sheet full-height for the length of the fade — a blank band
-                // under a short station card on every tap. Top-aligned rather
-                // than the default centre so the header stays put mid-fade.
                 layoutBuilder: (currentChild, previousChildren) => Stack(
                   alignment: Alignment.topCenter,
                   children: [
@@ -392,11 +355,6 @@ class _MetroScreenState extends State<MetroScreen> {
                       )
                     : _selected != null
                     ? MetroStationDetailView(
-                        // Keyed by station id, not a constant 'detail': the
-                        // nested BlocProvider(create:) runs once per element,
-                        // so a constant key reused the same MetroEtaBloc across
-                        // station switches — title updated (widget prop) but
-                        // ETA/schedule stayed on the first station.
                         key: ValueKey('detail:${_selected!.id}'),
                         system: 'TRTC',
                         stationId: _selected!.id,
@@ -429,10 +387,6 @@ class _MetroScreenState extends State<MetroScreen> {
       child: BlocProvider.value(
         value: _metroBloc,
         child: Scaffold(
-          // The map SVG is transparent, so the Scaffold paints the map canvas.
-          // A dedicated canvas — crisp white in light, deepened near-black in
-          // dark — instead of the grey scaffold surface, so lines and the
-          // #1a1a1a interchange dots lift off the background.
           backgroundColor: cs.brightness == Brightness.dark
               ? const Color(0xFF0C0C0C)
               : Colors.white,
@@ -465,12 +419,6 @@ class _MetroScreenState extends State<MetroScreen> {
                   animate: _prevSelected == null && _selected != null,
                 ),
               ),
-              // Both map-level controls share one row so the width they compete
-              // for is real: the back button and system pill take their intrinsic
-              // width, and the time/fare switch flex-shrinks into whatever is
-              // left instead of overdrawing them at large text scales. The
-              // switch lives on the map because it drives the whole-map station
-              // labels, and surfaces only once a station is selected.
               Align(
                 alignment: Alignment.topCenter,
                 child: FloatingAppBar(
@@ -535,12 +483,6 @@ class _MetroScreenState extends State<MetroScreen> {
   }
 }
 
-/// The bottom half of the metro 下車提醒 flow: the confirm bar once a station
-/// has been picked, and the manage card while a session is running.
-///
-/// It reads the flow straight from [MrtTrackBloc] rather than taking it down
-/// through the map, because the bell that opens the flow lives on a different
-/// screen (the station sheet, or a station opened from search).
 class _MetroAlightDock extends StatefulWidget {
   const _MetroAlightDock();
 
@@ -574,9 +516,6 @@ class _MetroAlightDockState extends State<_MetroAlightDock> {
         final target = ahead.where((s) => s.id == targetId).firstOrNull;
         if (target == null) return const SizedBox.shrink();
 
-        // Derived from the congestion feed's paired carriage when there is one
-        // (ADR-0015); otherwise the rider reads it off the car and types it,
-        // and that field is the only thing standing between them and 開始.
         final autoCarId = deriveCarIdFromCn1(arrival.cn1);
         final carId = arrival.cn1.isNotEmpty
             ? autoCarId

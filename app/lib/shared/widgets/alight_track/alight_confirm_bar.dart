@@ -18,7 +18,10 @@ class AlightBindingChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space8,
+        vertical: 3,
+      ),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(AppTheme.radiusChip),
@@ -28,17 +31,6 @@ class AlightBindingChip extends StatelessWidget {
   }
 }
 
-/// What the rider settles once a 下車站 has been chosen: which vehicle it binds
-/// to, how many stops of warning, and the commit.
-///
-/// It docks at the bottom of whichever screen hosts it — the stop is picked by
-/// looking up (a map, a timetable, a timeline) and confirmed by reaching down.
-/// Bus, TRA, THSR and metro all use this one bar; they differ only in
-/// [binding], which is present only when the vehicle is something the rider
-/// has to choose or check. A train number on its own train's screen is
-/// neither, so rail passes nothing.
-///
-/// Presentation only: the caller owns the lead value and the dispatch.
 class AlightConfirmBar extends StatelessWidget {
   const AlightConfirmBar({
     required this.targetName,
@@ -102,8 +94,11 @@ class AlightConfirmBar extends StatelessWidget {
           onRepick: onRepick,
           onCancel: onCancel,
         ),
-        if (binding != null) ...[const SizedBox(height: 12), binding!],
-        const SizedBox(height: 12),
+        if (binding != null) ...[
+          const SizedBox(height: AppTheme.space12),
+          binding!,
+        ],
+        const SizedBox(height: AppTheme.space12),
         _LeadStepper(
           value: lead,
           min: leadMin,
@@ -112,25 +107,19 @@ class AlightConfirmBar extends StatelessWidget {
           onChanged: onLeadChanged,
         ),
         if (errorText != null) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: AppTheme.space10),
           Text(
             errorText!,
             style: AppTextStyles.bodySmall.copyWith(color: cs.error),
           ),
         ],
-        const SizedBox(height: 12),
+        const SizedBox(height: AppTheme.space12),
         _StartButton(enabled: canStart && !busy, busy: busy, onTap: onStart),
       ],
     );
   }
 }
 
-/// The card shown when the rider taps an armed bell: what is running, and the
-/// two ways out.
-///
-/// Tapping the bell does not cancel on the spot. A session takes several taps
-/// to build and then rides in a pocket; ending it is worth one deliberate
-/// press on a control that says so.
 class AlightManageBar extends StatelessWidget {
   const AlightManageBar({
     required this.targetName,
@@ -157,7 +146,10 @@ class AlightManageBar extends StatelessWidget {
     return _Dock(
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space12,
+            vertical: AppTheme.space10,
+          ),
           decoration: BoxDecoration(
             color: cs.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -171,13 +163,13 @@ class AlightManageBar extends StatelessWidget {
                 ),
               ),
               if (bindingLabel != null) ...[
-                const SizedBox(width: 8),
+                const SizedBox(width: AppTheme.space8),
                 AlightBindingChip(label: bindingLabel!),
               ],
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppTheme.space12),
         Row(
           children: [
             Expanded(
@@ -187,7 +179,7 @@ class AlightManageBar extends StatelessWidget {
                 onTap: onClose,
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: AppTheme.space10),
             Expanded(
               child: _GhostButton(
                 label: i18n.alightCancelReminder,
@@ -220,7 +212,12 @@ class _Dock extends StatelessWidget {
         top: false,
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space16,
+            AppTheme.space12,
+            AppTheme.space16,
+            AppTheme.space16,
+          ),
           decoration: BoxDecoration(
             color: cs.surface,
             border: Border(top: BorderSide(color: cs.outlineVariant)),
@@ -259,7 +256,10 @@ class _PickedLine extends StatelessWidget {
         ? '${i18n.alightPickedStop(targetName)} ${i18n.alightFromSearch}'
         : i18n.alightPickedStop(targetName);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space12,
+        vertical: AppTheme.space6,
+      ),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -280,7 +280,10 @@ class _PickedLine extends StatelessWidget {
               semanticLabel: i18n.alightRepick,
               minTapSize: 44,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.space8,
+                  vertical: AppTheme.space6,
+                ),
                 child: Text(
                   i18n.alightRepick,
                   style: AppTextStyles.bodySmall.copyWith(
@@ -295,7 +298,7 @@ class _PickedLine extends StatelessWidget {
             semanticLabel: i18n.commonClose,
             minTapSize: 44,
             child: Padding(
-              padding: const EdgeInsets.all(4),
+              padding: const EdgeInsets.all(AppTheme.space4),
               child: Icon(
                 Icons.close_rounded,
                 size: 18,
@@ -336,17 +339,12 @@ class _LeadStepper extends StatelessWidget {
           onTap: () => onChanged(value - 1),
           semanticLabel: i18n.commonDecrease,
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppTheme.space12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              // One sentence rather than a label and a number in separate
-              // places: "how many stops" only means something next to the stop
-              // it counts back from. At zero there is no count to print, and
-              // "提前 0 站" would be a number pretending to be a setting — the
-              // sentence says what actually happens instead.
               if (value == 0)
                 Text(
                   i18n.alightNoLead(targetName),
@@ -386,7 +384,7 @@ class _LeadStepper extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppTheme.space12),
         _StepButton(
           icon: Icons.add_rounded,
           enabled: value < max,

@@ -82,8 +82,8 @@ class AppInput extends StatelessWidget {
         errorBorder: _border(cs.error),
         focusedErrorBorder: _border(cs.error, width: 2),
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
+          horizontal: AppTheme.space16,
+          vertical: AppTheme.space12,
         ),
         labelStyle: AppTextStyles.bodyRegular.copyWith(
           color: cs.onSurfaceVariant,

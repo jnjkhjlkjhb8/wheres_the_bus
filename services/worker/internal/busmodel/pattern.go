@@ -1,23 +1,5 @@
 package busmodel
 
-// busPatternSQL is the ordered stop list of every bus route direction, each stop
-// carrying its cumulative seconds from the origin.
-//
-// complete is the same all-or-nothing judgement metroPatternSQL makes, and for
-// the same reason: a journey is laid out by accumulating hops, so one unknown
-// segment silently compresses everything after it and the direction has to be
-// dropped rather than published wrong. The stop_count guard is the other half —
-// a route direction with a single stop has no hops to miss, so it would pass a
-// pure BOOL_AND and produce a trip that never moves.
-//
-// The known_stop test is the third: bus_station_stop_map carries stops that
-// bus_stopofroute does not, so stops.txt never declares them — TNN33591 is on
-// four Tainan directions and in no stop inventory. Emitting a call there is a
-// dangling reference, which is an invalid feed rather than a merely thin one.
-// The stop cannot simply be skipped either: dropping it from the middle of a
-// sequence makes the surrounding running times describe a journey that omits a
-// stop the bus actually serves. So the direction goes, exactly as it does for a
-// missing segment.
 const PatternSQL = `
   WITH known_stop AS (
     SELECT DISTINCT c->>'StopUID' AS stop_uid

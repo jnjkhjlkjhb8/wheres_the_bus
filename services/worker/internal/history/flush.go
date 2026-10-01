@@ -8,23 +8,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// History and prediction rows record a tick that has already been published, and
-// nothing downstream waits on them. Running them inline on the live tick's
-// context is where two symptoms came from: the bus tick spends ~22 s of its 25 s
-// budget on TDX, so these writes ran last and died mid-batch on "context
-// deadline exceeded", and the seconds they did spend came out of the budget the
-// remaining cities needed to fetch at all.
-//
-// They go to a bounded background flusher instead — their own deadline, off the
-// tick's clock. The queue is deliberately shallow: a database that cannot keep
-// up should drop batches loudly rather than accumulate a backlog of rows that
-// are staler than the ones behind them.
-// FlushTimeout is the floor and FlushPerBatch the allowance for each
-// further archiveRowsPerInsert rows. One flush goes out in bounded batches, so a
-// flat deadline is the wrong shape: it fails only the largest bursts, and it
-// fails them at the end, after most of the work is already spent. A snapshot of
-// 21,353 rows died on the last of its 22 statements at a flat 60s, losing the
-// tail and keeping the other 21,000.
 const (
 	_flushTimeout  = 60 * time.Second
 	_flushPerBatch = 5 * time.Second
@@ -95,10 +78,6 @@ func (f *Flusher) Close() {
 	f.wg.Wait()
 }
 
-// Submit queues one batch of archive rows for the background flusher. The write
-// runs off the caller's clock on its own deadline, and is dropped loudly when
-// the queue is full: a database that cannot keep up should shed batches rather
-// than accumulate rows staler than the ones behind them.
 func Submit(table string, rows int, write func(context.Context)) {
 	_flushes.submit(Flush{table: table, rows: rows, write: write})
 }

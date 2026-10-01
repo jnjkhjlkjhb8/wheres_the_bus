@@ -33,10 +33,6 @@ final class MetroEtaSettled extends MetroEtaEvent {
   const MetroEtaSettled();
 }
 
-/// Emitted when the arrival feed's underlying ResilientSubscription gives up
-/// reconnecting. The bloc keeps showing the last-known [MetroEtaState.arrivals]
-/// (the feed never clears them on failure) but surfaces the health so the UI
-/// doesn't present silently stale data as current (F28).
 final class MetroEtaFailed extends MetroEtaEvent {
   const MetroEtaFailed(this.error);
 

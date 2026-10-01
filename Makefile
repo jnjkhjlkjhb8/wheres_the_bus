@@ -27,17 +27,20 @@ RENDERED_PROD := env/.rendered/prod
 # any service that doesn't set its own ENV_FILE_<SERVICE> override) alongside
 # the per-service ENV_FILE_<SERVICE> overrides.
 COMPOSE_TEST := ENV_FILE=env/test.env \
+	ROUTING_NETWORK=bus-test-routing \
 	ENV_FILE_ROUTER=$(RENDERED_TEST)/router.env ENV_FILE_FUNCTIONS=$(RENDERED_TEST)/functions.env \
 	ENV_FILE_INGESTOR=$(RENDERED_TEST)/ingestor.env ENV_FILE_LOADER=$(RENDERED_TEST)/loader.env \
 	ENV_FILE_POWERSYNC=$(RENDERED_TEST)/powersync.env ENV_FILE_MOTIS=$(RENDERED_TEST)/motis.env \
 	COMPOSE_PROFILES=motis \
 	$(COMPOSE) -p test --env-file ./env/test.env -f docker/docker-compose.yaml -f docker/docker-compose.test.yaml
 COMPOSE_STAGING := ENV_FILE=env/staging.env \
+	ROUTING_NETWORK=bus-routing \
 	ENV_FILE_ROUTER=$(RENDERED_STAGING)/router.env ENV_FILE_FUNCTIONS=$(RENDERED_STAGING)/functions.env \
 	ENV_FILE_INGESTOR=$(RENDERED_STAGING)/ingestor.env ENV_FILE_LOADER=$(RENDERED_STAGING)/loader.env \
 	ENV_FILE_POWERSYNC=$(RENDERED_STAGING)/powersync.env ENV_FILE_MOTIS=$(RENDERED_STAGING)/motis.env \
 	$(COMPOSE) -p staging --env-file ./env/staging.env -f docker/docker-compose.yaml -f docker/docker-compose.staging.yaml
 COMPOSE_PROD := ENV_FILE=env/prod.env \
+	ROUTING_NETWORK=bus-routing \
 	ENV_FILE_ROUTER=$(RENDERED_PROD)/router.env ENV_FILE_FUNCTIONS=$(RENDERED_PROD)/functions.env \
 	ENV_FILE_INGESTOR=$(RENDERED_PROD)/ingestor.env ENV_FILE_LOADER=$(RENDERED_PROD)/loader.env \
 	ENV_FILE_POWERSYNC=$(RENDERED_PROD)/powersync.env ENV_FILE_MOTIS=$(RENDERED_PROD)/motis.env \
@@ -113,6 +116,7 @@ verify: proto-go
 	./scripts/check-hermetic.sh
 	./scripts/check-compose-isolation.sh
 	./scripts/check-container-hardening.sh
+	./scripts/check-spacing-tokens.sh
 	git diff --exit-code
 
 render-env-test:
@@ -125,12 +129,15 @@ render-env-prod:
 	./scripts/render-env.sh env/prod.env $(RENDERED_PROD)
 
 up-test: render-env-test
+	ROUTING_NETWORK=bus-test-routing ./scripts/ensure-routing-network.sh
 	$(COMPOSE_TEST) up -d --build postgres redis router functions
 
 up-staging: render-env-staging
+	./scripts/ensure-routing-network.sh
 	$(COMPOSE_STAGING) up -d --build --wait
 
 up-prod: render-env-prod
+	./scripts/ensure-routing-network.sh
 	$(COMPOSE_PROD) up -d --build --wait
 
 # Re-fetch the OSM extract, rebuild the MOTIS data set if either input has

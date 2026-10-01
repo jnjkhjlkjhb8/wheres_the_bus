@@ -13,10 +13,6 @@ import (
 // subscriber's downstream channel may hold before it is evicted as too slow.
 const DefaultSubscriberQueueSize = 32
 
-// errLiveSubscriberOverflow is returned to a subscriber whose downstream
-// queue filled up. The subscriber is evicted rather than having a distinct
-// delta frame silently dropped or replaced; the client is expected to
-// reconnect.
 var errLiveSubscriberOverflow = status.Error(codes.Unavailable, "live stream subscriber fell behind, reconnect")
 
 type HubStats struct {
@@ -88,10 +84,6 @@ func (h *LiveHub) Subscribe(ctx context.Context, channel string) (<-chan []byte,
 
 	entry := h.entries[channel]
 	if entry == nil {
-		// One upstream subscription is shared by every subscriber on this
-		// channel, so it must not inherit the cancellation of whichever caller
-		// happened to open it first — that caller disconnecting would kill the
-		// feed for everyone else. Values (tracing) are kept; cancellation is not.
 		upstream, upstreamClose, err := h.source.Subscribe(context.WithoutCancel(ctx), channel)
 		if err != nil {
 			h.mu.Unlock()
@@ -121,29 +113,15 @@ func (h *LiveHub) Subscribe(ctx context.Context, channel string) (<-chan []byte,
 	return downstream, closeSubscriber, nil
 }
 
-// unsubscribe removes id's subscription. downstream is the channel handed
-// back by subscribe, passed in directly (rather than re-read from
-// entry.subscribers) so cleanup still finds it after eviction has already
-// removed the subscribers[id] entry.
 func (h *LiveHub) unsubscribe(channel string, entry *liveHubEntry, id uint64, downstream chan []byte) {
 	h.mu.Lock()
 	if h.entries[channel] != entry {
-		// The entry is already gone — e.g. forward's eviction path removed
-		// the last subscriber and closeEntryIfEmptyLocked dropped the entry
-		// before this caller's own cleanup ran. downstream may still hold a
-		// closeReasons entry from evictSlowSubscriber; clear it so it does
-		// not leak for the process lifetime.
 		delete(h.closeReasons, downstream)
 		h.mu.Unlock()
 		return
 	}
 	current, ok := entry.subscribers[id]
 	if !ok {
-		// Already evicted by evictSlowSubscriber: the subscribers[id] entry
-		// and channel are gone, but closeReasons may still hold this
-		// channel's eviction cause if the caller's handler exited (e.g. via
-		// ctx.Done()) without reading it through subscriptionCloseCause.
-		// Clear it here too, or it leaks for the process lifetime.
 		delete(h.closeReasons, downstream)
 		h.mu.Unlock()
 		return
@@ -160,10 +138,7 @@ func (h *LiveHub) unsubscribe(channel string, entry *liveHubEntry, id uint64, do
 	}
 }
 
-// evictSlowSubscriber removes a subscriber whose downstream queue is full
-// and closes its channel with errLiveSubscriberOverflow, so the client sees
-// a reconnectable error instead of having a distinct delta frame silently
-// dropped or replaced. Callers must hold h.mu.
+// Caller holds h.mu. Disconnect on overflow rather than silently losing deltas.
 func (h *LiveHub) evictSlowSubscriber(entry *liveHubEntry, id uint64, downstream chan []byte) {
 	delete(entry.subscribers, id)
 	h.activeStreams--

@@ -19,10 +19,6 @@ class FavoritesRepository {
   // scan+sort of its own.
   List<Favorite>? _cache;
 
-  // A single BoxEvent-coalescing change signal. Multiple Hive events from one
-  // user action (e.g. an N-item reorder = N putAll events) collapse into one
-  // downstream refresh instead of N. Attached lazily on first listener and
-  // torn down when the last listener leaves.
   StreamController<void>? _changes;
   StreamSubscription<BoxEvent>? _boxSub;
   Timer? _coalesceTimer;
@@ -33,10 +29,6 @@ class FavoritesRepository {
 
   Stream<BoxEvent> watch() => _box.watch();
 
-  /// Coalesced repository change signal: one emission per user action, even
-  /// when the underlying box fires many BoxEvents. Writes null the cache inline
-  /// regardless of listeners; this box subscription (active only while listened
-  /// to) additionally nulls it and coalesces the events into one signal.
   Stream<void> changes() {
     _changes ??= StreamController<void>.broadcast(
       onListen: _attachBox,

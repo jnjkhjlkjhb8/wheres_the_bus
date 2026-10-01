@@ -11,9 +11,6 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-// The empty-namespace SOAP quirk is load-bearing: the GetTrainInfo element must
-// carry no xmlns, or the real service 302-redirects to an empty result
-// (ADR-0015). This asserts the request body and the object extraction together.
 func TestGetTrainInfoRequestAndParse(t *testing.T) {
 	var gotBody, gotContentType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

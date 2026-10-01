@@ -4,14 +4,6 @@ package gtfs
 // and the per-network fare tables they price from. Split out of gtfs_files.go
 // for size; that file documents the identifier scheme every statement assumes.
 
-// ---------------------------------------------------------------------------
-// Fares (GTFS-Fares v2).
-// ---------------------------------------------------------------------------
-
-// The temp tables gtfsTempTables materializes, named where the queries read
-// them. They exist only inside the export transaction, so every statement below
-// is one a bare psql session cannot run on its own — createGTFSTempTables comes
-// first, and TestGTFSStatementsPlan proves the set is closed.
 const (
 	_gtfsStopTable       = "gtfs_stop"
 	_gtfsStopTimeTable   = "gtfs_stop_time"
@@ -24,26 +16,6 @@ const (
 	_gtfsFareZoneTable   = "gtfs_fare_zone"
 )
 
-// _gtfsFareODSQL is every station-to-station fare the feed prices, flattened to
-// one row per (network, origin station, destination station, amount).
-//
-// One adult single fare per pair, per mode. Fares v2 can carry the rider and
-// media axes as well, and TDX has them, but every extra axis multiplies the leg
-// rules by a factor and none of them is what a planner compares journeys on.
-// The axes are pinned to the same values services/api/maas.go pins for its
-// own fare quotes, so a fare quoted in the app and a fare in the feed agree:
-//
-//	metro  TicketType 1 (單程), FareClass 1 (全票)
-//	THSR   TicketType 1 (單程), FareClass 1 (全票), cheapest cabin (標準車廂)
-//	TRA    ticket type 成復
-//
-// The TRA choice is worth stating plainly: TDX prices a pair once per train
-// class (成自/成莒/成復/成普) and GTFS routes for TRA are train types, so a
-// per-class network would be more accurate. 成復 is used because it is the only
-// class present for every pair, and because taking anything else diverges from
-// what the app already quotes — maas.go's comment records that taking the max
-// instead quoted 自強 on every leg (桃園→臺北: 99 rather than 63). A 自強 leg is
-// therefore under-priced here (FDPL: per-train-class TRA fare networks).
 const _gtfsFareODSQL = `
   SELECT 'MRT:' || f.system AS network_id,
          f.system || ':' || f.originstationid AS from_stop,
@@ -86,24 +58,6 @@ const _gtfsFareODSQL = `
     AND (t.value->>'Price') ~ '^[0-9]+$'
   GROUP BY 1, 2, 3`
 
-// _gtfsFarePricedSQL is gtfsFareODSQL restricted to the pairs both of whose
-// stations the feed actually emits, with the area ids the fare files use.
-//
-// The restriction is the whole point. TDX prices every station pair it knows,
-// including systems with no landed timetable, and a leg rule naming an area that
-// stop_areas never declares is a broken feed rather than a generous one. Joining
-// against gtfsStopsSQL rather than against a second copy of its filters is what
-// keeps that true when the stop query changes.
-//
-// A station's area holds both the station node and its platform: stop_times
-// references the platform, but a consumer that resolves a leg to the parent
-// station should match the same area.
-// The stop query is named once and referenced twice rather than inlined twice:
-// working out which stops are served scans stop_times, and every needless copy
-// of gtfsStopsSQL in a fare file is that scan again.
-//
-// A leg priced at zero is dropped here but not from the flat rules: on a station
-// pair zero means TDX stated no fare, while a free bus states zero and means it.
 var _gtfsFarePricedSQL = `
   WITH leg AS (
     SELECT network_id, from_stop, to_stop, amount FROM (` + _gtfsFareODSQL + `) rail
@@ -137,27 +91,10 @@ var _gtfsFareZoneSQL = `
   FROM (` + _busSectionZoneSQL + `) z
   WHERE z.stop_uid IN (SELECT stop_id FROM ` + _gtfsStopTable + `)`
 
-// _gtfsFareZoneMembersSQL is which stops each section zone holds.
-//
-// Unlike the per-stop areas, a zone's membership cannot be read back out of its
-// id, so stop_areas.txt takes it from here.
 var _gtfsFareZoneMembersSQL = `
   SELECT DISTINCT 'Z:' || z.routeuid || ':' || z.idx::text AS area_id, z.stop_uid AS stop_id
   FROM ` + _gtfsFareZoneTable + ` z`
 
-// _gtfsFareZoneRulesSQL prices a sectioned leg: one unit per section entered.
-//
-//	sections entered = 1 + buffer zones the leg crosses entirely
-//
-// A buffer zone sits at every odd index, so the zones a leg from index i to
-// index j crosses are the odd numbers strictly between them, which is
-// j/2 - (i+1)/2 in integer division. Riding into a buffer costs nothing extra —
-// that is what makes it a buffer — and only passing clear through it adds a
-// unit.
-//
-// GREATEST clamps the one case that expression gets wrong: when i and j are the
-// same odd index the range it counts over runs backwards and it returns -1,
-// which priced a ride that begins and ends inside one buffer zone at nothing.
 var _gtfsFareZoneRulesSQL = `
   WITH zone AS (SELECT DISTINCT routeuid, unit, idx FROM ` + _gtfsFareZoneTable + ` z)
   SELECT 'BUS:' || a.routeuid AS network_id,
@@ -196,11 +133,6 @@ FROM (
 ) x
 ORDER BY area_id`
 
-// _gtfsStopAreasSQL puts each priced stop in its own area and each sectioned
-// route's stops in their zone's.
-//
-// An 'A:' area's membership is its id: the stop, and its platform when the stop
-// is a station. A 'Z:' area's is not, so it comes from the zone assignment.
 var _gtfsStopAreasSQL = `
 WITH area AS (
   SELECT from_area_id AS area_id FROM ` + _gtfsFarePricedTable + `
@@ -216,29 +148,6 @@ UNION
 SELECT area_id, stop_id FROM (` + _gtfsFareZoneMembersSQL + `) z
 ORDER BY area_id, stop_id`
 
-// _busFareSourceSQL is every bus fare this feed can express, as one row per route
-// per priced leg, before it is decided whether the route needs areas.
-//
-// TDX states a bus fare four ways and this reads three of them:
-//
-//	IsFreeBus            345 records   a column, price 0
-//	SectionFares         1,821         one price plus BufferZones marking where
-//	                                   a section changes. 1,143 have no zones at
-//	                                   all, which is a single-section route: a
-//	                                   flat fare.
-//	ODFares              1,014         OriginStop/DestinationStop by StopID
-//	StageFares           2,477         OriginStage/DestinationStage, also stops
-//
-// The 678 section records that do carry BufferZones are not read. Fares v2 has
-// no way to say "pay one section fare per section boundary crossed" without
-// modelling every boundary as an area and every crossing as a transfer rule,
-// and inventing that from a description field is how a rider gets quoted a fare
-// they will not be charged (FDPL: price sectioned bus fares).
-//
-// from_id/to_id NULL means the price applies to any leg on the route.
-//
-// Price is filtered to digits: StageFares uses -1 for "no fare stated", which
-// would otherwise become a negative fare product.
 const _busFareSourceSQL = `
   SELECT f.city, f.routeid, NULL::text AS from_id, NULL::text AS to_id, 0 AS amount
   FROM raw_tdx.bus_routefare f
@@ -288,31 +197,6 @@ const _busFareSourceSQL = `
     AND ` + _busFareAdultSQL + `
   GROUP BY 1, 2, 3, 4`
 
-// busSectionZoneSQL assigns every stop of a section-priced route to one zone.
-//
-// A Taiwanese sectioned fare is one unit price charged once per section entered,
-// and the sections are separated by buffer zones rather than by points: TDX gives
-// each zone a FareBufferZoneOrigin and a FareBufferZoneDestination, and a rider
-// travelling wholly inside one pays a single unit. So a route with k buffer zones
-// splits into 2k+1 zones — k+1 cores with the k buffers between them — and every
-// stop falls in exactly one:
-//
-//	[core 0][buffer 1][core 1][buffer 2][core 2]
-//	   0        1        2        3        4
-//
-//	idx = 2 * (buffer zones ending before the stop) + (1 if inside one)
-//
-// That indexing is the whole trick. Splitting at points instead would put a
-// buffer's stops in the sections on both sides, two leg rules would match one
-// leg, and Fares v2 does not say which wins.
-//
-// Measured 2026-08-01: 678 fare records over 455 routes carry buffer zones,
-// averaging 2.7 zones each, and all 1,216 zone endpoints resolve to a stop on
-// their own subroute.
-// _busStopSeqSQL is every subroute's stop list with the sequence the section
-// zones are laid out along. It is materialized (gtfsTempTables) because
-// busSectionZoneSQL joins to it three times — the two ends of every buffer zone,
-// then every stop to be placed between them.
 const _busStopSeqSQL = `
     SELECT r.city, r.subrouteuid, COALESCE(r.direction, 0) AS direction,
            s->>'StopUID' AS stop_uid, s->>'StopID' AS stop_id,
@@ -402,22 +286,6 @@ const _busStopUIDSQL = `
       AND COALESCE(s->>'StopID', '') <> ''
       AND COALESCE(s->>'StopUID', '') <> ''`
 
-// busFareLegSQL resolves bus fares onto the ids the feed uses, and collapses a
-// route whose every leg costs the same into one rule.
-//
-// The collapse is not an optimisation detail, it is what makes bus fares fit.
-// ODFares and StageFares state a price per stop pair: 1,644,378 and 367,045
-// adult rows respectively. Emitted verbatim that is two million leg rules for a
-// country where most bus routes charge one fare end to end. A route whose prices
-// are all one value is stated once, with empty areas, and only a route that
-// genuinely varies pays for its pairs.
-//
-// StopID is TDX's city-local id and stop_times references StopUID, so the pair
-// rows are mapped through bus_stopofroute, which carries both.
-// _busFarePairSQL is one row per priced leg with both ends resolved onto the ids
-// the feed uses. It is materialized (gtfsTempTables) because busFareLegSQL joins
-// it to itself twice — a leg to its reverse, then a route to its verdict — over
-// 1.75M rows.
 var _busFarePairSQL = `
   WITH route AS (
     -- The same route set gtfsRoutesSQL's bus branch emits, and for the same
@@ -476,13 +344,6 @@ var _busFareLegSQL = `
       WHERE x.routeuid = p.routeuid AND x.from_uid = p.to_uid AND x.to_uid = p.from_uid
     )`
 
-// _gtfsFareProductsSQL is one product per distinct amount, not per station pair.
-//
-// This is the difference between a fare model that fits in a feed and one that
-// does not. The official MOTC feed emits a product per pair and its
-// fare_products.txt is 2.8 GB with fare_leg_rules at 3.7 GB, together 88% of a
-// 7.6 GB archive that no validator can open. A fare is a price, NT$20 is one
-// price however many pairs charge it, and the leg rules do the pairing.
 var _gtfsFareProductsSQL = `
 SELECT DISTINCT
   'P:' || amount::text AS fare_product_id,
@@ -495,12 +356,6 @@ SELECT DISTINCT
 FROM (` + _gtfsFareAllRulesSQL + `) p
 ORDER BY fare_product_id`
 
-// _gtfsFareLegRulesSQL prices one leg: a journey on this network from this area
-// to that area costs this product.
-//
-// network_id scopes the rule to one mode, which routes.txt carries. Without it a
-// TRA fare would price a metro leg between two stations that happen to share an
-// area, and Fares v2 has no other way to say "this rule is TRA's".
 var _gtfsFareLegRulesSQL = `
 SELECT network_id, from_area_id, to_area_id, 'P:' || amount::text AS fare_product_id
 FROM (` + _gtfsFareAllRulesSQL + `) r

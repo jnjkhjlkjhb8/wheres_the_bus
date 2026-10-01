@@ -155,10 +155,6 @@ message Bus_StopEstimate{
   BusCrowdLevel crowd_level = 12;
   bool is_last_bus = 13;
 }
-// 車上擁擠度. UNKNOWN is the zero value because most vehicles have no reading:
-// only Data.taipei publishes crowding for buses, and only for Taipei, so every
-// other city leaves this unset and the app must render nothing rather than
-// "comfortable".
 enum BusCrowdLevel {
   BUS_CROWD_UNKNOWN = 0;
   BUS_CROWD_COMFORTABLE = 1;

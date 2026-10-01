@@ -13,9 +13,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
   }
-  // A 下車提醒 alert is a data-only message: vibrate with no banner, nothing
-  // in the notification center (ADR-0020). Background delivery lands here
-  // rather than on onMessage.
   await FirebaseNotifications.maybeVibrateForAlight(message.data);
   try {
     await FirebaseTelemetry.instance.notificationReceived(
@@ -28,7 +25,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 class FirebaseNotifications {
   FirebaseNotifications._();
 
-  /// Data-message type for a 下車提醒 vibration, any mode (ADR-0020).
   static const _alightVibrateType = 'alight_vibrate';
 
   static String kindFrom(Map<String, dynamic> data) {
@@ -36,12 +32,6 @@ class FirebaseNotifications {
     return kind == null || kind.isEmpty ? 'unknown' : kind;
   }
 
-  /// Fires the alight vibration when [data] is an `alight_vibrate` message,
-  /// guarded so it never double-buzzes against the live-stream path.
-  ///
-  /// An unrecognised `event` is dropped rather than defaulting to one of the
-  /// two: the wrong buzz is worse than none — the rider would read a long one
-  /// as "get off now" and stand up two stops early.
   static Future<void> maybeVibrateForAlight(Map<String, dynamic> data) async {
     if (data['type']?.toString() != _alightVibrateType) return;
     final trackId = data['track_id']?.toString() ?? '';

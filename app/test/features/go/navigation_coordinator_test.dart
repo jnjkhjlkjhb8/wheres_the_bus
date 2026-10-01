@@ -23,10 +23,6 @@ void main() {
     planBloc = PlanBloc(repository: _FakeMaasRepository());
     journeyBloc = JourneySessionBloc(
       etaStream: (_) => const Stream.empty(),
-      // This bloc's own setting-gate is exercised by NavigationCoordinator's
-      // `liveActivityEnabled` closure in each test below, not by this one;
-      // leaving the default here would hit SettingsRepository (and an
-      // unopened Hive box) instead.
       liveActivityEnabled: () => true,
     );
   });
@@ -39,11 +35,11 @@ void main() {
   NavigationCoordinator coordinator({
     required bool liveActivityEnabled,
     Stream<Position> Function()? positions,
-    // Mirrors NavigationCoordinator's own callback shape (see its comment).
+    // Callback signature follows the event producer.
     // ignore: avoid_positional_boolean_parameters
     void Function(NavAction action, PlanPoint? cameraTarget, bool arrived)?
     onAutoAction,
-    // Mirrors NavigationCoordinator's callback shape; see its comment.
+    // Callback signature follows the event producer.
     // ignore: avoid_positional_boolean_parameters
     void Function(bool driving)? onAutopilotStatus,
   }) => NavigationCoordinator(
@@ -429,10 +425,6 @@ void main() {
       final controller = StreamController<Position>();
       addTearDown(controller.close);
 
-      // decideNavAction reads the active section off
-      // planBloc.state.result!.routes[selectedRouteIndex] (mirroring
-      // go_screen), so the fake repository must actually resolve to this
-      // route before start() selects it.
       final autopilotPlanBloc = PlanBloc(
         repository: _FakeMaasRepository(routes: [route]),
       );
@@ -461,10 +453,6 @@ void main() {
       await _waitForPlanLeg(autopilotPlanBloc, 0);
       await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
 
-      // Arriving at the walk section's endpoint should auto-advance to the
-      // transit leg. Fire it twice back-to-back to prove the
-      // _lastAutoAdvancedLeg guard swallows the repeat before PlanBloc's
-      // state catches up.
       controller
         ..add(_posAt(_northOf(pointB, 10)))
         ..add(_posAt(_northOf(pointB, 10)));
@@ -583,10 +571,6 @@ void main() {
         await _waitForPlanLeg(autopilotPlanBloc, 0);
         await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
 
-        // Fire three ticks back-to-back, all still outside the board
-        // radius, before JourneySessionBloc's async BoardConfirmed handling
-        // has a chance to flip the phase away from `waiting`. Without the
-        // _lastAutoBoardedLeg guard this would fire onAutoAction 3 times.
         final farPos = _posAt(
           _northOf(const PlanPoint(lat: 25, lng: 121), 500),
         );
@@ -647,10 +631,6 @@ void main() {
         // JourneyStarted: JourneySession stays idle for the whole test.
         expect(journeyBloc.state.phase, JourneyPhase.idle);
 
-        // Moving away from the departure stop implies boarding, decided
-        // purely from the autopilot's own _lastAutoBoardedLeg flag --
-        // JourneySession is never told to start, so it cannot be the thing
-        // deciding this.
         controller.add(_posAt(_northOf(pointB, 500)));
         await Future<void>.delayed(const Duration(milliseconds: 50));
         expect(autoActions, [NavAction.board]);
@@ -716,10 +696,6 @@ void main() {
         journeyBloc.add(const BoardConfirmed());
         await _waitForJourneyPhase(journeyBloc, JourneyPhase.riding);
 
-        // Well outside the 80m board radius: without honoring the live
-        // phase, `boarded` would still read false from
-        // `_lastAutoBoardedLeg` and this would re-enter the board branch,
-        // firing a phantom onAutoAction(board).
         controller.add(_posAt(_northOf(pointB, 500)));
         await Future<void>.delayed(const Duration(milliseconds: 50));
         expect(autoActions, isEmpty);

@@ -1,6 +1,3 @@
-// Package static serves the static-version stamp: the completion time of the
-// last nightly load, as unix seconds (ADR-0017). The app uses it as the epoch
-// for its offline cache, so it must move only when a load actually finishes.
 package static
 
 import (
@@ -18,17 +15,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// StaticVersionPath serves the identity of the static dataset this environment
-// currently holds. The app namespaces its offline cache (ADR-0017) on the
-// value, so a nightly load is what expires a cached route — not a TTL that
-// guesses when the data moved.
 const StaticVersionPath = "/api/static-version"
 
 const (
-	// _staticVersionCacheTTL bounds how stale a served version may be. The
-	// value only changes at 03:30 (and on a LOAD_ON_BOOT restart), so a few
-	// minutes of lag costs nothing and keeps a launch spike off the database.
-	// The app fetches this once per launch.
 	_staticVersionCacheTTL = 5 * time.Minute
 
 	_staticVersionCacheKey = "static-version"
@@ -38,10 +27,6 @@ type staticVersionResponse struct {
 	Version string `json:"version"`
 }
 
-// HandleStaticVersion reports when this environment's static tables were last
-// fully loaded, as unix seconds. An environment that has never completed a
-// load reports "0" rather than an error: that is a real, stable answer, and
-// failing here would make every app launch clear its cache for nothing.
 func HandleStaticVersion(db *pgxpool.Pool) gin.HandlerFunc {
 	return handleStaticVersion(cache.NewTTLCache(), func(ctx context.Context) (string, error) {
 		var completedAt time.Time

@@ -26,7 +26,12 @@ class AppTimePicker {
         return SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space8,
+              AppTheme.space8,
+              AppTheme.space8,
+              AppTheme.space8,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

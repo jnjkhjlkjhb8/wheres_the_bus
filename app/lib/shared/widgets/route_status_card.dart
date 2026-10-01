@@ -25,7 +25,10 @@ class RouteStatusCard extends StatelessWidget {
     final color = lineColor ?? theme.colorScheme.primary;
     return Container(
       height: 80,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space12,
+        vertical: AppTheme.space10,
+      ),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -34,7 +37,7 @@ class RouteStatusCard extends StatelessWidget {
       child: Row(
         children: [
           _MarkerLine(color: color),
-          const SizedBox(width: 10),
+          const SizedBox(width: AppTheme.space10),
           Expanded(
             child: _StationLabels(origin: origin, destination: destination),
           ),

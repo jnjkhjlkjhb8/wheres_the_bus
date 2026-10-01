@@ -12,14 +12,19 @@ class _BoardBody extends StatelessWidget {
   Widget build(BuildContext context) =>
       BlocBuilder<RailStationBoardBloc, RailStationBoardState>(
         builder: (context, state) => switch (state) {
-          RailStationBoardLoading() => const _BoardSkeleton(),
+          RailStationBoardLoading() => _BoardSkeleton(system: system),
           RailStationBoardLoaded(:final departures) when departures.isEmpty =>
             _DayOverView(system: system, direction: state.direction),
-          RailStationBoardLoaded(:final departures, :final delays) =>
+          RailStationBoardLoaded(
+            :final departures,
+            :final delays,
+            :final delaysUpdatedAt,
+          ) =>
             _BoardList(
               system: system,
               departures: departures,
               delays: delays,
+              delaysUpdatedAt: delaysUpdatedAt,
             ),
           RailStationBoardFailure(error: NotFoundError()) => _NotLandedView(
             system: system,
@@ -39,11 +44,16 @@ class _BoardList extends StatelessWidget {
     required this.system,
     required this.departures,
     required this.delays,
+    required this.delaysUpdatedAt,
   });
 
   final RailSystem system;
   final List<RailStationDeparture> departures;
   final Map<String, int> delays;
+
+  /// When the delays last landed. Null for THSR, which has no delay feed —
+  /// and its board is landed timetable, which does not go stale mid-day.
+  final DateTime? delaysUpdatedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -59,19 +69,22 @@ class _BoardList extends StatelessWidget {
     final notice = system == RailSystem.tra;
 
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space8,
+        AppTheme.space8,
+        AppTheme.space8,
+        AppTheme.space8,
+      ),
       physics: const AlwaysScrollableScrollPhysics(),
       itemCount: departures.length + (notice ? 1 : 0),
       itemBuilder: (context, index) {
-        if (index == departures.length) return const _BoardLiveNotice();
+        if (index == departures.length) {
+          return _BoardLiveNotice(delaysUpdatedAt: delaysUpdatedAt);
+        }
         final departure = departures[index];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // A hairline between plain rows, so the list reads as one table
-            // rather than a stack of floating blocks. Skipped around the
-            // highlighted first row, whose tinted card already separates it,
-            // and where the next-day break already draws a rule.
             if (index > 1 && index != firstTomorrow)
               Divider(
                 height: 1,
@@ -85,10 +98,6 @@ class _BoardList extends StatelessWidget {
               system: system,
               departure: departure,
               delayMinutes: delays[departure.trainNo] ?? 0,
-              // Only the soonest train carries a countdown. Giving every row
-              // one turns the column into arithmetic the rider has to read
-              // instead of scan, and buries the only number that decides
-              // whether they run.
               highlighted: index == 0,
             ),
           ],
@@ -98,22 +107,36 @@ class _BoardList extends StatelessWidget {
   }
 }
 
-/// The lag disclaimer under a TRA board. TDX's live train data shares the TRA
-/// website's source, which runs about two minutes behind the TIDS displays on
-/// the platform; the operator asks that riders be told the in-station displays
-/// win once they are inside.
 class _BoardLiveNotice extends StatelessWidget {
-  const _BoardLiveNotice();
+  const _BoardLiveNotice({required this.delaysUpdatedAt});
+
+  final DateTime? delaysUpdatedAt;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-    child: Text(
-      AppI18n.of(context).railBoardLiveNotice,
-      textAlign: TextAlign.center,
-      style: AppTextStyles.bodySmall.copyWith(
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-      ),
+    padding: const EdgeInsets.fromLTRB(
+      AppTheme.space16,
+      AppTheme.space16,
+      AppTheme.space16,
+      AppTheme.space8,
+    ),
+    child: Column(
+      children: [
+        Text(
+          AppI18n.of(context).railBoardLiveNotice,
+          textAlign: TextAlign.center,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        // Directly under the lag disclaimer: the two say the same kind of
+        // thing — how far behind the platform this board might be — and the
+        // stamp is the half that carries a number.
+        if (delaysUpdatedAt != null) ...[
+          const SizedBox(height: AppTheme.space4),
+          FreshnessStamp(at: delaysUpdatedAt),
+        ],
+      ],
     ),
   );
 }
@@ -126,7 +149,12 @@ class _NextDayBreak extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space8,
+        AppTheme.space16,
+        AppTheme.space8,
+        AppTheme.space8,
+      ),
       child: Row(
         children: [
           Text(
@@ -136,7 +164,7 @@ class _NextDayBreak extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: AppTheme.space10),
           Expanded(child: Container(height: 1, color: cs.outlineVariant)),
         ],
       ),
@@ -196,7 +224,10 @@ class _DepartureRow extends StatelessWidget {
         // tint insets without shifting the row off the content column — the
         // same arithmetic EtaListTile's coming-soon highlight uses.
         margin: highlighted
-            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
+            ? const EdgeInsets.symmetric(
+                horizontal: AppTheme.space8,
+                vertical: AppTheme.space4,
+              )
             : EdgeInsets.zero,
         decoration: highlighted
             ? BoxDecoration(
@@ -205,8 +236,8 @@ class _DepartureRow extends StatelessWidget {
               )
             : null,
         padding: EdgeInsets.symmetric(
-          horizontal: highlighted ? 8 : 16,
-          vertical: 10,
+          horizontal: highlighted ? AppTheme.space8 : AppTheme.space16,
+          vertical: AppTheme.space10,
         ),
         constraints: BoxConstraints(minHeight: scaler.scale(56)),
         child: Row(
@@ -222,7 +253,9 @@ class _DepartureRow extends StatelessWidget {
                     style: AppTextStyles.timeValue(
                       size: 19,
                       weight: highlighted ? FontWeight.w600 : FontWeight.w400,
-                      color: suspended ? cs.outline : cs.onSurface,
+                      color: suspended
+                          ? AppTheme.inkTertiary(cs.brightness)
+                          : cs.onSurface,
                       decoration: suspended ? TextDecoration.lineThrough : null,
                     ),
                   ),
@@ -231,7 +264,7 @@ class _DepartureRow extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -244,7 +277,9 @@ class _DepartureRow extends StatelessWidget {
                     style: AppTextStyles.bodyRegular.copyWith(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
-                      color: suspended ? cs.outline : cs.onSurface,
+                      color: suspended
+                          ? AppTheme.inkTertiary(cs.brightness)
+                          : cs.onSurface,
                     ),
                   ),
                   const SizedBox(height: 3),
@@ -288,7 +323,7 @@ class _DepartureRow extends StatelessWidget {
                 ),
               ),
             if (!suspended) ...[
-              const SizedBox(width: 4),
+              const SizedBox(width: AppTheme.space4),
               Icon(
                 Icons.chevron_right_rounded,
                 size: 18,
@@ -302,12 +337,6 @@ class _DepartureRow extends StatelessWidget {
   }
 }
 
-/// Minutes until the soonest train leaves, re-derived on a slow tick.
-///
-/// A timetable carries no live countdown, so this one is computed from the
-/// device clock — which means it has to keep being recomputed. A board left
-/// open on screen for five minutes that still claims "3 分後" is worse than no
-/// countdown at all.
 class _Countdown extends StatefulWidget {
   const _Countdown({required this.departure});
 
@@ -361,50 +390,40 @@ class _CountdownState extends State<_Countdown> {
   }
 }
 
-/// The board's loading state, on the loaded row's geometry so nothing jumps
-/// when the departures land.
+/// The board's loading state: the loaded [_DepartureRow] over a stand-in
+/// train, so nothing jumps when the departures land.
 class _BoardSkeleton extends StatelessWidget {
-  const _BoardSkeleton();
+  const _BoardSkeleton({required this.system});
+
+  final RailSystem system;
 
   static const _rowCount = 6;
 
+  static const _departure = RailStationDeparture(
+    trainNo: '0000',
+    trainType: '囗囗',
+    destination: '囗囗囗',
+    departureTime: '00:00:00',
+    serviceDate: '',
+  );
+
   @override
   Widget build(BuildContext context) {
-    final scaler = MediaQuery.textScalerOf(context);
-    return SkeletonFade(
+    return Skeletonizer(
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space8,
+          AppTheme.space8,
+          AppTheme.space8,
+          AppTheme.space8,
+        ),
         physics: const NeverScrollableScrollPhysics(),
         itemCount: _rowCount,
-        itemBuilder: (context, index) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          constraints: BoxConstraints(minHeight: scaler.scale(56)),
-          child: Row(
-            children: [
-              SkeletonBone(
-                width: scaler.scale(48),
-                height: scaler.scale(19),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SkeletonBone(
-                      width: scaler.scale(96),
-                      height: scaler.scale(15),
-                    ),
-                    const SizedBox(height: 6),
-                    SkeletonBone(
-                      width: scaler.scale(70),
-                      height: scaler.scale(12),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        itemBuilder: (context, index) => _DepartureRow(
+          system: system,
+          departure: _departure,
+          delayMinutes: 0,
+          highlighted: false,
         ),
       ),
     );
@@ -477,7 +496,12 @@ class _BoardNotice extends StatelessWidget {
                 : 0.0,
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(32, 32, 32, 48),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space32,
+              AppTheme.space32,
+              AppTheme.space32,
+              AppTheme.space48,
+            ),
             child: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -490,7 +514,7 @@ class _BoardNotice extends StatelessWidget {
                       color: cs.onSurface,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppTheme.space8),
                   Text(
                     body,
                     textAlign: TextAlign.center,
@@ -528,11 +552,6 @@ class _QueryFooter extends StatelessWidget {
         PagedSheetRoute<void>(
           scrollConfiguration: const SheetScrollConfiguration(),
           initialOffset: AppSheetSnap.tall,
-          // Stops at tall rather than carrying on to full: the query form is
-          // shorter than either detent, so the last 15% of travel adds blank
-          // space and not content. Two stops that land within a hair of each
-          // other also cost the grid the thing it exists for — a rider who
-          // lets go can no longer tell which one they arrived at.
           snapGrid: const SheetSnapGrid(
             snaps: [AppSheetSnap.peek, AppSheetSnap.tall],
             minFlingSpeed: AppSheetSnap.flingSpeed,
@@ -551,7 +570,12 @@ class _QueryFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+    padding: const EdgeInsets.fromLTRB(
+      AppTheme.space20,
+      AppTheme.space8,
+      AppTheme.space20,
+      AppTheme.space32,
+    ),
     child: AppButton.outlined(
       label: AppI18n.of(context).railBoardQueryOd,
       onPressed: () => _openQuery(context),

@@ -20,11 +20,6 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 // The board is only reachable on a map screen, and the test flavor ships no
 // Maps key, so a rendered widget test is how this screen gets verified.
 
-/// A departure [ahead] from the real wall clock.
-///
-/// The countdown is derived from `DateTime.now()` — a timetable carries no
-/// live countdown, so the device clock is the only source — which means a
-/// fixture with a hard-coded time renders no countdown at all.
 RailStationDeparture _departureIn(
   Duration ahead, {
   String trainNo = '271',
@@ -109,11 +104,6 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  /// Tears the tree down inside the test body.
-  ///
-  /// The soonest row runs a 30s countdown ticker, and the binding checks for
-  /// pending timers *before* it disposes the tree at teardown — so every test
-  /// has to dispose the board itself.
   Future<void> disposeBoard(WidgetTester tester) =>
       tester.pumpWidget(const SizedBox.shrink());
 

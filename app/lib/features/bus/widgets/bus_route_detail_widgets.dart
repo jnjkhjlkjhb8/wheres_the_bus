@@ -9,10 +9,10 @@ class _RouteDetailTab extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final departures = _departuresFor(state);
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppTheme.space16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        spacing: 24,
+        spacing: AppTheme.space24,
         children: [
           _NextDepartures(cs: cs, departures: departures),
           _RouteMeta(cs: cs, state: state),
@@ -64,7 +64,7 @@ class _NextDepartures extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      spacing: 12,
+      spacing: AppTheme.space12,
       children: [
         _SectionLabel(AppI18n.of(context).busNextDepartures, cs: cs),
         if (departures.isEmpty)
@@ -87,7 +87,7 @@ class _NextDepartures extends StatelessWidget {
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-                spacing: 8,
+                spacing: AppTheme.space8,
                 children: [
                   for (final item in departures)
                     _DeparturePill(
@@ -117,7 +117,10 @@ class _DeparturePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space14,
+        vertical: AppTheme.space10,
+      ),
       decoration: BoxDecoration(
         color: isNext ? cs.primary : cs.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -161,7 +164,7 @@ class _RouteMeta extends StatelessWidget {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            spacing: 4,
+            spacing: AppTheme.space4,
             children: [
               _SectionLabel(AppI18n.of(context).busOperatingCities, cs: cs),
               Text(city, style: AppTextStyles.bodyLarge),
@@ -171,7 +174,7 @@ class _RouteMeta extends StatelessWidget {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
-            spacing: 4,
+            spacing: AppTheme.space4,
             children: [
               _SectionLabel(AppI18n.of(context).busEndpoints, cs: cs),
               _originDestinationLine(
@@ -186,10 +189,6 @@ class _RouteMeta extends StatelessWidget {
     );
   }
 
-  // At large text-scale factors, two Flexible halves of a Row squeeze each
-  // station name down to a single ellipsised glyph (verified at 2.0x). Measure
-  // both labels against the width actually on offer and fall back to a
-  // stacked column instead of destroying the names.
   Widget _originDestinationLine(
     BuildContext context, {
     required String origin,
@@ -216,7 +215,7 @@ class _RouteMeta extends StatelessWidget {
         if (fits) {
           return Row(
             mainAxisAlignment: MainAxisAlignment.end,
-            spacing: 4,
+            spacing: AppTheme.space4,
             children: [
               Flexible(
                 child: Text(
@@ -238,7 +237,7 @@ class _RouteMeta extends StatelessWidget {
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.end,
-          spacing: 2,
+          spacing: AppTheme.space2,
           children: [
             Text(origin, style: style, textAlign: TextAlign.end),
             const Text('↓', style: style),
@@ -259,7 +258,7 @@ class _Operators extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      spacing: 12,
+      spacing: AppTheme.space12,
       children: [
         _SectionLabel(AppI18n.of(context).busOperators, cs: cs),
         if (operators.isEmpty)
@@ -312,7 +311,10 @@ class _OperatorRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space16,
+        vertical: AppTheme.space14,
+      ),
       child: Row(
         children: [
           Expanded(
@@ -346,7 +348,7 @@ class _OperatorRow extends StatelessWidget {
               onTap: () => _dial(op.phone),
             ),
           if (op.url.isNotEmpty) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             _OperatorIconButton(
               icon: Icons.language_outlined,
               label: AppI18n.of(context).operatorWebsite(op.name),

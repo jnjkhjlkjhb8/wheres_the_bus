@@ -33,10 +33,6 @@ func TestBusEtaFlusherRunsTaskOffTheCallersContext(t *testing.T) {
 	}
 }
 
-// The deadline has to scale with the batch, or it only ever fails the largest
-// flushes — and fails them at the end, after the work is already spent. The
-// 21,353-row snapshot that died on the last of its 22 statements is the case
-// that has to fit.
 func TestFlushBudgetScalesWithRows(t *testing.T) {
 	floor := 60 * time.Second
 	for _, tc := range []struct {

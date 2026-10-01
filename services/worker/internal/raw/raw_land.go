@@ -1,7 +1,3 @@
-// Package raw lands TDX payloads verbatim into the shared raw_tdx schema and
-// records what was landed. A landing is one transaction: rows and the
-// landing-state marker commit together, so a partition is never half-updated
-// and a later 304 can be trusted against the marker it names (ADR-0005).
 package raw
 
 import (
@@ -24,11 +20,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// DB is the process-wide pool used by the raw_tdx landing path and by
-// dbSince. It is set once in main and read without locking; Dump treats a
-// nil value as a hard error. Tests never reassign this var — they call the
-// *WithDB entry points (DumpWithDB, VerifyAndTouchLandingWithDB,
-// landRawTDXWithDB) with their own pool instead.
 var DB *pgxpool.Pool
 
 // DumpEnabled gates the raw_tdx landing to ROLE=ingestor only, so the default
@@ -45,11 +36,6 @@ func IMSCacheKey(name string) string {
 	return shared.TDXLegacyIMSKey(name)
 }
 
-// dbSince derives an If-Modified-Since value from the latest updated_at of the
-// prod table backing a fetch target, so a cold IMS cache still avoids re-pulling
-// data already in PostgreSQL. It maps the fetch name to a table/partition query;
-// unknown names, a nil pool, or any query error yield "" (fetch everything). Not
-// used in ingestor mode (see SinceFallbackAllowed).
 func dbSince(name string) string {
 	if DB == nil {
 		return ""
@@ -101,10 +87,6 @@ func dbSince(name string) string {
 // raw_tdx would strand the landing table permanently empty.
 func SinceFallbackAllowed() bool { return !DumpEnabled }
 
-// SinceFallback is the shared TDX client's cold-cache If-Modified-Since source:
-// in the legacy prod path it derives the value from the backing table's
-// updated_at (dbSince); in ingestor mode it returns "" so an empty raw_tdx is
-// never masked by a table-derived 304.
 func SinceFallback(name string) string {
 	if SinceFallbackAllowed() {
 		return dbSince(name)
@@ -112,13 +94,6 @@ func SinceFallback(name string) string {
 	return ""
 }
 
-// DumpTarget maps a TDX static endpoint path to its raw_tdx landing table and
-// partition column, resolving through the datasetRegistry reverse index
-// (rawTargetIndex) so it can never drift from the fetch list or whitelist.
-// Real-time / unmapped endpoints (and the intentionally-absent Bus/Stop) return
-// ok=false. The date-partitioned timetable endpoints carry their partition value
-// (traindate) in the URL's last segment so a mid-run partition swap replaces one
-// date rather than TRUNCATE'ing the table.
 func DumpTarget(url string) (Target, bool) {
 	var partVal string
 	seg := strings.Split(strings.Trim(url, "/"), "/")
@@ -144,10 +119,6 @@ func DumpTarget(url string) (Target, bool) {
 		key, partVal = dataset.FamSeg{Family: dataset.FamilyBikeCity, Seg: "Station"}, cityOf()
 	case seg[1] == "Rail" && len(seg) >= 4 && seg[2] == "Metro":
 		key, partVal = dataset.FamSeg{Family: dataset.FamilyMetroSystem, Seg: seg[3]}, seg[len(seg)-1]
-	// Bare /v2/Rail/<Dataset> endpoints carry no TRA/THSR/Metro segment, unlike
-	// every other Rail family below: /v2/Rail/Shape (TRA line shapes) and
-	// /v2/Rail/Operator (all rail operators). The segment itself keys the index,
-	// so a new bare endpoint needs only its registry entry.
 	case seg[1] == "Rail" && len(seg) == 3:
 		key = dataset.FamSeg{Family: dataset.FamilyRailSingle, Seg: seg[2]}
 	case seg[1] == "Rail" && len(seg) >= 4 && (seg[2] == "TRA" || seg[2] == "THSR"):
@@ -167,10 +138,6 @@ func DumpTarget(url string) (Target, bool) {
 	return Target{Table: d.RawTable, PartCol: d.PartCol, PartVal: partVal}, true
 }
 
-// Target names one raw_tdx landing partition. The three fields are all
-// strings and always travel together, so they are grouped: a transposed
-// argument is a compile error here rather than a silent mislanding into the
-// wrong table or partition.
 type Target struct {
 	Table   string
 	PartCol string
@@ -191,20 +158,6 @@ type rawStateQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// ReportStalePartitions logs every landing_state partition whose fetched_at is
-// older than stalePartitionAfter and returns how many it found (FDPL-38).
-//
-// A full ingestor run touches every partition it fetches, 304s included
-// (VerifyAndTouchLanding), so a fetched_at that stops moving means nobody
-// fetches that partition any more: dropped from the feed, removed from the
-// fetch list, or failing every run. Every prune downstream is scoped to the
-// partitions that did load, so those rows would otherwise sit in raw_tdx and in
-// the env schema forever with no alarm behind them.
-//
-// It reports and never deletes: a partition TDX is briefly serving badly must
-// not lose the data it already has. Query failures are logged rather than
-// returned — this is a health signal appended to a run that already did its
-// work, and it must not turn a successful landing into a failed one.
 func ReportStalePartitions(ctx context.Context, db rawStateQuerier) int {
 	if db == nil {
 		return 0
@@ -268,10 +221,6 @@ func ReportStalePartitions(ctx context.Context, db rawStateQuerier) int {
 	return stale
 }
 
-// ErrLandingStateMismatch marks a 304 whose durable landing metadata does
-// not agree with raw_tdx. It is intentionally distinct from database failures:
-// callers may invalidate the endpoint marker and perform one full refetch only
-// for this recoverable state drift, while every database error fails closed.
 var ErrLandingStateMismatch = errors.New("raw landing state mismatch")
 
 type LandingStateMismatchError struct {
@@ -294,11 +243,7 @@ type LandingBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
-// TDXTables is the whitelist of raw_tdx landing tables, derived from the
-// datasetRegistry so it can never drift from the datasets themselves. Table and
-// partition names are interpolated into SQL, so they must come only from this
-// set. It includes the land-only bus_stop and tra_traintype (never fetched, never
-// loaded) whose DDL is kept because the tables may already exist on Azure.
+// SQL identifiers must come from the validated whitelist.
 var TDXTables = buildWhitelist()
 
 func buildWhitelist() map[string]bool {
@@ -309,11 +254,6 @@ func buildWhitelist() map[string]bool {
 	return m
 }
 
-// ValidateTarget guards the raw_tdx landing: it rejects any table not in the
-// rawTDXTables whitelist and any partition column other than "" / "city" /
-// "system" / "traindate". Table and partition names are interpolated into SQL,
-// so this is the injection barrier — never relax it to accept caller-supplied
-// identifiers.
 func ValidateTarget(t Target) error {
 	if !TDXTables[t.Table] {
 		return _oops.With("table", t.Table).Wrapf(errRawDump, "table not whitelisted")
@@ -326,13 +266,7 @@ func ValidateTarget(t Target) error {
 	}
 }
 
-// PartitionWhere builds the partition WHERE clause for a raw_tdx landing
-// table. Callers pass values already cleared by ValidateTarget, so table and
-// partCol are safe to interpolate. thsr_dailytimetable.traindate is timestamptz
-// landed at Taipei midnight (tra_dailytimetable.traindate is plain text), so
-// comparing it to a YYYY-MM-DD string under the services' UTC session matches
-// nothing; select by Taipei calendar date instead so the right partition is
-// found regardless of the session TimeZone.
+// THSR uses Taipei-midnight timestamptz; TRA uses date text independent of the session timezone.
 func PartitionWhere(t Target) string {
 	if t.Table == "thsr_dailytimetable" {
 		return "WHERE (traindate AT TIME ZONE 'Asia/Taipei')::date = $1::date"
@@ -340,15 +274,6 @@ func PartitionWhere(t Target) string {
 	return fmt.Sprintf("WHERE %s = $1", t.PartCol)
 }
 
-// VerifyAndTouchLanding validates a 304 against the durable state committed
-// with the last complete landing. It locks that state row, requires an exact
-// Last-Modified match, and verifies empty/non-empty parity against the raw
-// partition before bumping landing_state.fetched_at and the shared run cycle.
-// It deliberately does not UPDATE every raw row: doing so daily for the largest
-// fare tables would create substantial WAL and table bloat. Exact row_count
-// remains recorded for audit, while the bounded 304 check detects
-// missing/emptied partitions without counting millions of rows; partial-row
-// loss requires a full integrity audit.
 func VerifyAndTouchLanding(ctx context.Context, t Target, marker, landingCycle string) error {
 	if DB == nil {
 		return _oops.Wrapf(errRawDump, "ingestDB is nil")
@@ -454,14 +379,6 @@ func rawDeleteSQL(t Target) string {
 	return fmt.Sprintf("DELETE FROM raw_tdx.%s %s", t.Table, PartitionWhere(t))
 }
 
-// rawInsertSQL lowercases each object's top-level keys (PascalCase TDX → lowercase
-// columns), preserves nested objects/arrays as jsonb, injects context columns, and
-// coerces types by column name. It streams the array element-by-element through a
-// LATERAL jsonb_populate_record rather than materialising one giant lowercased
-// jsonb_agg array and re-parsing it in a single jsonb_populate_recordset — that
-// intermediate is O(payload) memory and was the long pole on the largest table
-// (tra_odfare, ~every station pair): the single-statement build overran the landing
-// deadline. An empty TDX array yields zero elements → a clean 0-row insert.
 func rawInsertSQL(table string) string {
 	return fmt.Sprintf(`INSERT INTO raw_tdx.%s
 SELECT r.* FROM jsonb_array_elements($2::jsonb) elem,
@@ -469,11 +386,6 @@ SELECT r.* FROM jsonb_array_elements($2::jsonb) elem,
     (SELECT jsonb_object_agg(lower(e.k), e.v) FROM jsonb_each(elem) AS e(k,v)) || $1::jsonb) r`, table, table)
 }
 
-// Dump lands a raw TDX JSON array into raw_tdx.<table>. Partitioned tables
-// replace their partition (DELETE WHERE col=val); unpartitioned tables are
-// TRUNCATE'd. A dump failure is an ingestion failure and is returned as an error:
-// the caller must NOT advance the Last-Modified / If-Modified-Since cache unless
-// the dump succeeds, otherwise a later 304 would leave raw_tdx permanently stale.
 func Dump(ctx context.Context, t Target, marker, landingCycle string, body []byte) error {
 	if DB == nil {
 		return _oops.Wrapf(errRawDump, "ingestDB is nil")
@@ -490,10 +402,7 @@ func DumpWithDB(ctx context.Context, db LandingBeginner, t Target, marker, landi
 	return dumpRawTDXReaderWithDB(ctx, db, t, marker, landingCycle, bytes.NewReader(body))
 }
 
-// DumpReader is the streaming landing entrypoint used by the ingestor.
-// body must be seekable because each transient transaction retry consumes it;
-// the reader is rewound before every attempt instead of retaining a second full
-// copy of the payload in memory.
+// A seekable body permits retries without retaining a second payload copy.
 func DumpReader(ctx context.Context, t Target, marker, landingCycle string, body io.ReadSeeker) error {
 	if DB == nil {
 		return _oops.Wrapf(errRawDump, "ingestDB is nil")
@@ -520,9 +429,6 @@ func dumpRawTDXReaderWithDB(
 	if strings.TrimSpace(landingCycle) == "" {
 		return _oops.Wrapf(errRawDump, "landing cycle is empty")
 	}
-	// Archive before landing, because landing is destructive: it replaces the
-	// partition, and TDX cannot re-serve what it replaced. Deliberately not a
-	// gate — a failed archive write is logged and the landing proceeds (ADR-0023).
 	ArchivePayload(ctx, history.Target(), t, marker, landingCycle, body)
 	return obs.Retry(ctx, 3, 2*time.Second, func() error {
 		if _, err := body.Seek(0, io.SeekStart); err != nil {
@@ -532,12 +438,6 @@ func dumpRawTDXReaderWithDB(
 	})
 }
 
-// landRawTDXWithDB runs one raw_tdx landing transaction, bounded by its own
-// timeout so a dead Azure peer cannot block the pgx socket read indefinitely
-// (there is no server statement_timeout, and TCP keepalive is too slow to
-// notice). On timeout pgx cancels the query; Dump retries, and if all
-// attempts fail the caller leaves the IMS cache un-advanced so this partition
-// refetches next run.
 func landRawTDXWithDB(
 	ctx context.Context,
 	db LandingBeginner,
@@ -562,9 +462,7 @@ func landRawTDXWithDB(
 	if err != nil {
 		return _oops.Wrapf(err, "begin")
 	}
-	// Roll back on a context independent of ctx: if this attempt was cancelled by
-	// the deadline above, a Rollback(ctx) would be a no-op and the TRUNCATE/DELETE's
-	// lock would linger, blocking the next retry's TRUNCATE until its own deadline.
+	// Rollback must outlive request cancellation to release the transaction.
 	defer func() {
 		rbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -616,20 +514,8 @@ func landRawTDXWithDB(
 	return nil
 }
 
-// _rawChunkBytes bounds the JSON slice bound to one INSERT during a raw_tdx
-// landing. The server parses each jsonb bind parameter in backend-private
-// memory (not bounded by work_mem), so binding a whole payload in one
-// statement scales server memory with payload size — which OOM-crashed the
-// 2GB B1ms Azure server. 4MB keeps per-statement parse memory trivial.
 const _rawChunkBytes = 4 << 20
 
-// insertRawChunks streams the landed JSON array into raw_tdx.<table> in
-// rawChunkBytes slices via exec (one INSERT per slice, all inside the caller's
-// transaction), so server-side parse memory is bounded by the chunk size
-// rather than the payload. An element larger than rawChunkBytes still lands as
-// its own single-element chunk. An empty array issues one 0-row insert,
-// matching the previous single-statement behavior; a non-array payload is an
-// error, as it was under jsonb_array_elements.
 func insertRawChunks(ctx context.Context, exec func(context.Context, string, ...any) (int64, error), table, inject string, body io.Reader) (int64, error) {
 	dec := json.NewDecoder(body)
 	// Split rather than folded into one condition: a well-formed token that is

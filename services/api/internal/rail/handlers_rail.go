@@ -43,10 +43,6 @@ func stationBoardLimit(requested int32) int {
 	}
 }
 
-// departuresAfter keeps the departures at or after the `HH:mm:ss` bound, which
-// compares chronologically as a string because the field is zero-padded. An
-// empty bound keeps the whole day. It always returns a fresh slice: the input
-// is usually the cached day, and the caller appends to the result.
 func departuresAfter[T interface{ GetDepartureTime() string }](items []T, after string) []T {
 	out := make([]T, 0, len(items))
 	for _, item := range items {
@@ -57,10 +53,6 @@ func departuresAfter[T interface{ GetDepartureTime() string }](items []T, after 
 	return out
 }
 
-// stationBoardWindow cuts the rider's window out of one service day, reaching
-// for nextDay only when that day runs out before the limit — at 23:50 the two
-// departures left are not an answer. A nextDay that fails is reported but not
-// fatal: a short board beats an error the rider cannot act on.
 func stationBoardWindow[T interface{ GetDepartureTime() string }](
 	day []T,
 	after string,
@@ -94,14 +86,6 @@ const (
 	_railFareTTL = 8 * time.Hour
 )
 
-// railCacheStation normalises a station identifier for cache-key use. Callers
-// pass whatever the app sent — a numeric id or a name in either spelling — and
-// resolveRailStationID already treats 臺 and 台 as one station in SQL, so
-// without this the same station mints one cache entry per spelling.
-//
-// A name and its numeric id still key separately. Collapsing those would mean
-// resolving before the cache read, i.e. paying two DB round trips on every hit
-// to save an entry; the extra entry is cheaper.
 func railCacheStation(s string) string {
 	return strings.ReplaceAll(strings.TrimSpace(s), "臺", "台")
 }
@@ -113,22 +97,6 @@ func railCacheDate(s string) string {
 	return parseRailDate(s).Format(time.DateOnly)
 }
 
-// railRead serves one cached rail payload, falling back to the loaded env schema
-// on a miss. It owns the shape every rail read repeats: probe Redis, load on a
-// miss, refuse to cache an empty result, write with the dataset's TTL, and treat
-// a failed cache write as a log line rather than a failed request.
-//
-// An empty result is reported as nil bytes with a nil error, not as an error,
-// because the two callers disagree about what it means: the fare, timetable and
-// stop-time handlers turn it into NotFound (ADR-0005), while the station board
-// tolerates it, since an empty next service day is a normal answer for its
-// top-up. Empty results are never cached — a negative entry would keep serving
-// nothing for a whole TTL after the loader lands the date.
-//
-// The cached value is opaque bytes. A corrupt entry therefore surfaces as a
-// decode error at the caller rather than being silently reloaded; Redis holds
-// only what this process marshalled, so the reload was defending against a case
-// that cannot arise, and one policy across all eight reads is worth more.
 func railRead(
 	ctx context.Context,
 	rc *redis.Client,
@@ -152,12 +120,6 @@ func railRead(
 	return b, nil
 }
 
-// traStationBoardDay serves one station/date/direction board from Redis,
-// falling back to the loaded env schema on a miss. The cache holds the whole
-// service day, so riders arriving at the station a minute apart share one
-// entry and the window is cut per request. An empty day is not cached: it
-// usually means the date has not landed yet, and a 1h negative entry would
-// keep serving nothing for an hour after the loader fixes that.
 func (s *TraTimetableServer) traStationBoardDay(ctx context.Context, station string, day time.Time, direction int32) ([]*pb.TraStationDeparture, error) {
 	key := fmt.Sprintf("TRA_StationBoard:%s:%s:%d", day.Format(time.DateOnly), railCacheStation(station), direction)
 	b, err := railRead(ctx, s.rc, "tra_station_board", key, _railDayTTL, func(ctx context.Context) ([]byte, int, error) {
@@ -178,11 +140,6 @@ func (s *TraTimetableServer) traStationBoardDay(ctx context.Context, station str
 	return board.Items, nil
 }
 
-// StationBoard returns the next departures from one TRA station in one
-// direction. When the requested day is nearly out of trains it tops the list up
-// from the next service date: at 23:50 the two departures left are not an
-// answer. Every row carries its own TrainDate, so the app can tell the days
-// apart. An empty result is NotFound (ADR-0005); it never fetches from TDX.
 func (s *TraTimetableServer) StationBoard(ctx context.Context, in *pb.AskStationBoard) (*pb.TraStationBoard, error) {
 	zap.S().Infow("call",
 		"component", "grpc",
@@ -298,10 +255,6 @@ func (s *ThsrServer) StationBoard(ctx context.Context, in *pb.ThsrAskStationBoar
 	return &pb.ThsrStationBoard{Items: items}, nil
 }
 
-// traFare serves a TRA fare from Redis, falling back to the loaded env schema on
-// a cache miss. Per ADR-0005 the router no longer fetches from TDX: if the loaded
-// tables have no rows for the request (e.g. a date beyond the landed window), it
-// returns codes.NotFound rather than triggering a fetch.
 func (s *TraTimetableServer) traFare(ctx context.Context, in *pb.AskRoute) (*pb.Resp_Data, error) {
 	zap.S().Infow("call",
 		"component", "grpc",
@@ -327,9 +280,6 @@ func (s *TraTimetableServer) traFare(ctx context.Context, in *pb.AskRoute) (*pb.
 	return &pb.Resp_Data{Data: b}, nil
 }
 
-// thsrFare serves a THSR fare from Redis, falling back to the loaded env schema
-// on a cache miss. Per ADR-0005 the router no longer fetches from TDX: an empty
-// result returns codes.NotFound.
 func (s *ThsrServer) thsrFare(ctx context.Context, in *pb.AskRoute) (*pb.Resp_Data, error) {
 	zap.S().Infow("call",
 		"component", "grpc",
@@ -364,9 +314,6 @@ func (s *ThsrServer) thsrFare(ctx context.Context, in *pb.AskRoute) (*pb.Resp_Da
 	return &pb.Resp_Data{Data: b}, nil
 }
 
-// traTimetable serves a TRA origin/destination timetable from Redis, falling back
-// to the loaded env schema on a cache miss. Per ADR-0005 the router no longer
-// fetches from TDX: an empty result returns codes.NotFound.
 func (s *TraTimetableServer) traTimetable(ctx context.Context, in *pb.AskRoute) (*pb.Resp_Data, error) {
 	zap.S().Infow("call",
 		"component", "grpc",
@@ -395,9 +342,6 @@ func (s *TraTimetableServer) traTimetable(ctx context.Context, in *pb.AskRoute) 
 	return &pb.Resp_Data{Data: b}, nil
 }
 
-// thsrTimetable serves a THSR origin/destination timetable from Redis, falling
-// back to the loaded env schema on a cache miss. Per ADR-0005 the router no
-// longer fetches from TDX: an empty result returns codes.NotFound.
 func (s *ThsrServer) thsrTimetable(ctx context.Context, in *pb.AskRoute) (*pb.Resp_Data, error) {
 	zap.S().Infow("call",
 		"component", "grpc",
@@ -426,9 +370,6 @@ func (s *ThsrServer) thsrTimetable(ctx context.Context, in *pb.AskRoute) (*pb.Re
 	return &pb.Resp_Data{Data: b}, nil
 }
 
-// traStops serves a TRA train's stop times from Redis, falling back to the loaded
-// env schema on a cache miss. Per ADR-0005 the router no longer fetches from TDX:
-// an empty result returns codes.NotFound.
 func (s *TraDetainServer) traStops(ctx context.Context, in *pb.AskDetain) (*pb.Resp_Data, error) {
 	zap.S().Infow("call", "component", "grpc", "action", "tra_stops", "event", "call", "train", in.Trainno)
 	date := railCacheDate(in.Date)
@@ -451,9 +392,6 @@ func (s *TraDetainServer) traStops(ctx context.Context, in *pb.AskDetain) (*pb.R
 	return &pb.Resp_Data{Data: b}, nil
 }
 
-// thsrStops serves a THSR train's stop times from Redis, falling back to the
-// loaded env schema on a cache miss. Per ADR-0005 the router no longer fetches
-// from TDX: an empty result returns codes.NotFound.
 func (s *ThsrDetainServer) thsrStops(ctx context.Context, in *pb.ThsrAskDetain) (*pb.Resp_Data, error) {
 	zap.S().Infow("call", "component", "grpc", "action", "thsr_stops", "event", "call", "train", in.Trainno)
 	date := railCacheDate(in.Date)

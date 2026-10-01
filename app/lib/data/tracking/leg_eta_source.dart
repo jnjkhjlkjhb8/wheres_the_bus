@@ -35,12 +35,6 @@ Stream<Duration?> defaultLegEtaStream(JourneyLeg leg) {
       return null;
     });
   }
-  // Synthetic identities from the in-app 追蹤 toggle (bus route screen) carry
-  // the subroute uid in routeKey and the boarding stop uid in
-  // departureStopKey; live ETA comes from the same stream the route screen
-  // renders. stopStatus semantics follow eta_format.dart: only a live bus at
-  // zero reads as arriving, positive seconds read as a countdown, everything
-  // else is "no estimate".
   if (leg.kind == JourneyLegKind.bus &&
       leg.identity.routeKey.isNotEmpty &&
       stopKey.isNotEmpty) {
@@ -79,11 +73,6 @@ Stream<Duration?> scheduledCountdown(
   yield* Stream.periodic(tick, (_) => remaining());
 }
 
-/// Train progress toward the alight stop (`schedule.last`) at [now], given the
-/// current live [delay]. `schedule` is board→alight inclusive, length >= 1.
-/// Everything the Live Activity needs for a rail track session comes from here:
-/// the remaining-stop count, the arrival ETA, the continuous progress fraction
-/// (inferred from the timetable + clock), and the true next-stop name.
 ({
   int remainingStops,
   Duration etaToAlight,
@@ -122,10 +111,6 @@ railProgress(List<RailStopSchedule> schedule, Duration delay, DateTime now) {
   // The stop the train is heading to (the alight once it's the last hop).
   final nextIdx = passed >= n ? n - 1 : (passed == 0 ? 0 : passed);
 
-  // Nothing has passed yet, so the train has not reached the stop the rider is
-  // standing at: they are waiting on the platform, not riding. The card has to
-  // say so — counting 還剩 N 站 at someone who has not boarded is a lie about
-  // where they are, and the number would not move for the whole wait.
   final aboard = passed > 0;
   final toBoardRaw = eff(0).difference(now);
 
@@ -156,11 +141,6 @@ typedef RailTrackFrame = ({
 
 typedef RailTrackStream = Stream<RailTrackFrame> Function(JourneyLeg leg);
 
-/// Live tracking frames for a rail trackOnly leg: re-derives [railProgress]
-/// from the leg's carried schedule on each 30 s tick and on every fresh TRA
-/// delay frame. THSR has no live delay, so it holds delay at zero and updates
-/// on the clock alone. Survives the rail screen being disposed — everything it
-/// needs lives on [leg].
 Stream<RailTrackFrame> defaultRailTrackStream(
   JourneyLeg leg, {
   Stream<Duration>? delaySource,

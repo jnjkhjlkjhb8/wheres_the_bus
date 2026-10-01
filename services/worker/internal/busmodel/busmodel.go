@@ -1,8 +1,3 @@
-// Package busmodel holds the TDX bus row shapes, the city tables the whole
-// ingestion pipeline decodes into, and the canonical stop-pattern query the
-// GTFS export and the predictor both build on. It performs no writes, so the
-// loader, the live ETA job, the GTFS export, and the history recorder can all
-// name the same shapes without depending on each other.
 package busmodel
 
 import (
@@ -138,10 +133,6 @@ type RawSchedule struct {
 	} `json:"Frequencys"`
 }
 
-// RawEstimated decodes a TDX Bus/EstimatedTimeOfArrival element: the live ETA
-// for one plate at one stop. EstimatedTime is seconds; StopStatus 0 means a bus
-// is en route; an empty NextBusTime with StopStatus 1 is the gap that ETA
-// prediction fills. The type name's misspelling is retained to match existing code.
 type RawEstimated struct {
 	PlateNumb string `json:"PlateNumb"`
 	StopUID   string `json:"StopUID"`
@@ -157,25 +148,9 @@ type RawEstimated struct {
 	NextBusTime   string `json:"NextBusTime"`
 	StopStatus    uint8  `json:"StopStatus"`
 	SrcUpdateTime string `json:"SrcUpdateTime"`
-	// IsLastBus is 1 only once the source has seen the route's last bus running.
-	// It is 0 both after that bus has gone and when no estimate was ever computed
-	// (no vehicle reporting at all), so on its own it cannot say 末班車已過 — TDX
-	// asks consumers to show 末班資訊 for the ambiguous case.
-	IsLastBus uint8 `json:"IsLastBus"`
-	// DataTime is when the source computed this estimate; SrcUpdateTime and
-	// SrcTransTime are when it published the batch that carried it. Which of the
-	// two publish stamps arrives depends on the city: measured 2026-08-09,
-	// Taoyuan and New Taipei send only SrcUpdateTime, 公總 and the counties it
-	// manages (InterCity, Keelung) send only SrcTransTime, and Tainan sends both.
-	// etaSourceTime picks whichever is there, so a feed without SrcUpdateTime is
-	// still aged rather than published at whatever age it arrived with.
-	//
-	// TDX stops recomputing an estimate once it counts down below 60 seconds, so
-	// DataTime falls behind the publish stamp while a bus is arriving late;
-	// countFrozenEstimates measures how often, which is what decides whether
-	// adjustedEstimate may keep ageing such an entry (FDPL-79).
-	DataTime     string `json:"DataTime"`
-	SrcTransTime string `json:"SrcTransTime"`
+	IsLastBus     uint8  `json:"IsLastBus"`
+	DataTime      string `json:"DataTime"`
+	SrcTransTime  string `json:"SrcTransTime"`
 }
 
 // RawPosition decodes a TDX Bus/RealTimeByFrequency element: a bus's live GPS
@@ -189,12 +164,6 @@ type RawPosition struct {
 		PositionLon float64 `json:"PositionLon"`
 		PositionLat float64 `json:"PositionLat"`
 	} `json:"BusPosition"`
-	// Azimuth is float64 for the same reason Speed is: TDX sends a fractional
-	// bearing on some vehicles — 10% of Tainan's, e.g. 40.993683 — and decoding
-	// that into an int fails the element, which aborts the whole city's tick
-	// before any ETA is matched or any history row is written. Tainan recorded
-	// nothing between 2026-07-13 and 07-31 for exactly this reason, surviving only
-	// in the small hours when no vehicle was reporting a fractional bearing.
 	Azimuth    float64 `json:"Azimuth"`
 	Speed      float64 `json:"Speed"`
 	DutyStatus uint8   `json:"DutyStatus"`
@@ -209,23 +178,19 @@ type RawPosition struct {
 // StationMap is one stop of one subroute joined to its station group and
 // coordinates, as loaded by busstaticmp and consumed by the bus ETA builder.
 type StationMap struct {
-	StationUID   string
-	StationName  string
-	GroupUID     string
-	GroupName    string
-	SubRouteUID  string
-	RouteUID     string
-	SubRouteName string
-	Destination  string
-	Direction    uint8
-	StopUID      string
-	StopSequence uint8
-	Lat          float64
-	Lon          float64
-	// Other operators' StopUIDs for this same stop on a co-operated route, empty
-	// for every stop only one operator runs. TDX keys an N1 estimate on the
-	// StopID of the operator running that trip, so the ETA join has to try these
-	// before deciding a stop has no reading.
+	StationUID    string
+	StationName   string
+	GroupUID      string
+	GroupName     string
+	SubRouteUID   string
+	RouteUID      string
+	SubRouteName  string
+	Destination   string
+	Direction     uint8
+	StopUID       string
+	StopSequence  uint8
+	Lat           float64
+	Lon           float64
 	AliasStopUIDs []string
 }
 
@@ -271,16 +236,6 @@ var Cities = []string{
 	"YilanCounty", "HualienCounty", "TaitungCounty", "PenghuCounty", "KinmenCounty", "LienchiangCounty", "Keelung",
 }
 
-// CityPrefix maps a TDX city code to its short prefix used in UID construction and
-// as the authority_code for operators. Every entry in cities must have a key
-// here: readBusCitySnapshot rejects an unmapped city before the writer can turn
-// its partition-replacement prefix into the destructive pattern "%".
-// The prefixes themselves live in shared, because the router resolves the same
-// mapping to attribute a live subscription to a city and a second copy of the
-// table is the silent-mismatch bug shared/keys.go exists to prevent. These two
-// stay as package-local maps derived from it rather than aliases: they are read
-// by index at a few dozen call sites, and one loader test shadows an entry —
-// aliasing would let that write reach the shared contract and every reader of it.
 var CityPrefix = func() map[string]string {
 	out := make(map[string]string, len(Cities))
 	for _, city := range Cities {

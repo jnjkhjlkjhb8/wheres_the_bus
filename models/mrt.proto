@@ -2,14 +2,9 @@ syntax = "proto3";
 option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 service Mrt_Service{
   rpc eta(Ask_mrt) returns (stream Resp_Mrt_eta) {}
-  // Metro alight reminder (捷運下車提醒, ADR-0015): a car-bound tracking session.
-  // CreateTrack resolves the car to a trip and returns the initial live state;
-  // WatchTrack streams the evolving state; CancelTrack ends the session.
   rpc CreateTrack(CreateMrtTrackRequest) returns (MrtTrackState) {}
   rpc WatchTrack(WatchMrtTrackRequest) returns (stream MrtTrackState) {}
   rpc CancelTrack(CancelMrtTrackRequest) returns (MrtTrackAck) {}
-  // SetTrackPushToken hands up the iOS ActivityKit push token for a session's
-  // card, so the tracker can refresh it while the app is suspended (ADR-0018).
   rpc SetTrackPushToken(SetMrtTrackPushTokenRequest) returns (MrtTrackAck) {}
 }
 // Wire-compatible with the former `bytes data = 1`: field 1 still carries a
@@ -45,11 +40,6 @@ message CartWeight {
   string Cart5L = 5;
   string Cart6L = 6;
 }
-// CreateMrtTrackRequest opens a metro alight-reminder session. The app always
-// sends a full car_id (derived from the boarded arrival's paired congestion CN1
-// or typed by the rider); the backend does no prefix probing. dest_station_id is
-// the train's terminal (from the tapped arrival row); target_station_id is the
-// alight station; lead_stops is the 提前站數 lead. system is fixed "TRTC".
 message CreateMrtTrackRequest {
   string install_id = 1;
   string car_id = 2;
@@ -58,11 +48,6 @@ message CreateMrtTrackRequest {
   string target_station_id = 5;
   int32 lead_stops = 6;
   string system = 7;
-  // How the card names this ride, and the line's identity as data. The server
-  // cannot derive these: vehicle_label is a localized line name (板南線) and
-  // line_color_hex lives in a client colour table. They are carried once at
-  // create so a server-pushed refresh (ADR-0018) can echo them into a card the
-  // app is not awake to fill in.
   string vehicle_label = 8;
   string line_code = 9;
   string line_color_hex = 10;
@@ -77,12 +62,6 @@ message CancelMrtTrackRequest {
 message MrtTrackAck {
   bool ok = 1;
 }
-// MrtTrackState is both the CreateTrack response and each WatchTrack stream item.
-// path_station_ids/path_station_names run board→terminal; current_index is the
-// last station the train has passed (0 = at board), target_index is the alight
-// station's position, remaining_stops = target_index − current_index. status is
-// one of tracking / lead_fired / arrived / lost / stale / cancelled.
-// next_poll_at_unix is an internal scheduling field, harmless to expose.
 message MrtTrackState {
   string track_id = 1;
   string trip_id = 2;
@@ -102,19 +81,11 @@ message MrtTrackState {
   // Internal: when the position last advanced. The tracker ends a session as
   // stale when no advance lands within the stale window. Harmless to expose.
   int64 last_progress_at_unix = 16;
-  // Carried from CreateMrtTrackRequest so a pushed card refresh can be built
-  // server-side (ADR-0018). Echoed back on the watch stream too, which is
-  // harmless — the app already knows them.
   string vehicle_label = 17;
   string line_code = 18;
   string line_color_hex = 19;
 }
 
-// SetMrtTrackPushTokenRequest carries the ActivityKit push token of the card
-// showing this session. The token is per-activity and dies with the card, so it
-// is stored beside the session state rather than on the device row — nothing to
-// clear when tracking ends. An empty token clears it (Android never sends one:
-// its push rides the device's FCM token).
 message SetMrtTrackPushTokenRequest {
   string install_id = 1;
   string track_id = 2;

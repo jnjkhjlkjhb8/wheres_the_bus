@@ -3,11 +3,6 @@ option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 
 service MaasService {
   rpc plan(MaasPlanRequest) returns (MaasPlanResponse) {}
-  // Same query as plan, delivered in stages: the routes land as soon as TDX
-  // and the fare/notification lookups resolve, and a second message follows
-  // with the map geometry (walkPath / transitPath) filled in. The first
-  // message is already usable — the app falls back to straight lines for a
-  // section whose path is empty.
   rpc planStream(MaasPlanRequest) returns (stream MaasPlanUpdate) {}
 }
 
@@ -36,10 +31,6 @@ message MaasPlanRequest {
   int32  lastMileMode     = 15;  // 0 walk,1 bike,2 car,3 shared-bike
   int32  lastMileTime     = 16;  // last-mile max minutes (default 10)
 
-  // Fields 17+ are honoured only by the MOTIS planner (ADR-0022). TDX MaaS has
-  // no equivalent for any of them, so the app asks GET /api/planner which
-  // backend is live and offers the matching controls rather than shipping
-  // options that silently do nothing. An older app simply leaves them unset.
 
   // Step-free routing for every walking segment. Set in Settings rather than
   // per trip: needing it is a fact about the rider, not about one journey.
@@ -48,10 +39,6 @@ message MaasPlanRequest {
   // because the UI offers a few discrete paces, and a float on the wire would
   // invite rounding differences between two clients that picked "slow".
   int32  walkSpeedCmPerSec = 18;
-  // Maximum interchanges. `optional` because 0 is a meaningful answer here --
-  // it means direct connections only -- so absence and zero have to stay
-  // distinguishable. Every other numeric field above can use 0 for "unset"
-  // because zero is not a request anyone makes of them.
   optional int32 maxTransfers = 19;
   // Exclude legs that require a seat reservation. TRA's 對號 services are what
   // this is for: bookable, and useless to a rider who wants to board now.
@@ -105,23 +92,7 @@ message Section {
   // Turn-by-turn walk steps for a walk section. Empty under the same
   // conditions as walkPath.
   repeated WalkStep walkSteps = 11;
-  // Rail-line geometry clipped to this section's stops (metro/TRA/THSR only;
-  // bus is out of scope). Empty when the section is not a rail leg, or the
-  // router could not snap the stops to a known line geometry — the app then
-  // falls back to a straight departure→intermediateStops→arrival line.
   repeated Location transitPath = 12;
-  // Other services that can replace this transit leg, populated only when the
-  // request asked for them (legAlternatives > 0) and the planner is MOTIS.
-  //
-  // Self-referential because an alternative *is* a transit leg, and reusing
-  // Section is what lets the bus notification-identity lookup resolve one the
-  // same way it resolves the leg it replaces — which is what makes an
-  // alternative tappable through to the route screen. Only `transport`,
-  // `departure`, `arrival` and `notification_identity` are ever set on one:
-  // MOTIS frames each alternative as [walk, transit, walk], and the two walks
-  // are the context it used to prove the swap fits, not something the rider
-  // chooses. Alternatives never nest — this field is always empty on a
-  // Section that is itself an alternative.
   repeated Section alternatives = 13;
 }
 

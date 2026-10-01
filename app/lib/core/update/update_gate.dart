@@ -5,43 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/firebase/remote_config.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/core/update/update_status.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-/// The version a soft nudge is currently offering, or null when there is
-/// nothing to nudge about (up to date, blocked, already dismissed, or the
-/// check hasn't resolved yet).
-///
-/// Published by [UpdateGate] rather than computed by the rail, so the whole
-/// app runs one version check: the blocking screen and the nudge can never
-/// disagree about which build is installed. `NoticeRailHost` renders it as a
-/// condition strip; see [dismissUpdateNudge] for how it is cleared.
 final availableUpdate = ValueNotifier<String?>(null);
 
-/// Silences the nudge for [version]. Persisted, so it stays silenced across
-/// launches — but only for that version: publishing a newer one nudges again.
-///
-/// Deliberately not a timer. The rider has exactly two states here, "I know"
-/// and "there's something newer than what I dismissed"; a "remind me in three
-/// days" tier would be a third state nobody asked for.
-Future<void> dismissUpdateNudge(String version) async {
-  availableUpdate.value = null;
-  await HiveStore.setDismissedUpdateVersion(version);
-}
-
-/// Owns the app's single update check.
-///
-/// Renders [child] normally, but swaps in a blocking [_ForceUpdateScreen] when
-/// the running version is below `min_supported_version`; when the running
-/// version merely trails `latest_version`, it publishes [availableUpdate] for
-/// the notice rail to pick up instead. The check runs on mount and again on
-/// every activated Remote Config revision (F16), so a bar raised — or a
-/// release published — after launch takes effect without a relaunch.
-///
-/// While a check is pending the child shows (never a blank flash) since the
-/// common case is up-to-date.
 class UpdateGate extends StatefulWidget {
   const UpdateGate({
     required this.child,
@@ -50,6 +21,7 @@ class UpdateGate extends StatefulWidget {
     this.minVersionOf,
     this.latestVersionOf,
     this.dismissedVersionOf,
+    this.maintenanceOf,
   });
 
   final Widget child;
@@ -67,12 +39,16 @@ class UpdateGate extends StatefulWidget {
   /// Injectable for tests; defaults to the persisted dismissal.
   final String? Function()? dismissedVersionOf;
 
+  /// Injectable for tests; defaults to reading the maintenance keys.
+  final ({bool enabled, String message}) Function()? maintenanceOf;
+
   @override
   State<UpdateGate> createState() => _UpdateGateState();
 }
 
 class _UpdateGateState extends State<UpdateGate> {
   String? _blockedAt;
+  String? _maintenance;
   StreamSubscription<void>? _revisionSub;
 
   String get _minVersion =>
@@ -84,6 +60,13 @@ class _UpdateGateState extends State<UpdateGate> {
 
   String? get _dismissedVersion =>
       (widget.dismissedVersionOf ?? () => HiveStore.dismissedUpdateVersion)();
+
+  ({bool enabled, String message}) get _maintenanceConfig =>
+      (widget.maintenanceOf ??
+      () => (
+        enabled: AppConfig.getBool('maintenance_banner_enabled'),
+        message: AppConfig.getString('maintenance_banner_text'),
+      ))();
 
   @override
   void initState() {
@@ -102,8 +85,12 @@ class _UpdateGateState extends State<UpdateGate> {
 
   Future<void> _check() async {
     try {
+      final maintenance = _maintenanceConfig;
       final info = await PackageInfo.fromPlatform();
       if (!mounted) return;
+      setState(
+        () => _maintenance = maintenance.enabled ? maintenance.message : null,
+      );
       final latest = _latestVersion;
       switch (resolveUpdateStatus(
         current: info.version,
@@ -126,19 +113,99 @@ class _UpdateGateState extends State<UpdateGate> {
   }
 
   @override
-  Widget build(BuildContext context) => _blockedAt == null
-      ? widget.child
-      : _ForceUpdateScreen(currentVersion: _blockedAt!);
+  Widget build(BuildContext context) {
+    final maintenance = _maintenance;
+    if (maintenance != null) return _MaintenanceScreen(message: maintenance);
+    final blocked = _blockedAt;
+    return blocked == null ? widget.child : _ForceUpdateScreen(blocked);
+  }
+}
+
+class _BlockingScreen extends StatelessWidget {
+  const _BlockingScreen({
+    required this.icon,
+    required this.title,
+    required this.body,
+    this.detail,
+    this.footer,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+
+  /// Mono line under the body — versions and other figures. Null when there
+  /// is no figure to state.
+  final String? detail;
+
+  /// Pinned to the bottom. Null for a dead end with nothing to do, which is
+  /// what a maintenance window is: waiting is the only move.
+  final Widget? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final detailLine = detail;
+
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(AppTheme.space24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Spacer(flex: 2),
+                Icon(icon, size: 32, color: cs.onSurfaceVariant),
+                const SizedBox(height: AppTheme.space24),
+                Text(title, style: AppTextStyles.heading1),
+                const SizedBox(height: AppTheme.space12),
+                Text(
+                  body,
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    color: cs.onSurfaceVariant,
+                    height: 1.5,
+                  ),
+                ),
+                if (detailLine != null) ...[
+                  const SizedBox(height: AppTheme.space20),
+                  // Versions are data, so they render in mono like every other
+                  // figure in the app.
+                  Text(
+                    detailLine,
+                    style: AppTextStyles.memo.copyWith(color: cs.outline),
+                  ),
+                ],
+                const Spacer(flex: 3),
+                ?footer,
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MaintenanceScreen extends StatelessWidget {
+  const _MaintenanceScreen({required this.message});
+
+  /// Ops-authored copy from Remote Config. Empty when ops opened the window
+  /// without writing anything, which the fallback covers.
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => _BlockingScreen(
+    icon: Icons.build_rounded,
+    title: AppI18n.of(context).maintenanceTitle,
+    body: message.isEmpty ? AppI18n.of(context).maintenanceBody : message,
+  );
 }
 
 /// Blocking interstitial for an unsupported build.
-///
-/// Content sits in the upper third and the action is pinned to the bottom, so
-/// the only thing to do is reachable one-handed. Left-aligned rather than
-/// centred: the body copy runs to two lines in Chinese, and a centred ragged
-/// block is harder to scan than a flush one.
 class _ForceUpdateScreen extends StatelessWidget {
-  const _ForceUpdateScreen({required this.currentVersion});
+  const _ForceUpdateScreen(this.currentVersion);
 
   final String currentVersion;
 
@@ -151,67 +218,28 @@ class _ForceUpdateScreen extends StatelessWidget {
     // of a button that silently no-ops on tap.
     final url = storeUrl();
 
-    return PopScope(
-      canPop: false,
-      child: Scaffold(
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Spacer(flex: 2),
-                Icon(
-                  Icons.system_update_rounded,
-                  size: 32,
-                  color: cs.onSurfaceVariant,
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  AppI18n.of(context).updateRequiredTitle,
-                  style: AppTextStyles.heading1,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  AppI18n.of(context).updateRequiredBody,
-                  style: AppTextStyles.bodyLarge.copyWith(
-                    color: cs.onSurfaceVariant,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // Versions are data, so they render in mono like every other
-                // figure in the app.
-                Text(
-                  AppI18n.of(
-                    context,
-                  ).updateVersionLine(currentVersion, minVersion),
-                  style: AppTextStyles.memo.copyWith(color: cs.outline),
-                ),
-                const Spacer(flex: 3),
-                if (url != null)
-                  FilledButton(
-                    onPressed: () =>
-                        launchUrl(url, mode: LaunchMode.externalApplication),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 50),
-                    ),
-                    child: Text(AppI18n.of(context).settingsUpdateGo),
-                  )
-                else
-                  Text(
-                    Platform.isIOS
-                        ? AppI18n.of(context).updateStoreHintIos
-                        : AppI18n.of(context).updateStoreHintAndroid,
-                    style: AppTextStyles.bodyRegular.copyWith(
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-              ],
+    return _BlockingScreen(
+      icon: Icons.system_update_rounded,
+      title: AppI18n.of(context).updateRequiredTitle,
+      body: AppI18n.of(context).updateRequiredBody,
+      detail: AppI18n.of(context).updateVersionLine(currentVersion, minVersion),
+      footer: url != null
+          ? FilledButton(
+              onPressed: () =>
+                  launchUrl(url, mode: LaunchMode.externalApplication),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+              ),
+              child: Text(AppI18n.of(context).settingsUpdateGo),
+            )
+          : Text(
+              Platform.isIOS
+                  ? AppI18n.of(context).updateStoreHintIos
+                  : AppI18n.of(context).updateStoreHintAndroid,
+              style: AppTextStyles.bodyRegular.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
             ),
-          ),
-        ),
-      ),
     );
   }
 }

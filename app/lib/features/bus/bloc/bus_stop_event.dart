@@ -24,10 +24,6 @@ class BusStopArrivalsUpdated extends BusStopEvent {
   });
   final List<BusStopArrival> arrivals;
 
-  /// Which kind of feed emission produced this list — `source` for a fresh
-  /// network frame, `decay` for a local countdown re-emission between frames.
-  /// Only `source` frames may refresh network-freshness timestamps or clear
-  /// an offline error (F29, F30).
   final ArrivalFeedEmissionKind kind;
   @override
   List<Object?> get props => [arrivals, kind];

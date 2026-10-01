@@ -410,8 +410,6 @@ func TestNearestBusSkipsOutOfService(t *testing.T) {
 	})
 }
 
-// The measurement behind FDPL-79: an estimate the source stopped recomputing
-// shows up as SrcUpdateTime running ahead of DataTime.
 func TestCountFrozenEstimates(t *testing.T) {
 	stamp := func(t time.Time) string { return t.Format(time.RFC3339) }
 	base := time.Date(2026, 7, 10, 8, 0, 0, 0, pipeline.Taipei)

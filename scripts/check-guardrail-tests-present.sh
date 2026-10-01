@@ -1,22 +1,4 @@
 #!/usr/bin/env bash
-# check-guardrail-tests-present.sh
-#
-# The substantive fault-injection, cancellation/overlap, and authenticated-
-# metrics tests live with their subsystems (added by earlier remediation
-# tasks). This check only asserts they have not silently vanished: each
-# named test file must still exist AND its anchor tests must still be
-# selected by `go test -run` (a deleted or renamed test would report
-# "no tests to run" / build failure here long before anyone notices the
-# coverage gap). It deliberately does not re-run the full suites.
-#
-# DB-dependent anchors skip themselves when DATABASE_URL is unset — a skip
-# still proves the test exists, compiles, and is wired into the suite.
-#
-# Accessibility text-scale/semantics matrix: no such Flutter test exists in
-# app/test yet; the gate for it lands with the Flutter accessibility task.
-# Tracked here as a WARN so the gap stays visible without failing builds.
-#
-# Requires generated protobuf stubs (run via `make verify`, after proto-go).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

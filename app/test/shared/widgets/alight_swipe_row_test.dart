@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_swipe_row.dart';
 
-/// The 下車提醒 entry gesture (ADR-0020): swiping a vehicle row right opens the
-/// flow, and the row stays exactly where it was.
 void main() {
   Widget host({required VoidCallback onSwiped}) => MaterialApp(
     home: Scaffold(

@@ -1,11 +1,6 @@
 import 'package:equatable/equatable.dart';
 import 'package:wheres_the_bus/data/tracking/journey_models.dart';
 
-/// View model driving the in-app tracked-bus state and, in Phase 4, the
-/// native Live Activity payload. Per ADR-0007 a MaaS `riding` leg maps to
-/// the same card shape as a directly pinned vehicle — [plate] is the only
-/// field that distinguishes the two ([TrackCard.fromRidingLeg] leaves it
-/// null since a riding leg has no pinned vehicle).
 class TrackCard extends Equatable {
   const TrackCard({
     required this.routeLabel,
@@ -36,8 +31,6 @@ class TrackCard extends Equatable {
     );
   }
 
-  /// Standalone pinned-vehicle card (fed by Task 5/6 once a vehicle is
-  /// matched off the ETA stream).
   const TrackCard.pinned({
     required this.routeLabel,
     required String this.plate,

@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# check-env-allowlist.sh
-#
-# tracked example env file through scripts/render-env.sh and asserts every
-# resulting per-service env file contains only KEY=value lines whose KEY is
-# listed in that service's scripts/env-allowlists/<service>.txt. This is what
-# actually catches a mis-scoped allowlist edit (a var added to the wrong
-# service's allowlist file) or a render-env.sh regression that stops
-# filtering — render-env.sh itself only ever emits an allowlisted subset by
-# construction, so this check re-derives "subset" independently by reading
-# both the rendered file and the allowlist file and diffing their key sets,
-# rather than trusting the renderer's own logic.
-#
-# TDX_CLIENT_ID/TDX_CLIENT_SECRET intentionally appear in router's and
-# functions' allowlists, not just ingestor's — see the comment atop
-# scripts/env-allowlists/router.txt (MaaS carve-out) and functions.txt
-# (registerLiveCrons realtime fetches) for why, and docs/config.md for the
-# full per-service table.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,6 +50,24 @@ note "== Per-service env allowlist (render + subset check, all example envs) =="
 for env_name in "${envs[@]}"; do
   check_env "$env_name"
 done
+
+note "== Staging isolation contract =="
+staging_source="env/staging.env.example"
+if grep -q '^PG_SCHEMA=staging$' "$staging_source" && grep -q '^TDX_CLIENT_ID=$' "$staging_source" && grep -q '^TDX_CLIENT_SECRET=$' "$staging_source"; then
+  ok "staging uses schema=staging and has no TDX writer credentials"
+else
+  bad "staging must use schema=staging and empty TDX writer credentials"
+fi
+if grep -q '^PS_SOURCE_DATABASE_URL=.*search_path%3Dstaging' "$staging_source"; then
+  ok "staging PowerSync source is schema-scoped"
+else
+  bad "staging PowerSync source must explicitly target the staging schema"
+fi
+if grep -q '^tunnel: REPLACE_WITH_' cloudflared/config.staging.yml; then
+  ok "staging tunnel fails closed until operator supplies its identity"
+else
+  bad "staging tunnel config must fail closed when its operator identity is absent"
+fi
 
 if [ "$fail" -ne 0 ]; then
   note ""

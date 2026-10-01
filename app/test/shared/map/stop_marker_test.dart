@@ -5,14 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 
-/// The ways [MapMarkers.stopMarker] can be wrong without looking wrong.
-///
-/// A bad anchor puts every stop on a route a few metres off its pole — far too
-/// subtle to catch by eye. An incomplete cache key serves the bitmap built for
-/// a different state, so a stop that has just started arriving keeps painting
-/// its old countdown disc until something else evicts it. And a text scale that
-/// reaches the type but not the plate clips the label instead of growing it,
-/// which only a device with large text turned on would ever reveal.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -138,10 +130,6 @@ void main() {
 
   group('cache capacity', () {
     test('one frame of the longest route does not evict itself', () async {
-      // The bitmap cache is LRU-capped. If a single frame's worth of markers
-      // exceeded the cap, every stop would rebuild on every live tick and the
-      // cache would be pure overhead — so the longest route the app serves has
-      // to fit inside it with the vehicle layer on top.
       final first = (await build(text: '1')).icon;
       for (var stop = 2; stop <= 60; stop++) {
         await build(text: '$stop');

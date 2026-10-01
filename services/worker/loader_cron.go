@@ -17,17 +17,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// rawSourcePool returns the pool the loader reads raw_tdx from. When
-// RAW_DATABASE_URL is set it opens a dedicated pool against that DSN, letting a
-// test environment read the shared Azure raw_tdx (read-only) while sinking
-// transforms to its own local schema via db. PG_SCHEMA is deliberately NOT
-// pinned on this pool: rawTDXSource reads raw_tdx.<table> schema-qualified, so a
-// search_path would have no effect on it and pinning the sink schema here would
-// be misleading. When RAW_DATABASE_URL is unset it returns db unchanged, so the
-// single-cluster deployment keeps reading and writing through one pool. A
-// configured URL is strict: parse/connect/ping failures are returned instead of
-// silently targeting the sink database. The returned cleanup owns only a
-// dedicated raw pool; the caller owns db.
 func rawSourcePool(ctx context.Context, db *pgxpool.Pool) (*pgxpool.Pool, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -64,15 +53,6 @@ func rawSourcePool(ctx context.Context, db *pgxpool.Pool) (*pgxpool.Pool, func()
 
 const _loadTimeout = 60 * time.Minute
 
-// registerLoaderCrons schedules the daily 03:30 load: transform raw_tdx into
-// this environment's PG_SCHEMA. It runs 30 minutes after the prod ingestor's
-// 03:00 landing (ADR-0005 coordination). When LOAD_ON_BOOT=true it also runs
-// one load immediately, mirroring INGEST_ON_BOOT, so a fresh deploy backfills
-// its schema without waiting for the next tick. The raw_tdx reader's pool comes
-// from RAW_DATABASE_URL when set, else the process sink pool db (see
-// rawSourcePool); the transforms always sink to db. boot tracks the
-// LOAD_ON_BOOT goroutine so drainShutdown waits for it instead of abandoning
-// it mid-run on shutdown.
 func registerLoaderCrons(r *cron.Cron, rawPool, db *pgxpool.Pool, rc *redis.Client, boot *sync.WaitGroup) {
 	src := rawTDXSource{pool: rawPool}
 	runner := newStaticPipelineRunner(rawPool, _loadTimeout)
@@ -101,18 +81,6 @@ func registerLoaderCrons(r *cron.Cron, rawPool, db *pgxpool.Pool, rc *redis.Clie
 	registerBusDailyTimetableCron(r, rawPool, db, rc)
 }
 
-// runLoadStage runs one load and, when the run earns it, the whole downstream
-// chain that waits on the load marker. The 03:30 tick and the LOAD_ON_BOOT path
-// are the same pipeline with different attempt policies, so attempt and the
-// component/action log identity are the only things they supply separately: it receives the load job and decides whether to
-// wrap it in retries. Everything after the run — the failure log, the
-// markerEarned gate, the marker write, then vector refresh and GTFS export — is
-// owned here, so neither caller can publish a marker its run did not earn or
-// start a downstream stage without one.
-//
-// runDate is stamped before the run, not after: the stages downstream key off
-// the service day the load was for, and a load that starts at 03:30 and finishes
-// after midnight would otherwise mark the wrong day.
 func runLoadStage(
 	component, action string,
 	src rawTDXSource,
@@ -149,19 +117,8 @@ func runLoadStage(
 	gtfs.RunExport(rawPool, runDate)
 }
 
-// _vectorRefreshTimeout bounds one changetovector attempt in the loader. It
-// mirrors the retry/resume budget the functions cron used before this stage
-// moved here: three attempts (runDailyWithRetry), each resumable because
-// vector.FreshVectorSkipSQL skips rows already embedded with unchanged content.
 const _vectorRefreshTimeout = 10 * time.Minute
 
-// runVectorRefresh runs changetovector in the loader process immediately after a
-// successful load, then records its pipeline marker. Binding it to the loader
-// keeps the load->vector critical path inside one container: the functions
-// service no longer needs to be running (or to poll the "load" marker) for
-// search vectors to refresh. It acquires the static-pipeline advisory lock via
-// its own runner, after the load's runner has released it, so the two stages
-// stay serialized exactly as they were across processes.
 func runVectorRefresh(rawPool, db *pgxpool.Pool, rc *redis.Client, runDate time.Time) {
 	job := vectorRefreshJob(rc, db)
 	runner := newStaticPipelineRunner(rawPool, _vectorRefreshTimeout)
@@ -177,19 +134,6 @@ func runVectorRefresh(rawPool, db *pgxpool.Pool, rc *redis.Client, runDate time.
 	marker.RecordWithRetry(context.Background(), db, "changetovector", runDate)
 }
 
-// markerEarned reports whether a load run may publish its pipeline marker, the
-// signal changetovector and the segment-time passes poll before starting.
-//
-// A partition that fails validation writes nothing, so its schema keeps
-// yesterday's rows. Running the downstream stages over one stale city plus
-// nineteen fresh ones beats withholding the marker and stranding vector search
-// and ETA prediction nationwide over a single bad row, which is what withholding
-// the marker on any per-partition failure would do.
-//
-// Two cases still withhold it. A run that loaded no partition at all published
-// nothing to act on. A truncated run (deadline, cancellation) is not a partial
-// load but an unfinished one: every partition it never reached would look
-// current to a downstream stage, so the next run must redo it.
 func markerEarned(stats loadStats, err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		zap.S().Errorw("withheld",

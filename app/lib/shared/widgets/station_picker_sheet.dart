@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_search_bar.dart';
@@ -32,7 +33,12 @@ class _StationPickerSheetState extends State<StationPickerSheet> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space16,
+            AppTheme.space8,
+            AppTheme.space16,
+            AppTheme.space8,
+          ),
           child: AppSearchBar(
             hintText: AppI18n.of(context).commonSearchStation,
             autofocus: true,

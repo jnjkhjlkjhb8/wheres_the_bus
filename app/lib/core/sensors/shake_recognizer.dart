@@ -1,17 +1,5 @@
 import 'dart:math' as math;
 
-/// Decides whether a run of accelerometer samples is a rider deliberately
-/// shaking the phone.
-///
-/// The bar is direction *reversal*, not raw force. This app is used on moving
-/// buses and trains, where a pothole clears any plain magnitude threshold
-/// easily — but a bump pushes the phone one way and lets it settle, while a
-/// shake swings it out, back, and out again along one axis. Measuring the
-/// reversals is what separates the two, and it is why the threshold can stay
-/// low enough that a gentle shake still registers.
-///
-/// Pure and clock-injected (samples carry their own [Duration]), so the whole
-/// decision is unit-testable without a device.
 class ShakeRecognizer {
   ShakeRecognizer({
     this.threshold = 15,

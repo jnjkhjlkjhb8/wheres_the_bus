@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_event.dart';
@@ -13,11 +14,6 @@ import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 
-/// Shared header for a second-layer station-detail sheet: a drag handle on
-/// top (matching the root sheet), then a row of `[back] title [favorite]`.
-/// Back pops the enclosing navigator (the sheet's nested navigator in the home
-/// flow, or the route in a standalone screen). Provide [favorite] for the
-/// standard bookmark toggle, or [trailing] for a custom trailing action.
 class SheetDetailHeader extends StatelessWidget {
   const SheetDetailHeader({
     required this.title,
@@ -54,7 +50,12 @@ class SheetDetailHeader extends StatelessWidget {
       children: [
         const SheetDragHandle(),
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 0, 12, 4),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space4,
+            0,
+            AppTheme.space12,
+            AppTheme.space4,
+          ),
           child: Row(
             children: [
               Pressable(
@@ -113,16 +114,8 @@ class FavoriteToggleButton extends StatelessWidget {
 
   final Favorite favorite;
 
-  /// Set when the button already sits inside an [AppBarCircleButton]. The
-  /// plate supplies the 44pt tap target and is only 40pt wide, so the button
-  /// drops its own tap padding — kept, it would squeeze the icon's box while
-  /// the glyph still painted at full size, pushing it off the plate's centre.
   final bool onPlate;
 
-  /// Called after the toggle is dispatched, with `true` when the favorite
-  /// was just added and `false` when it was just removed. Lets callers with
-  /// additional side effects (e.g. syncing a push subscription) hook in
-  /// without reimplementing the toggle/undo behavior.
   final ValueChanged<bool>? onToggled;
 
   void _toggle(BuildContext context) {

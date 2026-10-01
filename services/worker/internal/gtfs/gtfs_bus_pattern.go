@@ -2,39 +2,6 @@ package gtfs
 
 import "github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
 
-// Stop times for the bus networks that publish a departure but not a journey.
-//
-// Taipei, New Taipei, Taoyuan and Tainan land no multi-stop timetable at all:
-// across 84,056 timetable entries in raw_tdx.bus_schedule, exactly zero carry
-// more than one StopUID. busScheduleSource requires more than one distinct call,
-// so without this every trip in those four cities is filtered out and the cities
-// reach the feed with routes and stops but nothing to ride.
-//
-// What they do publish is the origin departure. The rest of the journey is the
-// running time between stops, which bus_segment_time now holds for 99.9% of route
-// directions — so a trip can be laid out the way metroPatternSQL lays out a metro
-// trip: anchor on the departure, accumulate the hops.
-//
-// These are kept separate from gtfs_files.go so the feed's own file list stays
-// one session's to edit. The wiring is three UNION ALL branches over there:
-// trips, stop_times and shapes. These trips need no stop reference list of their
-// own — stops.txt is read out of the calls (gtfsStopsSQLFor), so declaring the
-// stops they name is not a separate step. busScheduleServiceSQL already emits
-// the service ids, as it reads every schedule entry regardless of how many calls
-// it carries.
-
-// _busStopBoardingSQL is the per-stop boarding restriction TDX states on
-// bus_stopofroute: StopBoarding 1 is board-only and 2 is alight-only (0 is both
-// and -1 unknown, and neither restricts anything, so only 1 and 2 are kept and
-// every other stop falls through the LEFT JOINs as unrestricted).
-//
-// Without it every call in the feed is board-and-alight, and a planner will
-// happily alight a rider from an intercity coach at a stop the coach only picks
-// up at — 9023 before 經國轉運站 is the case this was found on.
-//
-// max() rather than a first-row pick: the same subroute direction can land more
-// than once (a route registered under two cities), and a restriction that any
-// row states is the one to publish.
 const _busStopBoardingSQL = `
   SELECT
     r.subrouteuid AS sub_route_uid,
@@ -50,19 +17,6 @@ const _busStopBoardingSQL = `
     AND (c->>'StopBoarding') ~ '^[12]$'
   GROUP BY 1, 2, 3`
 
-// busOriginTripSource is one trip per origin departure, for the schedule entries
-// that carry only that departure.
-//
-// The single-call test is what keeps this disjoint from busScheduleSource, which
-// takes the entries with more than one call: an entry satisfies exactly one of
-// them, so no trip is emitted twice and the two can be unioned without a
-// deduplicating pass.
-//
-// That holds per entry, not per trip_id. A subroute that publishes the same
-// departure and mask twice — once as a call list, once as an origin alone —
-// would give both sources the same trip_id, and stop_times would union a real
-// call list with an accumulated one into a journey neither source describes.
-// The richer entry wins, since it states times rather than deriving them.
 var _busOriginTripSource = `
   SELECT
     s.routeuid,

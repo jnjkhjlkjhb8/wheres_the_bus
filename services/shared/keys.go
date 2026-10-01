@@ -5,12 +5,6 @@ import (
 	"strings"
 )
 
-// This file is the Redis key contract between the two binaries: functions
-// writes these keys and channels, router reads them (docs/redis.md describes
-// the payloads). Constructing any cross-binary key inline instead of through
-// these helpers reintroduces the silent-mismatch class of bug this file
-// removes.
-
 // BusRouteEtaKey returns the key holding (and channel publishing) a bus
 // route's live ETA snapshot. The UID must already be canonical.
 func BusRouteEtaKey(subRouteUID string) string {
@@ -64,12 +58,6 @@ func BusDailyTimetableKey(subRouteUID string) string {
 	return "bus_daily_timetable:" + subRouteUID
 }
 
-// GTFSRealtimeKey returns the key holding the serialized GTFS-RT FeedMessage.
-// services/worker rebuilds it on a cron; services/api reads it and returns
-// the bytes verbatim. It carries a TTL longer than the rebuild period on
-// purpose: if the builder stops, the key expires and the endpoint serves 503,
-// so a planner falls back to the static timetable instead of a snapshot that is
-// silently hours old (ADR-0019).
 func GTFSRealtimeKey() string {
 	return "gtfs_rt:feed"
 }
@@ -98,10 +86,6 @@ func MrtLivePattern() string {
 	return "mrt_live:*"
 }
 
-// MrtTrackKey holds the live state (a marshaled models.MrtTrackState) of one
-// metro alight-reminder session, keyed by its reminder/track ID. The router
-// writes the initial state at CreateTrack and reads it to seed a WatchTrack
-// stream; the functions tracker overwrites it each station hop (ADR-0015).
 func MrtTrackKey(trackID string) string {
 	return "mrt_track:state:" + trackID
 }
@@ -112,10 +96,6 @@ func MrtTrackChannel(trackID string) string {
 	return "mrt_track:events:" + trackID
 }
 
-// MrtTrackPushTokenKey holds the iOS ActivityKit push token of the card showing
-// one session, so the tracker can refresh that card while the app is suspended
-// (ADR-0018). Session-scoped rather than device-scoped: the token is issued per
-// activity and dies with the card, so it expires with the session it belongs to.
 func MrtTrackPushTokenKey(trackID string) string {
 	return "mrt_track:push_token:" + trackID
 }
@@ -128,13 +108,6 @@ const TraDelayHashKey = "tra:delay"
 // TRA delay snapshot.
 const TraDelayAllKey = "tra:delay:all"
 
-// TraDelayStationKey is the hash of the station each train's delay was measured
-// at, keyed by train number and written alongside TraDelayHashKey.
-//
-// It is a second hash rather than a richer value in the first because the app
-// reads TraDelayHashKey's values as plain minutes; only the GTFS-RT feed needs
-// to know where the observation was taken, and it needs it to place the delay on
-// a stop rather than on the whole train.
 const TraDelayStationKey = "tra:delay:station"
 
 // TraDelayTrainChannel returns the per-train delay key/channel written by the
@@ -149,18 +122,16 @@ func BikeAvailabilityKey(stationUID string) string {
 	return "bike_availability:" + stationUID
 }
 
+func BikeAvailabilityObservedAtKey(stationUID string) string {
+	return "bike_availability_observed:" + stationUID
+}
+
 // LiveOwnedKeysKey stores the exact data keys last written by one live
 // partition. A partition 304 uses the set to refresh only its own TTLs.
 func LiveOwnedKeysKey(dataset, partition string) string {
 	return fmt.Sprintf("live:owned:%s:%s", dataset, partition)
 }
 
-// LiveDemandKey marks one city as currently watched by at least one rider. The
-// router sets it (with a TTL) whenever a live stream for that city is open;
-// functions reads it to decide whether the city gets its full cadence this tick
-// or the reduced one (FDPL-90). Its TTL must stay above the reduced cadence: a
-// city that has gone cold publishes nothing, so the only thing that can refresh
-// this key is the initial write a new subscriber makes.
 func LiveDemandKey(dataset, city string) string {
 	return fmt.Sprintf("live:demand:%s:%s", dataset, city)
 }
@@ -172,12 +143,6 @@ func LiveColdKey(dataset, city string) string {
 	return fmt.Sprintf("live:cold:%s:%s", dataset, city)
 }
 
-// _cityUIDPrefix maps a TDX city code to the short prefix its UIDs carry. Both
-// binaries need the mapping — functions to build keys per city, the router to
-// resolve the city out of a UID it was asked for — so it lives here with the
-// rest of the cross-binary key contract rather than being copied into each. It
-// is reached only through UIDPrefixForCity and CityFromUID: exporting the map
-// itself would hand every caller the ability to mutate the contract.
 var _cityUIDPrefix = map[string]string{
 	"Taipei": "TPE", "NewTaipei": "NWT", "Taoyuan": "TAO", "Taichung": "TXG",
 	"Tainan": "TNN", "Kaohsiung": "KHH", "InterCity": "THB", "Keelung": "KEE",
@@ -196,18 +161,10 @@ var _cityFromUIDPrefix = func() map[string]string {
 	return out
 }()
 
-// UIDPrefixForCity returns the short prefix a TDX city's UIDs carry, or "" for
-// a city with no mapping. Callers treat "" as a city they must not build keys
-// for: a missing prefix would collapse a per-city key pattern into one matching
-// every city.
 func UIDPrefixForCity(city string) string {
 	return _cityUIDPrefix[city]
 }
 
-// CityFromUID resolves the TDX city code from a UID that starts with a city
-// prefix (bus sub-route UIDs, bike station UIDs, rail LocationCityCode). It
-// returns "" for a UID too short to carry one or carrying an unknown prefix,
-// which callers treat as "no city to attribute this to" rather than as an error.
 func CityFromUID(uid string) string {
 	if len(uid) < 3 {
 		return ""

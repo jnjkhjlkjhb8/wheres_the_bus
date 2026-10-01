@@ -139,8 +139,6 @@ func TestTrackPusherAlertsOnlyOnIOS(t *testing.T) {
 	if body["title"] != "Get Set" {
 		t.Errorf("alert = %v, want the same words the local path uses", body)
 	}
-	// ADR-0020 keeps the 下車提醒 out of Android's notification centre; the buzz
-	// rides its own silent data message, and an alerting card would undo that.
 	if fcm.messages[0].Notification != nil {
 		t.Error("the Android card refresh must stay silent")
 	}
@@ -183,12 +181,6 @@ func TestTrackPusherReportsBothLegsWhenOneFails(t *testing.T) {
 	}
 }
 
-// TestLiveActivityPayloadMatchesTheWidgetContentState guards the one contract in
-// this change that no compiler checks: a remote Live Activity push is decoded
-// straight into the widget's `ContentState` by ActivityKit, with no app code in
-// the loop, so a field renamed on the Swift side would simply stop arriving —
-// silently, on a rider's lock screen. Reading the struct back out of the source
-// is cheaper than the alternative, which is finding out in production.
 func TestLiveActivityPayloadMatchesTheWidgetContentState(t *testing.T) {
 	payload, err := liveActivityPayload(testCard(), nil)
 	if err != nil {
@@ -219,10 +211,6 @@ func TestLiveActivityPayloadMatchesTheWidgetContentState(t *testing.T) {
 	}
 }
 
-// swiftContentStateFields reads the widget's ContentState properties out of the
-// Swift source, mapping each name to whether its type is optional. Deliberately
-// dumb: it wants the field names, and anything cleverer would be a Swift parser
-// nobody asked for.
 func swiftContentStateFields(t *testing.T) map[string]bool {
 	t.Helper()
 	const source = "../../../app/ios/BusLiveActivity/AlightTrackAttributes.swift"

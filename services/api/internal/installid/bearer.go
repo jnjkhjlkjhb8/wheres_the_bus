@@ -1,10 +1,5 @@
 package installid
 
-// Authorization-header parsing, shared by every HTTP surface that authenticates
-// a caller. Strict on shape rather than forgiving: a header with stray
-// whitespace or a multi-token credential is rejected outright, so a malformed
-// value can never be read as a valid one.
-
 import "strings"
 
 func ParseBearerCredential(header string) string {

@@ -131,10 +131,6 @@ func TestBuildGTFSRTBusDelaysGatesAndEmits(t *testing.T) {
 	}
 }
 
-// TestBusStopTimeUpdatesClampBackwardsTimes asserts the monotonic clamp. TDX
-// computes each stop's estimate independently and they can invert; a trip update
-// whose times go backwards along the trip is rejected by some consumers and
-// silently reordered by others.
 func TestBusStopTimeUpdatesClampBackwardsTimes(t *testing.T) {
 	vehicle := gtfsRTVehicle{calls: []gtfsRTCall{
 		{stopUID: "S1", sequence: 1, arrival: atClock(8, 10)},

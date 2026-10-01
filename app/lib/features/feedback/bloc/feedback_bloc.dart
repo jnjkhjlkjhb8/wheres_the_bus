@@ -8,10 +8,6 @@ import 'package:wheres_the_bus/features/feedback/bloc/feedback_event.dart';
 import 'package:wheres_the_bus/features/feedback/bloc/feedback_state.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-/// Owns one report's submission. Which category is selected and what has been
-/// typed stay in the sheet's own state: they are form state that never
-/// outlives the sheet, and routing every keystroke through a bloc would buy
-/// nothing.
 class FeedbackBloc extends Bloc<FeedbackEvent, FeedbackState> {
   FeedbackBloc({FeedbackRepository? repository})
     : _repository = repository ?? FeedbackRepository.instance,
@@ -37,10 +33,6 @@ class FeedbackBloc extends Bloc<FeedbackEvent, FeedbackState> {
     FeedbackSubmitted event,
     Emitter<FeedbackState> emit,
   ) async {
-    // Nothing guards re-entry here: events are handled one at a time, so a
-    // second submit can only arrive after the first has finished. The sheet's
-    // submit control is disabled for the whole in-flight window, which is what
-    // actually stops one intent from opening two threads.
     emit(state.copyWith(status: FeedbackStatus.submitting, clearError: true));
     try {
       final receipt = await _repository.submit(
@@ -60,14 +52,6 @@ class FeedbackBloc extends Bloc<FeedbackEvent, FeedbackState> {
   }
 }
 
-/// Why a submission failed. The three server rejections that are not "try
-/// again later" get their own case, because each has a different next step;
-/// everything else falls through to the shared [AppError] vocabulary so this
-/// screen does not invent its own wording for being offline.
-///
-/// A code rather than a sentence: the bloc has no `BuildContext` and so no
-/// locale, and a sentence resolved here would stay in whatever language was
-/// active at the moment of failure.
 sealed class FeedbackFailure extends Equatable {
   const FeedbackFailure();
 

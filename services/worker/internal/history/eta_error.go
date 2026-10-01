@@ -55,14 +55,6 @@ type matchedError struct {
 	actualSecs    int
 }
 
-// matchPredictionActual, for one (route, direction, stop), pairs each prediction
-// with the earliest arrival at or after the moment it was made, then computes the
-// error. The predicted arrival is predictedAt + predictedSecs; the actual is the
-// matched arrival; actualSecs is the true seconds-to-arrival from predictedAt.
-//
-// A prediction with no later arrival within matchWindow is dropped (the vehicle
-// never observably reached the stop, or history was pruned). Predictions and
-// arrivals need not be pre-sorted.
 func matchPredictionActual(preds []PredictionRecord, arrivals []arrivalEvent, matchWindow time.Duration) []matchedError {
 	sorted := append([]arrivalEvent(nil), arrivals...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].arrivedAt.Before(sorted[j].arrivedAt) })
@@ -182,10 +174,6 @@ func loadOpenPredictions(ctx context.Context, db *pgxpool.Pool) ([]PredictionRec
 	return out, rows.Err()
 }
 
-// writePredictionActuals fills actual_seconds for every matched prediction in
-// one statement. The rows are addressed by their natural key rather than by id,
-// which the matcher does not carry; source is part of that key because two
-// prediction tiers can describe the same stop at the same instant.
 func writePredictionActuals(ctx context.Context, db *pgxpool.Pool, matched []matchedError) (int64, error) {
 	if len(matched) == 0 {
 		return 0, nil
@@ -245,20 +233,9 @@ func fillPredictionActuals(ctx context.Context, db *pgxpool.Pool, hist Reader) (
 	return n, nil
 }
 
-// MeasurePredictionError is the daily cron body. It loads the last day's
-// predictions from bus_eta_prediction_error (Postgres) and observed arrivals
-// from bus_eta_history (the MySQL history host), fills in actuals for
-// still-open predictions, and logs MAE per route per source. It is measurement
-// only — no dashboard, just numbers in the log. Query failures are wrapped
-// transient so runDaily retries.
 func MeasurePredictionError(ctx context.Context, db *pgxpool.Pool, hist Reader) error {
 	zap.S().Infow("start", "component", "eta_error")
 
-	// Fill actual arrivals for predictions still missing one, by matching each to
-	// the first estimate-zero crossing at its stop after the prediction was made.
-	// bus_eta_history lives on the MySQL history host, so the two sides cannot be
-	// joined in one correlated UPDATE: they are loaded separately and paired by
-	// matchPredictionActual, which encodes the same rule in Go and is unit-tested.
 	filled, err := fillPredictionActuals(ctx, db, hist)
 	if err != nil {
 		return err
@@ -303,10 +280,6 @@ func MeasurePredictionError(ctx context.Context, db *pgxpool.Pool, hist Reader) 
 	return nil
 }
 
-// RecordPredictionErrors bulk-inserts freshly made predictions (actual pending)
-// into bus_eta_prediction_error, so a later MeasurePredictionError run can match
-// them to observed arrivals. An empty batch is a no-op; an insert error is
-// logged, not returned — measurement must never break the live ETA path.
 func RecordPredictionErrors(ctx context.Context, db *pgxpool.Pool, preds []PredictionRecord) {
 	if len(preds) == 0 {
 		return

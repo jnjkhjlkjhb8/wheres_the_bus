@@ -29,10 +29,6 @@ class MrtTrackBlocState extends Equatable {
   /// The last CreateTrack rejection, surfaced inline in the sheet.
   final MrtTrackCreateError createError;
 
-  /// Seconds until the tracked train reaches the boarding station, as last
-  /// reported by the station's arrival feed. Null once it has arrived (or when
-  /// the session was restored after a restart, by which point the rider is
-  /// aboard). Drives the pre-board reading on the card.
   final int? boardEtaSeconds;
 
   /// The arrival a 下車站 is currently being chosen for, or null when no

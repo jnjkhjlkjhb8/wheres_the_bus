@@ -36,10 +36,6 @@ class BusRouteDetailsUpdated extends BusRouteEvent {
   List<Object?> get props => [daily, fare];
 }
 
-/// Arms a pinned arrival reminder on [stopUid] (the trigger stop resolved from
-/// the picked alight stop + 提前站數) carrying the pinned vehicle's [plate].
-/// Always arms (never toggles off), fires one stop-ahead, and matches a single
-/// vehicle.
 class BusRoutePinnedReminderArmed extends BusRouteEvent {
   const BusRoutePinnedReminderArmed({
     required this.stopUid,
@@ -49,9 +45,6 @@ class BusRoutePinnedReminderArmed extends BusRouteEvent {
   final String stopUid;
   final String plate;
 
-  /// Which of the two 下車提醒 buzzes this row fires (ADR-0020). It rides to
-  /// the server so the push carries it back, which is the only way the
-  /// background path can tell a short buzz from a long one.
   final AlightEvent event;
   @override
   List<Object?> get props => [stopUid, plate, event];

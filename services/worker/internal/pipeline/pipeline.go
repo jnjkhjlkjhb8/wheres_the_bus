@@ -1,8 +1,3 @@
-// Package pipeline holds the ingestion primitives every domain loader is
-// written against: JSON array decoding, the COPY-into-staging-then-upsert
-// statement pair, duplicate-key collection, and the timeout wrappers the cron
-// jobs run under. It knows nothing about buses, rail, or bikes — the domains
-// depend on it, never the other way round.
 package pipeline
 
 import (
@@ -31,12 +26,6 @@ type CopyUpsertStmt struct {
 	Args []any
 }
 
-// CopyUpsertSpec is one dataset's copy-upsert recipe: the log identity, optional
-// pre-staging statements, the temp-table DDL and its COPY columns, and the
-// INSERT ... SELECT ... [ON CONFLICT ...] drain into the env-schema target. The
-// SQL strings are byte-identical to the transforms this consolidates; genuinely
-// per-dataset logic (the TRA service-day Mask, THSR overnight) stays in the
-// caller's row mapping, not here.
 type CopyUpsertSpec struct {
 	Key       string
 	PreExec   []CopyUpsertStmt
@@ -57,10 +46,6 @@ type LoadTxBeginner interface {
 	BeginLoadTx(context.Context) (LoadTx, error)
 }
 
-// DecodeLoadArray consumes exactly one JSON array, returning a wrapped error
-// for the element that failed to decode or validate. Load transforms call this
-// before opening a write transaction or Redis pipeline so a malformed suffix
-// cannot leave a partially applied target.
 func DecodeLoadArray[T any](dec *json.Decoder, dataset string, validate func(int, T) error) ([]T, error) {
 	tok, err := dec.Token()
 	if err != nil {
@@ -161,10 +146,6 @@ func RunCopyUpsert(ctx context.Context, db LoadTxBeginner, spec CopyUpsertSpec, 
 	return nil
 }
 
-// Mask packs a weekly service pattern into a bitmask: bit 0 = Monday through bit
-// 6 = Sunday, and bit 7 = national holiday when the optional nationalHoliday
-// argument is true. The stored uint8 is what schedule lookups match the current
-// day against.
 func Mask(mon, tues, wed, thur, fri, satur, sun bool, nationalHoliday ...bool) uint8 {
 	var res uint8
 	days := []bool{mon, tues, wed, thur, fri, satur, sun}
@@ -222,10 +203,6 @@ func RunDailyWithRetry(parent context.Context, d, backoff time.Duration, job fun
 	})
 }
 
-// errorWithout removes only branches that resolve to target from an error tree.
-// In particular, errors.Join may combine a benign transaction-closed sentinel
-// with a real rollback failure; checking errors.Is on the combined error would
-// otherwise discard both branches.
 func errorWithout(err, target error) error {
 	if err == nil {
 		return nil

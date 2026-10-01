@@ -171,9 +171,6 @@ class _ToastLayerState extends State<_ToastLayer> {
   bool _dragging = false;
 
   void _onDragStart(DragStartDetails details) {
-    // Stopping the controller completes any in-flight animateWith future;
-    // _dragging guards _afterSettle so that completion can't dismiss the
-    // toast out from under the new grab.
     _dragging = true;
     widget.controller.stop();
     widget.onInteractionStart();
@@ -286,8 +283,8 @@ class _ToastLayerState extends State<_ToastLayer> {
                 semanticLabel: alert.title ?? alert.message,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
+                    horizontal: AppTheme.space14,
+                    vertical: AppTheme.space12,
                   ),
                   decoration: BoxDecoration(
                     color: cs.brightness == Brightness.light
@@ -306,7 +303,7 @@ class _ToastLayerState extends State<_ToastLayer> {
                           department: alert.department,
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: AppTheme.space12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -322,7 +319,7 @@ class _ToastLayerState extends State<_ToastLayer> {
                                 height: 1.3,
                               ),
                             ),
-                            const SizedBox(height: 2),
+                            const SizedBox(height: AppTheme.space2),
                             Text(
                               AppI18n.of(context).alertJustNowDisruption,
                               style: AppTextStyles.memo.copyWith(
@@ -334,7 +331,7 @@ class _ToastLayerState extends State<_ToastLayer> {
                           ],
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: AppTheme.space8),
                       Icon(
                         Icons.chevron_right_rounded,
                         size: 20,

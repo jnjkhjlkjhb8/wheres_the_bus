@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
@@ -68,7 +69,7 @@ class _FavoritesList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ReorderableListView.builder(
-      padding: const EdgeInsets.only(bottom: 32),
+      padding: const EdgeInsets.only(bottom: AppTheme.space32),
       itemCount: items.length,
       onReorderStart: (_) => unawaited(HapticService.instance.lightTap()),
       onReorderItem: (oldIndex, newIndex) {
@@ -122,7 +123,7 @@ class _FavoriteListRow extends StatelessWidget {
       background: Container(
         color: cs.errorContainer,
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
         child: Icon(
           Symbols.delete_rounded,
           color: cs.onErrorContainer,
@@ -147,11 +148,16 @@ class _FavoriteListRow extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 64),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space16,
+                AppTheme.space10,
+                AppTheme.space4,
+                AppTheme.space10,
+              ),
               child: Row(
                 children: [
                   TransportIcon(type: transportTypeForFavorite(fav)),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppTheme.space12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -181,7 +187,9 @@ class _FavoriteListRow extends StatelessWidget {
                   ReorderableDragStartListener(
                     index: index,
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppTheme.space8,
+                      ),
                       child: Icon(
                         Symbols.drag_handle_rounded,
                         size: 22,
@@ -239,12 +247,21 @@ class _FavoritesEmpty extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(32, 0, 32, 48),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space32,
+          0,
+          AppTheme.space32,
+          AppTheme.space48,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Symbols.bookmark_rounded, size: 44, color: cs.outline),
-            const SizedBox(height: 16),
+            Icon(
+              Symbols.bookmark_rounded,
+              size: 44,
+              color: AppTheme.inkTertiary(cs.brightness),
+            ),
+            const SizedBox(height: AppTheme.space16),
             Text(
               AppI18n.of(context).favoritesEmpty,
               style: AppTextStyles.bodyLarge.copyWith(
@@ -252,7 +269,7 @@ class _FavoritesEmpty extends StatelessWidget {
                 color: cs.onSurface,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppTheme.space6),
             Text(
               AppI18n.of(context).favoritesEmptyHint,
               textAlign: TextAlign.center,

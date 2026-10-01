@@ -42,7 +42,9 @@ class _AppAccordionState extends State<AppAccordion> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(minHeight: 44),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.space16,
+                  ),
                   child: Row(
                     children: [
                       Expanded(
@@ -74,7 +76,12 @@ class _AppAccordionState extends State<AppAccordion> {
               alignment: Alignment.topCenter,
               child: _expanded
                   ? Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      padding: const EdgeInsets.fromLTRB(
+                        AppTheme.space16,
+                        0,
+                        AppTheme.space16,
+                        AppTheme.space16,
+                      ),
                       child: widget.child,
                     )
                   : const SizedBox(width: double.infinity),

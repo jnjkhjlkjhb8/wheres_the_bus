@@ -31,17 +31,15 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
   // earlier search can otherwise resolve after a newer one and clobber it.
   var _searchGeneration = 0;
 
-  // The in-flight plan stream, held so a new search or a cancel can drop the
-  // RPC rather than leaving it running to the router's 20s ceiling. _planFinish
-  // releases the event handler that is parked on that stream.
-  // Cancelled in _stopPlanStream, which every exit path — a new search, an
-  // explicit cancel, bloc close — goes through.
+  // Cancelled by _stopPlanStream on replacement, cancellation, and close.
   // ignore: cancel_subscriptions
   StreamSubscription<PlanUpdate>? _planSub;
   void Function()? _planFinish;
 
   List<PlanRoute> _readSavedRoutes() {
-    if (!HiveStore.savedPlansReady) return const [];
+    if (!HiveStore.savedPlansReady) {
+      throw StateError('saved_plans must be ready before reading routes');
+    }
     final routes = <PlanRoute>[];
     for (final e in HiveStore.savedPlanEntries) {
       final bytes = e['bytes'];
@@ -51,29 +49,51 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     return routes;
   }
 
-  void _onSavedRoutesLoaded(SavedRoutesLoaded _, Emitter<PlanState> emit) {
-    emit(state.copyWith(savedRoutes: _readSavedRoutes()));
+  Future<void> _onSavedRoutesLoaded(
+    SavedRoutesLoaded _,
+    Emitter<PlanState> emit,
+  ) async {
+    try {
+      await HiveStore.ensureSavedPlansReady();
+      emit(
+        state.copyWith(
+          savedRoutes: _readSavedRoutes(),
+          savedRoutesReady: true,
+          savedRoutesLoadError: false,
+        ),
+      );
+    } on Object {
+      emit(state.copyWith(savedRoutesReady: false, savedRoutesLoadError: true));
+    }
   }
 
   Future<void> _onRouteSaveToggled(
     RouteSaveToggled event,
     Emitter<PlanState> emit,
   ) async {
+    try {
+      await HiveStore.ensureSavedPlansReady();
+    } on Object {
+      emit(state.copyWith(savedRoutesReady: false, savedRoutesLoadError: true));
+      return;
+    }
     final key = event.route.savedKey;
     if (state.savedKeys.contains(key)) {
       await _removeSavedByContent(key);
     } else if (event.route.raw != null) {
       await HiveStore.putSavedPlan(key, event.route.raw!);
     }
-    emit(state.copyWith(savedRoutes: _readSavedRoutes()));
+    emit(
+      state.copyWith(
+        savedRoutes: _readSavedRoutes(),
+        savedRoutesReady: true,
+        savedRoutesLoadError: false,
+      ),
+    );
   }
 
-  // Delete by the entry's actual box key rather than the re-derived one. A
-  // snapshot written under an earlier key scheme is stored under a key that no
-  // longer equals its content-derived savedKey, so deleting the derived key
-  // would silently miss it and leave an un-removable card.
   Future<void> _removeSavedByContent(String savedKey) async {
-    if (!HiveStore.savedPlansReady) return;
+    await HiveStore.ensureSavedPlansReady();
     for (final e in HiveStore.savedPlanEntries) {
       final bytes = e['bytes'];
       if (bytes is! List) continue;
@@ -104,7 +124,6 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     Emitter<PlanState> emit,
   ) async {
     final gen = ++_searchGeneration;
-    // A new search resets to the results phase, dropping any active preview.
     emit(
       state.copyWith(
         status: PlanStatus.loading,
@@ -114,16 +133,6 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
         geometryPending: false,
       ),
     );
-    // The router answers in two messages — routes, then the same routes with
-    // map geometry — so the list can render while the walk paths resolve. The
-    // handler stays open on `done` until the stream ends, because emitting
-    // after it returns is an error; _stopPlanStream both drops the RPC and
-    // releases the handler waiting on it.
-    //
-    // Everything from here to the assignment below is synchronous on purpose:
-    // these handlers run concurrently, and an await before `_planSub` is set
-    // would let a second search overwrite the field without having cancelled
-    // the first subscription.
     _stopPlanStream();
     final done = Completer<void>();
     void finish() {
@@ -147,8 +156,6 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
         .listen(
           (update) {
             if (gen != _searchGeneration || emit.isDone) return;
-            // Results phase: the fastest route (index 0) is the default
-            // selection.
             emit(
               state.copyWith(
                 status: PlanStatus.success,
@@ -199,7 +206,6 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     finish?.call();
   }
 
-  // Selecting a route enters the plan-preview phase.
   void _onRouteSelected(RouteSelected event, Emitter<PlanState> emit) {
     emit(state.copyWith(selectedRouteIndex: event.index, previewing: true));
   }

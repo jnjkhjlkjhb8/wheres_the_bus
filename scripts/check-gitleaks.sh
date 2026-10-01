@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# check-gitleaks.sh
-#
-# Secret scan over the tracked tree using gitleaks pinned to a fixed version
-# (hermetic `go install pkg@version` into .tools/bin, never @latest).
-#
-# The scan target is a `git archive HEAD` extraction, not the working tree:
-# real env files (env/*.env) are gitignored but sit in local checkouts with
-# live credentials, and scanning them would light up findings for secrets
-# that are deliberately kept out of git. The archive contains exactly what
-# a clone (and CI) sees. Findings are printed with --redact, so secret
-# values never reach the log — file, line, and rule only.
-#
-# CI runs gitleaks/gitleaks-action (pinned by commit SHA in ci.yaml) over
-# commit history as the blocking gate; this script is the same policy for
-# `make verify` on a developer machine.
-#
-# Usage: scripts/check-gitleaks.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +7,7 @@ cd "$repo_root"
 GITLEAKS_VERSION="v8.30.1"
 tools_bin="$repo_root/.tools/bin"
 
-echo "== gitleaks secret scan ($GITLEAKS_VERSION, tracked tree) =="
+echo "== gitleaks secret scan ($GITLEAKS_VERSION, tracked tree + history policy) =="
 
 mkdir -p "$tools_bin"
 # A `go install` build does not stamp `gitleaks version`; read the module
@@ -38,6 +21,10 @@ fi
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 git archive HEAD | tar -x -C "$work_dir"
+
+# Scan the exact release tree. History is intentionally scanned by the CI
+# action with fetch-depth=0; this local gate must remain safe for developers
+# whose repository history contains reviewed, expired findings.
 
 # Config is taken from the working tree (not the archive) so a policy edit
 # is testable before it is committed.

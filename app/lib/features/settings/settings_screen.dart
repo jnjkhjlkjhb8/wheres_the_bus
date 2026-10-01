@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -13,6 +12,7 @@ import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
+import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
 import 'package:wheres_the_bus/core/update/update_status.dart';
 import 'package:wheres_the_bus/data/models/fare_type.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
@@ -68,12 +68,6 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
-/// Formats [dt] for the data-source freshness row: same-day syncs read
-/// "today HH:mm"; anything older reads "MM/dd HH:mm" so a stale sync is
-/// visibly stale rather than silently rendered like a fresh one.
-///
-/// Only the same-day form is localized — the older form is date + clock, which
-/// carries no words to translate.
 String formatSyncFreshness(AppI18n i18n, DateTime? dt) {
   if (dt == null) return i18n.settingsSyncNever;
   final local = dt.toLocal();
@@ -212,7 +206,12 @@ class _SettingsView extends StatelessWidget {
             ),
           ),
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(16, 8, 16, bottomInset + 32),
+            padding: EdgeInsets.fromLTRB(
+              AppTheme.space16,
+              AppTheme.space8,
+              AppTheme.space16,
+              bottomInset + AppTheme.space32,
+            ),
             sliver: SliverList.list(
               children: [
                 _SettingsSection(
@@ -241,24 +240,18 @@ class _SettingsView extends StatelessWidget {
                           ? null
                           : (v) => bloc.add(PushToggled(value: v)),
                     ),
-                    if (!Platform.isAndroid) ...[
-                      _SettingsSwitchRow(
-                        icon: Icons.dashboard_customize_outlined,
-                        label: i18n.settingsLiveActivity,
-                        value: state.liveActivityEnabled,
-                        onChanged: (v) =>
-                            bloc.add(LiveActivityToggled(value: v)),
-                      ),
-                    ],
+                    const _NotificationAccessRow(),
+                    _SettingsSwitchRow(
+                      icon: Icons.dashboard_customize_outlined,
+                      label: i18n.settingsLiveActivity,
+                      value: state.liveActivityEnabled,
+                      onChanged: (v) => bloc.add(LiveActivityToggled(value: v)),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppTheme.space24),
                 _SettingsSection(
                   title: i18n.settingsSectionPlanner,
-                  // Both rows stay visible whichever planner is live. Needing
-                  // step-free routing is a fact about the rider; a row that
-                  // vanished when the backend changed would read as the
-                  // setting having been lost.
                   footer: i18n.settingsPlannerFooter,
                   children: [
                     _SettingsSwitchRow(
@@ -277,7 +270,7 @@ class _SettingsView extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppTheme.space24),
                 _SettingsSection(
                   title: i18n.settingsSectionFare,
                   // The setting is worth explaining once here rather than
@@ -294,14 +287,10 @@ class _SettingsView extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppTheme.space24),
                 _SettingsSection(
                   title: i18n.settingsSectionAbout,
                   children: [
-                    // FAQ and the privacy policy have no destination yet; a
-                    // live chevron with an empty handler would be a dead
-                    // affordance (F45), so each is disabled with a static
-                    // coming-soon marker until it has somewhere to go.
                     _SettingsRow(
                       icon: Icons.help_outline_rounded,
                       label: i18n.settingsFaq,
@@ -335,7 +324,7 @@ class _SettingsView extends StatelessWidget {
                       ),
                   ],
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppTheme.space24),
                 const _TdxAttribution(),
                 _AppIdentityFooter(version: state.appVersion),
               ],
@@ -347,11 +336,6 @@ class _SettingsView extends StatelessWidget {
   }
 }
 
-/// Pinned header with an iOS-style large title that collapses into a
-/// translucent, blurred toolbar as the list scrolls under it. Collapse is
-/// scroll-linked (direct manipulation), so it needs no [AnimationController];
-/// [AppMotion] curves shape the fade of each layer against scroll progress,
-/// and [reduceMotion] drops the non-essential vertical drift.
 class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
   const _LargeTitleHeader({
     required this.title,
@@ -366,12 +350,6 @@ class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
   static const double _bar = 44;
   static const double _largeBlock = 52;
 
-  // BackdropFilter re-samples the backdrop on every distinct sigma, so a
-  // sigma that tracks scroll offset continuously forces a fresh blur pass
-  // almost every frame. Quantizing to a handful of steps lets consecutive
-  // scroll frames share the same sigma (and its cached blur) while still
-  // reading as a smooth collapse; the translucent fill's alpha keeps
-  // tracking scroll continuously so the crossfade itself stays smooth.
   static const int _blurSteps = 6;
 
   @override
@@ -516,30 +494,77 @@ class _SettingsSwitchRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final sw = AppSwitch(value: value, onChanged: onChanged);
 
-    // MergeSemantics collapses the label Text and the Switch's own
-    // toggled-state node into a single semantics node, so a screen reader
-    // announces "label, on/off" once instead of two separate stops (F52).
+    // MergeSemantics prevents duplicate accessibility announcements.
     return MergeSemantics(
       child: Pressable(
         onTap: onChanged != null ? () => onChanged!(!value) : null,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 48),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(vertical: AppTheme.space4),
             child: Row(
               children: [
                 if (icon != null) ...[
                   Icon(icon, size: 20, color: cs.onSurfaceVariant),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppTheme.space12),
                 ],
                 Expanded(child: Text(label, style: AppTextStyles.bodyLarge)),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppTheme.space12),
                 sw,
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _NotificationAccessRow extends StatefulWidget {
+  const _NotificationAccessRow();
+
+  @override
+  State<_NotificationAccessRow> createState() => _NotificationAccessRowState();
+}
+
+class _NotificationAccessRowState extends State<_NotificationAccessRow>
+    with WidgetsBindingObserver {
+  bool _blocked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_check());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_check());
+  }
+
+  Future<void> _check() async {
+    final enabled = await AlightTrackChannel.notificationsEnabled();
+    if (!mounted || enabled == !_blocked) return;
+    setState(() => _blocked = !enabled);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_blocked) return const SizedBox.shrink();
+    final i18n = AppI18n.of(context);
+    return _SettingsRow(
+      icon: Icons.notifications_off_outlined,
+      label: i18n.settingsNotificationsBlocked,
+      value: i18n.settingsOpenSystemSettings,
+      chevron: true,
+      onTap: () => unawaited(AlightTrackChannel.openNotificationSettings()),
     );
   }
 }
@@ -569,7 +594,12 @@ class _SettingsSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 0, 4, 7),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space4,
+            0,
+            AppTheme.space4,
+            7,
+          ),
           child: Text(
             title,
             style: AppTextStyles.bodySmall.copyWith(
@@ -598,7 +628,9 @@ class _SettingsSection extends StatelessWidget {
                     color: cs.outlineVariant,
                   ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.space16,
+                  ),
                   child: children[i],
                 ),
               ],
@@ -607,7 +639,12 @@ class _SettingsSection extends StatelessWidget {
         ),
         if (footer != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(6, 7, 6, 0),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space6,
+              7,
+              AppTheme.space6,
+              0,
+            ),
             child: Text(
               footer!,
               style: AppTextStyles.bodySmall.copyWith(
@@ -628,7 +665,12 @@ class _TdxAttribution extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final i18n = AppI18n.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 12, 6, 0),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space6,
+        AppTheme.space12,
+        AppTheme.space6,
+        0,
+      ),
       child: Text(
         i18n.settingsSource,
         style: AppTextStyles.bodySmall.copyWith(
@@ -639,17 +681,6 @@ class _TdxAttribution extends StatelessWidget {
   }
 }
 
-/// 設定 › 關於 › 檢查更新.
-///
-/// One row, five states, and the label itself carries the change: once a
-/// release is found the row stops being a check and becomes 「前往更新」, so
-/// the affordance matches what a tap now does instead of needing a caption to
-/// explain it. The result lives in the trailing slot rather than a toast — the
-/// answer belongs next to the question, and a rider who taps twice sees the
-/// text swap to 「檢查中⋯」 both times, so the row never looks unresponsive.
-///
-/// [UpdateCheck.failed] is rendered, not swallowed: offline, this row says it
-/// could not check rather than claiming the build is current.
 class _UpdateCheckRow extends StatelessWidget {
   const _UpdateCheckRow({required this.state, required this.bloc});
 
@@ -735,10 +766,6 @@ class _SettingsRow extends StatelessWidget {
   final bool monoValue;
   final VoidCallback? onTap;
 
-  /// Renders a static, disabled coming-soon marker instead of the usual
-  /// value/chevron and drops the tap handler, for a destination that
-  /// doesn't exist yet (F45, F48). Never pulses — the design system reserves
-  /// motion for live state, not placeholders.
   final bool comingSoon;
 
   @override
@@ -762,11 +789,11 @@ class _SettingsRow extends StatelessWidget {
             ? i18n.commonComingSoonSemantics(label)
             : label,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: AppTheme.space10),
           child: Row(
             children: [
               Icon(icon, size: 20, color: cs.onSurfaceVariant),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppTheme.space12),
               Expanded(child: Text(label, style: AppTextStyles.bodyLarge)),
               if (comingSoon)
                 Text(
@@ -779,7 +806,7 @@ class _SettingsRow extends StatelessWidget {
                 if (value != null)
                   Text(value!, textAlign: TextAlign.right, style: valueStyle),
                 if (chevron) ...[
-                  const SizedBox(width: 4),
+                  const SizedBox(width: AppTheme.space4),
                   Icon(
                     Icons.chevron_right_rounded,
                     size: 20,
@@ -806,7 +833,7 @@ class _AppIdentityFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(top: 28, bottom: 8),
+      padding: const EdgeInsets.only(top: 28, bottom: AppTheme.space8),
       child: Column(
         children: [
           Text(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
@@ -20,14 +21,8 @@ import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
-import 'package:wheres_the_bus/shared/widgets/state_cards.dart';
 
 Future<PlannedPlace> resolveCurrentPlace(AppI18n i18n) async {
-  // A granted permission still fails here when the fix times out (indoors,
-  // cold GPS). The OS cached fix is accurate enough for an origin, so fall
-  // back to it and only report "no location" when that is missing too — which
-  // is also the case for a real denial, since lastKnownPosition returns null
-  // without permission.
   Position pos;
   try {
     pos = await LocationService.instance.currentPosition();
@@ -91,18 +86,9 @@ class PlaceSearchScreen extends StatelessWidget {
   }
 }
 
-/// Builds the surface hosting the search field. [input] is the wired text field
-/// (with its own clear button); the builder decides where it sits — the
-/// plan-entry page drops it into the destination row of its origin/destination
-/// block, so typing happens on the same screen the planner opens at.
 typedef PlaceSearchHeaderBuilder =
     Widget Function(BuildContext context, Widget input);
 
-/// The shared place-search body: current location, saved places, recent
-/// searches, and autocomplete-on-type — reused inline by the plan-entry page
-/// (its own header hosts the field, picking sets the destination) and by
-/// [PlaceSearchScreen] (plain input row, picking pops the page). It never
-/// navigates itself; picking a place only calls [onPicked].
 class PlaceSearchView extends StatefulWidget {
   const PlaceSearchView({
     required this.onPicked,
@@ -133,10 +119,6 @@ class PlaceSearchView extends StatefulWidget {
   /// quiet prompt rather than a blank surface.
   final String? emptyHint;
 
-  /// Sits above the shortcut list while the query is empty (hidden during
-  /// autocomplete). The plan-entry host uses it for the 路線箱 saved routes:
-  /// a saved route is a whole answer in one tap, so it outranks the places
-  /// below it.
   final Widget? header;
 
   /// Replaces the built-in input row, handing back the wired text field for the
@@ -158,19 +140,12 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
   // rows below take callbacks, so nothing looks it up from the tree.
   final _bloc = PlaceSearchBloc()..add(const PlaceSearchStarted());
 
-  /// Where the rider is, for biasing geocoding results towards them. Read once
-  /// when the screen opens and never awaited on the typing path: a suggestion
-  /// list must not wait on a location fix, so an unresolved bias simply means
-  /// the first keystrokes are unbiased.
   LatLng? _bias;
 
   @override
   void initState() {
     super.initState();
     unawaited(_readBias());
-    // A hosted field is the reason the screen exists, so it always takes focus.
-    // Deferred a frame: requesting focus during the route transition drops
-    // frames of the push the rider is watching.
     final hosted = widget.headerBuilder != null;
     if (hosted || (widget.showInput && widget.autofocus)) {
       WidgetsBinding.instance.addPostFrameCallback(
@@ -373,7 +348,12 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
   Widget _buildInputRow(BuildContext context, PlaceSearchState state) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 16, 12),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space12,
+        AppTheme.space6,
+        AppTheme.space16,
+        AppTheme.space12,
+      ),
       child: Row(
         children: [
           if (widget.onBack != null)
@@ -393,7 +373,7 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
           Expanded(
             child: Container(
               height: 44,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space14),
               decoration: BoxDecoration(
                 color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -405,7 +385,7 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
                     size: 20,
                     color: cs.onSurfaceVariant,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Expanded(child: _buildInput(context, state)),
                 ],
               ),
@@ -448,7 +428,7 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
     if (state.loading && state.results.isEmpty) return const _PlaceSkeleton();
     if (state.results.isEmpty) return const _PlaceEmpty();
     return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: AppTheme.space24),
       itemCount: state.results.length,
       itemBuilder: (context, i) => _ResultRow(
         result: state.results[i],
@@ -462,7 +442,7 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
   Widget _buildShortcuts(BuildContext context, PlaceSearchState state) {
     return ListView(
       key: const ValueKey('shortcuts'),
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: AppTheme.space24),
       children: [
         if (widget.header != null) widget.header!,
         if (widget.allowCurrentLocation)
@@ -513,7 +493,12 @@ class _EmptyHint extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space24,
+        40,
+        AppTheme.space24,
+        AppTheme.space24,
+      ),
       child: Center(
         child: Text(
           text,
@@ -536,7 +521,12 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 6),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space20,
+        AppTheme.space20,
+        AppTheme.space6,
+      ),
       child: Text(
         text,
         style: AppTextStyles.bodySmall.copyWith(
@@ -561,11 +551,14 @@ class _CurrentLocationRow extends StatelessWidget {
       onTap: loading ? null : onTap,
       semanticLabel: AppI18n.of(context).goUseCurrentLocation,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space14,
+        ),
         child: Row(
           children: [
             Icon(Icons.my_location_rounded, size: 22, color: cs.primary),
-            const SizedBox(width: 14),
+            const SizedBox(width: AppTheme.space14),
             Text(
               AppI18n.of(context).goCurrentLocation,
               style: AppTextStyles.bodyLarge.copyWith(
@@ -583,10 +576,6 @@ class _CurrentLocationRow extends StatelessWidget {
   }
 }
 
-// A row whose right-swipe reveals a neutral save affordance and whose
-// left-swipe reveals a destructive action; a colored background is data here,
-// not decoration, so it stays within the achromatic UI (error red is the one
-// permitted semantic exception, used only for delete).
 class _SwipeRow extends StatelessWidget {
   const _SwipeRow({
     required this.dismissKey,
@@ -624,7 +613,7 @@ class _SwipeRow extends StatelessWidget {
           : Container(
               color: cs.surfaceContainerHigh,
               alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -633,7 +622,7 @@ class _SwipeRow extends StatelessWidget {
                     color: cs.onSurface,
                     size: 22,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Text(
                     AppI18n.of(context).commonSave,
                     style: AppTextStyles.bodyRegular.copyWith(
@@ -649,7 +638,7 @@ class _SwipeRow extends StatelessWidget {
           : Container(
               color: cs.errorContainer,
               alignment: Alignment.centerRight,
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
               child: Icon(
                 destructiveIcon,
                 color: cs.onErrorContainer,
@@ -819,11 +808,14 @@ class _PlaceRow extends StatelessWidget {
       child: Container(
         color: cs.surface,
         constraints: const BoxConstraints(minHeight: 56),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space10,
+        ),
         child: Row(
           children: [
             SizedBox(width: 22, child: Center(child: leading)),
-            const SizedBox(width: 14),
+            const SizedBox(width: AppTheme.space14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -861,10 +853,21 @@ class _PlaceSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        for (var i = 0; i < 5; i++) const ShimmerRow(height: 36),
-      ],
+    return Skeletonizer(
+      child: ListView.builder(
+        padding: const EdgeInsets.only(bottom: AppTheme.space24),
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 5,
+        itemBuilder: (context, i) => _ResultRow(
+          result: PlaceSuggestion(
+            placeId: 'skeleton-$i',
+            primaryText: BoneMock.chars(i.isEven ? 6 : 4, '囗'),
+            secondaryText: BoneMock.chars(10, '囗'),
+          ),
+          onTap: () {},
+          onSave: () {},
+        ),
+      ),
     );
   }
 }
@@ -876,11 +879,20 @@ class _PlaceEmpty extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 48, 24, 48),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space24,
+        AppTheme.space48,
+        AppTheme.space24,
+        AppTheme.space48,
+      ),
       child: Column(
         children: [
-          Icon(Icons.search_off_rounded, size: 40, color: cs.outline),
-          const SizedBox(height: 12),
+          Icon(
+            Icons.search_off_rounded,
+            size: 40,
+            color: AppTheme.inkTertiary(cs.brightness),
+          ),
+          const SizedBox(height: AppTheme.space12),
           Text(
             AppI18n.of(context).goNoPlaceMatch,
             style: AppTextStyles.bodyRegular.copyWith(

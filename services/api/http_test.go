@@ -232,9 +232,6 @@ func TestLoadOrGenerateKeyRecoversFromCorruptFile(t *testing.T) {
 	}
 }
 
-// An http.Server with no timeouts lets a slow or hostile client hold a
-// connection open indefinitely (Slowloris-style resource exhaustion). The
-// server the router actually starts must bound every phase of a request.
 func TestPrepareHTTPServerSetsRequestTimeouts(t *testing.T) {
 	config := httpServerConfig{MetricsCredential: strings.Repeat("m", 32)}
 	runtime, err := prepareHTTPServer(nil, nil, config,
@@ -263,10 +260,6 @@ func (fakeListener) Accept() (net.Conn, error) { return nil, errors.New("not imp
 func (fakeListener) Close() error              { return nil }
 func (fakeListener) Addr() net.Addr            { return &net.TCPAddr{} }
 
-// A key file whose parent directory disappears mid-run means the atomic
-// temp-write-rename cannot land; that failure must surface to the caller
-// instead of being swallowed, since a silently-unpersisted key regenerates on
-// every restart and invalidates every client's PowerSync token.
 func TestLoadOrGenerateKeyPropagatesPersistenceError(t *testing.T) {
 	keyFile := t.TempDir() + "/missing-dir/powersync_key.pem"
 	_, err := loadOrGenerateKeyAt(keyFile)
@@ -275,10 +268,6 @@ func TestLoadOrGenerateKeyPropagatesPersistenceError(t *testing.T) {
 	}
 }
 
-// The persisted key file must land via the same-directory temp file, fsync,
-// chmod 0600, rename sequence: no stray temp file left behind, and 0600
-// permissions on the final file so the private key is never group/world
-// readable.
 func TestLoadOrGenerateKeyPersistsAtomicallyWithOwnerOnlyPermissions(t *testing.T) {
 	dir := t.TempDir()
 	keyFile := dir + "/powersync_key.pem"
@@ -680,10 +669,6 @@ func TestSafeAccessLoggerRecordsHTTPMetricsByRoutePattern(t *testing.T) {
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/probe-metrics/fail", nil))
 
 	body := obs.MetricsText()
-	// Every request went through the ":id" pattern (not the concrete paths
-	// "one"/"two"/"fail"), proving the label is the registered route, not the
-	// raw request path -- otherwise this counter set would grow unbounded
-	// with every distinct id a client sends.
 	if !strings.Contains(body, `router_http_requests_total{path="/probe-metrics/:id"} 3`) {
 		t.Fatalf("missing aggregated request count in metrics text:\n%s", body)
 	}

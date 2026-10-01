@@ -1,37 +1,4 @@
 #!/usr/bin/env bash
-# ci.sh
-#
-# Canonical entrypoint for the engineering-contract test groups. Both
-# `.github/workflows/ci.yaml` and `make verify` call this script for the
-# same profiles, so local and CI runs exercise the identical command list —
-# the only allowed divergence is caching (CI restores/saves Go/Flutter/pub
-# caches; local runs use whatever is already on disk) and report upload
-# (CI additionally wraps test runners to emit junit/coverage artifacts for
-# Codecov; this script emits those artifacts too when the caller asks for
-# them via the env vars below, it just never uploads anything itself).
-#
-# Usage: scripts/ci.sh <profile> [profile...]
-#   contracts   dependency boundaries + file-size ratchet + proto contract +
-#               ADR hygiene
-#   go          golangci-lint (.golangci.yml, includes govet) + go test
-#   flutter     proto-dart stubs + flutter analyze + flutter test
-#   migrations  migration replay gate (scripts/check-migrations.sh)
-#   security    gitleaks + govulncheck + guardrail-test presence
-#   all         every profile above, in the order listed
-#
-# Report/caching knobs (all optional; unset means "plain local run"):
-#   GO_TEST_ARGS       extra args appended to `go test` (CI sets
-#                       "-coverprofile=coverage.out" for Codecov)
-#   GO_JUNIT_FILE       when set, wraps `go test` with `gotestsum
-#                       --junitfile <path>` instead of calling it directly
-#                       (gotestsum must already be installed)
-#   FLUTTER_TEST_ARGS  extra args appended to `flutter test` (CI sets
-#                       "--coverage --file-reporter=json:test-results.json")
-#
-# Requires generated Go protobuf stubs for the `go` profile (`make
-# proto-go`) — this script does not generate them, since which toolchain
-# generates them (Docker vs local protoc) differs by caller and is already
-# handled by existing Make targets.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -97,6 +64,10 @@ run_security() {
   ./scripts/check-guardrail-tests-present.sh
   echo "== security: per-service env allowlist =="
   ./scripts/check-env-allowlist.sh
+  echo "== security: effective compose contract =="
+  ./scripts/check-compose-effective.sh
+  echo "== security: release manifest =="
+  ./scripts/check-release-manifest.sh
 }
 
 for profile in "$@"; do

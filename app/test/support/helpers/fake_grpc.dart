@@ -21,9 +21,6 @@ class FakeResponseStream<R> extends StreamView<R> implements ResponseStream<R> {
   ResponseFuture<R> get single => throw UnimplementedError();
 }
 
-/// A [ResponseFuture] test double backed by a plain [Future], for faking unary
-/// gRPC calls. Future members delegate to the wrapped future; the repository
-/// only ever awaits the result.
 class FakeResponseFuture<R> implements ResponseFuture<R> {
   FakeResponseFuture(this._future);
 

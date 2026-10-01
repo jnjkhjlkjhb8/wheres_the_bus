@@ -1,10 +1,5 @@
 part of '../view/bus_route_screen.dart';
 
-/// A stop's service is over for today when its raw status was one of the two
-/// terminal codes (stopStatus 3 / 4; see eta_format.dart). The flag is
-/// computed where the stop is built, so this no longer has to match on the
-/// rendered label — which is localized and would stop matching in any other
-/// locale.
 bool _slServiceEnded(TimelineStop stop) => stop.serviceEnded;
 
 /// Single collapsed notice replacing 40 identical per-row "末班已過" labels
@@ -14,7 +9,10 @@ Widget _slServiceEndedBanner(BuildContext context) {
   final cs = Theme.of(context).colorScheme;
   return Container(
     width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+    padding: const EdgeInsets.symmetric(
+      horizontal: AppTheme.space20,
+      vertical: AppTheme.space12,
+    ),
     color: cs.surfaceContainerHighest,
     child: Text(
       AppI18n.of(context).busServiceEndedToday,
@@ -26,10 +24,6 @@ Widget _slServiceEndedBanner(BuildContext context) {
   );
 }
 
-/// Dispatches the reload and waits for the bloc to actually leave its loading
-/// state, so RefreshIndicator's spinner reflects real progress instead of
-/// closing the instant the gesture completes. Bounded so a stuck bloc can
-/// never hang the pull-to-refresh gesture forever.
 Future<void> _slAwaitRouteReload(BuildContext context) async {
   final bloc = context.read<BusRouteBloc>()..add(const BusRouteStarted());
   await bloc.stream
@@ -49,6 +43,8 @@ class _StopListTab extends StatelessWidget {
     this.boundPlate,
     this.onPickStop,
     this.onSwipeVehicle,
+    this.onTapStop,
+    this.onTapVehicle,
   });
 
   final List<TimelineStop> stops;
@@ -72,9 +68,13 @@ class _StopListTab extends StatelessWidget {
 
   final ValueChanged<String>? onPickStop;
 
-  /// Swiping a vehicle marker right opens the 下車提醒 flow bound to that
-  /// plate. The only entry into picking — see ADR-0020.
   final void Function(String plate, int markerIndex)? onSwipeVehicle;
+
+  /// Outside pick-mode a row tap centres the map on that stop's marker, and a
+  /// marker tap centres it on the bus — the sheet and the map are two views of
+  /// the same thing, so pointing at one should aim the other.
+  final ValueChanged<String>? onTapStop;
+  final ValueChanged<String>? onTapVehicle;
 
   @override
   Widget build(BuildContext context) {
@@ -103,15 +103,24 @@ class _StopListTab extends StatelessWidget {
               ? Icons.airline_seat_recline_extra_rounded
               : null,
         );
+        // A marker the feed gave no plate for can neither be selected nor
+        // swiped: both bind to a plate, and there is none here.
+        final tappableMarker = plate.isEmpty || picking || onTapVehicle == null
+            ? marker
+            : Pressable(
+                onTap: () => onTapVehicle!(plate),
+                semanticLabel: AppI18n.of(context).busVehicleHere,
+                child: marker,
+              );
         children.add(
           // A marker the feed gave no plate for is not swipeable: the flow
           // binds to a plate, and there is nothing here to bind to.
           plate.isEmpty || onSwipeVehicle == null || picking
-              ? marker
+              ? tappableMarker
               : AlightSwipeRow(
                   rowKey: plate,
                   onSwiped: () => onSwipeVehicle!(plate, i),
-                  child: marker,
+                  child: tappableMarker,
                 ),
         );
       }
@@ -140,13 +149,32 @@ class _StopListTab extends StatelessWidget {
           isAlightTarget: targetStopUid == stop.uid,
           isLeadStop: leadStopUid == stop.uid,
           dimmedForPick: picking && i < firstPickableIndex,
-          onPick: picking && i >= firstPickableIndex
-              ? () => onPickStop?.call(stop.uid)
-              : null,
+          onPick: picking
+              ? (i >= firstPickableIndex
+                    ? () => onPickStop?.call(stop.uid)
+                    : null)
+              : (onTapStop == null ? null : () => onTapStop!(stop.uid)),
           suppressEtaLabel: allStopsEnded,
         ),
       );
     }
+    // Last row of the list rather than a fixed footer: it dates the ETAs
+    // above it, and pinning it would cost a strip of height on a sheet whose
+    // whole job is showing as many stops as it can.
+    children.add(
+      Padding(
+        padding: const EdgeInsets.fromLTRB(
+          kTimelineGutter,
+          AppTheme.space12,
+          AppTheme.space16,
+          AppTheme.space16,
+        ),
+        child: BlocSelector<BusRouteBloc, BusRouteState, DateTime?>(
+          selector: (state) => state.updatedAt,
+          builder: (context, updatedAt) => FreshnessStamp(at: updatedAt),
+        ),
+      ),
+    );
 
     return RefreshIndicator(
       onRefresh: () => _slAwaitRouteReload(context),
@@ -178,7 +206,12 @@ class _FareSectionDivider extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(kTimelineGutter, 6, 16, 6),
+      padding: const EdgeInsets.fromLTRB(
+        kTimelineGutter,
+        AppTheme.space6,
+        AppTheme.space16,
+        AppTheme.space6,
+      ),
       child: Row(
         children: [
           Text(
@@ -188,7 +221,7 @@ class _FareSectionDivider extends StatelessWidget {
               color: cs.onSurfaceVariant,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: AppTheme.space10),
           Expanded(child: Container(height: 1, color: cs.outlineVariant)),
         ],
       ),
@@ -211,16 +244,8 @@ class _StopListItem extends StatelessWidget {
     this.dimmedForPick = false,
   });
 
-  /// The stop currently chosen as the 下車站, carried on the row the same way
-  /// the rail timetable carries it: the static highlight the design system
-  /// reserves for "find this row", plus the one solid ink glyph the list is
-  /// allowed to spend.
   final bool isAlightTarget;
 
-  /// The 提前提醒站. Derived from 提前站數 rather than picked, so it reports in
-  /// a quieter register than [isAlightTarget] — a bare glyph, no fill, no row
-  /// highlight (docs/design.md:253, and the same solid/outlined split
-  /// [TimelineStopTag] already uses).
   final bool isLeadStop;
 
   /// A stop the pinned bus has already passed while picking — visible, but not
@@ -272,7 +297,7 @@ class _StopListItem extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           nameWidget,
-          const SizedBox(height: 2),
+          const SizedBox(height: AppTheme.space2),
           Text(
             stop.secondaryLabel!,
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
@@ -284,7 +309,7 @@ class _StopListItem extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Flexible(child: nameWidget),
-          const SizedBox(width: 6),
+          const SizedBox(width: AppTheme.space6),
           TimelineStopTag(AppI18n.of(context).busTerminus, solid: false),
         ],
       );
@@ -321,14 +346,19 @@ class _StopListItem extends StatelessWidget {
                       bottom: BorderSide(color: cs.outlineVariant, width: 0.5),
                     ),
                   ),
-                  padding: const EdgeInsets.fromLTRB(0, 10, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(
+                    0,
+                    AppTheme.space10,
+                    AppTheme.space16,
+                    AppTheme.space10,
+                  ),
                   child: Row(
                     children: [
                       Expanded(child: nameWidget),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: AppTheme.space12),
                       if (!suppressEtaLabel) _buildEta(AppI18n.of(context), cs),
                       if (isLeadStop) ...[
-                        const SizedBox(width: 10),
+                        const SizedBox(width: AppTheme.space10),
                         Icon(
                           Icons.notifications_rounded,
                           size: 18,
@@ -336,7 +366,7 @@ class _StopListItem extends StatelessWidget {
                         ),
                       ],
                       if (isAlightTarget) ...[
-                        const SizedBox(width: 10),
+                        const SizedBox(width: AppTheme.space10),
                         Container(
                           width: 24,
                           height: 24,
@@ -383,12 +413,6 @@ class _StopListItem extends StatelessWidget {
     return parts.join('，');
   }
 
-  /// A live countdown and a scheduled departure clock are two different facts,
-  /// and the list used to print them in one voice: '20:40' and '2分' in the
-  /// same column, same size, same colour, with only the format hinting that
-  /// one means "no bus has left the terminal yet" and the other "a bus is two
-  /// minutes away". The countdown keeps the emphasis; a schedule drops to
-  /// secondary weight and says what it is.
   Widget _buildEta(AppI18n i18n, ColorScheme cs) {
     final label = stop.primaryTime;
     if (label == null) return const SizedBox.shrink();
@@ -436,101 +460,31 @@ class _StopListItem extends StatelessWidget {
   }
 }
 
-class _ShimmerStopList extends StatefulWidget {
-  const _ShimmerStopList();
+class _ShimmerStopList extends StatelessWidget {
+  const _ShimmerStopList({required this.scrollController});
 
-  @override
-  State<_ShimmerStopList> createState() => _ShimmerStopListState();
-}
-
-class _ShimmerStopListState extends State<_ShimmerStopList>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _animController;
-
-  @override
-  void initState() {
-    super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Reduce-motion can flip at runtime (OS setting), and this is the
-    // correct lifecycle hook for reacting to an inherited-widget change —
-    // build() must stay free of side effects.
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    if (disableAnimations) {
-      if (_animController.isAnimating) _animController.stop();
-    } else if (!_animController.isAnimating) {
-      unawaited(_animController.repeat(reverse: true));
-    }
-  }
-
-  @override
-  void dispose() {
-    _animController.dispose();
-    super.dispose();
-  }
+  final ScrollController scrollController;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final shimmerColor = cs.surfaceContainerHigh.withValues(alpha: 0.6);
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-
-    return AnimatedBuilder(
-      animation: _animController,
-      builder: (context, child) => Opacity(
-        opacity: disableAnimations
-            ? 0.6
-            : lerpDouble(0.4, 0.9, _animController.value)!,
-        child: child,
-      ),
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        itemCount: 6,
-        itemBuilder: (_, i) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 120,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: shimmerColor,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const Spacer(),
-
-                Container(
-                  width: 20,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: shimmerColor,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 16),
-
-                Container(
-                  width: 48,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: shimmerColor,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+    return Skeletonizer(
+      child: _StopListTab(
+        stops: _skeletonStops,
+        scrollController: scrollController,
+        flashStopUid: null,
       ),
     );
   }
 }
+
+/// Six stops with a countdown on the first two — the shape a route usually
+/// arrives in. Fixed values, so the bones never re-measure between frames.
+final List<TimelineStop> _skeletonStops = [
+  for (var i = 0; i < 6; i++)
+    TimelineStop(
+      uid: 'skeleton-$i',
+      name: BoneMock.chars(i.isEven ? 5 : 4, '囗'),
+      primaryTime: '${(i + 1) * 3}',
+      isLiveEta: i < 2,
+    ),
+];

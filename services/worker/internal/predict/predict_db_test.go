@@ -23,15 +23,6 @@ func predictTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// TestBatchNextDepartures is the regression test for the query rewrite: the
-// original filter (type = true AND stopsequence = 0) matched no row the
-// loader ever writes (the atomic writer stores frequency rows as type=true,
-// stopsequence=-1, and timetable rows as type=false, stopsequence=<TDX
-// StopSequence>), so BatchNextDepartures always returned an empty map. This
-// pins the fixed query against rows inserted through the same shape
-// the atomic writer stores: timetable origin-stop selection (not sequence 0),
-// service_day bitmask filtering (Monday=bit0..Sunday=bit6, mask2 order), and
-// the frequency-window fallback.
 func TestBatchNextDepartures(t *testing.T) {
 	pool := predictTestPool(t)
 	defer pool.Close()
@@ -46,7 +37,6 @@ func TestBatchNextDepartures(t *testing.T) {
 	}
 	cleanup()
 	defer cleanup()
-
 	const weekdays = 31 // Mon-Fri: bits 0-4
 	const allDays = 127 // Mon-Sun: bits 0-6
 
@@ -139,14 +129,6 @@ func TestBatchNextDepartures(t *testing.T) {
 	}
 }
 
-// TestBatchStopOffsets covers the two judgements the offset query makes: hops
-// accumulate along the stop sequence so every stop carries its running time from
-// the origin, and a Direction missing one hop is withheld entirely rather than
-// returned with the gap silently absorbed.
-//
-// The second half is what the ETA path depends on. Accumulating past an
-// unobserved hop leaves every stop after it early by that hop's duration, and
-// the prediction reads as confident while being wrong for the rest of the route.
 func TestBatchStopOffsets(t *testing.T) {
 	pool := predictTestPool(t)
 	defer pool.Close()
@@ -166,16 +148,23 @@ func TestBatchStopOffsets(t *testing.T) {
 	cleanup := func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM bus_station_stop_map WHERE sub_route_uid IN ($1, $2)`, whole, holed)
 		_, _ = pool.Exec(ctx, `DELETE FROM bus_segment_time WHERE sub_route_uid IN ($1, $2)`, whole, holed)
+		_, _ = pool.Exec(ctx, `DELETE FROM raw_tdx.bus_stopofroute WHERE subrouteuid=$1`, whole)
 	}
 	cleanup()
 	defer cleanup()
+	if _, err := pool.Exec(ctx, `INSERT INTO raw_tdx.bus_stopofroute
+		(city, routeuid, subrouteuid, direction, stops)
+		VALUES ('ZZ', $1, $1, 0, $2::jsonb)
+		ON CONFLICT DO NOTHING`, whole, `[{"StopUID":"S1"},{"StopUID":"S2"},{"StopUID":"S3"}]`); err != nil {
+		t.Fatalf("insert known stops: %v", err)
+	}
 
 	// Three stops each; the holed route is missing the S2->S3 segment.
 	for _, uid := range []string{whole, holed} {
 		for seq, stop := range []string{"S1", "S2", "S3"} {
 			if _, err := pool.Exec(ctx, `
-				INSERT INTO bus_station_stop_map (sub_route_uid, Direction, stop_uid, stop_sequence)
-				VALUES ($1, 0, $2, $3)`, uid, stop, seq+1); err != nil {
+				INSERT INTO bus_station_stop_map (sub_route_uid, Direction, station_id, stop_uid, stop_sequence)
+				VALUES ($1, 0, $2, $2, $3)`, uid, stop, seq+1); err != nil {
 				t.Fatalf("insert stop map: %v", err)
 			}
 		}

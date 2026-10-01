@@ -23,7 +23,7 @@ class FilterChipGroup<T> extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        spacing: 8,
+        spacing: AppTheme.space8,
         children: [
           for (final entry in options.entries)
             _Chip(
@@ -67,12 +67,8 @@ class _Chip extends StatelessWidget {
           duration: reduceMotion ? Duration.zero : AppMotion.short,
           curve: AppMotion.easeOut,
           height: 30,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space10),
           alignment: Alignment.center,
-          // Selection reads from a hairline accent border and a check, not a
-          // filled accent block: these groups default to everything selected,
-          // and a row of solid accent would outweigh the screen's primary
-          // action.
           decoration: BoxDecoration(
             color: selected ? cs.surfaceContainerHighest : Colors.transparent,
             borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -89,7 +85,7 @@ class _Chip extends StatelessWidget {
                 opacity: selected ? 1 : 0,
                 child: Icon(Icons.check_rounded, size: 14, color: cs.onSurface),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: AppTheme.space4),
               Text(
                 label,
                 style: AppTextStyles.bodySmall.copyWith(

@@ -5,17 +5,9 @@ services:
       PG_SCHEMA: staging
       ROUTER_DB_MAX_CONNS: 4
       ROUTER_DB_MIN_CONNS: 1
-      # Staging has no MOTIS of its own: two imported data sets (street graph
-      # plus timetable, twice) do not fit on the host, and what staging needs
-      # to prove is the router-to-MOTIS wiring, not a second copy of a feed
-      # built by the same code (ADR-0022). It therefore reaches prod's
-      # MOTIS across the host gateway, at the port prod publishes on loopback.
-      # MOTIS is a pure reader, so sharing it cannot contaminate prod.
-      MOTIS_BASE_URL: http://host.docker.internal:${MOTIS_PORT:-8082}
-    # host.docker.internal is not resolvable on Linux without this mapping;
-    # host-gateway is the Docker-provided alias for the host itself.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # Staging shares prod's read-only MOTIS over the restricted external
+      # routing network, never through a host-published loopback port.
+      MOTIS_BASE_URL: http://prod-motis:8080
     # Staging terminates gRPC TLS (GRPC_TLS=true, App Check disabled) so it
     # needs exactly the cert/key pair -- not the whole ./secrets directory,
     # and not firebase-sa.json, which staging never reads (FIREBASE_ENABLED
@@ -53,6 +45,15 @@ services:
   # deploy-transaction.sh), which is also why secrets/ and powersync/ sit at
   # the root rather than beside the compose files.
   cloudflared:
+    networks:
+      frontend:
+        ipv4_address: 172.30.10.2
     volumes:
       - ./cloudflared/config.staging.yml:/etc/cloudflared/config.yml:ro
       - ./secrets/cloudflared.staging.json:/etc/cloudflared/creds.json:ro
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24

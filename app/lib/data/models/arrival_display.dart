@@ -3,20 +3,6 @@ import 'package:wheres_the_bus/data/models/eta_format.dart';
 import 'package:wheres_the_bus/data/models/eta_status.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-/// The small contract the shared arrival tile renders (CONTEXT.md: "arrival
-/// display"). Each transit mode maps its own domain model to it; the tile owns
-/// the rendering invariants (mono time values via `EtaValue`, the static
-/// coming-soon highlight). This value carries only what the tile needs:
-///
-/// - [label]: the primary identifier text (bus route number, metro line/route).
-/// - [destination]: the "往 X" terminal.
-/// - [status]: the unified [EtaStatus] driving the time column and its colour.
-/// - [rank]: the sort key; soonest first, service-state rows last. The
-///   coming-soon highlight applies to the rank-0 row when [rank] <= 3 (see
-///   [isComingSoon]).
-///
-/// The status-and-rank *rules* stay in eta_format.dart, applied by the mode
-/// mappers below — this class does not re-derive them.
 class ArrivalDisplay {
   const ArrivalDisplay({
     required this.label,
@@ -27,10 +13,6 @@ class ArrivalDisplay {
     this.isLastBus = false,
   });
 
-  /// Maps a bus stop arrival to its display, reproducing the one status/rank
-  /// mapping the bus stop sheet used: 進站中 first, 即將進站 next, then minutes
-  /// (later minutes rank later), and every service-state row (尚未發車 / 末班已過
-  /// / 交管不停靠 / scheduled clock time) last.
   factory ArrivalDisplay.fromBusStop(AppI18n i18n, BusStopArrival a) {
     final label = a.displayLabelOf(i18n);
     final (EtaStatus status, int rank) = switch (a.displayStatus) {
@@ -49,6 +31,12 @@ class ArrivalDisplay {
           EtaStatus.label(label),
           (a.minutes ?? 0) + 2,
         ),
+      // Service has ended for the day: sink below every other service-state
+      // row (交管不停靠 / 未營運 / unknown), which stay at 9999.
+      BusStopDisplayStatus.lastBusPassed => (
+        label != null ? EtaStatus.label(label) : EtaStatus.unknown(),
+        10000,
+      ),
       _ => (
         label != null ? EtaStatus.label(label) : EtaStatus.unknown(),
         9999,
@@ -64,10 +52,6 @@ class ArrivalDisplay {
     );
   }
 
-  /// Maps a metro arrival to its display: a 分/秒 countdown, collapsing to 進站中
-  /// once the estimate reaches zero. [rank] is the second estimate so the row
-  /// order matches the feed's estimate sort. Metro does not surface the
-  /// coming-soon highlight, so callers leave it off regardless of [rank].
   factory ArrivalDisplay.fromMetro({
     required String line,
     required String destination,

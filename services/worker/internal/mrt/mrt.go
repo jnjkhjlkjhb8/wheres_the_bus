@@ -1,7 +1,3 @@
-// Package mrt loads metro static data (stations, first/last train, fare and
-// travel-time matrices, the same-line ride graph) and publishes live arrivals.
-// Arrivals come from the Metro Taipei SOAP feed rather than TDX (ADR-0014); the
-// TDX LiveBoard path is kept behind a kill switch.
 package mrt
 
 import (
@@ -62,12 +58,6 @@ type mrtFirstlast struct {
 	} `json:"ServiceDay"`
 }
 
-// mrtLive decodes a TDX Rail/Metro/LiveBoard element: the live estimate for a
-// train approaching a station toward a destination.
-//
-// Nothing calls this today: the TDX metro LiveBoard job is paused in favour of
-// the Metro Taipei SOAP feed (ADR-0014). It is kept, not deleted, because the
-// pause is a kill switch rather than a removal.
 type mrtLive struct {
 	LineID                 string `json:"LineID"`
 	StationID              string `json:"StationID"`
@@ -80,10 +70,6 @@ type mrtLive struct {
 	EstimateTime  int32 `json:"EstimateTime"`
 }
 
-// LoadStations upserts one metro system's stations into mrt_station via a
-// temp-table COPY then ON CONFLICT (station_id, system) upsert. It consumes an
-// already-opened decoder; the temp_mrt COPY and upsert are byte-identical to the
-// legacy transform.
 func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt stations: system is required")
@@ -145,18 +131,6 @@ func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 	}, row)
 }
 
-// LoadFirstlast rebuilds mrt_schedule (first/last train times) for one metro
-// system as partition-replace: within ONE transaction it DELETEs the system's
-// rows, COPYs the fresh rows into temp_mrt, then INSERTs them DISTINCT ON the
-// natural key (station_id, lineid, destinationstaionid, serviceday, system).
-// TDX FirstLastTimetable repeats that key within one system's payload (TRTC
-// especially), so the drain MUST collapse the duplicates: the mrt_schedule_natural_key
-// UNIQUE constraint (2026-06-14-perf-indexes.sql) — the same tuple PowerSync
-// derives its row id from — rejects duplicate rows, so an un-deduped INSERT
-// aborts the whole transaction and rolls back the partition DELETE, leaving the
-// system's schedule permanently empty. It consumes an already-opened decoder.
-// updated_at is stamped NOW() so the freshness probe (main.go's MAX(updated_at)
-// per system) keeps working.
 func LoadFirstlast(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt first-last: system is required")
@@ -171,10 +145,6 @@ func LoadFirstlast(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUps
 		if strings.TrimSpace(timetable.DestinationStaionID) == "" {
 			return errors.New("DestinationStaionID is required")
 		}
-		// An empty first/last train time means the operator publishes no
-		// window for this line/destination, not a defect; ServiceWindows
-		// already skips a row it cannot parse. Only a malformed value is
-		// rejected, matching the bus snapshot's empty-is-absent rule.
 		if v := strings.TrimSpace(timetable.FirstTrainTime); v != "" {
 			if _, ok := parseHHMM(v); !ok {
 				return _oops.With("first_train_time", timetable.FirstTrainTime).Errorf("FirstTrainTime is invalid")
@@ -209,12 +179,6 @@ func LoadFirstlast(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUps
 			system,
 		})
 	}
-	// Partition-replace: DELETE this system's rows before re-inserting, then
-	// DISTINCT ON the natural key so duplicates within the payload collapse to
-	// one row. The DELETE clears the partition first, so the deduped batch can
-	// never trip mrt_schedule_natural_key. (ON CONFLICT DO UPDATE would not help
-	// here: two conflicting rows in one INSERT raise "cannot affect row a second
-	// time" — the dedupe has to happen in the SELECT.)
 	return sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 		Key:     "mrt_firstlast",
 		PreExec: []pipeline.CopyUpsertStmt{{SQL: `DELETE FROM mrt_schedule WHERE system = $1`, Args: []any{system}}},
@@ -299,12 +263,6 @@ func isASCIIDigit(b byte) bool {
 	return b >= '0' && b <= '9'
 }
 
-// ServiceWindows returns the schedule windows keyed by
-// system|station|line|destination, reloading from mrt_schedule at most once per
-// mrtWindowCacheTTL. Service-day masks are deliberately ignored: a row for any
-// day widens the window, so filtering only ever drops entries outside every
-// documented service window. Returns nil (callers fail open) on query error or
-// nil db.
 func ServiceWindows(ctx context.Context, db *pgxpool.Pool) map[string][]ServiceWindow {
 	if db == nil {
 		return nil
@@ -362,10 +320,6 @@ func ServiceWindows(ctx context.Context, db *pgxpool.Pool) map[string][]ServiceW
 	return byKey
 }
 
-// InService reports whether a live-board entry falls inside any schedule
-// window for its key (with grace padding). Entries with no schedule rows pass:
-// TDX emits stale zero-estimate rows after close, so the filter only drops what
-// the static timetable positively places outside service hours.
 func InService(windows map[string][]ServiceWindow, key string, now time.Time) bool {
 	ws, ok := windows[key]
 	if !ok || len(ws) == 0 {
@@ -383,17 +337,6 @@ func InService(windows map[string][]ServiceWindow, key string, now time.Time) bo
 	return false
 }
 
-// Eta refreshes live metro arrivals into Redis on the 10s cron. Per system it
-// pipelines a protobuf MrtLive per (station, line) under mrt_live:... with a
-// 2-minute TTL and publishes per-station updates for live streaming. NTMC is
-// excluded (no live board). Per-system failures are logged and skipped.
-// Entries outside their static first/last-train window are dropped: after close
-// TDX keeps returning rows with EstimateTime 0 and ServiceStatus 0, which would
-// otherwise surface as "approaching" in the app at night.
-//
-// Nothing calls this today: the TDX metro LiveBoard job is paused in favour of
-// the Metro Taipei SOAP feed (ADR-0014). It is kept, not deleted, because the
-// pause is a kill switch rather than a removal.
 func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool) error {
 	zap.S().Infow("start", "component", "mrt_eta", "action", "mrt_eta", "event", "start")
 	windows := ServiceWindows(ctx, db)
@@ -476,19 +419,7 @@ func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink,
 	return jobErr
 }
 
-// mrtODFare decodes a TDX Rail/Metro/ODFare element: fares between an
-// origin/destination station pair, by ticket type. For KRTC/KLRT the same feed
-// carries the station-to-station TravelTime (whole minutes), which populates
-// mrt_journey_matrix.travel_time_min. TravelTime is json.Number because TDX has
-// emitted it both as a bare number and as a quoted string across systems; a
-// missing value yields 0 (left as-is by the upsert's conditional update), while
-// malformed, fractional, or negative input aborts the load.
-// TRTC's ODFare omits TravelTime entirely — its times are computed separately by
-// LoadTrtcTravelTime from the segment + transfer graph.
-//
-// The two fare axes are independent: TicketType is the ticket medium (1 = single
-// journey) and FareClass is the passenger category (1 = 全票, 2 = 半票). Both must
-// be matched — filtering on TicketType alone spans several classes.
+// TDX encodes TravelTime as either a number or a quoted string.
 type mrtODFare struct {
 	OriginStationID      string      `json:"OriginStationID"`
 	DestinationStationID string      `json:"DestinationStationID"`
@@ -535,13 +466,6 @@ func (f mrtODFare) travelTimeMin() (int, error) {
 	return int(value), nil
 }
 
-// LoadJourneyMatrix upserts one metro system's OD fare matrix into
-// mrt_journey_matrix from a decoder over the reconstructed raw_tdx array. It
-// decodes []mrtODFare and writes the single-journey full (全票, TicketType 1
-// FareClass 1) and half (半票, FareClass 2) fares plus the station-to-station
-// travel time from the same ODFare feed. The inline upsert only replaces a fare
-// or travel time with a positive value, so a feed that omits a fare class (or
-// TravelTime, as TRTC's does) never zeroes a previously populated value.
 func LoadJourneyMatrix(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt journey matrix: system is required")
@@ -569,11 +493,6 @@ func LoadJourneyMatrix(ctx context.Context, dec *json.Decoder, sink pipeline.Cop
 				return _oops.With("index", i).With("price", item.Price).Errorf("fares element Price must be non-negative")
 			}
 			if item.TicketType == _mrtTicketTypeSingle {
-				// Only the full and half classes are ever read (see fares), so
-				// scope the divergence check to them: a conflicting duplicate
-				// on any other class disputes a value this loader discards, and
-				// rejecting the system's whole matrix over it bought nothing.
-				// A real conflict on a price users see stays fatal.
 				if item.FareClass == _mrtFareClassFull || item.FareClass == _mrtFareClassHalf {
 					if prior, seen := classPrices[item.FareClass]; seen && prior != item.Price {
 						return _oops.With("index", i).With("fare_class", item.FareClass).Errorf("fares element divergent duplicate TicketType 1 FareClass")
@@ -656,11 +575,6 @@ func nonNegativeJSONInteger(number json.Number, field string, optional bool, max
 	return integer.Int64(), nil
 }
 
-// mrtS2SRow decodes one TDX Rail/Metro/S2STravelTime element: a line and its
-// ordered adjacent-station segments. The nested TravelTimes array lands as jsonb
-// (the landing lowercases only top-level keys), so it is decoded here with
-// case-insensitive struct tags. Only the segment endpoints and their RunTime +
-// StopTime (seconds) are used to build the metro graph.
 type mrtS2SRow struct {
 	TravelTimes []struct {
 		FromStationID string      `json:"FromStationID"`
@@ -688,16 +602,6 @@ func jsonNumInt(n json.Number, field string) (int64, error) {
 	return value, nil
 }
 
-// LoadTrtcTravelTime computes TRTC OD travel times from the segment + transfer
-// graph and writes them into mrt_journey_matrix.travel_time_min. TRTC's ODFare
-// feed omits per-OD TravelTime (unlike KRTC/KLRT), so the ODFare load leaves
-// those rows at 0; this runs after mrt_odfare (registry order) and fills them
-// in. It reads both landed graph inputs via src (like loadBus's multi-table
-// read), builds an undirected weighted graph (edge weight in seconds: adjacent
-// hops = RunTime + StopTime, interchanges = TransferTime * 60), all-pairs
-// shortest-paths it (Floyd-Warshall, ~130 nodes), and UPDATEs each reachable pair
-// that already exists in the matrix. Unreachable/absent pairs keep their current
-// value, so a missing feed never zeroes good data — it just no-ops.
 func LoadTrtcTravelTime(ctx context.Context, src pipeline.LoadSource, sink pipeline.CopyUpsertSink, system string) error {
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt travel time: system is required")
@@ -808,11 +712,6 @@ func LoadTrtcTravelTime(ctx context.Context, src pipeline.LoadSource, sink pipel
 	}, rows)
 }
 
-// AdjacencyRow decodes one S2STravelTime element for the adjacency graph: the
-// line and its ordered adjacent-station segments. Only the line and the segment
-// endpoints matter here (times are LoadTrtcTravelTime's concern), and the
-// nested TravelTimes array — jsonb in raw_tdx — decodes with case-insensitive
-// struct tags. LineID is the element's top-level lineid.
 type AdjacencyRow struct {
 	LineID      string `json:"LineID"`
 	TravelTimes []struct {
@@ -821,14 +720,6 @@ type AdjacencyRow struct {
 	} `json:"TravelTimes"`
 }
 
-// LoadAdjacency fills mrt_adjacency from a system's S2STravelTime segments
-// (ADR-0015): the same-line ride graph a metro alight-reminder session walks. It
-// stores both directions of every segment so the router's board→terminal BFS is
-// an undirected walk via directed-edge lookups. Interchange (LineTransfer) edges
-// are intentionally excluded — one train never crosses them, so joining two
-// lines into one component would let BFS route through a transfer a rider must
-// physically make. Rows are refreshed in place via an upsert; a system whose
-// feed is momentarily empty no-ops rather than deleting good edges.
 func LoadAdjacency(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt adjacency: system is required")
@@ -874,10 +765,6 @@ func LoadAdjacency(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUps
 	}, rows)
 }
 
-// AdjacencyRows flattens the decoded lines into both-direction edge rows,
-// keeping the first line seen for a (from, to) pair so the copy set has no
-// duplicate primary key. Split from LoadAdjacency so the flattening is
-// unit-testable without a database.
 func AdjacencyRows(lines []AdjacencyRow, system string) [][]any {
 	seen := map[string]bool{}
 	var rows [][]any
@@ -903,11 +790,6 @@ func AdjacencyRows(lines []AdjacencyRow, system string) [][]any {
 
 const _mrtGraphInf int64 = 1 << 62
 
-// mrtTravelGraph builds the undirected shortest-path distance matrix (seconds)
-// over every station appearing in a segment or transfer. Returns the station-id
-// slice (index i ↔ dist row i), the all-pairs distance matrix, and the segment /
-// transfer edge counts for logging. Split out from LoadTrtcTravelTime so the
-// graph math is unit-testable without a database.
 func mrtTravelGraph(lines []mrtS2SRow, transfers []mrtLineTransfer) ([]string, [][]int64, int, int, error) {
 	stations := []string{}
 	idx := map[string]int{}

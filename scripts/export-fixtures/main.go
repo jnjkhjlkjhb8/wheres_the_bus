@@ -1,22 +1,3 @@
-// Command export-fixtures dumps one raw_tdx dataset/partition to a JSON file for
-// deterministic loader replay tests
-// raw_tdx fixtures — deterministic, no network"). It is read-only: it never
-// writes to the database, only to the -out file.
-//
-// Usage:
-//
-//	DATABASE_URL=... go run ./scripts/export-fixtures \
-//	  -table thsr_station -out services/worker/testdata/raw_tdx/thsr_station.json
-//	DATABASE_URL=... go run ./scripts/export-fixtures \
-//	  -table tra_dailytimetable -partcol traindate -part 2026-07-05 -out ...
-//
-// The reconstruction query is byte-for-byte the same shape as
-// rawTDXSource.datasetJSON in services/worker/loader.go: to_jsonb of each row
-// minus the fetched_at (and partition) bookkeeping columns, with the
-// thsr_dailytimetable traindate re-derived as a YYYY-MM-DD string. A fixture
-// exported here therefore replays identically through the loader. The SQL is
-// duplicated rather than imported because that unexported helper lives in
-// another package main, which a separate command cannot import.
 package main
 
 import (
@@ -50,8 +31,6 @@ func main() {
 	}
 }
 
-// export is split out of main so the pool is closed on the failure paths too:
-// os.Exit does not run deferred calls.
 func export(dsn, table, partCol, part, out string) error {
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -70,10 +49,6 @@ func export(dsn, table, partCol, part, out string) error {
 	return nil
 }
 
-// datasetJSON reconstructs the lowercased-JSON array for one raw_tdx partition,
-// mirroring rawTDXSource.datasetJSON. partCol is interpolated into the query, so
-// callers must pass only trusted column names (this command is a developer tool
-// run against known raw_tdx tables).
 func datasetJSON(ctx context.Context, pool *pgxpool.Pool, table, partCol, partVal string) ([]byte, error) {
 	q, args := buildDatasetQuery(table, partCol, partVal)
 	var body []byte

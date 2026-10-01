@@ -1,21 +1,5 @@
 import 'package:flutter/services.dart';
 
-/// The platform → Dart direction of the tracking card's channel. Outbound
-/// start/update/stop calls travel the same channel the other way and are
-/// unaffected.
-///
-/// Two things arrive here:
-///
-/// - `onCancelTrack`, when the card's 取消追蹤 action is tapped. Every bloc that
-///   can own a tracking session binds; only one session exists at a time, so
-///   the ones without a live session ignore the call — cheaper and less fragile
-///   than teaching the platform side which bloc is currently the owner.
-/// - `onPushToken`, iOS only: each ActivityKit push token issued for the
-///   current card, which the owner hands to the server so it can refresh that
-///   card while the app is suspended (ADR-0018). Android's pushed refresh rides
-///   the device's existing FCM token and needs nothing here.
-///
-/// One class for both because a MethodChannel has room for exactly one handler.
 abstract final class AlightTrackInboundChannel {
   static const _channel = MethodChannel('com.wheres.bus/live_activity');
 

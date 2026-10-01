@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
@@ -15,17 +15,16 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
+import 'package:wheres_the_bus/data/models/plan_options.dart';
 import 'package:wheres_the_bus/data/repositories/maas_repository.dart';
 import 'package:wheres_the_bus/data/repositories/planner_repository.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
-import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_event.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
 import 'package:wheres_the_bus/features/go/map/go_plan_overlay.dart';
-import 'package:wheres_the_bus/data/models/plan_options.dart';
 import 'package:wheres_the_bus/features/go/model/planned_place.dart';
 import 'package:wheres_the_bus/features/go/navigation/navigation_coordinator.dart';
 import 'package:wheres_the_bus/features/go/view/place_search_screen.dart';
@@ -36,22 +35,21 @@ import 'package:wheres_the_bus/shared/map/map_color_scheme.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_badge.dart';
+import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/app_date_picker.dart';
-import 'package:wheres_the_bus/shared/widgets/app_progress_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/app_quantity_selector.dart';
 import 'package:wheres_the_bus/shared/widgets/app_range_slider.dart';
 import 'package:wheres_the_bus/shared/widgets/app_slider.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
-import 'package:wheres_the_bus/shared/widgets/app_switch.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
+import 'package:wheres_the_bus/shared/widgets/app_switch.dart';
 import 'package:wheres_the_bus/shared/widgets/app_time_picker.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/divider_line.dart';
 import 'package:wheres_the_bus/shared/widgets/filter_chip_group.dart';
 
 part 'go_screen_camera.dart';
-part '../widgets/go_navigation_steps_widgets.dart';
 part '../widgets/go_navigation_widgets.dart';
 part '../widgets/go_planner_time_widgets.dart';
 part '../widgets/go_planner_waiting_widgets.dart';
@@ -64,18 +62,10 @@ const _kDefaultPos = LatLng(25.0416, 121.5438);
 // (rather than a theme color) so it reads as clearly secondary over both the
 // light and dark map styles.
 
-// Follow-camera framing while navigating. Shared by the one-shot nav-start
-// camera and every follow tick so they stay in lockstep (spec: keep tilt 45 /
-// zoom 15.5). The bearing is a fixed constant — the map never rotates; only
-// the puck rotates to the device heading.
 const _kNavZoom = 15.5;
 const _kNavTilt = 45.0;
 const _kNavBearing = 30.0;
 
-// The departure/arrival stance for a plan query. `leaveNow` always re-queries
-// with a fresh current time; `departAt`/`arriveBy` pin the chosen instant and
-// map to the wire `arriveBy` flag. Surfaced only after a query (the results
-// header time chip); plan entry is always `leaveNow`.
 enum _TimeMode { leaveNow, departAt, arriveBy }
 
 class GoScreen extends StatefulWidget {
@@ -93,8 +83,6 @@ class GoScreen extends StatefulWidget {
 class _GoScreenState extends State<GoScreen> {
   GoogleMapController? _map;
   late final SheetController _sheet;
-  // A distinct controller for the preview sheet so it and the results sheet can
-  // co-exist briefly while the phase-swap animation crossfades them.
   late final SheetController _previewSheet;
   late final NavigationCoordinator _navigationCoordinator;
   PlannedPlace? _origin;
@@ -112,20 +100,7 @@ class _GoScreenState extends State<GoScreen> {
   // when `_timeMode` is not `leaveNow`.
   _TimeMode _timeMode = _TimeMode.leaveNow;
   DateTime _timeAt = DateTime.now();
-  // Whether the autopilot currently has a live GPS fix flowing. Gates the
-  // manual progression controls in the nav sheet: shown only when the
-  // autopilot can't actually drive (no permission / location services off).
-  bool _autopilotDriving = true;
-
-  // Camera follow mode — ephemeral UI state, deliberately kept out of PlanBloc.
-  // While navigating, each GPS fix recenters the camera on the user unless the
-  // user has panned the map by gesture (then follow pauses until re-armed by a
-  // nav (re)start or a leg advance).
   bool _followPaused = false;
-  // Puck-only heading: the directional arrow's rotation, driven by the compass.
-  // The camera bearing stays the _kNavBearing constant, so this never rotates
-  // the map — it only points the puck at the device's true (north-referenced)
-  // heading. Seeds to _kNavBearing until the first compass event.
   double _puckHeading = _kNavBearing;
   // Most recent navigation GPS fix, cached so the recenter button can snap the
   // camera back to the user, and so the puck can be placed at the user.
@@ -133,6 +108,9 @@ class _GoScreenState extends State<GoScreen> {
   // Compass heading subscription — magnetometer draws battery, so it lives only
   // for the duration of an active navigation (started with follow, torn down at
   // nav end / dispose), never on the planner screen.
+  // The subscription is cancelled by _stopCompass on every navigation end and
+  // again from dispose for a route removed while navigation is active.
+  // ignore: cancel_subscriptions
   StreamSubscription<double>? _compassSub;
   // Last compass heading actually applied to the puck, plus when — feeds the
   // shouldApplyHeading throttle.
@@ -141,19 +119,9 @@ class _GoScreenState extends State<GoScreen> {
   // onCameraMoveStarted fires for the app's own animateCamera too; this counts
   // in-flight programmatic moves so only genuine user gestures pause follow.
   int _programmaticMoves = 0;
-  // animateCamera's future completes on the platform method reply (animation
-  // start), while onCameraMoveStarted arrives as a separate channel event with
-  // no ordering guarantee — the counter can hit zero before the event lands.
-  // A short grace window after the last programmatic move covers that race.
   DateTime _lastProgrammaticMove = DateTime.fromMillisecondsSinceEpoch(0);
   static const _kProgrammaticMoveGrace = Duration(milliseconds: 500);
 
-  // Memoized map overlays. Building the polyline/marker sets walks every route,
-  // section, and intermediate stop, so cache them and reuse while the inputs
-  // (result identity, selected route, active leg, theme colors) are unchanged.
-  /// Owns everything pinned to a coordinate: the plan's polylines and markers,
-  /// the async bitmap cache behind them, and the memo that keeps a camera tick
-  /// from re-deriving the whole layer.
   late final GoPlanOverlay _overlay = GoPlanOverlay(
     onAlternateTap: _previewRouteIndex,
     onPuckTap: _recenterFollow,
@@ -162,11 +130,6 @@ class _GoScreenState extends State<GoScreen> {
 
   /// The layer the map is currently showing, recomputed in build.
   GoMapLayer _layer = (markers: const {}, polylines: const {});
-
-  // Canvas-drawn marker bitmaps resolve asynchronously; this mirrors the
-  // resolved descriptors so overlay builds can read them synchronously. A
-  // pending set dedupes in-flight generation. Resolving one invalidates the
-  // overlay memo so the marker appears on the next frame.
 
   @override
   void initState() {
@@ -181,9 +144,6 @@ class _GoScreenState extends State<GoScreen> {
           SettingsRepository.instance.liveActivityEnabled,
       positions: LocationService.instance.navigationStream,
       onAutoAction: _onAutoNavAction,
-      onAutopilotStatus: (driving) {
-        if (mounted) setState(() => _autopilotDriving = driving);
-      },
       onFollowUpdate: _onFollowUpdate,
     );
     if (context.read<PlanBloc>().state.activeLegIndex == null) {
@@ -212,10 +172,6 @@ class _GoScreenState extends State<GoScreen> {
 
   Future<void> _initOrigin() async {
     if (mounted) setState(() => _originStatus = OriginStatus.resolving);
-    // This runs synchronously out of initState, where reading an inherited
-    // widget (Localizations, below) throws. Yield first so the lookup happens
-    // once the element is settled — otherwise every open reported the origin
-    // as unavailable, permission granted or not.
     await Future<void>.microtask(() {});
     if (!mounted) return;
     final i18n = AppI18n.of(context);
@@ -226,12 +182,6 @@ class _GoScreenState extends State<GoScreen> {
         _origin = place;
         _originStatus = OriginStatus.resolved;
       });
-      // No-op unless a destination was seeded in (see [GoScreen
-      // .initialDestination]); with one, this is what fires the plan once the
-      // GPS fix that completes the pair finally lands. A denied or failed fix
-      // leaves the destination filled and the origin field waiting for a pick,
-      // which is the same state as opening the planner and typing a
-      // destination first.
       _maybePlan();
     } on Object catch (_) {
       if (!mounted) return;
@@ -293,10 +243,6 @@ class _GoScreenState extends State<GoScreen> {
     _maybePlan();
   }
 
-  /// [pageCursor] is empty for every ordinary search, which is what makes
-  /// paging reset itself: editing an endpoint, the time or the options runs
-  /// through here with no cursor and lands back on the first page. Only the
-  /// 更早 / 更晚 actions pass one, and only the one the last response returned.
   void _maybePlan({String pageCursor = ''}) {
     final from = _origin;
     final to = _dest;
@@ -305,10 +251,6 @@ class _GoScreenState extends State<GoScreen> {
     // user's chosen instant and set the wire `arriveBy` flag accordingly.
     final when = _timeMode == _TimeMode.leaveNow ? DateTime.now() : _timeAt;
     String two(int v) => v.toString().padLeft(2, '0');
-    // A fresh search invalidates every marker built for the prior results;
-    // drop them so the caches don't grow for the life of the screen across
-    // successive searches. Markers for the new plan rebuild on the next
-    // _ensureOverlays pass once results arrive.
     _overlay.invalidate();
     context.read<PlanBloc>().add(
       PlanSearchRequested(
@@ -319,10 +261,6 @@ class _GoScreenState extends State<GoScreen> {
         date: '${when.year}-${two(when.month)}-${two(when.day)}',
         time: '${two(when.hour)}:${two(when.minute)}',
         arriveBy: _timeMode == _TimeMode.arriveBy,
-        // The rider's own routing facts are folded in here rather than stored
-        // in the sheet's options: they belong to the person, and reading them
-        // at query time means a change in Settings applies to the next search
-        // without the planner screen having to listen for it.
         options: _options.copyWith(
           wheelchair: SettingsRepository.instance.stepFreeRouting,
           walkSpeedCmPerSec: SettingsRepository.instance.walkSpeedCmPerSec,
@@ -335,10 +273,6 @@ class _GoScreenState extends State<GoScreen> {
     );
   }
 
-  /// How many replacements to ask for per transit leg. Three is what fits
-  /// under a leg without the itinerary turning into a timetable; asking for
-  /// none and fetching them on tap would mean a second full plan, which the
-  /// planner is free to answer differently from the one on screen.
   static const int _kLegAlternatives = 3;
 
   void _retry() {
@@ -346,11 +280,6 @@ class _GoScreenState extends State<GoScreen> {
     _maybePlan();
   }
 
-  /// Ask the planner for the departures before or after the ones on screen.
-  ///
-  /// The cursor is opaque and only valid against the query that produced it,
-  /// so every other path through [_maybePlan] clears it — editing an endpoint,
-  /// the time, or the options starts a fresh page-one search.
   void _page(String cursor) {
     if (cursor.isEmpty) return;
     unawaited(HapticService.instance.lightTap());
@@ -366,10 +295,6 @@ class _GoScreenState extends State<GoScreen> {
     setState(() => _dest = null);
   }
 
-  // A saved route between the same two points, matched on where it actually
-  // starts and ends rather than on the place names — the same corner searched
-  // twice can come back with two different labels. Shown while waiting, so a
-  // rider on a trip they have taken before sees it immediately.
   PlanRoute? _lastRouteForTrip(List<PlanRoute> saved) {
     final from = _origin?.latLng;
     final to = _dest?.latLng;
@@ -509,11 +434,6 @@ class _GoScreenState extends State<GoScreen> {
     }
   }
 
-  // Compass event: rotate only the puck to the phone's heading while
-  // navigating, including standing still — the map never rotates. Throttled by
-  // shouldApplyHeading so it stays under ~5 setStates/sec and ignores sub-3°
-  // jitter. Not gated on _followPaused: the puck stays visible (and honest)
-  // even after a gesture pause.
   void _onCompassHeading(double heading) {
     if (!mounted) return;
     final navigating = context.read<PlanBloc>().state.activeLegIndex != null;
@@ -569,35 +489,6 @@ class _GoScreenState extends State<GoScreen> {
     setState(() => _followPaused = false);
     final fix = _lastFix;
     if (fix != null) _followTo(fix);
-  }
-
-  void _advance(PlanRoute route, int activeLeg) {
-    unawaited(HapticService.instance.lightTap());
-    unawaited(_advanceNavigation(route, activeLeg));
-  }
-
-  Future<void> _advanceNavigation(PlanRoute route, int activeLeg) async {
-    final result = await _navigationCoordinator.advance(
-      route: route,
-      activeLeg: activeLeg,
-    );
-    if (!mounted) return;
-    if (result.arrived) {
-      _resetCamera();
-      AppSnackbar.show(
-        context,
-        AppI18n.of(context).goArrived,
-        type: SnackType.success,
-      );
-      return;
-    }
-    // A leg advance re-arms follow: the pan below frames the next leg's
-    // departure, then GPS fixes resume driving the camera.
-    setState(() => _followPaused = false);
-    final next = _latLngOrNull(result.nextCameraPoint);
-    if (next != null) {
-      unawaited(_animateCameraGuarded(CameraUpdate.newLatLng(next)));
-    }
   }
 
   // Autopilot side effect: mirrors the manual buttons' haptic, and (for
@@ -666,9 +557,6 @@ class _GoScreenState extends State<GoScreen> {
 
   Widget _buildPlanner() {
     return BlocConsumer<PlanBloc, PlanState>(
-      // Camera reframes on entering a phase or switching the previewed route.
-      // Loading counts as a phase: framing the origin/destination pair is what
-      // makes the wait look like it is about this trip.
       listenWhen: (p, c) =>
           (p.status != c.status &&
               (c.status == PlanStatus.success ||
@@ -685,7 +573,9 @@ class _GoScreenState extends State<GoScreen> {
           p.previewing != c.previewing ||
           p.activeLegIndex != c.activeLegIndex ||
           p.activeWalkStepIndex != c.activeWalkStepIndex ||
-          p.savedRoutes.length != c.savedRoutes.length,
+          p.savedRoutes.length != c.savedRoutes.length ||
+          p.savedRoutesReady != c.savedRoutesReady,
+          p.savedRoutesLoadError != c.savedRoutesLoadError,
       listener: (context, state) {
         // Navigation drives its own camera.
         if (state.activeLegIndex != null) return;
@@ -740,9 +630,6 @@ class _GoScreenState extends State<GoScreen> {
           },
           child: Scaffold(
             resizeToAvoidBottomInset: false,
-            // Plan entry is a map-less phase: while no destination is chosen
-            // the GoogleMap is not built at all, so the planner never opens on
-            // the map first. Choosing a destination crossfades to the map.
             body: AnimatedSwitcher(
               duration: MediaQuery.disableAnimationsOf(context)
                   ? Duration.zero
@@ -755,6 +642,8 @@ class _GoScreenState extends State<GoScreen> {
                       origin: _origin,
                       originStatus: _originStatus,
                       savedRoutes: state.savedRoutes,
+                      savedRoutesReady: state.savedRoutesReady,
+                      savedRoutesLoadError: state.savedRoutesLoadError,
                       onEditOrigin: () => _editField(origin: true),
                       onSwap: _swap,
                       onPickDestination: _pickDestination,
@@ -762,6 +651,9 @@ class _GoScreenState extends State<GoScreen> {
                       onToggleSave: _toggleSave,
                       onBack: () => context.pop(),
                       onEnableLocation: () => unawaited(_initOrigin()),
+                      onRetrySavedRoutes: () => context.read<PlanBloc>().add(
+                        const SavedRoutesLoaded(),
+                      ),
                     )
                   : KeyedSubtree(
                       key: const ValueKey('map'),
@@ -782,9 +674,6 @@ class _GoScreenState extends State<GoScreen> {
     );
   }
 
-  // The map phase: the GoogleMap with the planner/nav header and the results /
-  // preview / nav sheet. Built only once a destination exists (never during
-  // plan entry), so the map is not instantiated on the planner's landing.
   Widget _mapPhase(
     BuildContext context,
     PlanState state, {
@@ -852,51 +741,32 @@ class _GoScreenState extends State<GoScreen> {
           top: 0,
           left: 0,
           right: 0,
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: navigating && route != null
-                  ? _NavHeader(
-                      route: route,
-                      activeLeg: state.activeLegIndex!,
-                      walkStepIndex: state.activeWalkStepIndex,
-                    )
-                  : _PlannerHeader(
-                      origin: _origin,
-                      dest: _dest,
-                      onEditOrigin: () => _editField(origin: true),
-                      onEditDest: () => _editField(origin: false),
-                      onSwap: _swap,
-                    ),
-            ),
+          child: FloatingAppBar(
+            automaticallyImplyLeading: false,
+            middle: navigating && route != null
+                ? _NavHeader(
+                    route: route,
+                    activeLeg: state.activeLegIndex!,
+                    walkStepIndex: state.activeWalkStepIndex,
+                    onEnd: _endNav,
+                  )
+                : _PlannerHeader(
+                    origin: _origin,
+                    dest: _dest,
+                    onEditOrigin: () => _editField(origin: true),
+                    onEditDest: () => _editField(origin: false),
+                    onSwap: _swap,
+                  ),
           ),
         ),
-        if (navigating && route != null)
-          _NavSheet(
-            controller: _sheet,
-            initialOffset: carriedSheetOffset(
-              _sheet,
-              min: AppSheetSnap.peekFrac,
-              max: AppSheetSnap.fullFrac,
-              fallback: AppSheetSnap.halfFrac,
-            ),
-            route: route,
-            activeLeg: state.activeLegIndex!,
-            onAdvance: () => _advance(route, state.activeLegIndex!),
-            onEnd: _endNav,
-            showManualControls: !_autopilotDriving,
-          )
-        else
+        // Navigating is map-first: the header carries the maneuver and the way
+        // out, and nothing else sits over the route.
+        if (!navigating || route == null)
           _sheetSwap(state, route, selectedIndex),
       ],
     );
   }
 
-  // Phase-swap between the results list and the plan-preview itinerary. Both
-  // are full sheets; the swap animates with transform + opacity only (enter
-  // ease-out ~240ms, exit faster ~150ms), collapsing to an instant swap under
-  // reduce-motion.
   Widget _sheetSwap(PlanState state, PlanRoute? route, int? selectedIndex) {
     final reduce = MediaQuery.disableAnimationsOf(context);
     final showPreview = state.previewing && route != null;
@@ -909,7 +779,7 @@ class _GoScreenState extends State<GoScreen> {
             initialOffset: carriedSheetOffset(
               _sheet,
               min: AppSheetSnap.peekFrac,
-              max: AppSheetSnap.fullFrac,
+              max: AppSheetSnap.full,
               fallback: AppSheetSnap.halfFrac,
             ),
             route: route,
@@ -929,7 +799,7 @@ class _GoScreenState extends State<GoScreen> {
             initialOffset: carriedSheetOffset(
               _previewSheet,
               min: AppSheetSnap.peekFrac,
-              max: AppSheetSnap.fullFrac,
+              max: AppSheetSnap.full,
               fallback: AppSheetSnap.halfFrac,
             ),
             state: state,

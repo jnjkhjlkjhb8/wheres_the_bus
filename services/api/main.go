@@ -1,9 +1,3 @@
-// Package main runs the router process: a gRPC server on :50051 and an HTTP
-// server on :8080. Static queries (bus/bike/MRT/TRA/THSR stops and timetables)
-// are served from PostgreSQL; realtime ETA and alert streams are fanned
-// out from Redis Pub/Sub. It also serves nearby-station search, TDX MaaS route
-// planning, and Firebase device/reminder registration. main() wires every gRPC
-// service, the rate limiter, and optional Firebase App Check onto one server.
 package main
 
 import (
@@ -41,10 +35,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
-	// Registers the gzip compressor. grpc-go answers a request in whatever
-	// encoding the request arrived in (server.go: RecvCompress), so this import
-	// is what lets the app's gzipped requests come back gzipped — bus route
-	// static payloads carry verbatim TDX fare JSON, which compresses ~25x.
 	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/status"
 )
@@ -117,11 +107,7 @@ type serverCoordinator struct {
 	shutdownTimeout  time.Duration
 	waitHTTPHandlers func()
 	capture          func(error)
-	// shutdown, when set, carries OS signals (SIGINT/SIGTERM) that should
-	// trigger the same coordinated stop path as a Serve failure. Injectable
-	// for tests; nil disables signal-triggered shutdown (select on a nil
-	// channel blocks forever, so it never wins the race below).
-	shutdown <-chan os.Signal
+	shutdown         <-chan os.Signal
 }
 
 type serverResult struct {
@@ -129,11 +115,6 @@ type serverResult struct {
 	err  error
 }
 
-// serve runs both servers and blocks until either one exits unexpectedly or
-// a shutdown signal arrives, whichever happens first. Exactly one of those
-// two events drives stopServers: the select below is atomic, so a signal
-// racing a Serve failure resolves to a single winner and stopServers runs
-// exactly once either way.
 func (c serverCoordinator) serve(grpcListener, httpListener net.Listener) error {
 	results := make(chan serverResult, 2)
 	go func() {
@@ -254,10 +235,6 @@ func run() error {
 			close(poolStatsStop)
 			<-poolStatsDone
 		})
-		// MaaS route planning is the router's sole, deliberate TDX carve-out: it is a
-		// request/response proxy, not cacheable live data, so it stays on the read
-		// path (ADR-0005 amendment). Every other live TDX fetch, including the THSR
-		// seat refresh, runs in services/worker. This client exists only for MaaS.
 		tdx := shared.NewTDXClient(shared.TDXConfig{
 			Store:  shared.RedisTDXStore{RC: rc},
 			IMSKey: shared.TDXLegacyIMSKey,
@@ -277,12 +254,6 @@ func run() error {
 			return _oops.Wrapf(err, "listen for gRPC")
 		}
 		runtime.addCleanup(func() { _ = lis.Close() })
-		// The planner health monitor has to exist before prepareHTTPServer,
-		// which takes httpConfig by value: assigning it afterwards would leave
-		// /api/planner reporting a monitor the HTTP router never received.
-		// Started here for the same reason -- Start runs one check
-		// synchronously, so the first request already has a real verdict
-		// rather than the monitor's optimistic default.
 		motisBaseURL := maas.MotisBaseURLFromEnv()
 		var plannerMonitor *maas.PlannerHealthMonitor
 		if httpConfig.MotisEnabled {
@@ -297,7 +268,7 @@ func run() error {
 			return err
 		}
 		runtime.addCleanup(func() { _ = httpRuntime.listener.Close() })
-		rl := ratelimit.New()
+		rl := ratelimit.NewWithTrustedProxies(httpConfig.TrustedProxies)
 		tlsCredentials, err := firebase.GRPCTLSCredentialsFromEnv()
 		if err != nil {
 			return _oops.Wrapf(err, "gRPC TLS initialization failed")
@@ -308,7 +279,7 @@ func run() error {
 		}
 		// One limiter across both chains so the TDX quota is spent per caller,
 		// not per method (see _maasQuotaScope).
-		maasRL := ratelimit.New()
+		maasRL := ratelimit.NewWithTrustedProxies(httpConfig.TrustedProxies)
 		serverOptions := []grpc.ServerOption{
 			// Stop is the bounded GracefulStop fallback. Waiting for handlers here
 			// keeps backend ownership valid until canceled RPC handlers return.
@@ -341,9 +312,6 @@ func run() error {
 		nearbyRouter := nearby.NewMotisWalkingRouter(resty.New().SetTimeout(5*time.Second), motisBaseURL)
 		pb.RegisterNear_Station_ServiceServer(grpcServer, transit.NewNearServer(nearby.NewNearbyDiscovery(nearby.NewPostgresNearbyStore(db), nearbyRouter)))
 		pb.RegisterAlert_ServiceServer(grpcServer, alert.NewAlertServer(live))
-		// MAAS_BACKEND is the manual kill switch (ADR-0022). Selecting tdx leaves
-		// the MOTIS client unbuilt, which is what makes the switch total: there
-		// is no path that reaches MOTIS while the switch says otherwise.
 		maasWorkConfig := maas.DefaultMaasSharedWorkConfig
 		if httpConfig.MotisEnabled {
 			maasWorkConfig.Motis = maas.NewMotisClient(motisBaseURL)
@@ -386,12 +354,6 @@ func run() error {
 	})
 }
 
-// reportProcessFailure writes the final process-failure message directly to
-// w, bypassing the slog default logger. By the time run() returns, obs.Init's
-// deferred cleanup has already flushed Sentry (it runs last among run's
-// cleanups), so logging this line through log.Errorf/slog would route it
-// through the Sentry-forwarding handler and silently enqueue an event nothing
-// ever flushes.
 func reportProcessFailure(w io.Writer, err error) {
 	_, _ = fmt.Fprintf(w, "router exited with error: %v\n", err)
 }

@@ -1,15 +1,7 @@
 part of '../view/go_screen.dart';
 
-/// How the origin resolved. The field says which of the three it is instead
-/// of showing the same grey AppI18n.of(context).goChooseOrigin while GPS is
-/// still working — that reads as "you must pick this" when in fact nothing
-/// is required yet.
 enum OriginStatus { resolving, resolved, unavailable }
 
-/// The origin → destination pair, drawn as one block. Two hosts, two
-/// elevations: [floating] over the map (where a shadow describes a real layer
-/// relationship), a hairline-bordered inset card on the flat entry surface
-/// (where a shadow would float over nothing).
 class _ODFields extends StatelessWidget {
   const _ODFields({
     required this.origin,
@@ -50,11 +42,16 @@ class _ODFields extends StatelessWidget {
         border: floating ? null : Border.all(color: cs.outlineVariant),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 4, 12, 4),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space14,
+          AppTheme.space4,
+          AppTheme.space12,
+          AppTheme.space4,
+        ),
         child: Row(
           children: [
             const _ODRail(),
-            const SizedBox(width: 10),
+            const SizedBox(width: AppTheme.space10),
             Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -70,7 +67,7 @@ class _ODFields extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: AppTheme.space4),
             Pressable(
               onTap: onSwap,
               semanticLabel: AppI18n.of(context).goSwapEndpoints,
@@ -111,7 +108,9 @@ class _ODRail extends StatelessWidget {
           Align(
             alignment: Alignment.topCenter,
             child: Padding(
-              padding: const EdgeInsets.only(top: _kODRowHeight / 2 - 6),
+              padding: const EdgeInsets.only(
+                top: _kODRowHeight / AppTheme.space2 - AppTheme.space6,
+              ),
               child: Icon(
                 Icons.radio_button_checked_rounded,
                 size: 13,
@@ -122,7 +121,9 @@ class _ODRail extends StatelessWidget {
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
-              padding: const EdgeInsets.only(bottom: _kODRowHeight / 2 - 8),
+              padding: const EdgeInsets.only(
+                bottom: _kODRowHeight / AppTheme.space2 - AppTheme.space8,
+              ),
               child: Icon(
                 Icons.location_on_rounded,
                 size: 16,
@@ -233,8 +234,6 @@ class _LocationOffHint extends StatelessWidget {
   }
 }
 
-/// The map phase's origin/destination card: both ends are summaries that open
-/// the pushed search page, and the whole thing floats over the map.
 class _PlannerHeader extends StatelessWidget {
   const _PlannerHeader({
     required this.origin,
@@ -332,7 +331,12 @@ class _PlannerSheet extends StatelessWidget {
         children: [
           const SheetDragHandle(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space20,
+              AppTheme.space4,
+              AppTheme.space20,
+              AppTheme.space10,
+            ),
             child: Row(
               children: [
                 Expanded(child: _SheetTitle(state: state)),
@@ -345,7 +349,7 @@ class _PlannerSheet extends StatelessWidget {
                     at: timeAt,
                     onTap: onAdjustTime,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                 ],
                 _OptionsButton(onTap: onAdjustOptions),
               ],
@@ -402,11 +406,6 @@ class _SheetTitle extends StatelessWidget {
   }
 }
 
-/// Asks the planner for the departures on either side of the ones on screen.
-///
-/// Full card width rather than a text link: it sits in the same column as the
-/// route cards, is reached one-handed while scrolling, and needs the same
-/// 44pt target as everything else in the list.
 class _PageAction extends StatelessWidget {
   const _PageAction({
     required this.label,
@@ -436,7 +435,7 @@ class _PageAction extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 18, color: cs.onSurface),
-            const SizedBox(width: 6),
+            const SizedBox(width: AppTheme.space6),
             Text(
               label,
               style: AppTextStyles.bodyRegular.copyWith(
@@ -534,15 +533,10 @@ class _PlannerBody extends StatelessWidget {
             hint: AppI18n.of(context).goNoRouteHint,
           );
         }
-        // Earlier above the first card, later below the last: the direction
-        // matches the time axis, so scrolling to the bottom of the list runs
-        // into "later" the way a rider expects. Each appears only when the
-        // planner actually returned a cursor for that direction — a button
-        // that leads nowhere is worse than no button.
         final earlier = state.result?.previousPageCursor ?? '';
         final later = state.result?.nextPageCursor ?? '';
         return ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppTheme.space16),
           children: [
             if (earlier.isNotEmpty) ...[
               _PageAction(
@@ -550,10 +544,10 @@ class _PlannerBody extends StatelessWidget {
                 icon: Icons.keyboard_arrow_up_rounded,
                 onTap: () => onPage(earlier),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: AppTheme.space10),
             ],
             for (final (i, route) in routes.indexed) ...[
-              if (i > 0) const SizedBox(height: 10),
+              if (i > 0) const SizedBox(height: AppTheme.space10),
               RouteOptionCard(
                 route: route,
                 highlighted: i == 0,
@@ -563,7 +557,7 @@ class _PlannerBody extends StatelessWidget {
               ),
             ],
             if (later.isNotEmpty) ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: AppTheme.space10),
               _PageAction(
                 label: AppI18n.of(context).goLaterDepartures,
                 icon: Icons.keyboard_arrow_down_rounded,

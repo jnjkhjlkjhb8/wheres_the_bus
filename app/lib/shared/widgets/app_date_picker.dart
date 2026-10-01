@@ -14,11 +14,6 @@ class AppDatePicker extends StatelessWidget {
   final DateTime? selectedDay;
   final ValueChanged<DateTime> onDaySelected;
 
-  /// Selectable range. Defaults to a year either side, which is what the rail
-  /// timetable can answer. The route planner passes a much narrower window:
-  /// its answers come from the loaded MOTIS timetable, and a date past that
-  /// window returns no plan rather than a worse one (ADR-0022). Offering a day
-  /// that cannot be answered is the bug; the bound is the fix.
   final DateTime? firstDay;
   final DateTime? lastDay;
 

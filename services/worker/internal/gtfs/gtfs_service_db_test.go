@@ -10,21 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Integration test — requires DATABASE_URL. Covers the service a bus trip lands
-// on, and the one way the two schedule sources can name the same trip.
-//
-// The bug this guards against shipped: bus trips were taken from
-// bus_dailytimetable, a single-day expansion, so each was pinned to the date TDX
-// served and the bus half of the feed was only valid on the day it was built —
-// 24,875 trips on the 2026-07-31 build. Every bus trip now comes from
-// bus_schedule, which states a ServiceDay mask, so a 'D<date>' service on a bus
-// trip means the daily timetable has crept back in.
-//
-// The second half is the seam between the two schedule sources. They split on
-// call count, which is disjoint per timetable entry but not per trip_id: a
-// subroute that publishes one departure twice, once with calls and once without,
-// would have both sources emit the same trip_id and stop_times would union a
-// stated call list with an accumulated one. The richer entry has to win.
 func TestBusScheduleServiceID(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -34,10 +19,6 @@ func TestBusScheduleServiceID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	// t.Cleanup, not defer: the fixture below holds a connection out of this pool
-	// until its own cleanup runs, and cleanups run last-registered-first. A
-	// deferred Close would run first and block forever waiting for a connection
-	// that is only released after it returns.
 	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
@@ -51,11 +32,6 @@ func TestBusScheduleServiceID(t *testing.T) {
 	}
 
 	const city = "ZZ_GTFS_SVC_TEST"
-	// The fixture lives in a transaction that is never committed. DATABASE_URL is
-	// a shared raw_tdx — the same one the nightly export reads — and a DELETE on
-	// cleanup only covers the runs that reach it: a killed test leaves the row
-	// behind, and a leftover ZZR1 is published as a real route. It had been. A
-	// rollback needs no run to reach it, because the server does it either way.
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
@@ -77,11 +53,6 @@ func TestBusScheduleServiceID(t *testing.T) {
 		return `[{"StopUID":"ZZ1","StopSequence":1,"DepartureTime":"` + dep + `"}]`
 	}
 
-	// 06:10 and 07:00 carry call lists, so they are busScheduleSource's. 07:00
-	// runs two patterns, which must become two trips rather than one OR-ed
-	// service calendar_dates has no row for. 06:10 is published a second time as
-	// a bare origin — the collision the guard exists for. 08:00 is an origin
-	// alone and nothing else, so it is busOriginTripSource's.
 	weekday := day(true /* mon */, true /* tue */, true /* wed */, true /* thu */, true, /* fri */
 		false /* sat */, false /* sun */)
 	weekend := day(false /* mon */, false /* tue */, false /* wed */, false /* thu */, false, /* fri */
@@ -155,15 +126,6 @@ func TestBusScheduleServiceID(t *testing.T) {
 	})
 }
 
-// Integration test — requires DATABASE_URL. Covers the mapping from TDX's
-// StopBoarding to the two GTFS flags.
-//
-// The bug this guards against shipped: every bus call was published as
-// board-and-alight, so a planner would set a rider down at a stop an intercity
-// coach only picks up at (9023 before 經國轉運站). The direction of the mapping
-// is the part worth pinning — StopBoarding 1 is board-only, which is a
-// drop_off_type of 1 and a pickup_type of 0, and reading it the other way round
-// fails silently in exactly the same way the original bug did.
 func TestBusStopBoarding(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {

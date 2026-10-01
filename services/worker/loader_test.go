@@ -344,11 +344,6 @@ func TestLoaderExceptionalBindingsUseSemanticSink(t *testing.T) {
 	}
 }
 
-// TestLoadBusDailyTimetableWritesRedis feeds a daily-timetable array to the
-// shared assembly function and asserts it lands the reconstructed protobuf under
-// bus_daily_timetable:<subRouteUID> with the expected TTL, exercising the loader
-// against testRedisAddr (REDIS_TEST_ADDR, falling back to 127.0.0.1:6379) and
-// skips when one is not reachable, mirroring the DB-gated tests' skip posture.
 func TestLoadBusDailyTimetableWritesRedis(t *testing.T) {
 	rc := dialTestRedis(t)
 	defer func() { _ = rc.Close() }()
@@ -388,11 +383,6 @@ func TestLoadBusDailyTimetableWritesRedis(t *testing.T) {
 	}
 }
 
-// fixtureSource reads committed raw_tdx array fixtures from testdata/raw_tdx/,
-// keyed by table name. It is the pipeline.LoadSource seam's file adapter for replay tests:
-// the fixtures were exported by scripts/export-fixtures using the same
-// reconstruction contract as rawTDXSource (lowercased keys, no fetched_at), so a
-// committed fixture replays byte-identically through the loader with no network.
 type fixtureSource struct {
 	dir     string
 	fetched time.Time
@@ -408,21 +398,14 @@ func (f fixtureSource) DatasetJSON(_ context.Context, table, _, _ string) ([]byt
 	return b, f.fetched, nil
 }
 
-// provisionThsrStationSink creates the thsr_stations env-schema sink on the
-// raw_tdx-only loader cluster. That cluster has no PostGIS, but rail.LoadThsrStation
-// calls ST_GeomFromText; a text-returning stub of that function plus a text geom
-// column lets the real transform run unmodified. Mirrors provisionBusSinks'
-// posture of creating sinks in-test on the throwaway cluster.
 func provisionThsrStationSink(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	ddl := []string{
-		`CREATE OR REPLACE FUNCTION ST_GeomFromText(wkt text, srid int) RETURNS text
-			LANGUAGE sql IMMUTABLE AS 'SELECT wkt'`,
 		`CREATE TABLE IF NOT EXISTS thsr_stations (
 			station_id text PRIMARY KEY,
 			name text,
 			city text,
-			geom text,
+			geom geometry(Point,4326),
 			stationcode text,
 			updated_at timestamptz NOT NULL DEFAULT NOW())`,
 	}
@@ -433,11 +416,6 @@ func provisionThsrStationSink(t *testing.T, ctx context.Context, pool *pgxpool.P
 	}
 }
 
-// TestLoaderReplayThsrStation replays the committed thsr_station fixture through
-// the real rail.LoadThsrStation transform via runLoad and asserts the sink rows,
-// exercising the second pipeline.LoadSource adapter (fixtureSource) end to end with no
-// network. rail.LoadThsrStation's ON CONFLICT (station_id) upsert makes the replay
-// idempotent, so re-running is safe.
 func TestLoaderReplayThsrStation(t *testing.T) {
 	pool := loaderTestPool(t)
 	defer pool.Close()
@@ -469,11 +447,11 @@ func TestLoaderReplayThsrStation(t *testing.T) {
 	// the railStation struct (not merely that rows appeared).
 	var geom string
 	if err := pool.QueryRow(ctx,
-		"SELECT geom FROM thsr_stations WHERE station_id='0990'").Scan(&geom); err != nil {
+		"SELECT ST_AsText(geom) FROM thsr_stations WHERE station_id='0990'").Scan(&geom); err != nil {
 		t.Fatalf("read geom: %v", err)
 	}
-	if geom != "POINT(121.606700 25.053300)" {
-		t.Fatalf("geom = %q, want POINT(121.606700 25.053300)", geom)
+	if geom != "POINT(121.6067 25.0533)" {
+		t.Fatalf("geom = %q, want POINT(121.6067 25.0533)", geom)
 	}
 }
 

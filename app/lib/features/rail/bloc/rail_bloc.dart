@@ -43,11 +43,6 @@ class RailBloc extends Bloc<RailEvent, RailState> {
     return h * 60 + m;
   }
 
-  /// Sorts timetable results by the bound time — departure when [isDeparture],
-  /// else arrival — and, when [cutoff] (minutes past midnight, the time the
-  /// user picked) is set, keeps only trains departing at/after it (departure
-  /// mode) or arriving at/before it (arrival mode). Unparseable times sort first
-  /// and are never dropped, so bad data stays visible rather than vanishing.
   List<T> _sortedFiltered<T>(
     List<T> items,
     String Function(T) departureOf,
@@ -98,10 +93,6 @@ class RailBloc extends Bloc<RailEvent, RailState> {
       ),
     );
 
-    // Remembered on request, not on success: the pair is what the rider asked
-    // for, so a query that fails offline should still prefill next time.
-    // Recorded here rather than in the query sheet so hand-offs that bypass
-    // the sheet (station detail, home sheet) are covered by the same funnel.
     unawaited(
       HiveStore.addRecentOdQuery(
         system: system.name,
@@ -112,20 +103,12 @@ class RailBloc extends Bloc<RailEvent, RailState> {
       ),
     );
 
-    // A TRA delay subscription must not outlive its request: only the TRA
-    // branch below starts a new one, so any request — TRA or THSR — first
-    // cancels whatever the previous request left running. Without this, a
-    // TRA request followed by a THSR request left the old TRA delay stream
-    // subscribed, and a later TRA delay frame would apply onto the THSR
-    // state through _onDelaysUpdated (F21).
     await _delaySub?.cancel();
     _delaySub = null;
 
     try {
       final originId = _stationId(event.origin);
       final destId = _stationId(event.destination);
-      // Kept as a future so the fares and the timetable load concurrently.
-      // TRA has no O/D-wide fare to fetch — see RailTimetableLoaded.fareQuote.
       final fareFuture = system == RailSystem.thsr
           ? _loadFares(event.date, originId, destId)
           : Future<RailFareQuote?>.value();
@@ -191,14 +174,6 @@ class RailBloc extends Bloc<RailEvent, RailState> {
     }
   }
 
-  /// Best-effort THSR fares for the O/D pair, every fare class and cabin class
-  /// the pair prices. Station ids are already resolved here, so this is a
-  /// direct RPC. Returns null on any failure (e.g. no landed fare, or non-prod
-  /// without TDX data) so the timetable still renders without a price.
-  ///
-  /// The set is not narrowed to one price here: which fare a rider is quoted
-  /// depends on their persisted ticket type, and the view resolves that so a
-  /// preference change re-labels the screen without a refetch.
   Future<RailFareQuote?> _loadFares(
     String date,
     String originId,
@@ -213,10 +188,6 @@ class RailBloc extends Bloc<RailEvent, RailState> {
     }
   }
 
-  /// The station id when the selection carries one, else its name. The router
-  /// resolves rail station names to ids (臺/台-tolerant) on every rail RPC, so a
-  /// bare name is a valid origin/destination — the app keeps no local station
-  /// table to resolve against since offline search was removed.
   String _stationId(RailStationSelection selection) {
     final id = selection.id;
     return (id != null && id.isNotEmpty) ? id : selection.name;
@@ -231,10 +202,6 @@ class RailBloc extends Bloc<RailEvent, RailState> {
   void _onDelaysUpdated(RailDelaysUpdated event, Emitter<RailState> emit) {
     final current = state;
     if (current is! RailTimetableLoaded) return;
-    // Delays are TRA-only (THSR carries its own delayMinutes per item, no
-    // separate stream). A frame from a delay subscription that outlived its
-    // request — the cancel above is async and can't preempt a frame already
-    // in flight — must not land on a THSR-loaded state (F21).
     if (current.system != RailSystem.tra) return;
     emit(current.copyWith(delays: event.delays));
   }

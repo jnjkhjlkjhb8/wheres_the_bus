@@ -5,6 +5,7 @@ class _TimetableTab extends StatefulWidget {
     required this.stops,
     required this.serviceDate,
     required this.delayMinutes,
+    required this.delayUpdatedAt,
     required this.alight,
     this.userOrigin,
     this.picking = false,
@@ -12,8 +13,6 @@ class _TimetableTab extends StatefulWidget {
     this.onPickStop,
   });
 
-  /// 提前站數. 0 (the default) means no 提前提醒站 exists, so no row carries
-  /// the bell — see ADR-0020.
   final int leadStops;
 
   /// Whether the rider is choosing a 下車站 right now. Stops the train has
@@ -30,14 +29,15 @@ class _TimetableTab extends StatefulWidget {
   /// station announcements and the ticket say.
   final int delayMinutes;
 
+  /// When [delayMinutes] last landed, or null before the first frame (and
+  /// always for THSR). The stop times are landed timetable; only the delay
+  /// laid over them ages, so only it is dated.
+  final DateTime? delayUpdatedAt;
+
   /// The station the rider boards at — their searched origin, or the train's
   /// own first stop.
   final String? userOrigin;
 
-  /// The station the rider gets off at, from the O/D they searched, or null
-  /// when they opened this train by number alone. Both ends come from the
-  /// search and are read-only here: tapping a row must not silently re-point
-  /// the fare, 追蹤 and the booking hand-off at a different trip.
   final String? alight;
 
   @override
@@ -131,6 +131,15 @@ class _TimetableTabState extends State<_TimetableTab> {
       );
     }
 
+    if (widget.delayUpdatedAt != null) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.all(AppTheme.space16),
+          child: Center(child: FreshnessStamp(at: widget.delayUpdatedAt)),
+        ),
+      );
+    }
+
     return Column(
       children: [
         _TimetableColumnHeader(showElapsed: showElapsed),
@@ -164,7 +173,12 @@ class _TimetableColumnHeader extends StatelessWidget {
           bottom: BorderSide(color: cs.outlineVariant, width: 0.5),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(kTimelineGutter, 8, 16, 6),
+      padding: const EdgeInsets.fromLTRB(
+        kTimelineGutter,
+        AppTheme.space8,
+        AppTheme.space16,
+        AppTheme.space6,
+      ),
       child: Row(
         children: [
           Text(AppI18n.of(context).railColStation, style: style),
@@ -180,7 +194,7 @@ class _TimetableColumnHeader extends StatelessWidget {
             ),
           ),
           if (showElapsed) ...[
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             SizedBox(
               width: scaledWidth(context, _StopRow.elapsedWidth),
               child: Text(
@@ -224,7 +238,7 @@ class _PassedStopsSummary extends StatelessWidget {
             bottom: BorderSide(color: cs.outlineVariant, width: 0.5),
           ),
         ),
-        padding: const EdgeInsets.fromLTRB(0, 9, 16, 9),
+        padding: const EdgeInsets.fromLTRB(0, 9, AppTheme.space16, 9),
         child: Row(
           children: [
             SizedBox(
@@ -252,7 +266,7 @@ class _PassedStopsSummary extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: AppTheme.space6),
             Icon(
               Icons.keyboard_arrow_down_rounded,
               size: 18,
@@ -310,10 +324,6 @@ class _StopRow extends StatelessWidget {
   /// wander in the first place.
   final bool showElapsed;
 
-  /// The two right-hand columns are fixed-width, because a timetable is only
-  /// scannable while its figures stack into columns the eye can run straight
-  /// down. Sized for the widest content each holds at text scale 1 — '18:08'
-  /// in 15px mono, '+34分' in 12px mono.
   static const double timeWidth = 58;
   static const double elapsedWidth = 46;
 
@@ -355,15 +365,9 @@ class _StopRow extends StatelessWidget {
                     bottom: BorderSide(color: cs.outlineVariant, width: 0.5),
                   ),
                 ),
-                padding: const EdgeInsets.fromLTRB(0, 11, 16, 11),
+                padding: const EdgeInsets.fromLTRB(0, 11, AppTheme.space16, 11),
                 child: Row(
                   children: [
-                    // One Expanded owns all the slack, rather than a Flexible
-                    // name next to a Spacer: two flex-1 children split the free
-                    // space in half each, the name leaves its half part-used,
-                    // and the unused remainder lands after the time columns —
-                    // which is what pushed the times off the heading's x by a
-                    // different amount on every row.
                     Expanded(
                       child: Row(
                         children: [
@@ -379,18 +383,18 @@ class _StopRow extends StatelessWidget {
                             ),
                           ),
                           if (isBoard) ...[
-                            const SizedBox(width: 6),
+                            const SizedBox(width: AppTheme.space6),
                             TimelineStopTag(
                               AppI18n.of(context).railBoard,
                               solid: false,
                             ),
                           ],
                           if (isAlight) ...[
-                            const SizedBox(width: 6),
+                            const SizedBox(width: AppTheme.space6),
                             TimelineStopTag(AppI18n.of(context).railAlight),
                           ],
                           if (isLeadStop) ...[
-                            const SizedBox(width: 6),
+                            const SizedBox(width: AppTheme.space6),
                             Icon(
                               Icons.notifications_rounded,
                               size: 16,
@@ -401,7 +405,7 @@ class _StopRow extends StatelessWidget {
                           // than in the time slot: a variable-width note inside
                           // a fixed column either clips or drags it off its x.
                           if (dwell >= 2) ...[
-                            const SizedBox(width: 8),
+                            const SizedBox(width: AppTheme.space8),
                             Text(
                               AppI18n.of(context).railDwellMinutes(dwell),
                               style: AppTextStyles.bodySmall.copyWith(
@@ -428,7 +432,7 @@ class _StopRow extends StatelessWidget {
                     // holds its x down the whole list instead of every
                     // upstream row shunting the times right by its width.
                     if (showElapsed) ...[
-                      const SizedBox(width: 12),
+                      const SizedBox(width: AppTheme.space12),
                       SizedBox(
                         width: scaledWidth(context, elapsedWidth),
                         child: Text(

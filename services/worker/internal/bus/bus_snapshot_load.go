@@ -15,10 +15,6 @@ import (
 
 var errBusPostCommitCache = errors.New("bus snapshot post-commit cache invalidation failed")
 
-// Load replaces one city only after all eight correlated landing partitions
-// have been read, validated, reconciled, and materialized. Source validation is
-// outside the target transaction; every target write and stale prune is inside
-// one transaction. Cache generation advances only after commit.
 func Load(ctx context.Context, src pipeline.LoadSource, db *pgxpool.Pool, rc *redis.Client, city string) error {
 	zap.S().Infow("city start", "component", "load", "action", "bus", "event", "city_start", "city", city)
 	snapshot, err := readBusCitySnapshot(ctx, src, city)

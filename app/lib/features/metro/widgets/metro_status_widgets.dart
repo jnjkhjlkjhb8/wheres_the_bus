@@ -101,10 +101,6 @@ class MetroArrivalsEmpty extends StatelessWidget {
   /// Injectable clock for tests; defaults to [DateTime.now].
   final DateTime? now;
 
-  /// Re-issues the load event; shown as a text action only when non-null.
-  /// Only wired for the `running` branch — the `ended`/`beforeFirst` cards
-  /// are a factual read of the schedule, not a live-feed failure, so they
-  /// have nothing to retry.
   final VoidCallback? onRetry;
 
   @override
@@ -115,12 +111,8 @@ class MetroArrivalsEmpty extends StatelessWidget {
         : metroServiceStatus(schedule, now ?? DateTime.now());
 
     if (status.state == MetroServiceState.running) {
-      // Service is running per the schedule, yet the feed pushed nothing —
-      // that's a live-data gap, not an absence of trains (B1). Say so
-      // explicitly instead of the old blanket "no trains" line, which lied
-      // whenever the feed was merely silent.
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -139,7 +131,7 @@ class MetroArrivalsEmpty extends StatelessWidget {
               ),
             ),
             if (onRetry != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               // A recovery hint, not the primary action on the screen — plain
               // text per the design system's Text/Tertiary style, not a
               // filled button.
@@ -176,7 +168,7 @@ class MetroArrivalsEmpty extends StatelessWidget {
         : nextPrefix;
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(AppTheme.space14),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
@@ -201,7 +193,7 @@ class MetroArrivalsEmpty extends StatelessWidget {
             ),
           ],
           if (status.firstTrain != null) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: AppTheme.space10),
             Row(
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
@@ -213,7 +205,7 @@ class MetroArrivalsEmpty extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppTheme.space8),
                 Text(
                   nextLabel,
                   style: AppTextStyles.bodySmall.copyWith(
@@ -243,7 +235,7 @@ class _MetroLiveErrorNotice extends StatelessWidget {
     return Row(
       children: [
         Icon(Icons.cloud_off_rounded, size: 16, color: cs.error),
-        const SizedBox(width: 6),
+        const SizedBox(width: AppTheme.space6),
         Expanded(
           child: Text(
             error.titleOf(AppI18n.of(context)),

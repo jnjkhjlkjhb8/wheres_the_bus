@@ -1,14 +1,6 @@
 import ActivityKit
 import Flutter
 
-/// Bridges Dart's `AlightTrackChannel` to one ActivityKit Live Activity.
-///
-/// The whole plugin is gated on iOS 16.2 rather than the project's 16.1
-/// deployment floor. 16.2 is where `ActivityContent` — and with it `staleDate`,
-/// the system's own "this reading is old" mechanism — arrived, and carrying a
-/// second code path for one point release would buy nothing: on 16.1 the
-/// tracking card simply never appears, which is the same graceful nothing the
-/// plugin already does on a device that refuses Live Activities.
 class LiveActivityPlugin: NSObject, FlutterPlugin {
     static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(
@@ -19,19 +11,6 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
         endOrphanedActivities()
     }
 
-    /// Ends any card already on screen at registration time.
-    ///
-    /// It cannot belong to this engine — no Dart has run yet — so it is a
-    /// leftover: a session the app was killed in the middle of, or, after an
-    /// update that changed `ContentState`, a card whose stored state the new
-    /// build can no longer decode. Neither will ever be updated again, and the
-    /// second cannot even be recognised: `Activity.activities` only lists what
-    /// decodes, so an orphan of that kind would sit there frozen with nothing
-    /// able to reach it.
-    ///
-    /// Android has cleared its leftover card at registration since the promoted
-    /// notification landed; this is the same rule, arrived at the same way. The
-    /// session the app restores posts its own card immediately after.
     private static func endOrphanedActivities() {
         guard #available(iOS 16.2, *) else { return }
         // Snapshotted here, synchronously, rather than inside the Task: a
@@ -49,14 +28,8 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
     private let channel: FlutterMethodChannel
     private var activityID: String?
 
-    /// The phase the card last rendered, kept for the card itself.
     private var lastPhase: AlightTrackAttributes.Phase?
 
-    /// Stops remaining on the previous update. A 下車提醒 alerts twice — at the
-    /// 提前提醒站 and at the 下車站 — so the phase alone can no longer identify
-    /// which crossing just happened: both sit inside `approaching`. The alert
-    /// fires on a crossing, never on a condition, or the card would alert once
-    /// per station for the rest of the ride.
     private var lastRemainingStops: Int?
 
     /// Streams this card's ActivityKit push token to Dart. Held so it can be
@@ -108,11 +81,6 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
             targetStation: args["targetStation"] as? String ?? ""
         )
         do {
-            // .token asks ActivityKit for a push token so the server can refresh
-            // this card while the app is suspended (ADR-0018). The token arrives
-            // asynchronously — and is reissued at the system's discretion — so
-            // the app forwards each one to Dart as it lands rather than reading
-            // `activity.pushToken` once here.
             let activity = try Activity.request(
                 attributes: attributes,
                 content: content(state, mode: attributes.mode),
@@ -181,10 +149,6 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
         }
     }
 
-    /// Forwards every push token this activity is issued to Dart, which hands it
-    /// to the server (ADR-0018). It is a stream, not a one-shot read: the system
-    /// reissues tokens at its own discretion, and a card refreshed against a
-    /// superseded token silently stops updating.
     @available(iOS 16.2, *)
     private func observePushToken(of activity: Activity<AlightTrackAttributes>) {
         pushTokenTask?.cancel()
@@ -222,15 +186,6 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
         ActivityContent(state: state, staleDate: staleDate(state, mode: mode))
     }
 
-    /// When the system should start treating this reading as old.
-    ///
-    /// Updates are local-only, so a suspended app leaves the card frozen with
-    /// no way to say so; `staleDate` is how the platform says it instead. The
-    /// window is per mode because the feeds behind them are not the same
-    /// cadence: bus ETA lands every 30 s, a metro card moves once per station
-    /// hop, and a train can sit between two rural stations for a long time
-    /// while nothing is wrong. A single number would cry stale on TRA or stay
-    /// quiet far too long on a bus.
     @available(iOS 16.2, *)
     private func staleDate(
         _ state: AlightTrackAttributes.ContentState,
@@ -249,17 +204,6 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
         return state.asOfDate.addingTimeInterval(window)
     }
 
-    /// The two 下車提醒 alerts, each on the one update that crosses into it.
-    ///
-    /// ADR-0020 asks for a vibration with nothing entering the notification
-    /// centre. On iOS that is not reachable: no API vibrates a backgrounded
-    /// app, and an alerting Live Activity update is the closest primitive.
-    /// `AlertConfiguration` offers no silent option, so on a device that is not
-    /// on silent this also makes the default alert sound. That is a platform
-    /// ceiling, not an unfinished seam — do not "fix" it from Dart.
-    ///
-    /// The long/short distinction the in-app haptics draw cannot be expressed
-    /// here either, so the two events are told apart by their words instead.
     @available(iOS 16.2, *)
     private func reminderAlert(
         for state: AlightTrackAttributes.ContentState,
@@ -304,10 +248,6 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
             walkMinutes: args["walkMinutes"] as? Int ?? 0,
             lineCode: args["lineCode"] as? String,
             lineColorHex: args["lineColorHex"] as? String,
-            // Stamped here rather than sent from Dart: Dart pushes an update
-            // when data arrives, so the moment the command lands *is* "as of
-            // when", and a field travelling over the channel could only be a
-            // less accurate copy of it.
             asOfUnix: Int(Date().timeIntervalSince1970)
         )
     }

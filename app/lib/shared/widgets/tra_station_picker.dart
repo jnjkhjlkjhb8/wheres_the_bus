@@ -95,7 +95,12 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
         borderRadius: BorderRadius.circular(AppTheme.radiusModal),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space16,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -107,9 +112,9 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AppTheme.space20),
             _header(cs, motion),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppTheme.space24),
             Center(
               child: ClockDial(
                 items: _activeItems,
@@ -118,7 +123,7 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
                 onReleased: _onDialReleased,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTheme.space16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -126,7 +131,7 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
                   label: '取消',
                   onPressed: () => Navigator.of(context).pop(),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppTheme.space8),
                 AppButton.text(
                   label: '確定',
                   onPressed: () => Navigator.of(context).pop(_station),
@@ -151,7 +156,7 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
               onTap: () => _selectTile(false),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
               child: Text(
                 ':',
                 style: TextStyle(

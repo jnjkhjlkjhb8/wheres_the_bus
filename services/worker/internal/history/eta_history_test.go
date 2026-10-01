@@ -47,10 +47,6 @@ func TestSnapshotTickCoversExactlyOneTickPerIntervalAtFastCadence(t *testing.T) 
 	}
 }
 
-// Arrivals are the rows MeasurePredictionError matches a prediction against.
-// matchPredictionActual takes the first arrival within 30 minutes, so a sampled-
-// away arrival is not a lost sample — it silently scores the prediction against
-// the next bus.
 func TestRecordsHistoryAlwaysKeepsArrivals(t *testing.T) {
 	for _, tc := range []struct {
 		estimate int32

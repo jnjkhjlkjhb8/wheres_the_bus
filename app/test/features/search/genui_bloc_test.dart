@@ -1,4 +1,4 @@
-// Sequential add/expect on the same bloc reads clearer than cascades here.
+// Separate event dispatches keep asynchronous expectations in order.
 // ignore_for_file: cascade_invocations
 
 import 'dart:async';
@@ -42,9 +42,6 @@ void main() {
     final bloc = GenUiBloc(
       service: _FakeService((prompt, onPhase) async {
         onPhase?.call(GenUiPhase.searching, '307');
-        // Yield so the queued GenUiPhaseChanged event is processed before the
-        // content emit, mirroring the real service's await gaps between the
-        // searching phase and the final renderUI response.
         await Future<void>.delayed(Duration.zero);
         return _answer;
       }),

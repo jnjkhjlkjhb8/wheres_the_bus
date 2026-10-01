@@ -57,10 +57,6 @@ class SearchQuerySubmitted extends SearchEvent {
   final String query;
   final int requestId;
 
-  /// The city filter this request was issued under, carried on the event
-  /// rather than read from the state when it lands: the two can differ once
-  /// a chip is tapped mid-flight, and the response has to be attributed to
-  /// the filter that produced it.
   final String? city;
   @override
   List<Object?> get props => [query, requestId, city];

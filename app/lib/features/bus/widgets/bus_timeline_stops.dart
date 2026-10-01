@@ -1,8 +1,4 @@
-/// Pure derivation of the horizontal route timeline's stop list from static
-/// stops plus live ETA, split out of `bus_route_screen.dart` so it is unit
-/// testable without pumping the widget tree. Behavior mirrors the screen
-/// exactly; the display invariants (ETA ceil-to-minutes, one status-code
-/// mapping) live in `eta_format.dart` and are reused here, not re-implemented.
+/// Bus stop timeline derivation.
 library;
 
 import 'package:wheres_the_bus/core/firebase/remote_config.dart';
@@ -11,10 +7,6 @@ import 'package:wheres_the_bus/data/models/eta_format.dart';
 import 'package:wheres_the_bus/data/models/timeline_stop.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-/// Live per-stop state for the timeline. 進站中 (arriving) is reserved for a
-/// live bus at the stop — the one status the crude [_approaching] threshold
-/// can't express — so it routes through the shared [busStopDisplayStatus]
-/// mapping; everything within the approaching window stays 即將進站.
 TimelineStopState timelineStopState(BusStopEtaViewModel? eta) {
   if (eta == null) return TimelineStopState.none;
   final status = busStopDisplayStatus(
@@ -35,15 +27,6 @@ bool _approaching(BusStopEtaViewModel? eta) {
       eta.estimateSeconds <= AppConfig.getInt('eta_approaching_threshold_s');
 }
 
-/// Per-stop fare section for two-section (兩段票) routes: stops before the
-/// buffer zone are section 1, stops after are section 2, buffer stops carry the
-/// section they lead into. Returns an empty map for any other pricing (flat,
-/// free, 里程計費) so the timeline draws no section band. [pricingType] is the
-/// route's TDX fare pricing type (2 = 兩段票).
-///
-/// Assumes a single contiguous buffer zone (the 兩段票 norm). A route with
-/// multiple buffer zones would collapse to two sections; revisit if TDX ever
-/// ships 3+ sections on one direction.
 Map<int, int> fareSectionsBySequence({
   required List<BusStopModel> stops,
   required Set<int> bufferSequences,
@@ -58,11 +41,6 @@ Map<int, int> fareSectionsBySequence({
   };
 }
 
-/// Derives the ordered timeline-stop list for one direction from the static
-/// [stops] and the live [etaMap]. Each stop's ETA is looked up first by
-/// direction+sequence (`seq:<direction>:<sequence>`) then by uid
-/// (`uid:<stopUid>`); a stop with no ETA entry is still emitted, with no
-/// primary time and a [TimelineStopState.none] state.
 List<TimelineStop> deriveTimelineStops({
   required AppI18n i18n,
   required List<BusStopModel> stops,
@@ -79,9 +57,10 @@ List<TimelineStop> deriveTimelineStops({
     bufferSequences: bufferSequences,
     pricingType: pricingType,
   );
+  final resolved = retireStaleArriving([for (final st in stops) etaFor(st)]);
   return [
-    for (final st in stops)
-      if (etaFor(st) case final eta)
+    for (final (i, st) in stops.indexed)
+      if (resolved[i] case final eta)
         TimelineStop(
           uid: st.stopUid,
           name: st.stopName,
@@ -104,22 +83,40 @@ List<TimelineStop> deriveTimelineStops({
   ];
 }
 
-/// Indices of the stops a vehicle marker belongs *above*, i.e. the vehicle is
-/// somewhere in the segment between stop `i - 1` and stop `i`.
-///
-/// There is no per-stop vehicle association in the feed — `BusVehiclePosition`
-/// carries GPS only, and mapping a coordinate back onto a route that doubles
-/// back on itself guesses wrong exactly where riders notice. The ETA sequence
-/// is the more reliable derivation and is the thing the rider is reading
-/// anyway. Two signals mark a vehicle:
-///
-/// - a stop counting down live where the one behind it is not (the run has
-///   begun here — everything behind is waiting on a later departure), and
-/// - a countdown that drops below the stop behind it, which no single vehicle
-///   can do: it means the stop behind is quoting a *following* bus.
-///
-/// Deliberately says nothing about which plate is which; the feed does not
-/// support that claim.
+List<BusStopEtaViewModel?> retireStaleArriving(
+  List<BusStopEtaViewModel?> etas,
+) {
+  final stale = <int>{};
+  final lastByPlate = <String, int>{};
+  int? lastPlateless;
+  for (var i = 0; i < etas.length; i++) {
+    final eta = etas[i];
+    if (eta == null || !_isArriving(eta)) continue;
+    if (eta.plate.isEmpty) {
+      if (lastPlateless == i - 1) stale.add(i - 1);
+      lastPlateless = i;
+      continue;
+    }
+    final previous = lastByPlate[eta.plate];
+    if (previous != null) stale.add(previous);
+    lastByPlate[eta.plate] = i;
+  }
+  if (stale.isEmpty) return etas;
+  return [
+    for (final (i, eta) in etas.indexed)
+      stale.contains(i)
+          ? eta!.copyWith(stopStatus: busStopStatusNoReading)
+          : eta,
+  ];
+}
+
+bool _isArriving(BusStopEtaViewModel eta) =>
+    busStopDisplayStatus(
+      estimateSeconds: eta.estimateSeconds,
+      stopStatus: eta.stopStatus,
+    ) ==
+    BusStopDisplayStatus.arriving;
+
 Set<int> busVehicleMarkerIndices(List<TimelineStop> stops) {
   final markers = <int>{};
   for (var i = 1; i < stops.length; i++) {

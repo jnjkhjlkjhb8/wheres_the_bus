@@ -9,10 +9,6 @@ class _StopSheet extends StatelessWidget {
       onRefresh: () async {
         context.read<BusStopBloc>().add(const BusStopRetryRequested());
       },
-      // Slivers so the arrival rows build lazily: on dense stops only the
-      // visible tiles are (re)built per live ETA frame instead of the whole
-      // route × member-stop matrix. The freshness line lives in the header
-      // subtitle (see BusStopDetailView), so the list starts at the content.
       child: const CustomScrollView(
         physics: AlwaysScrollableScrollPhysics(),
         slivers: [
@@ -24,10 +20,6 @@ class _StopSheet extends StatelessWidget {
   }
 }
 
-/// The arrival list section. Rebuilds only on the fields it renders — the
-/// derived tile view-models (recomputed in the bloc only when arrivals move),
-/// the member set, selection, status, and error — never on the freshness time,
-/// which the meta line owns. Build is pure layout over the bloc's derivation.
 class _StopBody extends StatelessWidget {
   const _StopBody();
 
@@ -91,14 +83,15 @@ class _StopBody extends StatelessWidget {
     final byStation = state.arrivalsByStation;
     final members = state.members;
     final selected = state.selectedStationUid;
-    final hasFilter = members.length > 1;
+    final chipMembers = members
+        .where((m) => (byStation[m.stationUid] ?? const []).isNotEmpty)
+        .toList();
+    final hasFilter = chipMembers.length > 1;
     final visibleMembers = selected == null
         ? members
         : members.where((m) => m.stationUid == selected).toList();
-    // Section headers only earn their space when 全部 spans several stops;
-    // a picked chip already names the stop.
     final showHeaders = hasFilter && selected == null;
-    final labels = memberStopLabels(members, byStation);
+    final labels = memberStopLabels(chipMembers, byStation);
     // Member stops with no routes render nothing in the 全部 view — an empty
     // group is noise, and a stack of them reads as a broken screen.
     final groups = [
@@ -126,7 +119,7 @@ class _StopBody extends StatelessWidget {
     return [
       if (hasFilter) ...[
         () => _StationFilterBar(
-          members: members,
+          members: chipMembers,
           selectedUid: selected,
           labels: labels,
         ),
@@ -156,10 +149,6 @@ class _StopBody extends StatelessWidget {
   }
 }
 
-/// Single-select filter chips, one per member stop plus 全部. Picking a chip
-/// filters the list and pans the map to that stop (via [BusStopStationSelected]
-/// on the bloc); labels come from [memberStopLabels] — destination-first,
-/// never the raw StationID, and the same names the map's capsules use.
 class _StationFilterBar extends StatelessWidget {
   const _StationFilterBar({
     required this.members,
@@ -174,9 +163,14 @@ class _StationFilterBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        AppTheme.space4,
+        AppTheme.space16,
+        AppTheme.space8,
+      ),
       child: Row(
-        spacing: 8,
+        spacing: AppTheme.space8,
         children: [
           _StationChip(
             label: AppI18n.of(context).commonAll,
@@ -214,7 +208,7 @@ class _StationChip extends StatelessWidget {
         duration: AppMotion.micro,
         curve: AppMotion.easeInOut,
         height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
         decoration: BoxDecoration(
           color: selected ? cs.primary : cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(8),
@@ -242,7 +236,12 @@ class _StationSectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        AppTheme.space14,
+        AppTheme.space16,
+        AppTheme.space6,
+      ),
       child: Row(
         children: [
           Expanded(
@@ -273,27 +272,19 @@ class _StopMeta extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     // The freshness line is the only thing that cares about updatedAt, so it
     // selects that field alone and rebuilds independently of the arrival list.
     return BlocSelector<BusStopBloc, BusStopState, DateTime?>(
       selector: (state) => state.updatedAt,
-      builder: (context, updatedAt) {
-        final label = updatedAt != null
-            ? AppI18n.of(context).busUpdatedAt(_hhmm(updatedAt))
-            : AppI18n.of(context).busStopFallbackTitle;
-        return Text(
-          label,
-          style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
-        );
-      },
+      builder: (context, updatedAt) => updatedAt == null
+          ? Text(
+              AppI18n.of(context).busStopFallbackTitle,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            )
+          : FreshnessStamp(at: updatedAt),
     );
-  }
-
-  static String _hhmm(DateTime t) {
-    final h = t.hour.toString().padLeft(2, '0');
-    final m = t.minute.toString().padLeft(2, '0');
-    return '$h:$m';
   }
 }
 
@@ -311,12 +302,17 @@ class _StopMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 48, 24, 48),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space24,
+        AppTheme.space48,
+        AppTheme.space24,
+        AppTheme.space48,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 40, color: cs.outline),
-          const SizedBox(height: 16),
+          Icon(icon, size: 40, color: AppTheme.inkTertiary(cs.brightness)),
+          const SizedBox(height: AppTheme.space16),
           Text(
             title,
             textAlign: TextAlign.center,
@@ -325,7 +321,7 @@ class _StopMessage extends StatelessWidget {
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppTheme.space6),
           Text(
             hint,
             textAlign: TextAlign.center,

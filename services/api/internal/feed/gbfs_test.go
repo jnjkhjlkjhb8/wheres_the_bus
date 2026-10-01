@@ -20,10 +20,6 @@ func mustMarshalBikeEta(t *testing.T, eta *models.BikeEta) string {
 	return string(raw)
 }
 
-// TestDecodeBikeStatus covers the mapping every station_status row goes through:
-// the rentable split is summed, TDX's three service states collapse onto GBFS's
-// three booleans, and anything the cache cannot answer for is refused rather
-// than reported as an empty station.
 func TestDecodeBikeStatus(t *testing.T) {
 	const now = int64(1700000000)
 

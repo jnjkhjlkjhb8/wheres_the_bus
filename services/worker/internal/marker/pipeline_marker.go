@@ -1,7 +1,3 @@
-// Package marker records and waits on nightly pipeline completion. Jobs that
-// must run after a load — the vector refresh, the travel-time averages — block
-// on the marker its producer writes instead of on a wall-clock offset, so a slow
-// load delays them rather than racing them.
 package marker
 
 import (
@@ -37,10 +33,6 @@ func (r PGReader) MarkerExists(ctx context.Context, job string, runDate time.Tim
 	return exists, nil
 }
 
-// recordPipelineMarker upserts today's completion marker for job. Callers
-// must only call this after a fully successful run; a failed or partial run
-// must never write it, since downstream stages treat its presence as proof
-// the upstream stage is safe to build on.
 func recordPipelineMarker(ctx context.Context, db *pgxpool.Pool, job string, runDate time.Time) error {
 	_, err := db.Exec(ctx,
 		`INSERT INTO pipeline_runs (job, run_date) VALUES ($1, $2)
@@ -53,20 +45,6 @@ func recordPipelineMarker(ctx context.Context, db *pgxpool.Pool, job string, run
 	return nil
 }
 
-// RecordWithRetry records the marker with a few quick attempts
-// of its own, deliberately outside the caller's job retry: a failed one-row
-// upsert must never re-drive the (expensive, already successful) stage it
-// marks. Exhausted attempts are logged here and go no further: a marker-only
-// failure is not a stage failure, and every caller runs after the stage it
-// marks has already succeeded, so there is nothing left for it to decide.
-//
-// On success it also logs the marker lag: wall time from runDate (the
-// cron tick's start, per its caller) to the marker write, i.e. how long this
-// pipeline stage took end-to-end including its own retries. It is a plain
-// structured-log gauge, not a queryable metric — Wait (the
-// only downstream consumer) already reads pipeline_runs directly, so a
-// second read path would duplicate that source of truth for no benefit; a
-// human tuning the SLO in docs/slo.md is the intended reader.
 func RecordWithRetry(ctx context.Context, db *pgxpool.Pool, job string, runDate time.Time) {
 	err := obs.Retry(ctx, 3, 5*time.Second, func() error {
 		return obs.Transient(recordPipelineMarker(ctx, db, job, runDate))
@@ -98,13 +76,6 @@ const (
 	PollDeadline = 2 * time.Hour
 )
 
-// Wait polls reader for job's runDate marker: an immediate
-// check, then every interval, giving up once now (per the now func) has
-// passed the deadline measured from the first check. A read error does not
-// abort the wait — a transient database blip during the poll window must not
-// cancel the whole nightly stage — it is logged and the next tick retries;
-// only the deadline (or ctx via sleep) ends an unready wait. now and sleep
-// are injected so the poll/deadline logic is testable without real waits.
 func Wait(
 	ctx context.Context,
 	reader Reader,

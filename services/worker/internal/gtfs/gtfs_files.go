@@ -2,79 +2,18 @@ package gtfs
 
 import "github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
 
-// The GTFS feed's file set, one SQL statement per file.
-//
-// Every statement reads raw_tdx and nothing else. That is deliberate: raw_tdx is
-// the shared landing schema, so the feed does not depend on this environment's
-// PG_SCHEMA, on search_path, or on a loader having caught up. Several export
-// datasets have no loader at all (datasetSpec.exportOnly), and the ones that do
-// are loaded for a narrower system set than they are landed for — reading the
-// landing tables is the only source that covers everything.
-//
-// Keeping the logic in SQL rather than Go is what makes this debuggable: any
-// file below can be pasted into psql and inspected on its own.
-//
-// The set is split across three files by domain, all in this package: this one
-// holds agency, stops, routes, translations, pathways, attributions and
-// feed_info; gtfs_fares.go the Fares v2 files; gtfs_timetable.go trips,
-// stop_times, calendar_dates, frequencies, transfers and shapes.
-//
-// Identifier scheme. TDX ids are only unique within a partition, so ids that
-// cross one are prefixed:
-//
-//	agency   rail  operatorcode                    e.g. TRTC
-//	         bus   city ':' operatorid             e.g. Taichung:1
-//	                                               (operatorid alone is not unique:
-//	                                                "1" is both 台中客運 and 桃園客運)
-//	stop     metro system ':' stationid            e.g. TRTC:BL11
-//	         exit   ... ':exit:' exitid
-//	         rail  TRA: / THSR: ':' stationid
-//	         bus   StopUID verbatim (already national)
-//	route    metro system ':' routeid              e.g. TRTC:BL-1
-//	         rail  TRA: ':' lineid, THSR
-//	         bus   RouteUID verbatim
 const (
 	// _gtfsTimezone and gtfsLang are the whole feed's; every agency is Taiwanese.
-	_gtfsTimezone = "Asia/Taipei"
-	_gtfsLang     = "zh-TW"
-	// _gtfsFallbackAgencyURL stands in for an operator that publishes no URL.
-	// agency_url is a required GTFS field, so an empty one is a validator error
-	// and would drop the operator's routes with it. The MOTC open-data portal is
-	// where the record actually comes from, which is the most truthful stand-in
-	// available.
+	_gtfsTimezone          = "Asia/Taipei"
+	_gtfsLang              = "zh-TW"
 	_gtfsFallbackAgencyURL = "https://tdx.transportdata.tw/"
-	// _gtfsNameZh and gtfsNameEn are the keys TDX nests its two name variants
-	// under. Every name-bearing query takes one of them, which is what lets
-	// translations.txt be the same queries read in the other language. They are
-	// interpolated into SQL, so they are constants here and never widen to a
-	// caller-supplied value.
-	_gtfsNameZh = "Zh_tw"
-	_gtfsNameEn = "En"
+	_gtfsNameZh            = "Zh_tw"
+	_gtfsNameEn            = "En"
 	// _gtfsTranslationLang is the language code translations.txt labels the
 	// English rows with. GTFS wants an IETF tag, which 'En' is not.
 	_gtfsTranslationLang = "en"
 )
 
-// gtfsPhoneSQL normalises one free-text TDX phone column into a single national
-// number, or NULL when the column holds nothing that is one.
-//
-// The first run of at least eight phone-shaped characters is taken and reduced
-// to digits. That one rule handles every shape observed in the data:
-//
-//	(02)2982-2886、0800-003-307   -> 0229822886   second number dropped
-//	(02)2992-9891#410             -> 0229929891   extension dropped
-//	(02)2291-6051 ~ 5             -> 0222916051   range dropped
-//	06-221-9177, 06-279-8267      -> 062219177    second number dropped
-//	55688                         -> NULL         a short code, not a number
-//
-// It also disposes of the Big5-in-UTF-8 rows without special handling: those
-// bytes are not in the character class, so they terminate the run, and
-// "0800-053808(<mojibake>)<mojibake>03-3753711" yields 0800053808 — the leading
-// number, correct, with the corrupt tail discarded.
-//
-// The 8..11 digit bound is what rejects short codes while accepting every real
-// Taiwanese form: 0800 freephone (10), Taipei 02 + 8 (10), and other area codes
-// at 9.
 func gtfsPhoneSQL(column string) string {
 	return `NULLIF(CASE WHEN length(regexp_replace(
 		COALESCE((regexp_match(` + column + `, '[0-9()\- ]{8,}'))[1], ''),
@@ -84,21 +23,6 @@ func gtfsPhoneSQL(column string) string {
 		'[^0-9]', '', 'g') ELSE '' END, '')`
 }
 
-// _gtfsAgencySQL emits one row per operator.
-//
-// rail_operator carries a row per ProviderID and repeats operatorcode (TRTC and
-// NTMC each appear twice), so it is collapsed to one row per code — that code is
-// what metro_route.operatorcode references.
-//
-// agency_phone is normalised rather than copied. TDX's values are free text and
-// hold several numbers, extension markers, ranges, and Chinese labels at once
-// ("(02)2982-2886、0800-003-307", "(02)2291-6051 ~ 5"), and a few rows carry Big5
-// bytes in the UTF-8 column, which is an outright validation error. gtfsPhoneSQL
-// takes the first phone-shaped run and reduces it to digits; see its comment for
-// why that also disposes of the mojibake.
-// _gtfsAgencySQL is the Chinese feed. gtfsAgencySQLFor("En") is the same query
-// with the name read in English, which is what translations.txt is built from —
-// see gtfsTranslationsSQL for why the query is reused rather than rewritten.
 var _gtfsAgencySQL = gtfsAgencySQLFor(_gtfsNameZh)
 
 func gtfsAgencySQLFor(lang string) string {
@@ -133,51 +57,6 @@ WHERE COALESCE(TRIM(agency_name), '') <> ''
 ORDER BY agency_id`
 }
 
-// _gtfsStopsSQL emits every boardable point plus the station entrances that lead
-// to one.
-//
-// Entrances (location_type 2) are the reason StationExit was landed: a rider
-// walks to a specific exit, and Taipei Main Station's exits are several hundred
-// metres apart, so routing to a station centroid mis-times the walk by minutes.
-// Each entrance is emitted only when its parent station is also emitted, since a
-// dangling parent_station is a validator error.
-//
-// Bus stops come from bus_stopofroute rather than a stop table: raw_tdx.bus_stop
-// is landed-but-never-fetched, so the stop-level records only exist nested in
-// each subroute's stop list. The same StopUID appears on every subroute that
-// calls there, hence DISTINCT ON.
-// _gtfsStopsSQL emits the rail-family station hierarchy plus flat bus stops.
-//
-// GTFS requires an entrance (location_type 2) to hang off a station
-// (location_type 1), never off a boarding stop (0) — emitting the station as a
-// plain stop is what produced 754 wrong_parent_location_type errors. So every
-// metro, TRA and THSR station becomes three kinds of node:
-//
-//	SYS:ID            location_type 1  the station, parent of everything below
-//	SYS:ID:platform   location_type 0  the boardable point stop_times will reference
-//	SYS:ID:exit:KEY   location_type 2  an entrance
-//
-// Bus stops stay flat: TDX has no station/platform distinction for them that is
-// worth modelling, and a stop with no parent is valid.
-//
-// Entrances are why StationExit was landed. A rider walks to a specific exit,
-// and Taipei Main's are several hundred metres apart, so routing to a station
-// centroid mis-times the walk by minutes.
-//
-// exit_key exists because 19 exits carry a blank ExitID, eight at Taipei Main
-// alone, which would collide into one id per station and silently drop the rest.
-// They get a synthetic ASCII key ordered by name — ASCII rather than the exit's
-// Chinese name so ids stay portable, and ordered so the key is stable between
-// builds.
-//
-// Bus stops come from bus_stopofroute rather than a stop table: raw_tdx.bus_stop
-// is landed-but-never-fetched, so stop-level records exist only nested in each
-// subroute's stop list, repeated per subroute that calls there.
-//
-// gtfsStopsSQLFor("En") is the same query with every name read in English, for
-// translations.txt. The keying stays on the Chinese name throughout — exit_key's
-// ROW_NUMBER and the filter feeding it — because a stop_id that moved with the
-// language would name rows stops.txt does not contain.
 var _gtfsStopsSQL = gtfsStopsSQLFor(_gtfsNameZh)
 
 func gtfsStopsSQLFor(lang string) string {
@@ -291,26 +170,6 @@ WHERE COALESCE(TRIM(stop_name), '') <> ''
 ORDER BY stop_id`
 }
 
-// _gtfsRoutesSQL emits one row per route.
-//
-// Metro routes come from Metro/Route, not Metro/Line: branches and short
-// workings — Xinbeitou, Xiaobitan, the Daan-Beitou short turn — exist only at
-// the Route level, and building from Line would silently drop them. Line is
-// still read, for the colour that Route does not carry.
-//
-// Metro/Route holds one row per direction with a direction-specific name
-// ("頂埔－南港展覽館" and its reverse), while a GTFS route spans both, so the
-// direction 0 row supplies the name.
-//
-// route_type follows the mode rather than the operator: the three light-rail
-// systems are trams (0) and Maokong is an aerial lift (6), even though all of
-// them are "metro" operators in TDX.
-//
-// gtfsRoutesSQLFor("En") is the same query with every name read in English, for
-// translations.txt. Which rows survive stays language-independent: the TRA
-// branch still selects its train types on the Chinese name being present, so a
-// type with no English translation drops out of translations.txt rather than out
-// of routes.txt.
 var _gtfsRoutesSQL = gtfsRoutesSQLFor(_gtfsNameZh)
 
 func gtfsRoutesSQLFor(lang string) string {
@@ -397,27 +256,6 @@ WHERE COALESCE(TRIM(route_short_name), '') <> ''
 ORDER BY route_id`
 }
 
-// _gtfsTranslationsSQL is the English name of every record the feed names in
-// Chinese.
-//
-// The English was always in the landed payload — TDX nests names as
-// {"Zh_tw": ..., "En": ...} — and the exporter simply never read the other key.
-//
-// It is built by re-running the three name-bearing queries with the language
-// swapped rather than by joining the raw tables again. record_id must name a row
-// the referenced file actually contains, and those queries carry non-obvious
-// filters (a stop is emitted only if some trip calls there, a route only if it
-// has a short name, an entrance only alongside its station). Reusing them is
-// what makes a dangling record_id impossible; a second set of filters would only
-// stay correct until one of them changed.
-//
-// A name with no English drops out on the same emptiness check each query
-// already ends with, so an untranslated record is absent rather than translated
-// into Chinese.
-//
-// Only these three tables are translated, which is also all the official MOTC
-// feed translates. trip_headsign would mean threading the language through all
-// four trip sources for a field no consumer reads.
 var _gtfsTranslationsSQL = `
 WITH a AS (` + gtfsAgencySQLFor(_gtfsNameEn) + `
 ), s AS (` + gtfsStopsSQLFor(_gtfsNameEn) + `
@@ -441,38 +279,6 @@ FROM r
 WHERE COALESCE(TRIM(route_long_name), '') <> ''
 ORDER BY 1, 2, 5`
 
-// _gtfsPathwaysSQL connects each station entrance to the platform it leads to,
-// one row per way of making the walk.
-//
-// What TDX has and has not. Probed 2026-08-01 against Rail/Metro with a working
-// token, using Station, StationExit, LineTransfer and S2STravelTime as controls
-// so a 404 means the endpoint is absent rather than the request being wrong:
-//
-//	StationExit      200  Elevator, Escalator, Stair per entrance
-//	StationFacility  200  toilets, drinking fountains, information spots
-//	Network          200  lines, not station interiors
-//	StationLayout, StationPathway, Floor, Level, Gate, Concourse,
-//	Platform, Elevator, Escalator, Accessibility        all 404
-//
-// So there is no station interior graph to import: no fare gates, no concourse
-// nodes, no traversal times, and nothing that levels.txt could be built from —
-// levels.txt is therefore not emitted rather than invented. What StationExit
-// does state is how you get in, which is the part a rider actually chooses
-// between, and it is already landed.
-//
-// An entrance with both stairs and a lift is two pathways, not one: that is what
-// lets a wheelchair route reject the stairs instead of averaging them away. An
-// entrance with no accessibility flag at all still gets a walkway, because it
-// demonstrably connects to the platform and saying nothing would strand it.
-//
-// traversal_time is left out. TDX states none, and the alternative is inventing
-// a number that a router would treat as measured.
-//
-// The entrance ids are rebuilt from the same 'SYS:ID:exit:ExitID' scheme
-// gtfsStopsSQL emits, so the join is against ids stops.txt really contains. The
-// 19 entrances TDX gives no ExitID are keyed there by row number instead and so
-// match nothing here; they fall through to the walkway branch, which is the
-// right answer for them anyway.
 var _gtfsPathwaysSQL = `
 WITH stop AS (SELECT * FROM ` + _gtfsStopTable + `), entrance AS (
   SELECT stop_id, parent_station FROM stop WHERE location_type = 2
@@ -520,16 +326,6 @@ SELECT
   1 AS is_authority,
   'https://tdx.transportdata.tw/' AS attribution_url`
 
-// gtfsFeedInfoSQL describes the build. feed_version is the build timestamp,
-// which is what makes two feeds comparable when diagnosing a routing difference.
-//
-// COPY takes no bind parameters, so the version is interpolated. It is a
-// timestamp this process formats, never anything read from the database or the
-// network, and sqlStringLiteral (vector.go) quotes it regardless.
-//
-// feed_start_date and feed_end_date are deliberately absent: they bound the
-// service dates the feed covers, and until calendar_dates is emitted there is no
-// honest value for them.
 func gtfsFeedInfoSQL(version string) string {
 	return `
 SELECT

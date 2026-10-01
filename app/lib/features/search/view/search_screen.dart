@@ -5,9 +5,11 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/city_names.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/data/models/near_models.dart';
@@ -47,13 +49,6 @@ String _backHere(BuildContext context) {
   return AppRoutes.searchLocation(query: query.isEmpty ? null : query);
 }
 
-/// Leaves the search screen. Usually a plain pop back to whatever pushed it,
-/// but this screen can also be the only entry on the stack — reached fresh
-/// via a deep link, or via state restoration after Android reclaims the
-/// process while search was open, which restores only the current location,
-/// not the push history beneath it. `pop()` in that case has nothing to do
-/// (and the system back gesture falls through to exiting the app), so it
-/// goes home instead.
 void _closeSearch(BuildContext context) {
   if (context.canPop()) {
     context.pop();
@@ -70,12 +65,6 @@ void _navigateToResult(BuildContext context, SearchResult result) {
   switch (result.type) {
     case SearchResultType.busRoute:
       unawaited(context.push(AppRoutes.busRoute(result.uid)));
-    // Stations land on the home map's own detail sheet rather than a screen of
-    // their own, so one kind of place has one presentation however it was
-    // reached. `go` rather than `push`: home is the root of the stack, and a
-    // pushed second home would be a second map — so this page cannot stay
-    // under the station. `back` is what replaces it: closing the sheet returns
-    // here, to this query, instead of stopping at the bare map.
     case SearchResultType.busStation:
       context.go(
         AppRoutes.nearStation(
@@ -99,10 +88,6 @@ void _navigateToResult(BuildContext context, SearchResult result) {
         ),
       );
     case SearchResultType.mrtStation:
-      // Resolved to a line-map id here rather than passing the name on: the
-      // search uid and the map's station ids use different code schemes, and
-      // `/metro/station/:id` is specified to carry a TDX code. A name the map
-      // does not know opens it bare, which is what it would show anyway.
       final stationId = metroStationIdForName(result.name);
       unawaited(
         context.push(
@@ -134,10 +119,6 @@ class SearchScreen extends StatelessWidget {
   /// than on an empty screen with the words already typed.
   final String? initialQuery;
 
-  /// Test seam. The screen owns its bloc in the app — nothing routes to it
-  /// with one — but a widget test has no Hive box or router behind the
-  /// default, and this screen's states (results, filtered, empty) are worth
-  /// rendering rather than only asserting on in the bloc.
   final SearchBloc? bloc;
 
   @override
@@ -214,10 +195,6 @@ class _SearchViewState extends State<_SearchView> {
     _focusNode.requestFocus();
   }
 
-  /// Runs a question through the ask lane. The field is the single input for
-  /// both lanes, so a chip or an example asking something else has to move the
-  /// field with it — otherwise the keyword results below would keep answering
-  /// the previous question.
   void _ask(String prompt) {
     final text = prompt.trim();
     if (text.isEmpty) return;
@@ -256,7 +233,12 @@ class _SearchViewState extends State<_SearchView> {
           children: [
             Container(
               color: cs.surface,
-              padding: EdgeInsets.fromLTRB(16, topPad + 12, 16, 12),
+              padding: EdgeInsets.fromLTRB(
+                AppTheme.space16,
+                topPad + AppTheme.space12,
+                AppTheme.space16,
+                AppTheme.space12,
+              ),
               child: Row(
                 children: [
                   Pressable(
@@ -288,7 +270,7 @@ class _SearchViewState extends State<_SearchView> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: AppTheme.space4),
                   Expanded(
                     child: Container(
                       // minHeight, not a fixed height: at large text scales the
@@ -302,7 +284,9 @@ class _SearchViewState extends State<_SearchView> {
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: AppShadows.cardFor(cs.brightness),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppTheme.space12,
+                      ),
                       child: Row(
                         children: [
                           Icon(
@@ -310,7 +294,7 @@ class _SearchViewState extends State<_SearchView> {
                             size: 18,
                             color: cs.onSurfaceVariant,
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: AppTheme.space8),
                           Expanded(
                             child: TextField(
                               controller: _controller,
@@ -334,7 +318,7 @@ class _SearchViewState extends State<_SearchView> {
                                 border: InputBorder.none,
                                 isDense: true,
                                 contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 12,
+                                  vertical: AppTheme.space12,
                                 ),
                               ),
                             ),
@@ -359,10 +343,6 @@ class _SearchViewState extends State<_SearchView> {
                                       width: 18,
                                       height: 18,
                                       decoration: BoxDecoration(
-                                        // onSurfaceVariant, not outline: this
-                                        // is a control, so it owes 3:1 against
-                                        // its background (WCAG 1.4.11).
-                                        // outline (#BFBFBF) manages 1.84:1.
                                         color: cs.onSurfaceVariant,
                                         shape: BoxShape.circle,
                                       ),
@@ -419,14 +399,6 @@ class _SearchViewState extends State<_SearchView> {
     );
   }
 
-  // Distinguishes the body states for the AnimatedSwitcher. A query that is
-  // still loading but already has results to show (from a previous query)
-  // keeps the 'results' key — see F1: the full-screen spinner only replaces
-  // the body when there is nothing to show yet, otherwise stale results
-  // stay on screen (with scroll position) while a thin progress bar overlays
-  // them. The 'results' key is intentionally constant across queries so a
-  // new results list replaces the old one in place without a crossfade —
-  // only state-kind changes animate.
   String _bodyKey(SearchState state) {
     if (state.loading &&
         state.results.isEmpty &&
@@ -449,11 +421,6 @@ class _SearchViewState extends State<_SearchView> {
     ColorScheme cs,
     double bottomPad,
   ) {
-    // Skeleton, not a spinner: the row structure is fixed, so showing it
-    // keeps the layout from jumping when results land. It replaces the whole
-    // body only while there is no chip row — once there is one, a city toggle
-    // would otherwise take the chips away under the finger that just tapped
-    // them, and the skeleton goes under the chrome instead (below).
     if (state.loading &&
         state.results.isEmpty &&
         state.cityOptions.length < 2) {
@@ -505,7 +472,9 @@ class _SearchViewState extends State<_SearchView> {
                   // list is the reflex for getting it out of the way.
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: EdgeInsets.only(bottom: bottomPad + 16),
+                  padding: EdgeInsets.only(
+                    bottom: bottomPad + AppTheme.space16,
+                  ),
                   itemCount: state.results.length,
                   separatorBuilder: (_, _) => Divider(
                     height: 1,
@@ -546,7 +515,12 @@ class _SectionHeader extends StatelessWidget {
     final n = count;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 6, 12, 6),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space6,
+        AppTheme.space12,
+        AppTheme.space6,
+      ),
       color: cs.surface,
       child: Row(
         children: [
@@ -577,11 +551,16 @@ class _NoResults extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 48, 32, 32),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space32,
+        AppTheme.space48,
+        AppTheme.space32,
+        AppTheme.space32,
+      ),
       child: Column(
         children: [
           Icon(Icons.search_off_rounded, size: 40, color: cs.onSurfaceVariant),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppTheme.space16),
           Text(
             AppI18n.of(context).searchNoMatch(query),
             textAlign: TextAlign.center,
@@ -592,7 +571,7 @@ class _NoResults extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppTheme.space6),
           Text(
             AppI18n.of(context).searchNoMatchHint,
             textAlign: TextAlign.center,
@@ -623,8 +602,6 @@ class _ResultsSkeleton extends StatelessWidget {
   }
 }
 
-/// The placeholder rows alone, for the case where the header and the city
-/// chips are already on screen and only the list is being replaced.
 class _SkeletonRows extends StatelessWidget {
   const _SkeletonRows();
 
@@ -632,62 +609,27 @@ class _SkeletonRows extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return ExcludeSemantics(
-      child: ListView.separated(
-        padding: EdgeInsets.zero,
-        itemCount: 6,
-        separatorBuilder: (_, _) => Divider(
-          height: 1,
-          thickness: 0.5,
-          color: cs.outlineVariant,
-        ),
-        itemBuilder: (_, _) => Container(
-          height: 62,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 20,
-            vertical: 12,
+      child: Skeletonizer(
+        child: ListView.separated(
+          padding: EdgeInsets.zero,
+          itemCount: 6,
+          separatorBuilder: (_, _) => Divider(
+            height: 1,
+            thickness: 0.5,
+            color: cs.outlineVariant,
           ),
-          color: cs.surfaceContainerLow,
-          child: Row(
-            children: [
-              _SkeletonBox(width: 34, height: 34, radius: 9, cs: cs),
-              const SizedBox(width: 12),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _SkeletonBox(width: 72, height: 13, radius: 4, cs: cs),
-                  const SizedBox(height: 7),
-                  _SkeletonBox(width: 148, height: 11, radius: 4, cs: cs),
-                ],
-              ),
-            ],
+          itemBuilder: (_, i) => _SearchResultRow(
+            result: SearchResult(
+              type: SearchResultType.busStation,
+              uid: 'skeleton-$i',
+              name: BoneMock.chars(5, '囗'),
+              subtitle: BoneMock.chars(9, '囗'),
+            ),
+            transportType: TransportType.busStop,
+            onTap: () {},
           ),
         ),
       ),
     );
   }
-}
-
-class _SkeletonBox extends StatelessWidget {
-  const _SkeletonBox({
-    required this.width,
-    required this.height,
-    required this.radius,
-    required this.cs,
-  });
-
-  final double width;
-  final double height;
-  final double radius;
-  final ColorScheme cs;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: width,
-    height: height,
-    decoration: BoxDecoration(
-      color: cs.surface,
-      borderRadius: BorderRadius.circular(radius),
-    ),
-  );
 }

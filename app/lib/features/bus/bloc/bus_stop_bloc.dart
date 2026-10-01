@@ -31,10 +31,6 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
   final String? stopId;
   final String? city;
 
-  /// Captured at construction: a bloc has no `BuildContext` to resolve a
-  /// locale from per frame. The arrival rows therefore keep the language the
-  /// screen was opened in until it is rebuilt — acceptable because switching
-  /// language re-runs the root `MaterialApp` builder, which tears this down.
   final AppI18n _i18n;
   final BusRepository _repository;
   // Replace policy + 15s decay live inside the feed; the empty-frame guard the
@@ -61,23 +57,10 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     } on Object catch (e, s) {
       CrashReporter.record(e, s);
       if (isClosed) return;
-      // The station-group fetch is the only thing that can move the sheet out
-      // of `loading` before the first ETA frame arrives. If it fails and the
-      // ETA stream stays silent (no data, no terminal error — see
-      // ResilientSubscription's clean-close backoff), nothing else ever
-      // settles the state, so the sheet spins forever (F31). Settling here
-      // immediately, rather than waiting on a timer, means a later ETA frame
-      // can still recover the view the normal way (a source frame clears
-      // `error` and flips status to loaded).
       emit(
         state.copyWith(status: BusStopStatus.error, error: AppError.from(e)),
       );
     }
-    // `_repository.stationGroup` is the only await above; if the bloc closed
-    // during that gap, close() already ran and cancelled the old `_sub` — a
-    // subscription created past this point would be orphaned (never
-    // cancelled) and its later `add()` would throw on the closed event
-    // controller.
     if (isClosed) return;
     _sub = _feed
         .watch(
@@ -106,11 +89,6 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     final arrivalsChanged = !listEquals(event.arrivals, state.arrivals);
     final isSource = event.kind == ArrivalFeedEmissionKind.source;
 
-    // A decay re-emission only re-derives already-known countdowns locally —
-    // it learned nothing new from the network. It may refresh the displayed
-    // values, but must never move `status` out of an error/loading state,
-    // touch `updatedAt`, or clear `error`: only a real source frame proves
-    // the feed is alive (F29, F30).
     if (!isSource) {
       if (!arrivalsChanged) return;
       final displays = [

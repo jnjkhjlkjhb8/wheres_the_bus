@@ -68,12 +68,6 @@ class PlanRoute extends Equatable {
   /// built via the proto factory. Persisted as-is when a snapshot is saved.
   final List<int>? raw;
 
-  /// Stable identity for a saved snapshot, derived from the canonical proto
-  /// bytes so sibling options of the same trip (which share origin, dest, and
-  /// departure time) get distinct keys. Identical content collapses to one
-  /// entry; re-serialization is deterministic, so a restored snapshot keys the
-  /// same as the route it came from. Falls back to a field key when [raw] is
-  /// absent.
   String get savedKey {
     final bytes = raw;
     if (bytes == null) {
@@ -180,17 +174,8 @@ class PlanSection extends Equatable {
   /// conditions as [walkPath].
   final List<PlanWalkStep> walkSteps;
 
-  /// Rail-line geometry clipped to this section's stops (metro/TRA/THSR
-  /// only); empty when not a rail section or the router could not snap the
-  /// stops to a known line (the map then draws a straight line through the
-  /// stops, same fallback as an unresolved [walkPath]).
   final List<PlanPoint> transitPath;
 
-  /// Other services that run this leg, when the plan asked for them. Only
-  /// [transport], [departure], [arrival] and [identity] are set on one: the
-  /// planner frames an alternative as a walk, a service and another walk, and
-  /// the two walks are how it proved the swap fits, not a choice the rider
-  /// makes. An alternative never carries alternatives of its own.
   final List<PlanSection> alternatives;
 
   @override

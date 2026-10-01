@@ -1,11 +1,3 @@
-// Package main is the functions binary: a TDX ingestion scheduler and MQTT
-// subscriber. One image runs in three modes selected by the ROLE env var
-// (resolveRole): ROLE=ingestor lands raw TDX payloads into raw_tdx on a daily
-// cron; ROLE=loader transforms raw_tdx into this env's PG_SCHEMA at 03:30;
-// empty ROLE runs the legacy prod path (Firebase notifications, all
-// transform/realtime crons, MQTT alerts) that writes static data to PostgreSQL
-// and realtime ETAs to Redis. It also fills missing bus ETAs via schedule and
-// segment-time prediction.
 package main
 
 import (
@@ -38,23 +30,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// main boots the functions binary: it initializes observability, resolves the
-// run mode from ROLE (a fatal error on unknown/unimplemented roles), opens
-// shared Redis and PostgreSQL connections, then dispatches to either the
-// ingestor cron set or the legacy prod flow. It blocks until a shutdown signal.
 func main() {
 	if err := run(); err != nil {
-		// Straight to stderr: run's deferred obs cleanup has already flushed
-		// Sentry by the time it returns, so logging this through the
-		// Sentry-forwarding handler would enqueue an event nothing flushes.
 		_, _ = fmt.Fprintf(os.Stderr, "functions exited with error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// run is main's body as a normal error-returning function: a boot failure must
-// unwind the deferred Redis/PostgreSQL closes and the obs flush, which log.Fatal
-// would skip.
 func run() error {
 	defer obs.Init("functions")()
 	defer obs.Recover("main")
@@ -150,16 +132,6 @@ func run() error {
 				return _oops.Wrapf(err, "gtfs-rt failed")
 			}
 		case "bikeeta", "traeta", "buseta":
-			// Refreshes what the published feeds read out of Redis: bike
-			// availability for GBFS station_status, TRA delays and bus arrivals
-			// for the GTFS-RT delay producers.
-			//
-			// The dispatcher is always nil, so a manual run sends no push
-			// notifications. The pool is only given to bus, which cannot resolve a
-			// stop without it; bike and tra run without one so that a manual
-			// refresh writes no history rows. Bus does record its prediction
-			// errors — that is not separable from the job, and it is the same
-			// observation the scheduled run would have made.
 			ctx, cancel := context.WithTimeout(context.Background(), _manualBackfillTimeout)
 			defer cancel()
 			job := map[string]string{"bikeeta": "bike", "traeta": "tra", "buseta": "bus"}[os.Args[2]]
@@ -212,10 +184,6 @@ const (
 	_modeLoader
 )
 
-// resolveRole maps the ROLE env to a run mode. Unimplemented (eta/realtime) and
-// unknown roles are errors, so they can never silently fall into the legacy prod
-// flow. Empty ROLE preserves current prod behavior; ROLE=loader owns the 03:30
-// loader cron (registerLoaderCrons) in its own container.
 func resolveRole(role string) (appMode, error) {
 	switch role {
 	case "":
@@ -262,10 +230,7 @@ type staticPipelineDedicatedConn interface {
 	Close(context.Context) error
 }
 
-// pgStaticPipelineConnector opens a dedicated connection from a copy of the
-// raw pool's connection config. The production ingest/load pools intentionally
-// allow MaxConns=1; holding the advisory-lock transaction inside that pool would
-// consume its only slot and deadlock the job's own SQL.
+// A separate connection prevents advisory locking from exhausting a one-connection job pool.
 type pgStaticPipelineConnector struct {
 	pool    *pgxpool.Pool
 	connect func(context.Context, *pgx.ConnConfig) (staticPipelineDedicatedConn, error)
@@ -380,10 +345,6 @@ func newStaticPipelineRunner(rawLockPool *pgxpool.Pool, timeout time.Duration) s
 	}
 }
 
-// Run waits for the local gate and PostgreSQL advisory lock within one timeout,
-// runs job, and always releases both. The independent release context ensures a
-// canceled job cannot strand the transaction-scoped lock. A panic is rethrown
-// only after release; if release also fails, both failures remain visible.
 func (r staticPipelineRunner) Run(parent context.Context, job func(context.Context) error) (err error) {
 	if parent == nil {
 		parent = context.Background()
@@ -426,14 +387,6 @@ func (r staticPipelineRunner) Run(parent context.Context, job func(context.Conte
 	return errors.Join(jobErr, ctx.Err())
 }
 
-// addStaticCron applies cron's own non-overlap guard in addition to the runner's
-// boot/manual gate. The runner remains authoritative because boot is not a cron
-// entry and different static job names can otherwise overlap.
-//
-// Every job registered this way also touches the liveness marker
-// (_health.touch) once it returns, success or failure -- see healthFile's
-// doc comment for why the container healthcheck cares about scheduler
-// liveness, not per-job business success.
 func addStaticCron(r *cron.Cron, spec string, job func()) (cron.EntryID, error) {
 	guarded := cron.NewChain(cron.SkipIfStillRunning(cron.DefaultLogger)).Then(cron.FuncJob(func() {
 		job()
@@ -442,21 +395,6 @@ func addStaticCron(r *cron.Cron, spec string, job func()) (cron.EntryID, error) 
 	return r.AddJob(spec, guarded)
 }
 
-// staticJobSpec is one nightly pipeline job's recipe. Before this, every cron
-// closure composed the same decisions by hand and picked them à la carte: the
-// 04:00 chain hand-rolled its marker wait including the deadline margin, while
-// the 04:15 and 04:30 entries reached for runDaily directly. Making them fields
-// means a job that needs an upstream marker cannot forget the margin, and the
-// nightly pipeline's shape reads as a list instead of five closures.
-//
-// Deliberately not covered: weatherSync and loadHolidays. Those are best-effort
-// refreshes with a last-good Redis snapshot behind them, so they warn rather
-// than error and must not retry — a different category, not a missing field.
-//
-// Also deliberately absent: a locked flag. The static-pipeline advisory lock
-// would be redundant here, because waitFor already proves the upstream stage
-// finished, and adding it would mean bounding the whole chain under one more
-// timeout that could truncate a legitimately slow segment-time pass.
 type staticJobSpec struct {
 	name     string
 	schedule string
@@ -483,10 +421,6 @@ func registerStaticJob(r *cron.Cron, markers marker.Reader, spec staticJobSpec) 
 	})
 }
 
-// runStaticJob is registerStaticJob's testable core. Every wall-clock dependency
-// is injected for the same reason waitForPipelineMarker takes now and sleep: the
-// marker polls every five minutes against a two-hour deadline and retries back
-// off a minute apart, so a test on the real clock would genuinely wait.
 func runStaticJob(
 	markers marker.Reader,
 	spec staticJobSpec,
@@ -530,10 +464,6 @@ func vectorRefreshJob(rc vector.Redis, db vector.DB) func(context.Context) error
 	}
 }
 
-// runBootBusDailyTimetable refreshes the legacy prod process's schedule cache
-// through the same bounded process gate and raw-database advisory lock as every
-// other static job. The caller logs an error and continues booting; this helper
-// intentionally adds no second timeout around the runner.
 func runBootBusDailyTimetable(
 	parent context.Context,
 	runner staticPipelineRunner,
@@ -547,20 +477,12 @@ func runBootBusDailyTimetable(
 	})
 }
 
-// runLegacyProd is the current prod path: Firebase, notification dispatcher, all
-// transform/realtime crons, and MQTT. Only ROLE="" reaches here — the ingestor
-// never initializes any of it. A boot failure is returned rather than fatal, so
-// run's deferred Redis/PostgreSQL closes and the obs flush still get to run —
-// without the flush the failure that stopped boot never reaches Sentry.
 func runLegacyProd(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, rawPool, db *pgxpool.Pool) error {
 	sender, err := notify.NewFirebaseSender(context.Background())
 	if err != nil {
 		return _oops.Wrapf(err, "init Firebase sender")
 	}
 	dispatcher := notify.NewDispatcher(notify.NewStore(db), sender)
-	// The card-refresh transports (ADR-0018). Absent APNs credentials disable the
-	// iOS leg only; a malformed key is a boot failure rather than a silent
-	// downgrade, because credentials that are present but unusable are a mistake.
 	apns, err := notify.NewAPNSSender()
 	if err != nil {
 		return _oops.Wrapf(err, "init APNs sender")
@@ -581,10 +503,6 @@ func runLegacyProd(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, rawPoo
 	}
 	holidayCancel()
 	predict.Install()
-	// Prime the weather cache at boot: the @every 10m cron below does not fire until
-	// 10 minutes in, so without this every bus_eta_history row written in that window
-	// after a restart would carry null weather features. The bounded context keeps
-	// startup delay finite while avoiding a detached refresh goroutine.
 	weatherCtx, weatherCancel := context.WithTimeout(context.Background(), weather.HTTPTimeout)
 	if err := weather.Sync(weatherCtx, rc); err != nil {
 		zap.S().Warnw("initial sync failed; keeping last good Redis snapshot",
@@ -593,29 +511,12 @@ func runLegacyProd(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, rawPoo
 		)
 	}
 	weatherCancel()
-	// Re-assert the demand keys of cities holding a pending bus reminder before
-	// the first live tick can gate any of them away (FDPL-90). Bounded like the
-	// weather prime above so a slow database delays boot finitely.
 	demandCtx, demandCancel := context.WithTimeout(context.Background(), weather.HTTPTimeout)
 	restoreReminderDemand(demandCtx, db, pipeline.NewRedisLiveSink(rc))
 	demandCancel()
-	// The ingestor lands raw_tdx at 03:00 and the ROLE=loader container transforms
-	// it into this env's schema at 03:30. changetovector runs in that same loader
-	// process right after the load (registerLoaderCrons -> runVectorRefresh), and
-	// the segment-time passes (below) read what it fills. Each cron entry here
-	// keeps its own clock offset (03:45 / 04:00) but first polls pipeline_runs for
-	// the upstream stage's durable completion marker (written by the
-	// loader/changetovector on success) rather than trusting the offset alone.
-	// markerReader is what the 04:00 cron polls the "changetovector" marker with.
 	markerReader := marker.NewPGReader(db)
 	registerLiveCrons(r, tdx, rc, db, dispatcher)
-	// GTFS-RT snapshot (ADR-0019): rebuilt here, served by services/api. It
-	// reads rawPool because the static trip index is derived from
-	// raw_tdx.bus_schedule, the same source trips.txt is built from.
 	registerGTFSRTCron(r, rawPool, rc)
-	// Metro alight-reminder tracker (ADR-0015): a 15s cron that advances active
-	// car-bound sessions from GetTrainInfo (event-driven, one call per hop). Not a
-	// pipeline.LiveSpec — it never touches TDX. Nil-safe dispatcher when push is disabled.
 	registerMrtTrackCron(r, rc, db, dispatcher, pusher)
 	_, _ = addStaticCron(r, "@every 10m", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), weather.HTTPTimeout)
@@ -646,10 +547,6 @@ func runLegacyProd(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, rawPoo
 			pipeline.RunDaily("computeSegmentTimesFromEstimates", 15*time.Minute, func(ctx context.Context) error {
 				return history.ComputeSegmentTimesFromEstimates(ctx, db, history.ResolveSource())
 			})
-			// Then, once the observations are in: a distance-derived estimate for
-			// the hops still empty, so one unobserved segment does not cost GTFS the
-			// whole route direction. Marked sample_count = 0 and never written over
-			// an observed row.
 			pipeline.RunDaily("fillSegmentTimesFromDistance", 15*time.Minute, func(ctx context.Context) error {
 				return history.FillSegmentTimesFromDistance(ctx, db)
 			})
@@ -670,12 +567,11 @@ func runLegacyProd(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, rawPoo
 		name: "cleanups", schedule: "0 30 4 * * *",
 		run: func(context.Context) error {
 			pipeline.RunDaily("cleanupPredictionErrors", 10*time.Minute, func(ctx context.Context) error { return cleanup.PredictionErrors(ctx, db) })
-			// bike history moved to the archive host and is kept indefinitely
-			// (ADR-0023), so its retention job is gone. What the archive host does
-			// need is its partitions maintained: expired ones dropped, coming ones
-			// created before rows reach p_max and pruning silently stops working.
 			pipeline.RunDaily("maintainArchivePartitions", 10*time.Minute, func(ctx context.Context) error {
 				return history.MaintainPartitions(ctx, history.AdminTarget(), time.Now())
+			})
+			pipeline.RunDaily("pruneArrivalReminders", 10*time.Minute, func(ctx context.Context) error {
+				return notify.NewStore(db).PruneReminders(ctx, time.Now().Add(-30*24*time.Hour))
 			})
 			history.ReportGaps()
 			return nil
@@ -694,8 +590,6 @@ func runLegacyProd(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, rawPoo
 	return nil
 }
 
-// waitForShutdown blocks until SIGINT or SIGTERM, letting deferred cleanup
-// (cron stop, connection close, MQTT disconnect) run on graceful termination.
 func waitForShutdown() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -703,19 +597,8 @@ func waitForShutdown() {
 	zap.S().Infow("signal received", "component", "boot", "action", "shutdown", "event", "signal_received")
 }
 
-// _shutdownGrace bounds how long drainShutdown waits for in-flight cron/boot
-// work to finish before the caller proceeds to close shared Redis/DB
-// connections. A job that outlives it is abandoned mid-flight (its own
-// per-job timeout is expected to have fired well before this), but the
-// process still exits instead of hanging forever on a stuck job.
 const _shutdownGrace = 30 * time.Second
 
-// drainShutdown waits, bounded by grace, for both cronDone (the context
-// returned by cron.Cron.Stop — its own intake must already be stopped before
-// calling this) and boot (goroutines started outside cron, e.g. an
-// *_ON_BOOT run) to finish. Call it after intake has stopped and before
-// closing any dependency a running job might still be using: that ordering
-// is what keeps a job from observing a closed Redis/DB connection mid-run.
 func drainShutdown(cronDone context.Context, boot *sync.WaitGroup, grace time.Duration) {
 	done := make(chan struct{})
 	go func() {

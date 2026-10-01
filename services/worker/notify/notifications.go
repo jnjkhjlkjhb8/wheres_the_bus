@@ -51,10 +51,6 @@ type Dispatcher struct {
 	isInvalidFCMToken func(error) bool
 }
 
-// ArrivalFinalizationTimeout bounds the detached fired/release/invalidate
-// window after a send. Exported so the functions package can assert the
-// reclaim-safety bound (liveJobTimeout + this < ReminderClaimTimeout) in a
-// test.
 const ArrivalFinalizationTimeout = 2 * time.Second
 
 // NewDispatcher builds a dispatcher, or returns nil when sender is
@@ -67,37 +63,19 @@ func NewDispatcher(store notificationStorage, sender Sender) *Dispatcher {
 	return &Dispatcher{store: store, sender: sender, now: time.Now, finalizationTimeout: ArrivalFinalizationTimeout, isInvalidFCMToken: messaging.IsUnregistered}
 }
 
-// notificationMessage builds an FCM message with both a notification and a data
-// payload (title/body are copied into data too), configured for high-priority
-// delivery with default sound on Android and APNs. It mutates and reuses the
-// passed data map.
 func notificationMessage(token, title, body string, data map[string]string) *messaging.Message {
 	data["title"] = title
 	data["body"] = body
 	return &messaging.Message{Token: token, Data: data, Notification: &messaging.Notification{Title: title, Body: body}, Android: &messaging.AndroidConfig{Priority: "high", Notification: &messaging.AndroidNotification{Sound: "default"}}, APNS: &messaging.APNSConfig{Payload: &messaging.APNSPayload{Aps: &messaging.Aps{Sound: "default"}}}}
 }
 
-// MrtVibrateEvent is one metro alight-reminder session reaching one of its two
-// thresholds: the reminder row to fire once, the device token to reach, and
-// which buzz it is. TrackID is echoed to the client so it can match the
-// vibration to the session on screen.
 type MrtVibrateEvent struct {
-	ReminderID string
-	Token      string
-	TrackID    string
-	// AlightEvent is "lead" or "alight" (ADR-0020).
+	ReminderID  string
+	Token       string
+	TrackID     string
 	AlightEvent string
 }
 
-// vibrateMessage builds a 下車提醒 push: a DATA-only, high-priority FCM message
-// with NO notification payload, so nothing enters the notification center — the
-// Android client wakes and vibrates (ADR-0020). Every mode uses it; the event
-// tells the client which of the two vibrations to play.
-//
-// It carries no APNs config: iOS cannot vibrate a backgrounded app from a push
-// at all, so an iOS token receives a silent data message and the alert reaches
-// the rider through the Live Activity's own alerting update instead. That
-// asymmetry is a platform ceiling, not an unfinished seam — see ADR-0020.
 func vibrateMessage(token, trackID, alightEvent string) *messaging.Message {
 	return &messaging.Message{
 		Token:   token,
@@ -116,13 +94,6 @@ func reminderMessage(r arrivalReminder, title, body string, data map[string]stri
 	return notificationMessage(r.token, title, body, data)
 }
 
-// FireMrtVibrate delivers the alight vibration exactly once, reusing the
-// reminder claim/fire machinery: claim moves the row pending→sending (losing the
-// race or an already-fired row yields false with no send), the data message is
-// sent, and fired finalizes it. A failed send releases the claim for a later
-// tick and invalidates an unregistered token. No-op — (false, nil) — for a nil
-// dispatcher or an empty token (push off / unknown device), so the tracker still
-// advances the card without vibrating.
 func (d *Dispatcher) FireMrtVibrate(ctx context.Context, event MrtVibrateEvent) (bool, error) {
 	if d == nil || event.Token == "" {
 		return false, nil
@@ -156,11 +127,6 @@ func (d *Dispatcher) FireMrtVibrate(ctx context.Context, event MrtVibrateEvent) 
 	return fired, nil
 }
 
-// routeAlert pushes a service-disruption notification to every device
-// subscribed to a route. An empty routeKey is a line-wide disruption and
-// reaches every subscriber of that transit type. It is a no-op for a nil
-// dispatcher or an unknown transit type. Tokens are deduped, and a send that
-// reports an unregistered token invalidates that token instead of retrying.
 func (d *Dispatcher) routeAlert(ctx context.Context, routeType, routeKey, body string) {
 	if d == nil || !isAlertRouteType(routeType) {
 		return
@@ -313,15 +279,6 @@ func (d *Dispatcher) Arrivals(ctx context.Context, events []ArrivalEvent) error 
 	return dispatchErr
 }
 
-// FireScheduled sends arrival reminders whose scheduled fire time has arrived —
-// the rail path, where the arrival time is known so fire_at was set at creation
-// (arrival − lead) rather than derived from a live ETA. It claims each reminder
-// before sending to avoid duplicate pushes across ticks, marks it fired on
-// success, releases it to retry on a transient failure, and invalidates the
-// token when FCM reports it unregistered. No-op for a nil dispatcher. Mirrors
-// the Arrivals contract: claim, send, and final-state errors are joined so no
-// failed transition — including a release failure that would otherwise strand
-// a reminder in 'sending' forever — is hidden from the cron runner.
 func (d *Dispatcher) FireScheduled(ctx context.Context) error {
 	if d == nil {
 		return nil

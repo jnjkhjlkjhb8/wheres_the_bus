@@ -58,10 +58,6 @@ void main() {
   });
 
   test('toArgs carries the session id, and declares it when there is none', () {
-    // Android's 取消追蹤 needs it to end the session from a process with no Dart
-    // alive (FDPL-65). A bus ride has no server session, and the key must still
-    // be present: the platform side reads a missing key and a null one the same
-    // way, but a payload that silently drops fields is how the two sides drift.
     const metro = AlightTrackContent(
       mode: AlightTrackMode.metro,
       phase: AlightTrackPhase.riding,

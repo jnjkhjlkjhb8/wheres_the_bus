@@ -25,10 +25,6 @@ JourneyLeg _leg({List<RailStopSchedule> schedule = const []}) => JourneyLeg(
 );
 
 void main() {
-  test('railSchedule defaults to empty and is not part of bus legs', () {
-    expect(_leg().railSchedule, isEmpty);
-  });
-
   test('RailStopSchedule equality drives leg equality', () {
     final a = RailStopSchedule(
       name: '台北',

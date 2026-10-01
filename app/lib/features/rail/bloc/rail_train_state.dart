@@ -28,6 +28,7 @@ class RailTrainState extends Equatable {
     this.userFare,
     this.error,
     this.liveDelayMinutes,
+    this.delayUpdatedAt,
   });
 
   final RailTrainStatus status;
@@ -37,12 +38,6 @@ class RailTrainState extends Equatable {
   /// its last), or null when the fare query has no data.
   final RailFareQuote? fullFare;
 
-  /// Adult (全票) fare in NT$ for the segment the caller actually searched
-  /// (`RailTrainBloc.userOrigin`/`userDest`), or null when no such segment was
-  /// given, or its fare query had no data. This is the number an O/D result
-  /// list already quoted the user, so the screen must lead with this one, not
-  /// [fullFare] — quoting the full-run fare instead used to show a different
-  /// price than the list for what read as the same trip.
   final RailFareQuote? userFare;
   final AppError? error;
 
@@ -51,6 +46,11 @@ class RailTrainState extends Equatable {
   /// the snapshot it navigated in with while this is null.
   final int? liveDelayMinutes;
 
+  /// When the last delay frame landed, or null before the first one (and
+  /// always, for THSR). The stop times are landed timetable data; the delay
+  /// laid over them is the part that ages.
+  final DateTime? delayUpdatedAt;
+
   RailTrainState copyWith({
     RailTrainStatus? status,
     List<RailTrainStop>? stops,
@@ -58,6 +58,7 @@ class RailTrainState extends Equatable {
     RailFareQuote? userFare,
     AppError? error,
     int? liveDelayMinutes,
+    DateTime? delayUpdatedAt,
   }) => RailTrainState(
     status: status ?? this.status,
     stops: stops ?? this.stops,
@@ -65,6 +66,7 @@ class RailTrainState extends Equatable {
     userFare: userFare ?? this.userFare,
     error: error ?? this.error,
     liveDelayMinutes: liveDelayMinutes ?? this.liveDelayMinutes,
+    delayUpdatedAt: delayUpdatedAt ?? this.delayUpdatedAt,
   );
 
   @override
@@ -75,5 +77,6 @@ class RailTrainState extends Equatable {
     userFare,
     error,
     liveDelayMinutes,
+    delayUpdatedAt,
   ];
 }

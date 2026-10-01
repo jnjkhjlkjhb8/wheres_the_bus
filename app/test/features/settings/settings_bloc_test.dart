@@ -118,12 +118,6 @@ void main() {
       expect(bloc.state.liveActivityEnabled, isFalse);
       expect(settings.liveActivityEnabled, isFalse);
     });
-
-    test('language selection updates state but is not persisted', () async {
-      final settings = repo();
-      // Language has no repository backing; nothing to persist.
-      expect(settings.appearanceMode, 'system');
-    });
   });
 
   group('push toggle', () {

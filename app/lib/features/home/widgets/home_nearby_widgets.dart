@@ -43,9 +43,12 @@ class _FilterButtonGroup extends StatelessWidget {
     const filters = NearbyFilter.values;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space20,
+        vertical: AppTheme.space12,
+      ),
       child: Row(
-        spacing: 8,
+        spacing: AppTheme.space8,
         children: [
           for (final filter in filters)
             Pressable(
@@ -57,7 +60,9 @@ class _FilterButtonGroup extends StatelessWidget {
                 duration: AppMotion.micro,
                 curve: AppMotion.easeInOut,
                 height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.space16,
+                ),
                 decoration: BoxDecoration(
                   color: filter == selectedFilter
                       ? cs.primary
@@ -106,10 +111,6 @@ class _NearbyStationsTab extends StatefulWidget {
 class _NearbyStationsTabState extends State<_NearbyStationsTab> {
   NearbyFilter _selectedFilter = NearbyFilter.all;
   bool _showReturnMap = false;
-  // Driven off the list's scroll notifications rather than an owned controller:
-  // attaching one to a ListView inside a smooth_sheets Sheet double-binds the
-  // viewport (the sheet already drives it) and trips ScrollController's
-  // single-position assertion.
   bool _onScrollNotification(ScrollNotification n) {
     if (n.metrics.axis != Axis.vertical) return false;
     // No sheet expansion here: SheetScrollConfiguration already hands
@@ -176,11 +177,6 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
     }
   }
 
-  // At the peek detent, chrome (handle + search + tab bar) already consumes
-  // most of the available height, and AppI18n.of(context).commonAll — the
-  // default filter — costs 60px for a row that changes nothing. Keep the
-  // filter row collapsed until the sheet has grown roughly halfway toward
-  // the half detent, so peek spends its height on station rows instead.
   Widget _buildFilterRow(BuildContext context) {
     final reduceMotion = AppMotion.reduced(context);
     return AnimatedBuilder(
@@ -189,10 +185,6 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
         final metrics = widget.sheetController.metrics;
         final viewport =
             metrics?.viewportSize.height ?? MediaQuery.sizeOf(context).height;
-        // The viewport measures 0 on the frames before the sheet has been
-        // laid out. Dividing through it yields NaN, which survives clamp()
-        // and then trips Curve.transform's range assert, so bail to the
-        // collapsed state until there is a real height to interpolate over.
         if (viewport <= 0) return const SizedBox.shrink();
         final peekPx = viewport * AppSheetSnap.peekFrac;
         final halfPx = viewport * AppSheetSnap.halfFrac;
@@ -235,17 +227,20 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
                 kind = 'loading';
                 body = LayoutBuilder(
                   builder: (context, constraints) {
-                    // Each ShimmerRow is height + 8 (vertical margin); fill
-                    // the viewport so the skeleton reads as a full list.
-                    const rowExtent = 62 + 8.0;
+                    // A row is 62 high at minimum; fill the viewport so the
+                    // skeleton reads as a full list.
+                    const rowExtent = 62.0;
                     final count = (constraints.maxHeight / rowExtent).ceil();
-                    return ListView(
-                      padding: const EdgeInsets.only(top: 4),
-                      physics: const NeverScrollableScrollPhysics(),
-                      children: [
-                        for (var i = 0; i < count; i++)
-                          const ShimmerRow(height: 62),
-                      ],
+                    return Skeletonizer(
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: count,
+                        itemBuilder: (context, i) => _NearbyStationRow(
+                          station: _skeletonStations[i % 3],
+                          onStationTap: (_) {},
+                        ),
+                      ),
                     );
                   },
                 );
@@ -379,10 +374,6 @@ class _ReturnMapPillState extends State<_ReturnMapPill>
     fontWeight: FontWeight.w600,
   );
 
-  // Hug: the pill sizes to its content (icon + gap + label) plus side
-  // padding. Cached because this feeds an AnimatedBuilder that rebuilds
-  // every frame of the pill's show/hide animation; only the text scaler
-  // (read in didChangeDependencies) can change the result.
   late double _cachedPillWidth;
 
   double _computePillWidth(BuildContext context) {
@@ -522,6 +513,36 @@ class _ReturnMapPillState extends State<_ReturnMapPill>
   }
 }
 
+final List<NearStationViewModel> _skeletonStations = [
+  NearStationViewModel(
+    type: NearStationType.mrt,
+    stationId: '',
+    stationName: BoneMock.chars(4, '囗'),
+    lat: 0,
+    lon: 0,
+    walkingMinutes: 3,
+    distanceMeters: 240,
+  ),
+  NearStationViewModel(
+    type: NearStationType.bus,
+    stationId: '',
+    stationName: BoneMock.chars(6, '囗'),
+    lat: 0,
+    lon: 0,
+    walkingMinutes: 5,
+    distanceMeters: 420,
+  ),
+  NearStationViewModel(
+    type: NearStationType.bike,
+    stationId: '',
+    stationName: BoneMock.chars(3, '囗'),
+    lat: 0,
+    lon: 0,
+    walkingMinutes: 8,
+    distanceMeters: 860,
+  ),
+];
+
 class _NearbyStationRow extends StatelessWidget {
   const _NearbyStationRow({
     required this.station,
@@ -552,7 +573,10 @@ class _NearbyStationRow extends StatelessWidget {
       semanticLabel: '${station.stationName} $details',
       child: Container(
         constraints: const BoxConstraints(minHeight: 62),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space12,
+        ),
         decoration: BoxDecoration(
           color: Colors.transparent,
           border: Border(
@@ -567,7 +591,7 @@ class _NearbyStationRow extends StatelessWidget {
             TransportIcon(
               type: _nearbyIconType(station),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -584,7 +608,7 @@ class _NearbyStationRow extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppTheme.space2),
                   Row(
                     children: [
                       Icon(
@@ -610,7 +634,7 @@ class _NearbyStationRow extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Icon(
               Icons.chevron_right_rounded,
               size: 20,

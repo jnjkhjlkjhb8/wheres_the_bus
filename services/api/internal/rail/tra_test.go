@@ -40,10 +40,6 @@ func TestTraFarePayloadReturnsRows(t *testing.T) {
 	}
 }
 
-// TestTraTicketTypesCoverBothAxes pins the ticket-type set to the cross product
-// of 票種 and 車種. Dropping the 孩/敬/愛 prefixes leaves a rider whose preference
-// is 敬老 looking at the full adult fare; dropping a 車種 suffix leaves a whole
-// class of train unpriced.
 func TestTraTicketTypesCoverBothAxes(t *testing.T) {
 	present := map[string]bool{}
 	for _, ticketType := range _traTicketTypes {
@@ -64,11 +60,6 @@ func TestTraTicketTypesCoverBothAxes(t *testing.T) {
 	}
 }
 
-// TestTraFarePayloadKeepsFarePerTrainClass pins the two things the Fare RPC
-// depends on: every priced 票種 × 車種 row survives, so the caller can pick the
-// one matching its train's class *and* the rider's ticket type. Collapsing them
-// to a single price quoted the 自強 fare (成自) for a 區間車 — 桃園→臺北 showed 99
-// instead of 63 — and quoted 全票 to a 敬老 rider.
 func TestTraFarePayloadKeepsFarePerTrainClass(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {
@@ -113,8 +104,6 @@ func TestTraFarePayloadKeepsFarePerTrainClass(t *testing.T) {
 	}
 }
 
-// TestTraFarePayloadEmptyOnNoRows verifies an unlanded date yields an empty
-// payload (nil bytes) so the handler maps it to NotFound (ADR-0005).
 func TestTraFarePayloadEmptyOnNoRows(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {

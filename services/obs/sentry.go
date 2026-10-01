@@ -1,7 +1,3 @@
-// Package obs provides Sentry-backed error tracking plus small error and
-// retry helpers shared by the router and functions binaries. When SENTRY_DSN
-// is empty, Sentry is not initialized and the capture paths become no-ops
-// while structured zap output continues unchanged.
 package obs
 
 import (
@@ -19,11 +15,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Init installs the zap global logger (JSON, tagged with service) that every
-// call site reaches through zap.L/zap.S, and, when SENTRY_DSN is set,
-// initializes Sentry. The returned function flushes buffered events and must be
-// deferred. SENTRY_TRACES_SAMPLE_RATE (default 0.1) tunes tracing; an
-// unparseable value is ignored.
 func Init(service string) func() {
 	logger := zap.New(NewCore(newZapCore())).With(zap.String("service", service))
 	zap.ReplaceGlobals(logger)
@@ -64,12 +55,6 @@ func Init(service string) func() {
 	}
 }
 
-// newZapCore builds the JSON core every process logs through. The field names
-// and encodings reproduce the slog JSONHandler output this replaced
-// (time/level/msg, RFC3339 nanoseconds, uppercase levels) so existing log
-// queries keep matching. Caller, logger name, and stacktrace keys are omitted:
-// nothing names a logger, and the fields already say where a line came from.
-// Info is the floor, as it was under slog.
 func newZapCore() zapcore.Core {
 	encoder := zapcore.EncoderConfig{
 		TimeKey:        "time",
@@ -102,10 +87,6 @@ func scrubSentryEventQuery(event *sentry.Event, _ *sentry.EventHint) *sentry.Eve
 	return event
 }
 
-// Recover is a deferred panic handler that reports the panic to Sentry tagged
-// with the given job name, then re-panics so the caller's normal crash
-// behavior is preserved. With no DSN the report is dropped but the re-panic
-// still occurs.
 func Recover(name string) {
 	if r := recover(); r != nil {
 		hub := sentry.CurrentHub().Clone()
@@ -116,10 +97,6 @@ func Recover(name string) {
 	}
 }
 
-// Capture reports err to Sentry tagged with the given job name. A nil err is
-// ignored. Unlike Recover it does not re-raise anything, so callers keep
-// running after the report. With no DSN the clone has no client and the
-// report is silently dropped.
 func Capture(name string, err error) {
 	if err == nil {
 		return
@@ -130,15 +107,6 @@ func Capture(name string, err error) {
 	hub.CaptureException(err)
 }
 
-// UnaryInterceptor returns a gRPC unary interceptor that puts a per-request
-// Sentry hub (tagged with the method) on the context, recovers panics from
-// downstream handlers, and records the call in the router_grpc_requests_total
-// / router_grpc_errors_total counters (see metrics.go) -- the single choke
-// point every unary RPC passes through, so this covers the whole API surface
-// without touching individual handlers. A recovered panic is reported to
-// Sentry and converted into a codes.Internal status so the panic does not
-// escape the gRPC server; the generic "internal error" message avoids
-// leaking internals to clients.
 func UnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (_ any, err error) {
 		hub := sentry.CurrentHub().Clone()
@@ -155,12 +123,6 @@ func UnaryInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
-// StreamInterceptor is the streaming counterpart to UnaryInterceptor: it tags
-// a cloned hub with the method, recovers panics from the stream handler
-// (reporting them and returning a codes.Internal status), and records the
-// call in the same router_grpc_requests_total / router_grpc_errors_total
-// counters. The hub is not placed on the stream context here because
-// ServerStream carries its own context.
 func StreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
 		hub := sentry.CurrentHub().Clone()

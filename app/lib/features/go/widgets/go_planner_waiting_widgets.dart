@@ -1,13 +1,5 @@
 part of '../view/go_screen.dart';
 
-/// What the sheet shows while the router works. Three honest things: what the
-/// system is doing (and roughly how long it has been at it), the route this
-/// rider took last time between the same two points, and the shape of the
-/// answer that is coming.
-///
-/// Deliberately absent: a progress bar and a stopwatch. The router reports no
-/// stages, so a percentage would be invented; a counting clock only makes the
-/// wait feel longer.
 class PlanWaitingPanel extends StatefulWidget {
   const PlanWaitingPanel({
     required this.routeCount,
@@ -70,10 +62,15 @@ class _PlanWaitingState extends State<PlanWaitingPanel> {
       _ => AppI18n.of(context).goPlanningRoute,
     };
     return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: AppTheme.space24),
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space20,
+            AppTheme.space14,
+            AppTheme.space20,
+            AppTheme.space6,
+          ),
           child: Row(
             children: [
               Icon(
@@ -81,7 +78,7 @@ class _PlanWaitingState extends State<PlanWaitingPanel> {
                 size: 16,
                 color: cs.onSurfaceVariant,
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppTheme.space8),
               Expanded(
                 child: AnimatedSwitcher(
                   duration: reduce ? Duration.zero : AppMotion.micro,
@@ -129,10 +126,6 @@ class _PlanWaitingState extends State<PlanWaitingPanel> {
   }
 }
 
-/// The distance the dotted line on the map covers, in words. It lives here
-/// rather than on the map because a text pill pinned to a coordinate shakes
-/// while the map pans — anything anchored to the map has to be a bitmap marker,
-/// and a label is not worth that machinery.
 class _StraightLineReadout extends StatelessWidget {
   const _StraightLineReadout({required this.meters});
 
@@ -166,10 +159,6 @@ class _StraightLineReadout extends StatelessWidget {
   }
 }
 
-/// The saved route between these same two points, offered while the fresh one
-/// is still being computed. Framed as a memory, not a result: dashed outline,
-/// its own caption, and outside the results list, because its times are from
-/// whenever it was saved.
 class _LastRouteCard extends StatelessWidget {
   const _LastRouteCard({required this.route, this.onTap});
 
@@ -180,12 +169,17 @@ class _LastRouteCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        AppTheme.space6,
+        AppTheme.space16,
+        AppTheme.space4,
+      ),
       child: Pressable(
         onTap: onTap,
         semanticLabel: AppI18n.of(context).goLastRouteSemantics,
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(AppTheme.space14),
           decoration: BoxDecoration(
             color: cs.surface,
             border: Border.all(color: cs.outlineVariant),
@@ -200,13 +194,13 @@ class _LastRouteCard extends StatelessWidget {
                   color: cs.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               Row(
                 children: [
                   Expanded(
                     child: LegStrip(sections: route.sections),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Text(
                     AppI18n.of(context).aboutMinutes(routeMinutes(route)),
                     style: AppTextStyles.bodySmall.copyWith(
@@ -232,100 +226,77 @@ class _RouteSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    // A fraction of the card's own width rather than a fixed pixel count —
-    // see the identical fix on genui's `_AnswerSkeleton`.
-    Widget bar(double widthFactor, double h) => FractionallySizedBox(
-      alignment: Alignment.centerLeft,
-      widthFactor: widthFactor,
-      child: Container(
-        height: h,
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(AppTheme.radiusButton),
+    return Skeletonizer(
+      child: Padding(
+        // Same padding and gap as the loaded results list.
+        padding: const EdgeInsets.all(AppTheme.space16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < count; i++) ...[
+              if (i > 0) const SizedBox(height: AppTheme.space10),
+              RouteOptionCard(
+                key: ValueKey('plan-skeleton-$i'),
+                route: _skeletonRoute,
+                highlighted: false,
+                onTap: () {},
+              ),
+            ],
+          ],
         ),
       ),
     );
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        // Stretched to match RouteOptionCard's width in the results
-        // ListView.separated — otherwise these shrink-wrap to their bar
-        // width and the real card snaps wider the moment routes land.
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < count; i++)
-            _ShimmerFade(
-              key: ValueKey('plan-skeleton-$i'),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: cs.surface,
-                  border: Border.all(color: cs.outlineVariant),
-                  borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    bar(0.24, 22),
-                    const SizedBox(height: 12),
-                    bar(0.64, 16),
-                    const SizedBox(height: 10),
-                    bar(0.38, 12),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
   }
 }
 
-/// The card-scale counterpart of `ShimmerRow`: same loop, same reduce-motion
-/// behaviour, wrapped around a placeholder that has real structure.
-class _ShimmerFade extends StatefulWidget {
-  const _ShimmerFade({required this.child, super.key});
+/// One plausible journey — a walk, a ride, a walk — standing in for the real
+/// options. The times are fixed so the bones never re-measure between frames.
+final PlanRoute _skeletonRoute = PlanRoute(
+  travelTime: 32 * 60,
+  startTime: '08:10',
+  endTime: '08:42',
+  transfers: 1,
+  totalFare: 30,
+  sections: [
+    _skeletonSection(type: 'walk', minutes: 4),
+    _skeletonSection(
+      type: 'transit',
+      minutes: 24,
+      mode: 'BUS',
+      shortName: BoneMock.chars(3, '囗'),
+    ),
+    _skeletonSection(type: 'walk', minutes: 4),
+  ],
+);
 
-  final Widget child;
-
-  @override
-  State<_ShimmerFade> createState() => _ShimmerFadeState();
-}
-
-class _ShimmerFadeState extends State<_ShimmerFade>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl = AnimationController(
-    vsync: this,
-    duration: AppMotion.shimmerLoop,
+PlanSection _skeletonSection({
+  required String type,
+  required int minutes,
+  String mode = 'walk',
+  String shortName = '',
+}) {
+  const place = PlanPlace(
+    name: '',
+    type: '',
+    location: PlanPoint(lat: 0, lng: 0),
+    time: '',
   );
-  late final Animation<double> _opacity = Tween<double>(
-    begin: 0.45,
-    end: 0.85,
-  ).animate(CurvedAnimation(parent: _ctrl, curve: AppMotion.easeInOut));
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final reduce = MediaQuery.disableAnimationsOf(context);
-    if (reduce && _ctrl.isAnimating) {
-      _ctrl.stop();
-    } else if (!reduce && !_ctrl.isAnimating) {
-      unawaited(_ctrl.repeat(reverse: true));
-    }
-    return AnimatedBuilder(
-      animation: _opacity,
-      builder: (_, child) =>
-          Opacity(opacity: reduce ? 0.6 : _opacity.value, child: child),
-      child: widget.child,
-    );
-  }
+  return PlanSection(
+    type: type,
+    travelSummary: PlanTravelSummary(duration: minutes * 60, length: 0),
+    departure: place,
+    arrival: place,
+    transport: PlanTransport(
+      mode: mode,
+      name: shortName,
+      shortName: shortName,
+      longName: '',
+      headsign: '',
+      category: '',
+      routeColor: '',
+    ),
+    intermediateStops: const [],
+  );
 }
 
 /// Trailing control in the sheet header. Opens the routing-options sheet.
@@ -341,7 +312,10 @@ class _OptionsButton extends StatelessWidget {
       onTap: onTap,
       semanticLabel: AppI18n.of(context).goRouteOptions,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space12,
+          vertical: AppTheme.space8,
+        ),
         decoration: BoxDecoration(
           color: cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(AppTheme.radiusButton),
@@ -350,7 +324,7 @@ class _OptionsButton extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.tune_rounded, size: 18, color: cs.onSurface),
-            const SizedBox(width: 6),
+            const SizedBox(width: AppTheme.space6),
             Text(
               AppI18n.of(context).goOptions,
               style: AppTextStyles.bodySmall.copyWith(
@@ -387,10 +361,7 @@ Map<int, String> _kTransitModes(AppI18n i18n) => {
   8: i18n.modeFerry,
   9: i18n.modeCableCar,
 };
-/// The interchange caps the sheet offers, keyed by what actually goes on the
-/// wire. Null is "no cap" — the field is left unset — and 0 is a real request
-/// for direct connections only; the two are different answers, which is why
-/// this is a nullable key rather than a count with a sentinel.
+
 Map<int?, String> _kTransferCaps(AppI18n i18n) => {
   null: i18n.goMaxTransfersAny,
   0: i18n.goMaxTransfersDirect,
@@ -406,12 +377,6 @@ Map<int, String> _kMileModes(AppI18n i18n) => {
   3: i18n.modeSharedBike,
 };
 
-/// Options sheet for the routing parameters the live planner honours. Returns
-/// the edited [PlanOptions] on 套用, or null on dismiss.
-///
-/// [capabilities] decides what is offered. The five shared controls are always
-/// first and always in the same order, so the sheet does not reshuffle under
-/// the rider when the backend changes -- only the tail appears or disappears.
 Future<PlanOptions?> showOptionsSheet(
   BuildContext context, {
   required PlanOptions current,
@@ -421,8 +386,7 @@ Future<PlanOptions?> showOptionsSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) =>
-        _OptionsSheet(initial: current, capabilities: capabilities),
+    builder: (_) => _OptionsSheet(initial: current, capabilities: capabilities),
   );
 }
 
@@ -470,7 +434,12 @@ class _OptionsSheetState extends State<_OptionsSheet> {
           children: [
             const SheetDragHandle(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space20,
+                AppTheme.space4,
+                AppTheme.space20,
+                AppTheme.space8,
+              ),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
@@ -481,7 +450,12 @@ class _OptionsSheetState extends State<_OptionsSheet> {
             ),
             Flexible(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                padding: const EdgeInsets.fromLTRB(
+                  AppTheme.space20,
+                  0,
+                  AppTheme.space20,
+                  AppTheme.space8,
+                ),
                 children: [
                   _sectionRow(
                     AppI18n.of(context).goPrefRow,
@@ -498,7 +472,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                     AppI18n.of(context).goPrefFastest,
                     cs,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppTheme.space12),
                   _rowControl(
                     AppI18n.of(context).goRouteCount,
                     AppQuantitySelector(
@@ -510,15 +484,15 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                     ),
                     cs,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppTheme.space12),
                   _sectionRow(AppI18n.of(context).goModes, '', cs),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppTheme.space8),
                   FilterChipGroup<int>(
                     options: _kTransitModes(AppI18n.of(context)),
                     selected: _o.transitModes.toSet(),
                     onToggle: _toggleMode,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppTheme.space16),
                   _sectionRow(
                     AppI18n.of(context).goTransferTime,
                     AppI18n.of(
@@ -545,7 +519,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                     AppI18n.of(context).goSixtyMinutes,
                     cs,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppTheme.space12),
                   _mileSection(
                     AppI18n.of(context).goFirstMile,
                     _o.firstMileMode,
@@ -554,7 +528,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                     (t) => setState(() => _o = _o.copyWith(firstMileTime: t)),
                     cs,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppTheme.space12),
                   _mileSection(
                     AppI18n.of(context).goLastMile,
                     _o.lastMileMode,
@@ -563,16 +537,12 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                     (t) => setState(() => _o = _o.copyWith(lastMileTime: t)),
                     cs,
                   ),
-                  // The planner-specific tail. No heading of its own: these
-                  // are more conditions on the same search, not a different
-                  // kind of thing, and a section header that disappeared with
-                  // its contents would read as the sheet having been cut off.
                   if (widget.capabilities.has(
                     PlannerCapabilities.maxTransfers,
                   )) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppTheme.space16),
                     _sectionRow(AppI18n.of(context).goMaxTransfers, '', cs),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppTheme.space8),
                     AppSlidingSegment<int?>(
                       options: _kTransferCaps(AppI18n.of(context)),
                       value: _o.maxTransfers,
@@ -586,7 +556,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                   if (widget.capabilities.has(
                     PlannerCapabilities.avoidReservation,
                   )) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppTheme.space12),
                     _switchRow(
                       AppI18n.of(context).goAvoidReservation,
                       value: _o.avoidReservation,
@@ -610,7 +580,12 @@ class _OptionsSheetState extends State<_OptionsSheet> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space20,
+                AppTheme.space8,
+                AppTheme.space20,
+                AppTheme.space16,
+              ),
               child: SizedBox(
                 width: double.infinity,
                 child: AppButton(
@@ -633,7 +608,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
     required ValueChanged<bool> onChanged,
     required ColorScheme cs,
   }) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
+    padding: const EdgeInsets.symmetric(vertical: AppTheme.space4),
     child: Row(
       children: [
         Expanded(
@@ -673,7 +648,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
   );
 
   Widget _rowControl(String title, Widget control, ColorScheme cs) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
+    padding: const EdgeInsets.symmetric(vertical: AppTheme.space4),
     child: Row(
       children: [
         Expanded(
@@ -691,7 +666,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
   );
 
   Widget _endLabels(String left, String right, ColorScheme cs) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 4),
+    padding: const EdgeInsets.symmetric(horizontal: AppTheme.space4),
     child: Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -727,7 +702,7 @@ class _OptionsSheetState extends State<_OptionsSheet> {
         ),
         cs,
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: AppTheme.space8),
       FilterChipGroup<int>(
         options: _kMileModes(AppI18n.of(context)),
         selected: {mode},

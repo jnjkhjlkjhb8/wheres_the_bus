@@ -8,13 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Integration test — requires DATABASE_URL. Verifies Dump against the real
-// raw_tdx schema: empty-array 0-row insert, partition replace, and that a
-// non-whitelisted table returns an error (the condition under which callApi skips
-// caching the If-Modified-Since value).
 func TestDumpRawTDXIntegration(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("DATABASE_URL required for DB integration tests")
+		}
 		t.Skip("DATABASE_URL not set; skipping raw_tdx integration test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
@@ -35,6 +34,9 @@ func TestDumpRawTDXIntegration(t *testing.T) {
 		t.Fatalf("probe raw_tdx schema: %v", err)
 	}
 	if !provisioned {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("raw_tdx schema not provisioned")
+		}
 		t.Skip("raw_tdx schema or landing-cycle migration not provisioned; skipping raw_tdx integration test")
 	}
 	const city = "ZZ_TEST_CITY"
@@ -77,16 +79,12 @@ func TestDumpRawTDXIntegration(t *testing.T) {
 	}
 }
 
-// TestDumpRawTDXTHSRTraindateRoundtrip guards the thsr_dailytimetable partition
-// lifecycle. Its traindate column is timestamptz (tra's is text), while the
-// landing DELETE passes a bare "YYYY-MM-DD" string. This asserts that a second
-// landing for the same date replaces the first rather than duplicating — i.e.
-// the DELETE param coerces to the same timestamptz value the row was landed with.
-// If TDX ever sends a full timestamp instead of a date-only string the row count
-// diverges and this fails loudly instead of silently duplicating the window.
 func TestDumpRawTDXTHSRTraindateRoundtrip(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("DATABASE_URL required for DB integration tests")
+		}
 		t.Skip("DATABASE_URL not set; skipping raw_tdx integration test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
@@ -107,6 +105,9 @@ func TestDumpRawTDXTHSRTraindateRoundtrip(t *testing.T) {
 		t.Fatalf("probe raw_tdx schema: %v", err)
 	}
 	if !provisioned {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("raw_tdx schema not provisioned")
+		}
 		t.Skip("raw_tdx schema or landing-cycle migration not provisioned; skipping raw_tdx integration test")
 	}
 

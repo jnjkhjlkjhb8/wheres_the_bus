@@ -61,9 +61,6 @@ func TestTrackCancelEndsBothReminderRows(t *testing.T) {
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", recorder.Code)
 	}
-	// A 下車提醒 arms two rows on two stops (ADR-0020) and the claim machinery is
-	// per-row, so cancelling only the one the session is named after would leave
-	// the 提前提醒站 buzz to fire at a rider who already said stop.
 	want := []string{trackID, trackID + ":lead"}
 	if len(store.cancelled) != 2 || store.cancelled[0] != want[0] || store.cancelled[1] != want[1] {
 		t.Errorf("cancelled = %v, want %v", store.cancelled, want)

@@ -9,10 +9,6 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// TestTouchHealthFileCreatesAndRefreshes covers both paths in healthFile.touch:
-// the first call creates the marker (Chtimes on a nonexistent file fails,
-// falling back to Create), and a second call updates its mtime instead of
-// erroring on an existing file.
 func TestTouchHealthFileCreatesAndRefreshes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "healthy")
@@ -42,10 +38,6 @@ func TestTouchHealthFileCreatesAndRefreshes(t *testing.T) {
 	}
 }
 
-// TestAddStaticCronTouchesHealthFileAfterJob proves the addStaticCron wiring
-// itself, not just the helper in isolation: a registered job's tick must
-// refresh the marker even though the job function never calls
-// _health.touch directly.
 func TestAddStaticCronTouchesHealthFileAfterJob(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "healthy")

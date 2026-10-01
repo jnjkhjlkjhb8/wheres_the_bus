@@ -131,10 +131,6 @@ func TestFindNearDropsViewportsSupersededWhileBusy(t *testing.T) {
 	store.mu.Lock()
 	origins := store.origins
 	store.mu.Unlock()
-	// The blocked first query and the newest viewport are always served. The
-	// middle ones collapse into the single waiting slot; 121.52 may or may not
-	// have reached it before 121.53 replaced it, so only 121.51 is guaranteed
-	// dropped.
 	if len(origins) < 2 || len(origins) > 3 {
 		t.Fatalf("served origins = %v, want the first plus at most one more", origins)
 	}

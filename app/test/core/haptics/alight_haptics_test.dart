@@ -1,8 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/core/haptics/alight_haptics.dart';
 
-/// The 下車提醒 crossing rule (ADR-0020). `remaining` counts stops to the
-/// 目標站, where 1 means "your stop is next".
 void main() {
   AlightEvent? at(int? previous, int remaining, int lead) => alightEventFor(
     previousRemaining: previous,

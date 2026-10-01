@@ -3,10 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/shared/widgets/route_tab_bar.dart';
 
 void main() {
-  // The home/bus sheets build RouteTabBar once inside a nested Navigator route
-  // that never re-runs its builder, so the bar must derive its colour from the
-  // live theme rather than a colour passed in at build time — otherwise it
-  // stays stuck in the launch theme after a light/dark switch.
   Widget host(Brightness brightness, TabController controller) => MaterialApp(
     theme: ThemeData(
       colorScheme: ColorScheme.fromSeed(

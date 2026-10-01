@@ -60,7 +60,7 @@ class _SystemPillState extends State<_SystemPill> {
         onTap: () => _showPicker(context),
         child: Container(
           height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space14),
           // Same skin as the back button and the time/fare segment beside it:
           // hand-rolling it here drifted (shadow in dark mode, no hairline).
           decoration: AppTheme.floatingControl(
@@ -71,7 +71,7 @@ class _SystemPillState extends State<_SystemPill> {
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            spacing: 4,
+            spacing: AppTheme.space4,
             children: [
               Text(
                 AppI18n.of(context).metroSystemTrtc,
@@ -124,7 +124,9 @@ class _SystemPillState extends State<_SystemPill> {
             .map(
               (s) => PopupMenuItem(
                 value: s,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.space12,
+                ),
                 child: Text(
                   s,
                   style: AppTextStyles.bodyLarge.copyWith(

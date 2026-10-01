@@ -50,7 +50,12 @@ class _THSRPickerDialogState extends State<_THSRPickerDialog> {
         borderRadius: BorderRadius.circular(AppTheme.radiusModal),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space16,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -62,7 +67,7 @@ class _THSRPickerDialogState extends State<_THSRPickerDialog> {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AppTheme.space20),
             // THSR is a single flat line, so the M3 "big value above the dial"
             // is one always-selected field (no second field, no AM/PM toggle).
             StationDisplayField(
@@ -70,7 +75,7 @@ class _THSRPickerDialogState extends State<_THSRPickerDialog> {
               active: true,
               width: 120,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppTheme.space24),
             Center(
               child: ClockDial(
                 items: _thsrStations,
@@ -78,7 +83,7 @@ class _THSRPickerDialogState extends State<_THSRPickerDialog> {
                 onSelected: (i) => setState(() => _selectedIndex = i),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTheme.space16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -86,7 +91,7 @@ class _THSRPickerDialogState extends State<_THSRPickerDialog> {
                   label: AppI18n.of(context).commonCancel,
                   onPressed: () => Navigator.of(context).pop(),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppTheme.space8),
                 AppButton.text(
                   label: AppI18n.of(context).commonConfirm,
                   onPressed: () =>

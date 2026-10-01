@@ -17,18 +17,8 @@ String alertRelativeTime(AppI18n i18n, DateTime time, DateTime now) {
   return '${time.month}/${time.day}';
 }
 
-/// A CJK codepoint, cheaply detected without a locale library: TDX's
-/// `Department` field is either a readable Chinese name ("臺北市公共運輸處")
-/// or, on the one feed that doesn't carry one (InterCity Alert), a bare
-/// operator code ("THB"). The presence of a CJK character is what
-/// distinguishes the two.
 final _cjk = RegExp('[一-鿿]');
 
-/// Label + operator color for an [AlertSource]. Metro/bus resolve their code to
-/// a localized operator name; rail kinds are fixed. [department] is TDX's own
-/// publisher name for this alert and takes priority over the hardcoded bus
-/// city map whenever it's a real name rather than an operator code. Returns
-/// null for a null source so callers can omit the chip entirely.
 ({String label, Color color})? _resolve(
   AppI18n i18n,
   AlertSource source,
@@ -63,10 +53,7 @@ final _cjk = RegExp('[一-鿿]');
       // Ink carries the bus chip. In dark mode a #111111 fill would vanish, so
       // fall back to the inverse surface pair which keeps the contrast.
       return (label: label, color: AppTheme.inkLight);
-    // Ops-authored notices speak as the app, not as an operator. Both
-    // announcement kinds wear the same chip — the rail already distinguishes
-    // a maintenance window by tone, and in the inbox they read the same way.
-    case AlertSourceKind.appMaintenance:
+    // An ops-authored announcement speaks as the app, not as an operator.
     case AlertSourceKind.appNotice:
       return (label: i18n.appName, color: AppTheme.inkLight);
   }
@@ -99,7 +86,7 @@ class AlertSourceChip extends StatelessWidget {
 
     return Container(
       height: 20,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: bg,

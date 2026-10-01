@@ -49,10 +49,6 @@ class AlertRepository {
     const AlertSource(AlertSourceKind.thsr),
   );
 
-  /// Decodes each proto envelope to domain rows, tagged with the stream they
-  /// arrived on. Every message carries that channel's whole current set, so an
-  /// emission replaces the source's previous one rather than adding to it —
-  /// which is how a disruption disappears once TDX stops publishing it.
   Stream<List<AlertViewModel>> _decoded(
     Stream<Alert_Msg> source,
     AlertSource from,

@@ -232,9 +232,6 @@ func TestRawTDXSourceReturnsLandingCycleFromSameReadTransaction(t *testing.T) {
 	}
 }
 
-// TestReportStalePartitions covers the FDPL-38 sweep: rows older than the
-// window are counted and named, and a scan failure degrades to zero rather than
-// taking the landing run down with it.
 func TestReportStalePartitions(t *testing.T) {
 	const scanPattern = `SELECT table_name, partition_value, fetched_at FROM raw_tdx\.landing_state WHERE fetched_at < \$1`
 

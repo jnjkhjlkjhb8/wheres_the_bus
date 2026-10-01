@@ -13,10 +13,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// rawThsrAvailableSeatStatus decodes a TDX Rail/THSR/AvailableSeatStatus/Train
-// element: one train's origin/destination seat-status segments for a date. Each
-// top-level element carries an Items array of OD segments, aggregated per train
-// into one ThsrAvailableSeats.
 type rawThsrAvailableSeatStatus struct {
 	TrainDate string `json:"TrainDate"`
 	Items     []struct {
@@ -28,16 +24,6 @@ type rawThsrAvailableSeatStatus struct {
 	} `json:"Items"`
 }
 
-// ThsrAvailableSeats refreshes the realtime THSR available-seat cache into Redis
-// on the 10-minute cron (seats change slowly). It fetches today's
-// AvailableSeatStatus feed for the Taipei calendar date, aggregates the OD
-// segments per train into a ThsrAvailableSeats, and pipelines a SET under
-// thsr_seats:<date>:<train> (15-minute TTL) plus a PUBLISH to the per-date
-// channel so already-connected router streams get the update. On a 304 the
-// runner has already re-armed the cached snapshots' TTL via pipeline.BoundFetch.
-//
-// This is the seat refresh ADR-0005 originally left on the router's read path;
-// moving it here makes the router a pure reader (ADR-0005 amendment).
 func ThsrAvailableSeats(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
 	date := time.Now().In(pipeline.Taipei).Format(time.DateOnly)
 	zap.S().Infow("start", "component", "thsr_seats", "action", "thsr_seats", "event", "start", "date", date)
@@ -73,10 +59,6 @@ func ThsrAvailableSeats(ctx context.Context, fetch pipeline.BoundFetch, sink pip
 		}); decErr != nil {
 			return decErr
 		}
-		// The router's AvailableSeats stream subscribes to this same per-date string
-		// (shared.ThsrSeatsPattern) as an opaque literal channel, so a plain PUBLISH
-		// reaches it — no pattern semantics. It seeds new clients by SCANning the
-		// per-train keys, so the SET keys carry the actual snapshots.
 		channel := shared.ThsrSeatsPattern(date)
 		pipe := sink.Pipe()
 		count := 0

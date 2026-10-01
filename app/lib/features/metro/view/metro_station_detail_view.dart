@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
@@ -24,9 +25,9 @@ import 'package:wheres_the_bus/shared/widgets/alight_track/alight_confirm_bar.da
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_track_bell.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/eta_list_tile.dart';
+import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/line_badge.dart';
 import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';
-import 'package:wheres_the_bus/shared/widgets/state_cards.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 part '../widgets/metro_schedule_widgets.dart';

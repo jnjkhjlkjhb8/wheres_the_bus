@@ -1,5 +1,4 @@
 #!/bin/sh  
-#https://juejin.cn/post/7459974398650793984
  
 OUTPUT_FILE="${SRCROOT}/Flutter/Dart-Defines.xcconfig"  
 : > $OUTPUT_FILE  

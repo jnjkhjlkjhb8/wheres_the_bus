@@ -120,10 +120,6 @@ enum BookingLaunchResult {
   failed,
 }
 
-/// Whether the operator's own app is installed, so the caller can offer the
-/// app hand-off. iOS custom schemes are confirmed; on Android a missing scheme
-/// registration reads as "not installed", which degrades to the (pre-filled)
-/// web variant rather than the app store (ADR-0012).
 Future<bool> isOperatorAppInstalled({required bool isThsr}) async {
   try {
     return await canLaunchUrl(Uri.parse(isThsr ? 'thsrc://' : 'tra-tip://'));
@@ -132,12 +128,6 @@ Future<bool> isOperatorAppInstalled({required bool isThsr}) async {
   }
 }
 
-/// Exchanges [request] for a short-lived TDX deeplink, or null when the router
-/// is unreachable or the exchange is rejected.
-///
-/// The URL is HMAC-signed upstream and expires in minutes, so it is minted per
-/// hand-off. Callers start this as soon as the booking sheet opens so the
-/// network time is spent while the user reads, not after they commit.
 Future<String?> fetchRailBookingUrl(
   RailBookingRequest request, {
   required bool useApp,

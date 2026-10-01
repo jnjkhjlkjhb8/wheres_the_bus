@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -7,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
@@ -48,6 +48,7 @@ import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/divider_line.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/fare_preference.dart';
+import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/route_tab_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/transit_timeline.dart';
 
@@ -64,6 +65,11 @@ part '../widgets/bus_route_timetable_widgets.dart';
 /// the whole line. Stops on a route are often only 300–500 m apart, so a wider
 /// radius starts picking the neighbouring one.
 const _kRouteAutoFocusRadiusMeters = 200.0;
+
+// Horizontal timeline geometry, mirrored from _HorizontalRouteTimeline so the
+// screen can compute a scroll offset without laying the strip out first.
+const double _kTlCellWidth = 120;
+const double _kTlPadding = AppTheme.space20;
 
 const _kDefaultCamera = CameraPosition(
   target: LatLng(25.0416, 121.5501),
@@ -118,12 +124,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
   /// expire — and is cleared by tapping the marker again or the bare map.
   String? _selectedStopUid;
 
-  // "Pin a bus, pick your alight stop" state. [_pinnedPlate] is the selected
-  // vehicle (null = none); [_pickingStop] is true from selection until a stop
-  // is chosen (完成) or skipped (略過); [_pinnedNextStopIndex] snapshots the
-  // bus's next-stop index at pin time so the passed/downstream split stays
-  // stable while picking; [_targetStopUid] is the chosen alight stop;
-  // [_leadStops] is 提前站數 (0–3, default 0 = no early warning).
   String? _pinnedPlate;
   bool _pickingStop = false;
   int? _pinnedNextStopIndex;
@@ -178,13 +178,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // _syncMap only runs from the bloc listener, so a theme flip or a text-size
-    // change with no new bloc state would otherwise leave every marker bitmap
-    // (and the route Polyline color) painted for the brightness and text scale
-    // that were active when they were last built. Forcing a resync here is what
-    // makes the map repaint for a light/dark switch or a Dynamic Type change at
-    // all. Both are tracked rather than resyncing on every dependency change,
-    // because that also fires for keyboard insets and locale.
     final brightness = Theme.of(context).colorScheme.brightness;
     final textScale = MediaQuery.textScalerOf(context).scale(12);
     if ((_lastBrightness != null && _lastBrightness != brightness) ||
@@ -196,12 +189,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     _lastTextScale = textScale;
   }
 
-  /// Asks the overlay for a new frame and commits it.
-  ///
-  /// Everything expensive — the signature short-circuit, geometry parsing,
-  /// marker and bubble rasterising, glide continuity, and the supersede rule —
-  /// lives behind [BusRouteOverlay.resolve]. A null frame means "nothing to
-  /// show that isn't already on screen", so this leaves the map alone.
   Future<void> _syncMap(BusRouteState s) async {
     // Read before the first await: every caller reaches this from
     // didChangeDependencies or later, so the locale and theme are readable
@@ -241,11 +228,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     unawaited(_maybeFit(s));
   }
 
-  /// Runs the once-a-second bubble clock only while a bubble is on screen.
-  ///
-  /// Live frames land every ~30 s, so without this the freshness line sits at
-  /// whatever it read when the bus was pinned and then jumps — which is the one
-  /// number on this map whose whole job is to say how old the rest of it is.
   void _syncBubbleTicker({required bool wanted}) {
     if (wanted == (_bubbleTicker != null)) return;
     _bubbleTicker?.cancel();
@@ -257,13 +239,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
           );
   }
 
-  /// Repaints each visible bubble against the current clock.
-  ///
-  /// Not gated on reduce-motion: a clock reading its own value is information,
-  /// not decoration. `busGpsAge` only spells out seconds between 15 and 59, so
-  /// outside that window the text is unchanged, `MapMarkers` hands back the
-  /// very bitmap already on screen, and the identity check below skips the
-  /// repaint. The once-a-second wake-up then costs a cache lookup per bubble.
   Future<void> _tickBubbles() async {
     if (await _overlay.tickBubbles(DateTime.now()) && mounted) {
       _paintVehicles();
@@ -280,13 +255,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     );
   }
 
-  /// Sets the opening camera, once: on the stop the rider is standing at when
-  /// there is one, otherwise on the whole route.
-  ///
-  /// The auto-focus answer is awaited *before* any camera move. Fitting the
-  /// route and then zooming to one stop would be two moves where the rider
-  /// should see one, and the second would read as the map correcting itself.
-  /// The fix is the prefetched cached one, so the wait is not a real one.
   Future<void> _maybeFit(BusRouteState s) async {
     if (_fitted) return;
     if (_mapController == null || _overlay.stopPoints.isEmpty) return;
@@ -306,14 +274,10 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     // After a frame: the sheet's stop list and horizontal timeline have to be
     // laid out before their controllers can be scrolled to the stop.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _flashStop(stop.stopUid);
+      if (mounted) _flashStop(stop.stopUid, moveCamera: false);
     });
   }
 
-  /// The stop of the displayed direction the rider is standing at, or null.
-  ///
-  /// Direction is never switched automatically — the rider chose the one on
-  /// screen, and flipping it under them is a bigger claim than "you are here".
   Future<BusStopModel?> _nearestStopOnEntry(BusRouteState s) async {
     final fix = await (_autoFocusFix ??= LocationService.instance
         .lastKnownPosition());
@@ -352,48 +316,23 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     }
   }
 
-  /// Scrolls the stop list to [stopUid] and highlights that row for a few
-  /// seconds. Row heights vary, so the target offset is estimated and clamped
-  /// to the scroll extent — it lands the stop near the top, not pixel-exact.
-  // index × estimated row height; move to scrollable_positioned_list
-  // only if pixel-exact landing is ever needed.
-  void _flashStop(String stopUid) {
-    _selectStop(_selectedStopUid == stopUid ? null : stopUid);
+  void _flashStop(String stopUid, {bool moveCamera = true}) {
+    final selecting = _selectedStopUid != stopUid;
+    _selectStop(selecting ? stopUid : null);
     final index = _stopUidsInOrder.indexOf(stopUid);
     if (index >= 0) {
-      // Vertical stop list: rows vary in height, so the offset is an estimate.
-      if (_scrollController.hasClients) {
-        // Matches _StopListItem's BoxConstraints(minHeight: 54) in
-        // bus_route_stop_list_widgets.dart — rows can grow taller than this
-        // (secondary label line, text scale), so it's a floor, not an exact
-        // row height; keep it in sync if that minHeight ever changes.
-        const estRowHeight = 54.0;
-        final target = (index * estRowHeight).clamp(
-          0.0,
-          _scrollController.position.maxScrollExtent,
-        );
-        unawaited(
-          _scrollController.animateTo(
-            target,
-            duration: const Duration(milliseconds: 320),
-            curve: AppMotion.easeInOut,
-          ),
-        );
-      }
-      // Horizontal timeline: fixed 120px cells, so centre the stop exactly.
-      if (_timelineController.hasClients) {
-        const cellWidth = 120.0;
-        final pos = _timelineController.position;
-        final target =
-            (index * cellWidth + cellWidth / 2 - pos.viewportDimension / 2)
-                .clamp(0.0, pos.maxScrollExtent);
-        unawaited(
-          _timelineController.animateTo(
-            target,
-            duration: const Duration(milliseconds: 320),
-            curve: AppMotion.easeInOut,
-          ),
-        );
+      _scrollListTo(index);
+      // The stop's own cell: its dot sits at the centre of cell `index`.
+      _scrollTimelineTo(index * _kTlCellWidth + _kTlCellWidth / 2);
+    }
+    // Deselecting is a dismissal — the rider closed the capsule, so leave the
+    // camera where they left it.
+    if (moveCamera && selecting) {
+      final stop = _currentStops(
+        _bloc.state,
+      ).where((st) => st.stopUid == stopUid).firstOrNull;
+      if (stop != null && (stop.lat != 0 || stop.lon != 0)) {
+        _focusCameraOn(LatLng(stop.lat, stop.lon));
       }
     }
     _flashTimer?.cancel();
@@ -403,22 +342,61 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     });
   }
 
-  /// Opens (or closes) the stop capsule. Nothing animates: a [BitmapDescriptor]
-  /// can't be tweened, so the capsule appears at full size rather than being
-  /// faked with an overlay that would shake through every pan
-  /// (`marker_factory.dart`). Reduce-motion is therefore already satisfied.
+  void _scrollListTo(int index) {
+    if (!_scrollController.hasClients) return;
+    const estRowHeight = 54.0;
+    final target = (index * estRowHeight).clamp(
+      0.0,
+      _scrollController.position.maxScrollExtent,
+    );
+    unawaited(
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 320),
+        curve: AppMotion.easeInOut,
+      ),
+    );
+  }
+
+  /// Centres the horizontal timeline on [contentX], an x in the strip's own
+  /// content coordinates (cells are a fixed width, so callers can compute one
+  /// exactly — a stop's dot, or the boundary a vehicle arrow rides).
+  void _scrollTimelineTo(double contentX) {
+    if (!_timelineController.hasClients) return;
+    final pos = _timelineController.position;
+    final target = (contentX + _kTlPadding - pos.viewportDimension / 2).clamp(
+      0.0,
+      pos.maxScrollExtent,
+    );
+    unawaited(
+      _timelineController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 320),
+        curve: AppMotion.easeInOut,
+      ),
+    );
+  }
+
+  /// Aims the map at one marker. Same zoom the route uses when it opens on the
+  /// rider's own stop, so tapping a stop in the sheet and arriving on one from
+  /// outside land the rider at the same scale.
+  void _focusCameraOn(LatLng target) {
+    unawaited(
+      _mapController?.animateCamera(CameraUpdate.newLatLngZoom(target, 16)) ??
+          Future<void>.value(),
+    );
+  }
+
   void _selectStop(String? stopUid) {
     if (_selectedStopUid == stopUid) return;
     _selectedStopUid = stopUid;
     _repaintPins();
   }
 
-  /// Unpins the bus and leaves pick-mode, cancelling any armed tracking
-  /// session. Reached both by re-tapping the pinned marker and by the pick
-  /// bar's explicit 取消選站 control — the marker alone was undiscoverable as
-  /// the only way out.
   void _cancelPick() {
-    context.read<JourneySessionBloc>().add(const JourneyCancelled());
+    context.read<JourneySessionBloc>().add(
+      const JourneyCancelled(userInitiated: true),
+    );
     setState(() {
       _pinnedPlate = null;
       _pickingStop = false;
@@ -429,16 +407,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     _liftSheet(false);
   }
 
-  /// Selects/deselects the bus marker [plate]. Selecting enters pick-mode
-  /// (＋, "selected, not yet tracking"); tapping the pinned bus again unpins and
-  /// cancels any armed tracking session.
-  /// Selects a bus, or deselects the one already selected.
-  ///
-  /// Selection is a glance: it brings up that bus's bubble (plate, status, GPS
-  /// freshness) and recedes the others. It deliberately does not start the
-  /// 下車提醒 flow — tapping a mark to read it should not arm anything. The
-  /// bell is the one entry point into picking an alight stop, and it uses this
-  /// selection when there is one.
   void _togglePin(String plate) {
     if (_pinnedPlate == plate) {
       _clearPin();
@@ -459,12 +427,17 @@ class _BusRouteScreenState extends State<BusRouteScreen>
       _pinnedNextStopIndex = nextStopIndex;
     });
     _repaintPins();
+    final at = _overlay.vehiclePosition(plate);
+    if (at != null) _focusCameraOn(at);
+    if (nextStopIndex != null) {
+      // The bus's own mark, not the stop it is heading for: in the list it is
+      // the marker row above row `nextStopIndex`, and in the strip it rides
+      // the boundary on that cell's left edge.
+      _scrollListTo(nextStopIndex);
+      _scrollTimelineTo(nextStopIndex * _kTlCellWidth);
+    }
   }
 
-  /// Drops the selection without touching any running 追蹤.
-  ///
-  /// Distinct from [_cancelPick], which also ends the session: deselecting a
-  /// bus you were only looking at must not cancel a reminder you set earlier.
   void _clearPin() {
     setState(() {
       _pinnedPlate = null;
@@ -473,14 +446,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     _repaintPins();
   }
 
-  /// Holds the sheet at full while picking — the swiped row and the stop about
-  /// to be tapped are both in that list — and drops it back to peek when
-  /// picking ends. Also what back collapses to, since the resting detent
-  /// differs by mode.
-  ///
-  /// No scroll-to accompanies it: the rider just swiped the vehicle row, so it
-  /// is on screen by definition, and every stop that bus has not reached is
-  /// directly below it.
   void _liftSheet(bool picking) => unawaited(
     _sheetController.animateToDetent(
       picking ? AppSheetSnap.full : AppSheetSnap.peek,
@@ -494,12 +459,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     unawaited(_syncMap(_bloc.state));
   }
 
-  /// Opens pick-mode from a right-swipe on a vehicle marker in the stop list —
-  /// the only entry (ADR-0020).
-  ///
-  /// The gesture *is* the 指定車輛 binding, which is why no plate chooser
-  /// follows it: the rider swiped the bus they are sitting on, so there is
-  /// nothing left to guess at and nothing to correct afterwards.
   void _enterPickFromSwipe(String plate, int markerIndex) {
     setState(() {
       _pinnedPlate = plate;
@@ -538,10 +497,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     setState(() => _targetStopUid = uid);
   }
 
-  /// The 提前提醒站 for the current pick, or null when 提前站數 is 0 (the
-  /// default) or no 下車站 has been chosen yet. Derived rather than stored so
-  /// the 🔔 moves as the rider turns the stepper — the setting's effect is
-  /// visible in the list while it is still being set, not only after 開始.
   String? get _leadStopUid {
     final target = _targetStopUid;
     if (target == null || _leadStops <= 0) return null;
@@ -564,13 +519,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     return s.direction == 0 ? route.stopsGo : route.stopsReturn;
   }
 
-  /// 完成: start plate-tracked waiting on the picked alight stop and arm the
-  /// reminders that back it in the background.
-  ///
-  /// Two rows, not one (ADR-0020): the 下車站 always, and the 提前提醒站 as
-  /// well whenever 提前站數 is above 0. They are separate reminders because
-  /// they are separate events — a short buzz and a long one — and the server
-  /// fires each exactly once.
   void _confirmPick() {
     final plate = _pinnedPlate;
     final target = _targetStopUid;
@@ -589,7 +537,8 @@ class _BusRouteScreenState extends State<BusRouteScreen>
           busTrackingLeg(
             route: route,
             stops: stops,
-            boardIndex: idx,
+            boardIndex: _pinnedNextStopIndex ?? -1,
+            targetIndex: idx,
             direction: s.direction,
           ),
         ],
@@ -654,10 +603,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
       initialValue: 0,
     );
 
-    // Pixel height of the peek detent — the resting state whenever the sheet
-    // isn't being dragged. Shared by the camera fit (finding 2, keeps the
-    // route's tail from landing under the sheet) and the recenter FAB fade
-    // (finding 6, keeps it off the app bar mid-drag).
     final sheetPeekPx =
         MediaQuery.sizeOf(context).height * AppSheetSnap.peekFrac;
 
@@ -677,10 +622,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
             prev.error != curr.error,
         listener: (context, state) => _syncMap(state),
         builder: (context, state) {
-          // subRouteUid is an internal identifier (e.g. "TPE..."), never a
-          // user-facing name — while the route hasn't loaded (still loading,
-          // or failed; see the error banner below) the pill shows blank
-          // rather than leak it into the header.
           final routeName = state.route?.routeName ?? '';
           final dirNames = [
             state.route?.headsignGo ?? '',
@@ -688,12 +629,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
           ];
           final dirName = state.direction == 0 ? dirNames[0] : dirNames[1];
 
-          // Back unwinds the sheet before it unwinds the page, the same way
-          // home does: a raised sheet collapses to its resting detent first,
-          // and only a sheet already down leaves the route. `canPop` tracks
-          // that so the platform keeps its own back gesture (and predictive
-          // preview) for the step that really does depart. Rebuilding on every
-          // sheet tick is cheap here — only the PopScope is inside the builder.
           return ValueListenableBuilder<double?>(
             valueListenable: _sheetController,
             builder: (context, offset, child) {
@@ -729,11 +664,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                         compassEnabled: false,
                         markers: layer.markers,
                         polylines: layer.polylines,
-                        // Reserves the peek sheet's footprint so
-                        // newLatLngBounds (in _fitUpdate) fits the route into
-                        // the visible area above it instead of the full
-                        // viewport — otherwise the route's tail lands hidden
-                        // under the sheet.
                         padding: EdgeInsets.only(bottom: sheetPeekPx),
                         // Map shares a Stack with the draggable sheet; without
                         // an eager recognizer the map loses the gesture arena,
@@ -761,10 +691,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                       left: 0,
                       right: 0,
                       bottom: sheetPeekPx,
-                      // Otherwise a load failure leaves the peek detent showing
-                      // a blank map above a blank timeline with no explanation
-                      // — ErrorStateView already covers this inside the 站牌列表
-                      // tab, but that tab sits well below the fold at peek.
                       child: AnimatedBuilder(
                         animation: sheetAnimation,
                         builder: (context, child) {
@@ -784,14 +710,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                             ),
                           );
                         },
-                        // ErrorStateView carries no surface of its own — inside
-                        // a sheet it sits on the sheet's. Here its ground is
-                        // the live map, so it needs one: unbacked, the text
-                        // lands on streets and labels and stops being
-                        // readable. Opaque rather than translucent because the
-                        // map behind a failed load has nothing left to say,
-                        // and it returns the moment the sheet is pulled up
-                        // (this whole layer fades with the sheet).
                         child: ColoredBox(
                           color: cs.surface,
                           child: SafeArea(
@@ -825,11 +743,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                       valueListenable: _sheetController,
                       builder: (context, offset, child) {
                         final currentOffset = offset ?? 0.0;
-                        // Past the peek detent the sheet keeps climbing toward
-                        // the 收藏 bookmark button in the app bar; clamping the
-                        // travel stops the FAB there, and fading it out over
-                        // the same range means it's not just stuck, it's gone
-                        // before it would ever collide.
                         const fadeRange = 80.0;
                         final overshoot = currentOffset - sheetPeekPx;
                         final opacity = (1.0 - overshoot / fadeRange).clamp(
@@ -875,7 +788,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                     scrollController: _scrollController,
                     timelineController: _timelineController,
                     flashStopUid: _flashStopUid,
-                    vehicles: const [],
                     direction: state.direction,
                     isLoading: state.loading,
                     onDirectionChanged: (dir) {
@@ -899,12 +811,10 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                     onPickStop: _onPickStop,
                     onSwipeVehicle: _enterPickFromSwipe,
                     onCancelPick: _cancelPick,
+                    onTapStop: _flashStop,
+                    onTapVehicle: _togglePin,
                   ),
 
-                  // The mode capsule now rides inside the sheet, in the
-                  // direction slider's slot: the list it changes the meaning of
-                  // is in the sheet, and a capsule over the map would be
-                  // labelling the wrong surface.
                   if (_pickingStop && _targetStopUid != null)
                     Positioned(
                       left: 0,

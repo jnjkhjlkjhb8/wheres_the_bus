@@ -547,12 +547,6 @@ func (d *demandLiveSource) Touch(_ context.Context, key string, ttl time.Duratio
 	d.touches[key] = ttl
 }
 
-// TestCreateArrivalReminderClaimsBusCityDemand covers the reason a bus reminder
-// has to raise demand at all (FDPL-90): it fires from busEta's own per-city
-// tick, and the rider who set it holds no live stream once the app is
-// backgrounded. Without the claim the city drops to its reduced cadence and the
-// reminder is dispatched late or not at all. The TTL has to reach the
-// reminder's own expiry, not the default demand window.
 func TestCreateArrivalReminderClaimsBusCityDemand(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	live := &demandLiveSource{}

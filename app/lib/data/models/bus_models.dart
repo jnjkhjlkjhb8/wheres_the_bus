@@ -79,10 +79,6 @@ class BusStopEtaViewModel extends Equatable {
 
   int get estimateMinutes => etaCeilMinutes(estimateSeconds);
 
-  /// Re-derives [estimateSeconds] from [arrivalUnix] against [now] so the
-  /// displayed countdown decays between server frames. When [arrivalUnix] is 0
-  /// the server-sent [estimateSeconds] is kept unchanged. Negatives clamp to 0
-  /// so a just-passed arrival instant with stopStatus 0 still reads 進站中.
   BusStopEtaViewModel decayed(DateTime now) {
     if (arrivalUnix <= 0) return this;
     return copyWith(
@@ -94,19 +90,20 @@ class BusStopEtaViewModel extends Equatable {
     );
   }
 
-  BusStopEtaViewModel copyWith({int? estimateSeconds}) => BusStopEtaViewModel(
-    stopUid: stopUid,
-    direction: direction,
-    sequence: sequence,
-    estimateSeconds: estimateSeconds ?? this.estimateSeconds,
-    nextBusTime: nextBusTime,
-    stopStatus: stopStatus,
-    vehiclePlates: vehiclePlates,
-    arrivalUnix: arrivalUnix,
-    vehicles: vehicles,
-    plate: plate,
-    isLastBus: isLastBus,
-  );
+  BusStopEtaViewModel copyWith({int? estimateSeconds, int? stopStatus}) =>
+      BusStopEtaViewModel(
+        stopUid: stopUid,
+        direction: direction,
+        sequence: sequence,
+        estimateSeconds: estimateSeconds ?? this.estimateSeconds,
+        nextBusTime: nextBusTime,
+        stopStatus: stopStatus ?? this.stopStatus,
+        vehiclePlates: vehiclePlates,
+        arrivalUnix: arrivalUnix,
+        vehicles: vehicles,
+        plate: plate,
+        isLastBus: isLastBus,
+      );
 
   String? displayLabelOf(AppI18n i18n) => busStopDisplayLabel(
     i18n: i18n,
@@ -160,19 +157,7 @@ class BusStationMember {
   final double lon;
 }
 
-/// How full a vehicle is, in the app's own vocabulary. The wire enum is a
-/// generated proto type and stops at the data layer (see the architecture test
-/// in test/architecture); widgets take this.
-///
-/// [unknown] is the default because most vehicles have no reading: only
-/// Data.taipei publishes bus crowding, and only for Taipei. It must render as
-/// nothing rather than as an empty bus.
 enum CrowdLevel { unknown, comfortable, normal, crowded }
-
-/// One route's arrival at a member stop of a station group. The countdown and
-/// every display label derive from [estimateSeconds] + [stopStatus] through the
-/// one shared mapping in eta_format.dart; [decayed] re-derives the estimate
-/// from [arrivalUnix] locally so the countdown stays accurate between frames.
 
 class BusStopArrival extends Equatable {
   const BusStopArrival({
@@ -328,10 +313,6 @@ class BusRouteViewModel extends Equatable {
   final List<BusServiceEntry> schedulesReturn;
   final BusFareInfo? fare;
 
-  /// The single direction a one-way sub-route serves, or null when both
-  /// directions carry stops. TDX publishes plenty of sub-routes with only a
-  /// return leg (a `201A` that runs inbound only), so the outbound slot being
-  /// the populated one cannot be assumed.
   int? get soleDirection {
     if (stopsGo.isEmpty && stopsReturn.isNotEmpty) return 1;
     if (stopsReturn.isEmpty && stopsGo.isNotEmpty) return 0;

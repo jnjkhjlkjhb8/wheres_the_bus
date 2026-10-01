@@ -6,11 +6,6 @@ import (
 	"time"
 )
 
-// TestMrtTravelGraph exercises the TRTC OD travel-time graph: two lines joined by
-// an interchange transfer, verifying shortest-path seconds (including the cross-
-// line path through the transfer edge) and the minute rounding used by the loader.
-// Inputs are decoded from JSON so the case-insensitive struct tags are covered too
-// (the landing lowercases the keys before the loader ever sees them).
 func TestMrtTravelGraph(t *testing.T) {
 	// Line BL: BL01 -(110s)- BL02 -(125s)- BL03. Line R: R01 -(100s)- R02.
 	// Transfer BL02 <-> R01 = 3 min = 180s. Keys lowercased as landing emits them.
@@ -56,10 +51,6 @@ func TestMrtTravelGraph(t *testing.T) {
 	}
 }
 
-// TestMrtODFareFares pins the two-axis fare pick: TicketType selects the medium
-// (1 = 單程票) and FareClass the passenger category (1 = 全票, 2 = 半票). Matching on
-// TicketType alone spans several classes, which is how the half fare used to end
-// up in fare_nt. An absent class stays 0 so the upsert keeps the stored price.
 func TestMrtODFareFares(t *testing.T) {
 	var f mrtODFare
 	if err := json.Unmarshal([]byte(`{"OriginStationID":"BL01","DestinationStationID":"BL05","Fares":[

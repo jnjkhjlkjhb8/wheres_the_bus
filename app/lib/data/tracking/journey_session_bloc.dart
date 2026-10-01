@@ -12,16 +12,6 @@ import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/data/tracking/leg_eta_source.dart';
 
-/// Drives a journey/track Live Activity through [JourneySessionState].
-///
-/// Every [JourneyStarted] bumps [_generation]. The internal tick events
-/// ([EtaTicked], [ProgressTicked], [PinnedStopsUpdated]) carry the
-/// generation their source subscription was created under; handlers drop
-/// anything that doesn't match the current generation. This matters because
-/// cancelling a stream subscription is asynchronous — an event already
-/// in flight from journey A's subscription can still land after journey B
-/// has started, and without the generation check it would silently mix
-/// into B's state (both journeys' waiting phase looks identical).
 class JourneySessionBloc
     extends Bloc<JourneySessionEvent, JourneySessionState> {
   JourneySessionBloc({
@@ -86,6 +76,8 @@ class JourneySessionBloc
   /// `start`. Null until this journey has one.
   int? _lease;
 
+  String _trackId = '';
+
   final Future<void> Function(String sessionId, AlightEvent event) _vibrate;
 
   /// Stops remaining on the previous card push, so a buzz fires on the
@@ -98,14 +90,17 @@ class JourneySessionBloc
     Emitter<JourneySessionState> emit,
   ) async {
     if (event.legs.isEmpty) return;
-    // Checked here rather than at each call site so a future start path
-    // cannot bypass the user's setting.
     if (!_liveActivityEnabled()) return;
     _timeout?.cancel();
     _timeout = Timer(sessionTimeout, () => add(const JourneyCancelled()));
     _linger?.cancel();
     _trackedArrived = false;
     final generation = ++_generation;
+    // Unique per session so one ride's tombstone can never refuse the next
+    // one's card; the clock is enough, sessions are minutes apart.
+    _trackId =
+        '${AlightTrackContent.localTrackIdPrefix}'
+        '${DateTime.now().microsecondsSinceEpoch}';
     emit(
       JourneySessionState(
         phase: JourneyPhase.waiting,
@@ -173,9 +168,9 @@ class JourneySessionBloc
     _pushUpdate();
   }
 
-  void _onCancelled(JourneyCancelled _, Emitter<JourneySessionState> emit) {
+  void _onCancelled(JourneyCancelled event, Emitter<JourneySessionState> emit) {
     if (state.phase == JourneyPhase.idle) return;
-    _end(emit);
+    _end(emit, userInitiated: event.userInitiated);
   }
 
   void _onEta(EtaTicked event, Emitter<JourneySessionState> emit) {
@@ -226,7 +221,7 @@ class JourneySessionBloc
     _pushUpdate();
   }
 
-  void _end(Emitter<JourneySessionState> emit) {
+  void _end(Emitter<JourneySessionState> emit, {bool userInitiated = false}) {
     unawaited(_etaSub?.cancel());
     unawaited(_routeEtaSub?.cancel());
     unawaited(_railSub?.cancel());
@@ -240,7 +235,13 @@ class JourneySessionBloc
     emit(state.copyWith(phase: JourneyPhase.done, suggestBoarding: false));
     final lease = _lease;
     _lease = null;
-    if (lease != null) unawaited(_channel?.stop(lease));
+    if (lease != null) {
+      unawaited(_channel?.stop(lease));
+    } else if (userInitiated) {
+      // No lease to present, and a rider asking for the card to go. Honour it
+      // unarbitrated: see JourneyCancelled.userInitiated.
+      unawaited(_channel?.stopAny());
+    }
   }
 
   /// Pushes [_content] through the shared channel under this journey's
@@ -252,13 +253,6 @@ class JourneySessionBloc
     _maybeVibrate(content);
   }
 
-  /// Buzzes on a stops-remaining crossing (ADR-0020). Every state change that
-  /// can move the count funnels through [_pushUpdate], so this is the one
-  /// place bus and 雙鐵 need it.
-  ///
-  /// Silent while waiting: before the rider is aboard the remaining count is
-  /// the whole leg's geometry, not a live position, and buzzing off it would
-  /// fire on the frame the session started.
   void _maybeVibrate(AlightTrackContent content) {
     if (content.phase == AlightTrackPhase.waiting) {
       _lastRemaining = null;
@@ -271,7 +265,7 @@ class JourneySessionBloc
     );
     _lastRemaining = content.remainingStops;
     if (event != null) {
-      unawaited(_vibrate('journey-$_generation', event));
+      unawaited(_vibrate(_trackId, event));
     }
   }
 
@@ -317,15 +311,6 @@ class JourneySessionBloc
     );
   }
 
-  /// Stops between the pinned vehicle's current position and the leg's
-  /// target stop, both located in [etas] by stop uid / estimate plate. Null
-  /// when either side hasn't resolved yet (target stop or the plate itself
-  /// missing from the current frame).
-  ///
-  /// The vehicle is located by [BusStopEtaViewModel.plate] — the bus this
-  /// estimate is about. [BusStopEtaViewModel.vehicles] cannot be used: the
-  /// server puts the whole route's fleet on every stop, so it matches
-  /// everywhere and pins the result to the route's first stop.
   int? _pinnedStopsRemaining(
     List<BusStopEtaViewModel> etas,
     JourneyLeg leg,
@@ -438,25 +423,12 @@ class JourneySessionBloc
   AlightTrackContent _content(JourneySessionState s) {
     final leg = s.currentLeg!;
     final rail = s.isRailTrack;
-    // A pinned vehicle is being followed toward the alight stop even though
-    // the internal phase never leaves `waiting` — for the card that is the
-    // same reading as riding, so it counts stops rather than minutes.
-    //
-    // A rail track is the exception: the rider can arm it from the timetable
-    // long before the train pulls in, and until it does they are standing on a
-    // platform, not riding. `railAboard` comes from the schedule (delay
-    // included), so the card only starts counting stops once the train has
-    // actually reached the boarding stop.
     final aboard =
         s.phase == JourneyPhase.riding ||
         (rail && s.railAboard) ||
         (!rail && s.plate != null);
 
     final names = [...leg.stopNames, leg.alightStop];
-    final nextName =
-        s.phase == JourneyPhase.riding && s.nextStopIndex < names.length
-        ? names[s.nextStopIndex]
-        : leg.boardStop;
 
     // One segment per hop, board→alight. A rail leg carries its geometry as
     // railSchedule; a bus leg as stopLocations.
@@ -470,12 +442,18 @@ class JourneySessionBloc
               ? leg.stopLocations.length - s.nextStopIndex
               : geometryHops),
     );
-    // A pinned vehicle reports its own stops-remaining even on a leg whose
-    // stop list never landed (geometryHops == 0). The bar stretches to fit
-    // that count rather than clamping it: 還剩 3 站 collapsing to 1 would be
-    // the card lying about the ride.
     final hopCount = max(1, max(geometryHops, remaining));
     final clampedRemaining = remaining.clamp(0, hopCount);
+    final travelled = hopCount - clampedRemaining;
+    final nextIndex = s.phase == JourneyPhase.riding
+        ? s.nextStopIndex
+        : travelled;
+    // Falls back to the stop the session opened at: a leg whose stop list
+    // never landed has no name to advance through, and naming the target
+    // there would read as "you are already there".
+    final nextName = nextIndex < names.length
+        ? names[nextIndex]
+        : leg.boardStop;
 
     return AlightTrackContent(
       mode: switch (leg.kind) {
@@ -500,7 +478,7 @@ class JourneySessionBloc
       targetStation: leg.alightStop,
       nextStation: rail ? (s.railNextStop ?? leg.boardStop) : nextName,
       hopCount: hopCount,
-      currentIndex: hopCount - clampedRemaining,
+      currentIndex: travelled,
       remainingStops: clampedRemaining,
       leadStops: s.leadStops,
       etaMs: s.eta == null
@@ -515,6 +493,7 @@ class JourneySessionBloc
           ? leg.railSchedule.first.scheduledArrival.millisecondsSinceEpoch
           : null,
       delayMinutes: rail && !aboard ? s.railDelay.inMinutes : 0,
+      trackId: _trackId,
     );
   }
 

@@ -17,20 +17,6 @@ const String _envPowersyncUrl = String.fromEnvironment(
   'POWERSYNC_URL',
 );
 
-// Every table declared here must have a matching bucket data query in
-// powersync/sync-rules.yaml (same FROM table name, since PowerSync names the
-// local SQLite table after the query's source table) that projects every
-// column listed below under a matching alias, plus a stable `id`. Enforced by
-// test/core/powersync/sync_rules_contract_test.dart.
-//
-// `mrt_stations` and `bus_stops` were dropped from a prior revision of this
-// schema: no repository queried them and no Postgres table backed them
-// (`mrt_stations` vs. the real `mrt_station`), so they were permanently
-// unsynced dead schema. `tra_stations`/`thsr_stations` keep only the columns
-// `TraRepository.stationId`/`ThsrRepository.stationId` actually read —
-// lat/lon would require exposing PostGIS geometry columns as flat
-// lat/lon (a Postgres-side view or generated column), which is out of scope
-// here; see the migration note in the task report.
 const _schema = Schema([
   Table('mrt_journey_matrix', [
     Column.text('from_station_id'),
@@ -45,11 +31,6 @@ const _schema = Schema([
     Column.text('lineid'),
     Column.text('destinationstaionid'),
     Column.integer('serviceday'),
-    // Station codes are only unique within an operator — TRTC 圓山 and KRTC
-    // 巨蛋 are both `R14` — so `system` is what keeps one operator's
-    // first/last-train rows out of another's station sheet. It was projected
-    // by the sync rule but omitted here, which dropped it on the way into
-    // SQLite and left MrtRepository.schedule unable to filter at all.
     Column.text('system'),
     Column.text('first_train_time'),
     Column.text('last_train_time'),
@@ -98,10 +79,6 @@ class PowerSyncService implements LocalDb {
   PowerSyncDatabase? _db;
   Future<void>? _initFuture;
 
-  /// Starts (or joins) initialization. Concurrent callers share the same
-  /// in-flight [Future] instead of racing separate `PowerSyncDatabase`
-  /// instances (F14). A failed attempt is not memoized permanently: the next
-  /// call to [init] retries from scratch.
   Future<void> init() {
     final existing = _initFuture;
     if (existing != null) return existing;
@@ -145,10 +122,6 @@ class PowerSyncService implements LocalDb {
     }
   }
 
-  /// Launching with no network left the database initialized but never
-  /// connected, and nothing ever retried it — the local copy then stayed
-  /// frozen at whatever the last online launch had synced, for the whole
-  /// process (FDPL-53). Every return to the foreground is another chance.
   void _handleForeground() {
     if (!AppForeground.value.value) return;
     final db = _db;

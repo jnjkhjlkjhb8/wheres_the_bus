@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/data/tracking/journey_models.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
@@ -145,10 +146,6 @@ void main() {
   test(
     'positions factory gated off is never subscribed (setting disabled)',
     () async {
-      // Mirrors app.dart's runtime gate: when the toggle is off the closure
-      // returns an empty stream and the erroring branch must never be reached.
-      // enabled is read from a field so the analyzer can't prove the branch
-      // dead; it stays false for the whole test (toggle simulated off).
       final gate = _Gate();
       var subscribed = false;
       Stream<Position> positions() {
@@ -189,10 +186,6 @@ void main() {
       );
       expect(started.eta, isNull);
 
-      // Journey A's subscription tagged this event with generation 1; the
-      // bloc is now on generation 2. Injected directly because the real
-      // race (a subscription's cancel() not yet taking effect) can't be
-      // reproduced deterministically from a single shared StreamController.
       b.add(const EtaTicked(Duration(minutes: 3), generation: 1));
       await Future<void>.delayed(Duration.zero);
 
@@ -201,6 +194,34 @@ void main() {
       await b.close();
     },
   );
+
+  test('every card names its session, and a new ride mints a new id', () async {
+    final channel = _FakeChannel();
+    JourneySessionBloc start() => JourneySessionBloc(
+      etaStream: (_) => etaCtrl.stream,
+      channel: channel,
+      liveActivityEnabled: () => true,
+    )..add(JourneyStarted(legs: [_leg('307')]));
+
+    final a = start();
+    await a.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+    await a.close();
+    final b = start();
+    await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+    await b.close();
+
+    expect(channel.started, hasLength(2));
+    for (final content in channel.started) {
+      // Named — the platform's tombstone and 取消追蹤 both key off this — and
+      // marked device-local, so the cancel receiver knows not to call a server
+      // that has never heard of this ride.
+      expect(
+        content.trackId,
+        startsWith(AlightTrackContent.localTrackIdPrefix),
+      );
+    }
+    expect(channel.started[0].trackId, isNot(channel.started[1].trackId));
+  });
 
   test('position stream error does not break riding', () async {
     final b = JourneySessionBloc(
@@ -217,4 +238,21 @@ void main() {
     expect(b.state.phase, JourneyPhase.riding);
     await b.close();
   });
+}
+
+class _FakeChannel extends AlightTrackChannel {
+  final started = <AlightTrackContent>[];
+  int _lease = 0;
+
+  @override
+  Future<int> start(AlightTrackContent content) async {
+    started.add(content);
+    return ++_lease;
+  }
+
+  @override
+  Future<void> update(int lease, AlightTrackContent content) async {}
+
+  @override
+  Future<void> stop(int lease) async {}
 }

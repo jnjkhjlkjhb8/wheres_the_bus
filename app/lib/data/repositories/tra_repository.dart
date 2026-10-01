@@ -39,13 +39,6 @@ class TraRepository {
     decode: TraDecoder.instance.decodeTimetable,
   );
 
-  /// The next departures from one station in one direction — the board a rider
-  /// gets by tapping the station on the map, with no destination to pick.
-  ///
-  /// [after] is the rider's own `HH:mm:ss`, not the server's: the router runs
-  /// in UTC. The offline key deliberately omits it, so a rider who loses signal
-  /// mid-journey still sees the last board they pulled rather than a miss on a
-  /// minute nobody has queried before.
   Future<List<RailStationDeparture>> stationBoard({
     required String stationId,
     required String date,
@@ -65,13 +58,6 @@ class TraRepository {
     decode: TraDecoder.instance.decodeStationBoard,
   );
 
-  /// Adult fares for an origin→destination pair, one per train class — a TRA
-  /// fare depends on the class of train taken, so use `traFareFor` to
-  /// pick the one that prices a given train. `ask_staiton` carries the pair
-  /// across its two string fields — station_id is the origin, date is the
-  /// destination id — matching the router's Fare handler (TRA fares are per
-  /// O/D, not per date). The router resolves station names to ids, so plain
-  /// station names are valid arguments too.
   Future<List<TraFare>> fares(String originId, String destId) => offlineCached(
     key: 's:tra:fare:$originId:$destId',
     fetch: () =>

@@ -23,20 +23,6 @@ func SortedKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// Quarantine collects the records one partition dropped instead of
-// rejecting the whole partition over them.
-//
-// TDX publishes a standing tail of dangling references and divergent variants
-// that never resolve on their own. Failing the partition over one of them
-// wrote nothing at all, which left that city frozen at its last good snapshot
-// indefinitely and silently — a load failure has no staleness alarm behind it.
-// Dropping the record keeps the rest of the partition current.
-//
-// The line this draws: a bad *record* is dropped, a wrong *payload* still
-// fails. Dangling refs, divergent variants and unusable per-record identity
-// are data defects and get quarantined; a UID that belongs to another city
-// means the wrong payload landed, so those checks stay fatal rather than
-// silently discarding thousands of rows.
 type Quarantine struct {
 	dataset string
 	part    string
@@ -130,12 +116,6 @@ func (q *Quarantine) Report() {
 	}
 }
 
-// quarantineRatioLimit is the share of one kind's records that may be dropped
-// before the partition fails instead. A standing tail of TDX defects is a
-// handful of records; a third of a city's shapes vanishing is a defect in the
-// feed or in this loader, and quarantining that silently ships a half-empty
-// city without anyone noticing. The default is a starting guess — the ratio is
-// logged on every run, so tune it from what the feed actually does.
 func QuarantineRatioLimit() float64 {
 	if v := os.Getenv("LOAD_QUARANTINE_MAX_RATIO"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && f <= 1 {

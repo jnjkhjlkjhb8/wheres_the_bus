@@ -10,20 +10,33 @@ package ratelimit
 import (
 	"context"
 	"net"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
 type Limiter struct {
-	mu          sync.Mutex
-	buckets     map[string]rateBucket
-	nextCleanup time.Time
-	now         func() time.Time
+	mu             sync.Mutex
+	buckets        map[string]rateBucket
+	nextCleanup    time.Time
+	now            func() time.Time
+	trustedProxies []netip.Prefix
+}
+
+// NewWithTrustedProxies enables forwarding-aware caller keys. Forwarded
+// headers are accepted only when the transport peer belongs to one of these
+// explicitly configured proxy networks.
+func NewWithTrustedProxies(proxies []netip.Prefix) *Limiter {
+	r := New()
+	r.trustedProxies = append([]netip.Prefix(nil), proxies...)
+	return r
 }
 
 type rateBucket struct {
@@ -90,10 +103,61 @@ func Allow(ctx context.Context, rl *Limiter, scope string, limit int, window tim
 	if !ok || peerInfo.Addr == nil {
 		return true
 	}
-	addr := peerInfo.Addr.String()
+	addr := callerAddress(ctx, peerInfo, rl.trustedProxies)
+	if addr == "" {
+		return true
+	}
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
 	}
 	return rl.Allow(scope, host, limit, window)
+}
+
+func callerAddress(ctx context.Context, p *peer.Peer, trusted []netip.Prefix) string {
+	addr := p.Addr.String()
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	peerIP, err := netip.ParseAddr(host)
+	if err != nil || len(trusted) == 0 {
+		return host
+	}
+	trustedPeer := false
+	for _, prefix := range trusted {
+		if prefix.Contains(peerIP) {
+			trustedPeer = true
+			break
+		}
+	}
+	if !trustedPeer {
+		return host
+	}
+	values := metadata.ValueFromIncomingContext(ctx, "x-forwarded-for")
+	if len(values) != 1 {
+		return host
+	}
+	parts := strings.Split(values[0], ",")
+	addresses := make([]netip.Addr, len(parts))
+	for i, part := range parts {
+		parsed, parseErr := netip.ParseAddr(strings.TrimSpace(part))
+		if parseErr != nil {
+			return host
+		}
+		addresses[i] = parsed.Unmap()
+	}
+	for i := len(addresses) - 1; i >= 0; i-- {
+		trustedHop := false
+		for _, prefix := range trusted {
+			if prefix.Contains(addresses[i]) {
+				trustedHop = true
+				break
+			}
+		}
+		if !trustedHop {
+			return addresses[i].String()
+		}
+	}
+	return host
 }

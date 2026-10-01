@@ -15,9 +15,6 @@ class BusRepository {
 
   static final BusRepository instance = BusRepository();
 
-  // Resolved per call so a test can inject one stub without the default for
-  // the other touching the real gRPC channel, and so a recycled channel
-  // (FDPL-51) is picked up instead of a client bound to the dead one.
   final Bus_Route_ServiceClient? _routeClient;
   Bus_Route_ServiceClient get _route =>
       _routeClient ?? GrpcClient.instance.busRoute;
@@ -26,13 +23,6 @@ class BusRepository {
   Bus_Station_ServiceClient get _station =>
       _stationClient ?? GrpcClient.instance.busStation;
 
-  /// Cache-first: a route the rider has already opened renders from Hive with
-  /// no round-trip for a week. Stop order and shape only move with the 03:30
-  /// daily load, and that load is what expires this entry — `pruneStaticCache`
-  /// namespaces the box on the backend's static dataset version, so a route
-  /// edited upstream is gone from the cache on the first launch after the load
-  /// that republished it. The week is the ceiling for a device that never
-  /// reaches the version endpoint at all.
   Future<BusRouteViewModel> routeStatic(String subRouteUid) => offlineCached(
     key: 's:bus:static:$subRouteUid',
     maxAge: const Duration(days: 7),
@@ -69,12 +59,6 @@ class BusRepository {
           .eta(Bus_Ask_StationGroup(city: city, groupUid: groupUid))
           .map(BusDecoder.instance.decodeStationEta);
 
-  // Station groups only change with the 03:30 daily load, so a process-lifetime
-  // memo is safe and makes a re-visit render with no round-trip at all. The
-  // Hive layer underneath it (ADR-0017) is what survives a launch; this stays
-  // because it also skips the decode on a warm re-visit.
-  // unbounded and in-memory — one entry per group visited in a
-  // session, cleared with the process.
   final _stationGroups = <String, List<BusStationMember>>{};
 
   /// Resolves a station group's member stops as decoded domain types.

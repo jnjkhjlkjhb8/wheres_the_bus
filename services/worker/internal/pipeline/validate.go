@@ -6,11 +6,6 @@ import (
 	"time"
 )
 
-// LoadSource is the seam between the loader and the raw landing store. The
-// production adapter (rawTDXSource) reconstructs a lowercased-JSON array from a
-// raw_tdx table/partition; the test adapters (fakeLoadSource) serve committed
-// bytes. table/partCol/partVal identify one partition; an unpartitioned dataset
-// passes partCol="" and partVal="".
 type LoadSource interface {
 	DatasetJSON(ctx context.Context, table, partCol, partVal string) ([]byte, time.Time, error)
 }

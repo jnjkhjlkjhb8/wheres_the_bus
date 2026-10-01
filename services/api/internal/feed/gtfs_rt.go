@@ -15,23 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// The GTFS-RT endpoint (ADR-0019).
-//
-// This file serves; it does not build. services/worker rebuilds the whole
-// FeedMessage on a cron and leaves the serialized bytes in one Redis key, and
-// the handler returns them verbatim. The router therefore holds no GTFS-RT
-// types and no background work: the request path stays a request path.
-//
-// The key's TTL is the liveness check. A stopped builder lets it expire, this
-// returns 503, and a planner falls back to the static timetable — which is the
-// right answer, and strictly better than serving a snapshot that is quietly
-// hours old because nothing noticed the builder died.
-
 const (
-	// _gtfsRTCredentialEnv is the shared secret MOTIS sends. Prod binds the HTTP
-	// port to 0.0.0.0 with no reverse proxy, so an ungated route here is a public
-	// route. Unset means the endpoint is not mounted at all: an environment
-	// without a credential serves no feed rather than an open one.
 	_gtfsRTCredentialEnv = "GTFS_RT_CREDENTIAL"
 	// _gtfsRTCredentialMinLength matches the metrics credential's floor. The value
 	// is a machine-to-machine secret, so there is no reason for it to be short.
@@ -70,10 +54,6 @@ func RegisterGTFSRTRoutes(r gin.IRoutes, rc *redis.Client, credential string, li
 	r.GET(GTFSRTPath, limit, requireGTFSRTCredential(credential), handleGTFSRT(rc))
 }
 
-// requireGTFSRTCredential accepts the secret only in the Authorization header,
-// which is where MOTIS's own `headers:` config puts it and keeps it out of URLs
-// and access logs. Both sides are hashed before the constant-time comparison so
-// the configured length does not leak.
 func requireGTFSRTCredential(expected string) gin.HandlerFunc {
 	expectedHash := sha256.Sum256([]byte(expected))
 	return func(c *gin.Context) {
@@ -89,10 +69,6 @@ func requireGTFSRTCredential(expected string) gin.HandlerFunc {
 	}
 }
 
-// handleGTFSRT returns the current snapshot. A missing key is 503 rather than an
-// empty feed: an empty FeedMessage is a valid statement that nothing is
-// cancelled and nothing is delayed, which is exactly the wrong thing to say when
-// the truth is that we do not know.
 func handleGTFSRT(rc *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		payload, err := rc.Get(c.Request.Context(), shared.GTFSRealtimeKey()).Bytes()

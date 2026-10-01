@@ -2,14 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 
-/// The cache behaviour `bus_route_screen.dart`'s bubble clock is built on.
-///
-/// That clock wakes once a second while a bubble is on screen and rebuilds it,
-/// then skips the repaint when the returned bitmap is `identical` to the one
-/// already published. Both halves have to hold: a freshness label that changed
-/// must produce a new bitmap (or the bubble freezes), and one that didn't must
-/// return the very same instance (or the map repaints every second for nothing,
-/// which is what the always-on-bubble version used to do).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

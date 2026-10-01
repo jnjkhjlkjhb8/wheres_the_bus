@@ -25,11 +25,6 @@ func segmentEtaTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// fixtureHistory is a Source that returns canned hops. The observations
-// live on MySQL now, so the judgements that used to be asserted here — adjacency,
-// sequence gaps, non-positive differences — are made by SQL this suite cannot
-// reach. What is still Go, and still worth pinning, is what the process does with
-// the rows that come back.
 type fixtureHistory struct {
 	estimate []SegmentObs
 }
@@ -42,13 +37,6 @@ func (f fixtureHistory) segmentsByEstimate(context.Context, time.Duration) ([]Se
 	return f.estimate, nil
 }
 
-// TestComputeSegmentTimesFromEstimates asserts the conflict rule the estimate
-// pass carries now that it is the only observation pass: a fresh figure lands
-// whatever it rests on, over a hop nobody covered, over a distance-derived
-// estimate, and over its own previous run. The sample_count guard it used to
-// carry belonged to a two-pass world; keeping it here would mean a week with
-// fewer observations could never refresh a hop, and the stored seconds would age
-// indefinitely while updated_at said otherwise.
 func TestComputeSegmentTimesFromEstimates(t *testing.T) {
 	pool := segmentEtaTestPool(t)
 	defer pool.Close()
@@ -127,10 +115,6 @@ func TestComputeSegmentTimesFromEstimates(t *testing.T) {
 	}
 }
 
-// TestFillSegmentTimesFromDistance covers the fill pass's two promises: an empty
-// hop gets an estimate scaled by distance and the route's observed pace, and an
-// existing observed row is left exactly as it was. Without both, GTFS either
-// keeps dropping route directions or silently loses a measured time to a guess.
 func TestFillSegmentTimesFromDistance(t *testing.T) {
 	pool := segmentEtaTestPool(t)
 	defer pool.Close()

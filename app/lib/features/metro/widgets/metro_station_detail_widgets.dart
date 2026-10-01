@@ -32,7 +32,12 @@ class _StationDetailSheet extends StatelessWidget {
         // card instead of dragging blank surface up behind a short one.
         shrinkWrap: true,
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 56),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          0,
+          AppTheme.space16,
+          56,
+        ),
         children: [
           Row(
             children: [
@@ -52,10 +57,10 @@ class _StationDetailSheet extends StatelessWidget {
                 ),
               for (final code in station.id.split('_'))
                 Padding(
-                  padding: const EdgeInsets.only(right: 6),
+                  padding: const EdgeInsets.only(right: AppTheme.space6),
                   child: _MetroRoundel(code: code),
                 ),
-              const SizedBox(width: 6),
+              const SizedBox(width: AppTheme.space6),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -95,7 +100,7 @@ class _StationDetailSheet extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           BlocBuilder<MetroEtaBloc, MetroEtaState>(
             builder: (context, state) {
               final arrivals = state.arrivals
@@ -104,14 +109,9 @@ class _StationDetailSheet extends StatelessWidget {
               if (state.loading && arrivals.isEmpty) {
                 return const _MetroArrivalsSkeleton();
               }
-              // The feed keeps showing the last-known list even after its
-              // ResilientSubscription gives up (state.error set) — that list
-              // can go stale, so the banner is what tells the difference from
-              // a genuinely current one instead of presenting it silently
-              // (F28).
               final staleBanner = state.error != null
                   ? Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.only(bottom: AppTheme.space8),
                       child: _MetroLiveErrorNotice(error: state.error!),
                     )
                   : null;
@@ -145,11 +145,15 @@ class _StationDetailSheet extends StatelessWidget {
                       color: cs.outlineVariant.withValues(alpha: 0.5),
                     ),
                   ],
+                  // Under the list rather than over it: the countdowns are
+                  // what the rider came for, and the stamp is the footnote
+                  // that dates them.
+                  FreshnessStamp(at: state.updatedAt),
                 ],
               );
             },
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           BlocBuilder<MetroEtaBloc, MetroEtaState>(
             // First/last-train data is loaded once and never changes per arrival
             // frame; rebuild only when the schedule itself (or its shimmer
@@ -176,14 +180,6 @@ Favorite _metroFavorite(AppI18n i18n, MetroMapStation s) => Favorite(
   subtitle: _lineName(i18n, s.id),
 );
 
-/// A single metro arrival row, rendered through the shared [EtaListTile] in its
-/// bare, roundel-lead configuration: line roundel leading, 往-destination in
-/// heading2, and the status through the shared time column. Metro keeps its own
-/// list chrome (divider-separated rows, no coming-soon highlight or tap
-/// target), so it uses the tile's `bare` variant.
-///
-/// Below the row sits the per-car congestion strip, and — for high-capacity
-/// TRTC arrivals only — the 下車提醒 bell (ADR-0015).
 class MetroArrivalTile extends StatelessWidget {
   const MetroArrivalTile({required this.arrival, super.key});
 
@@ -207,7 +203,7 @@ class MetroArrivalTile extends StatelessWidget {
           destinationStyle: AppTextStyles.heading2,
           bare: true,
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: AppTheme.space10),
         Row(
           children: [
             Expanded(child: _MetroCongestionStrip(levels: arrival.congestion)),
@@ -220,81 +216,23 @@ class MetroArrivalTile extends StatelessWidget {
   }
 }
 
-/// Loading stand-in for the arrivals list.
-///
-/// The bones sit on [MetroArrivalTile]'s own geometry — roundel lead, the
-/// destination line, the time column, and the congestion strip under them,
-/// divider and all — so the rows the feed delivers land where the skeleton
-/// already drew them instead of shoving the schedule section down the sheet.
 class _MetroArrivalsSkeleton extends StatelessWidget {
   const _MetroArrivalsSkeleton();
-
-  /// The tile's tallest element is the mono time value: heading1's size on
-  /// memo's line box. Deriving it from the same tokens keeps the skeleton
-  /// honest if either token moves.
-  static final double _tileRowHeight =
-      AppTextStyles.heading1.fontSize! * AppTextStyles.memo.height!;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final scaler = MediaQuery.textScalerOf(context);
-    return SkeletonFade(
+    return Skeletonizer(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           for (var i = 0; i < 3; i++) ...[
-            SizedBox(
-              height: scaler.scale(_tileRowHeight),
-              child: Row(
-                children: [
-                  // TransportIcon's box, at its default size.
-                  const SkeletonBone(width: 24, height: 24, radius: 6),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: FractionallySizedBox(
-                        widthFactor: 0.55,
-                        child: SkeletonBone(
-                          height: scaler.scale(
-                            AppTextStyles.heading2.fontSize!,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SkeletonBone(
-                    width: scaler.scale(52),
-                    height: scaler.scale(22),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              // The congestion label's line box, which is what sets the
-              // strip's height in a loaded row.
-              height: scaler.scale(
-                AppTextStyles.bodyVerySmall.fontSize! *
-                    AppTextStyles.bodyVerySmall.height!,
-              ),
-              child: Row(
-                children: [
-                  for (var car = 0; car < 6; car++) ...[
-                    if (car > 0) const SizedBox(width: 3),
-                    _CongestionCar(
-                      color: cs.surfaceContainerHighest,
-                      head: car == 0,
-                    ),
-                  ],
-                  const SizedBox(width: 8),
-                  SkeletonBone(
-                    width: scaler.scale(40),
-                    height: scaler.scale(10),
-                  ),
-                ],
+            MetroArrivalTile(
+              arrival: MetroArrival(
+                line: '',
+                destination: BoneMock.chars(4, '囗'),
+                estimateSeconds: (i + 1) * 120,
+                congestion: const [2, 2, 2, 2, 2, 2],
               ),
             ),
             Divider(
@@ -308,10 +246,6 @@ class _MetroArrivalsSkeleton extends StatelessWidget {
   }
 }
 
-/// Per-car congestion silhouette: a train of rounded cars, head car (travel
-/// direction, leftmost) with a rounded nose, each car tinted by its crowding
-/// level through the existing semantic status tokens. No reading — the levels
-/// are a felt glance. Absent data renders muted cars with a 暫無資料 label.
 class _MetroCongestionStrip extends StatelessWidget {
   const _MetroCongestionStrip({required this.levels});
 
@@ -350,7 +284,7 @@ class _MetroCongestionStrip extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: AppTheme.space8),
         Text(
           hasData
               ? AppI18n.of(context).metroCrowding
@@ -388,15 +322,6 @@ class _CongestionCar extends StatelessWidget {
   }
 }
 
-/// The 下車提醒 bell for this train (ADR-0015).
-///
-/// Idle opens pick-mode and puts the rider on the line map, because that is
-/// where a 下車站 is chosen — on the map screen the sheet simply steps aside,
-/// and from search or the home card this navigates there first, so there is
-/// only ever one way to pick a metro station.
-///
-/// Armed opens the manage card in place rather than cancelling on the tap: a
-/// session takes several taps to build and then rides in a pocket.
 class _MetroAlightBell extends StatefulWidget {
   const _MetroAlightBell({required this.arrival});
 
@@ -447,7 +372,7 @@ class _MetroAlightBellState extends State<_MetroAlightBell> {
             ),
             if (active && _managing && session != null)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.only(top: AppTheme.space8),
                 child: AlightManageBar(
                   targetName: session.targetStationName,
                   lead: session.leadStops,

@@ -181,12 +181,6 @@ func readBusCitySnapshot(ctx context.Context, src pipeline.LoadSource, city stri
 			if !uidBelongsToPrefix(sub.SubRouteUID, prefix) || !uidBelongsToPrefix(uid, prefix) {
 				return nil, _oops.With("route_index", ri).With("subroute_index", si).With("sub_route_uid", sub.SubRouteUID).With("uid", uid).With("city", city).Wrapf(errBusSnapshotInvalid, "Route.SubRoutes UID canonical does not belong")
 			}
-			// sub is a range copy, so normalizing in place is what reaches the
-			// candidate Direction below: the snapshot stores the canonical
-			// "HH:MM" form regardless of which shape the city published. An
-			// unparseable time blanks that one field rather than dropping the
-			// subroute — empty already means "not published" to every reader,
-			// and the route itself is still perfectly usable without it.
 			for _, f := range []struct {
 				label string
 				value *string
@@ -279,12 +273,6 @@ func readBusCitySnapshot(ctx context.Context, src pipeline.LoadSource, city stri
 		return nil, _oops.Wrapf(err, "StopOfRoute")
 	}
 	q.Consider("stopofroute", len(stopVariants))
-	// A stop or station whose survey has not finished is published with a (0,0)
-	// coordinate — TDX names Keelung — so a zero position is source state, not a
-	// broken record: the record is kept and counted rather than failing the city
-	// over it. Everything downstream already tolerates it (the station-group join
-	// matches nothing within a kilometre of (0,0), and the ETA path guards on
-	// lat == 0), so the count exists to keep an invisible condition visible.
 	unsurveyedStops := 0
 	seenStops := make(map[string]busmodel.RawStopOfRoute)
 	for i, variant := range stopVariants {
@@ -319,10 +307,6 @@ func readBusCitySnapshot(ctx context.Context, src pipeline.LoadSource, city stri
 				unsurveyedStops++
 			}
 			if stop.StopSequence <= lastSequence {
-				// TDX publishes lists whose sequence repeats or restarts mid-list
-				// (a loop route renumbering, two segments concatenated). Nothing
-				// downstream can order those stops, so the variant goes rather
-				// than the city; the ratio gate decides if it is more than a tail.
 				q.Drop("stopofroute", "stopofroute_unordered", fmt.Sprintf("StopOfRoute[%d] %s/%d seq=%d", i, uid, dir, stop.StopSequence))
 				unordered = true
 				break
@@ -334,11 +318,6 @@ func readBusCitySnapshot(ctx context.Context, src pipeline.LoadSource, city stri
 		}
 		key := fmt.Sprintf("%s/%d", uid, dir)
 		if prior, ok := seenStops[key]; ok {
-			// First variant wins for the stop order. TDX publishes one list per
-			// operator on a co-operated route, and the same physical stop carries
-			// a different StopID in each; picking the first is deterministic (the
-			// payload order is stable) and beats discarding the city. Counted so a
-			// rising tally is visible.
 			if !jsonSemanticEqual(prior.Stops, variant.Stops) {
 				q.Drop("stopofroute", "stopofroute_divergent", key)
 			}
@@ -358,10 +337,6 @@ func readBusCitySnapshot(ctx context.Context, src pipeline.LoadSource, city stri
 			})
 		}
 	}
-	// A direction whose stop lists were all dropped above cannot be served, and a
-	// subroute that loses its last direction has nothing left to publish. Both go
-	// rather than the city — the ratio gate above decides whether this many
-	// missing lists means the whole payload is suspect.
 	for _, uid := range pipeline.SortedKeys(snapshot.subroutes) {
 		sub := snapshot.subroutes[uid]
 		pruned := false
@@ -430,10 +405,6 @@ func readBusCitySnapshot(ctx context.Context, src pipeline.LoadSource, city stri
 			route := snapshot.subroutes[uid]
 			direction := directionFor(snapshot.subroutes, uid, dir)
 			if direction == nil || route == nil {
-				// The route exists but not this direction. A route-level shape
-				// (no SubRouteUID) fans out to every subroute of the route and
-				// drops once per subroute lacking shape.Direction, so this one
-				// multiplies — scope tells them apart in the log.
 				scope := "sub"
 				if shape.SubRouteUID == "" {
 					scope = "routelevel"

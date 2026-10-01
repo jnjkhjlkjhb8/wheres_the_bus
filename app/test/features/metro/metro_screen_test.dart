@@ -47,8 +47,6 @@ void main() {
         ),
       ),
     );
-    // One frame is enough to build the sheet; avoid settling on the map's
-    // raster future and deferred hit-target timer.
     await tester.pump();
 
     // The mode switch moved to a floating map chip that only appears once a

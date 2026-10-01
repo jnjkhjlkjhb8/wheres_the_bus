@@ -12,10 +12,6 @@ import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_event.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_state.dart';
 
-/// Parses the `alert_sources` remote-config value: comma-separated tagged
-/// tokens `metro:<system>` and `bus:<city>`. Malformed or unknown-kind tokens
-/// are dropped so a bad remote value can't break alert startup. TRA/THSR are
-/// nationwide rail and stay wired directly, not listed here.
 ({List<String> metro, List<String> bus}) parseAlertSources(String csv) {
   final metro = <String>[];
   final bus = <String>[];
@@ -44,30 +40,14 @@ Stream<Set<String>> _defaultScope() async* {
   yield* favorites.changes().map((_) => subscriptionScope(favorites.all()));
 }
 
-/// Default `alert_sources` config source: emits the current value immediately
-/// (so startup doesn't wait for a revision), then re-emits on every
-/// activated Remote Config revision. Injectable via [AlertBloc.new] so tests
-/// can drive dynamic-subscription behavior (F33) without Firebase.
 Stream<String> _defaultAlertSourcesConfig() async* {
   yield AppConfig.getString('alert_sources');
   yield* AppConfig.revisions().map((_) => AppConfig.getString('alert_sources'));
 }
 
-/// Ops-authored notices, read from Remote Config. Their text is their
-/// identity (same rule as feed alerts), so rewriting an announcement
-/// publishes a new one and re-arms its unread state — which is what ops mean
-/// when they change the copy.
 List<AlertViewModel> readAnnouncements() {
-  final maintenance = AppConfig.getString('maintenance_banner_text');
   final announcement = AppConfig.getString('announcement_text');
   return [
-    if (AppConfig.getBool('maintenance_banner_enabled') &&
-        maintenance.isNotEmpty)
-      AlertViewModel(
-        message: maintenance,
-        level: AlertSeverity.yellow,
-        source: const AlertSource(AlertSourceKind.appMaintenance),
-      ),
     if (announcement.isNotEmpty)
       AlertViewModel(
         message: announcement,
@@ -179,11 +159,6 @@ class AlertBloc extends Bloc<AlertEvent, AlertState> {
     _scopeSub = _scopeSource().listen((scope) => add(AlertScopeChanged(scope)));
   }
 
-  /// Diffs the newly-parsed metro/bus sources against what's currently
-  /// subscribed and replaces only what changed (F33): kept sources are never
-  /// touched (added/removed keys are disjoint from kept ones), so there is no
-  /// window where a still-wanted subscription is unsubscribed. An identical
-  /// CSV is a no-op — no cancel/resubscribe at all.
   Future<void> _onConfigChanged(
     AlertConfigChanged event,
     Emitter<AlertState> emit,

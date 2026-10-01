@@ -25,10 +25,6 @@ func cleanupTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// TestCleanupPredictionErrorsRetentionBoundary pins the 30-day retention
-// boundary of the only data-deleting cron left on Postgres: rows past the
-// window must go, rows inside it must survive. bus_eta_history is no longer a
-// target — it lives on the MySQL history host and is never pruned.
 func TestCleanupPredictionErrorsRetentionBoundary(t *testing.T) {
 	pool := cleanupTestPool(t)
 	defer pool.Close()

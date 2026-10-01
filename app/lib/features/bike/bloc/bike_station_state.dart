@@ -41,10 +41,6 @@ class BikeStationState extends Equatable {
   /// Static station-info fetch failure (name/capacity never loaded).
   final String? error;
 
-  /// Live availability stream failure, surfaced after the underlying
-  /// ResilientSubscription gives up reconnecting; cleared only on recovery.
-  /// Kept separate from [error] so a static-info success doesn't mask a live
-  /// stream that never came up, and vice versa (F27).
   final AppError? liveError;
 
   BikeStationState copyWith({

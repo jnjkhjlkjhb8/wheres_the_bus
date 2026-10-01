@@ -20,12 +20,6 @@ enum AppSegmentStyle {
   floating,
 }
 
-/// A segmented control whose thumb can be tapped to, or grabbed and dragged.
-///
-/// The thumb is the only draggable part: a press anywhere else is a plain tap,
-/// matching the platform control. Dragging tracks the finger 1:1, resists past
-/// the ends, ticks as it crosses each segment, and lands where the flick was
-/// going rather than where the finger stopped.
 class AppSlidingSegment<T> extends StatefulWidget {
   const AppSlidingSegment({
     required this.options,
@@ -67,10 +61,6 @@ class _AppSlidingSegmentState<T> extends State<AppSlidingSegment<T>>
   /// "there is nothing more here".
   static const double _overshoot = 0.12;
 
-  /// Resting point of a flick, in segments per segment/second of release
-  /// velocity. The exponential-decay projection scrolling uses, at a 0.995
-  /// deceleration rate — snappier than scroll's 0.998, because a segment is a
-  /// short throw.
   static const double _flickProjection = 0.199;
 
   /// Release speed, in segments/second, above which the settle is allowed the
@@ -78,10 +68,6 @@ class _AppSlidingSegmentState<T> extends State<AppSlidingSegment<T>>
   /// carried no momentum to express.
   static const double _momentumThreshold = 0.5;
 
-  // Thumb position as a progress in segments — 0 sits on the first option,
-  // `_lastIndex` on the last. Unbounded controller so a SpringSimulation can
-  // drive it directly by value instead of fighting the default 0..1 clamp
-  // mid-flight, and so the rubber-band can carry it briefly past either end.
   late final AnimationController _thumb = AnimationController.unbounded(
     vsync: this,
     value: _indexOf(widget.value).toDouble(),
@@ -95,10 +81,6 @@ class _AppSlidingSegmentState<T> extends State<AppSlidingSegment<T>>
     duration: AppMotion.press,
   );
 
-  /// The gesture area, asked for its width when a drag needs to convert pixels
-  /// into segments. Measuring here rather than through a `LayoutBuilder` keeps
-  /// the control intrinsically sizeable, which `fill: false` depends on —
-  /// `LayoutBuilder` refuses to answer intrinsic queries.
   final GlobalKey _trackKey = GlobalKey();
 
   /// Pill width in logical pixels — converts a horizontal drag delta into
@@ -241,10 +223,6 @@ class _AppSlidingSegmentState<T> extends State<AppSlidingSegment<T>>
     final entries = widget.options.entries.toList();
     final skin = _SegmentSkin.of(widget.style, cs);
 
-    // The pills tile the track exactly and the thumb is one pill wide, so the
-    // thumb lands on the same centre as the label it covers whatever the
-    // option count — and it does so as a fraction of the track, which keeps
-    // the control intrinsically sizeable for [AppSlidingSegment.fill].
     final track = GestureDetector(
       onHorizontalDragDown: _handleDragDown,
       onHorizontalDragCancel: _handleDragCancel,
@@ -293,7 +271,9 @@ class _AppSlidingSegmentState<T> extends State<AppSlidingSegment<T>>
                     child: Pressable(
                       onTap: () => _handleTap(index),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppTheme.space10,
+                        ),
                         child: Center(
                           child: _SegmentLabel(
                             text: entry.value,
@@ -315,7 +295,7 @@ class _AppSlidingSegmentState<T> extends State<AppSlidingSegment<T>>
     );
 
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(AppTheme.space4),
       decoration: skin.track,
       // IntrinsicWidth over a row of equal flex children resolves to the
       // widest label times the option count, so hugging still yields equal
@@ -325,12 +305,6 @@ class _AppSlidingSegmentState<T> extends State<AppSlidingSegment<T>>
   }
 }
 
-/// The one-option case of [AppSlidingSegment]: same groove, same 44px
-/// footprint, nothing to choose.
-///
-/// A loop bus route has a single headsign, and a two-slot slider with a blank
-/// half would render. Reusing the control's own skin keeps the header from
-/// changing shape as the rider moves between a loop route and a two-way one.
 class AppStaticSegment extends StatelessWidget {
   const AppStaticSegment({
     required this.label,
@@ -362,7 +336,7 @@ class AppStaticSegment extends StatelessWidget {
     return Semantics(
       label: semanticLabel,
       child: Container(
-        padding: const EdgeInsets.all(4),
+        padding: const EdgeInsets.all(AppTheme.space4),
         decoration: skin.track,
         child: SizedBox(
           height: 36,
@@ -371,7 +345,7 @@ class AppStaticSegment extends StatelessWidget {
             children: [
               if (leading != null) ...[
                 Icon(leading, size: 15, color: cs.onSurfaceVariant),
-                const SizedBox(width: 6),
+                const SizedBox(width: AppTheme.space6),
               ],
               Flexible(
                 child: Text(
@@ -464,11 +438,6 @@ class _SegmentSkin {
         labelSelected: cs.surface,
       );
     }
-    // A recessed groove holding a raised, lighter thumb. The track is a
-    // translucent black overlay, not an opaque surface token, so it darkens
-    // whatever hosts the control — scaffold or bottom sheet alike. An opaque
-    // track keyed to a fixed surface collides with the sheet colour in dark
-    // mode (surfaceContainerLow == the sheet), which erases the track entirely.
     return _SegmentSkin(
       track: BoxDecoration(
         color: Colors.black.withValues(alpha: isDark ? 0.30 : 0.05),

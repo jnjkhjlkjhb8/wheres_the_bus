@@ -28,17 +28,6 @@ int walkMinutes(PlanRoute route) {
   return total;
 }
 
-/// Scheduled wait before `sections[i]` departs: the gap between the previous
-/// section's arrival and this one's departure. TDX covers transfer waiting with
-/// no section of its own — it exists only as this gap, which is why the leg
-/// durations alone fall short of the route total. Applies to any pair of
-/// sections, so a same-platform metro transfer (no pedestrian leg between the
-/// two rides) reports its wait too.
-///
-/// Zero when either timestamp is missing or unparseable, and when the gap is
-/// negative. A walk section whose duration OSRM could not resolve keeps TDX's
-/// own figure, which may already span the wait; that case leaves no gap here
-/// and still reads as walking.
 int waitMinutesBefore(List<PlanSection> sections, int i) {
   if (i <= 0 || i >= sections.length) return 0;
   final arrival = DateTime.tryParse(sections[i - 1].arrival.time);
@@ -87,11 +76,6 @@ class RouteOptionCard extends StatelessWidget {
     final origin = sections.isNotEmpty ? sections.first.departure.name : '';
     final dest = sections.isNotEmpty ? sections.last.arrival.name : '';
 
-    // Left column, heaviest first: how long the journey takes, then when it
-    // happens. The fare sits alone at the top right, competing with nothing
-    // for width — which is what keeps the window from ellipsising on a narrow
-    // phone. The "fastest" badge is gone: the list is already ordered by it,
-    // so the badge restated the position of the first card and nothing else.
     final header = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -129,7 +113,10 @@ class RouteOptionCard extends StatelessWidget {
         ),
         if (route.totalFare > 0)
           Padding(
-            padding: const EdgeInsets.only(left: 8, top: 2),
+            padding: const EdgeInsets.only(
+              left: AppTheme.space8,
+              top: AppTheme.space2,
+            ),
             child: _Fare(amount: route.totalFare),
           ),
       ],
@@ -139,10 +126,10 @@ class RouteOptionCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         header,
-        const SizedBox(height: 10),
+        const SizedBox(height: AppTheme.space10),
         LegStrip(sections: sections),
         if (highlighted && (origin.isNotEmpty || dest.isNotEmpty)) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -156,7 +143,7 @@ class RouteOptionCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppTheme.space12),
               Flexible(
                 child: Text(
                   dest,
@@ -171,7 +158,7 @@ class RouteOptionCard extends StatelessWidget {
             ],
           ),
         ],
-        const SizedBox(height: 10),
+        const SizedBox(height: AppTheme.space10),
         Row(
           children: [
             Icon(
@@ -179,7 +166,7 @@ class RouteOptionCard extends StatelessWidget {
               size: 14,
               color: cs.onSurfaceVariant,
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: AppTheme.space4),
             Text(
               route.transfers == 0
                   ? AppI18n.of(context).goDirect
@@ -188,14 +175,6 @@ class RouteOptionCard extends StatelessWidget {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            // No walking total here any more: every walk in the strip above
-            // now reports its own minutes, so a sum would be the same fact
-            // stated twice. The transfer count stays because it is what these
-            // cards get compared on, and counting chips is not that.
-            //
-            // The bookmark trades places with the fare: price belongs with
-            // the other facts about the journey, the control belongs with
-            // the other chrome.
             if (onToggleSave != null) ...[
               const Spacer(),
               _SaveButton(saved: isSaved, onTap: onToggleSave!),
@@ -211,7 +190,7 @@ class RouteOptionCard extends StatelessWidget {
         context,
       ).routeSummarySemantics(minutes, arrival, dest),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(AppTheme.space14),
         decoration: BoxDecoration(
           color: highlighted ? cs.primaryContainer : cs.surface,
           borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -238,7 +217,7 @@ class _SaveButton extends StatelessWidget {
           ? AppI18n.of(context).goUnsaveRoute
           : AppI18n.of(context).goSaveRoute,
       child: Padding(
-        padding: const EdgeInsets.all(2),
+        padding: const EdgeInsets.all(AppTheme.space2),
         child: AnimatedSwitcher(
           duration: AppMotion.short,
           child: Icon(
@@ -254,15 +233,6 @@ class _SaveButton extends StatelessWidget {
   }
 }
 
-/// The whole journey as one run of chips, in order: what the rider rides, and
-/// the gaps between. Two vocabularies only — a filled chip is something with a
-/// timetable, a bare grey glyph is time spent not on it — so the shape of a
-/// route reads before any of its words do.
-///
-/// Every leg reports its own minutes, including the scheduled wait between two
-/// legs, which no section covers: it exists only as the gap between one
-/// arrival and the next departure, and is often the largest single number in
-/// the route.
 class LegStrip extends StatelessWidget {
   const LegStrip({required this.sections, super.key});
 
@@ -313,17 +283,13 @@ class LegStrip extends StatelessWidget {
     }
     return Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 4,
-      runSpacing: 6,
+      spacing: AppTheme.space4,
+      runSpacing: AppTheme.space6,
       children: children,
     );
   }
 }
 
-/// A stretch of the journey spent off a vehicle — walking, or waiting for the
-/// next one. Deliberately the same chip in both cases, differing only by glyph:
-/// both are time the rider spends getting nowhere, and drawing them alike is
-/// what lets the coloured chips read as "the parts that move".
 class _GapChip extends StatelessWidget {
   const _GapChip({
     required this.icon,
@@ -362,15 +328,6 @@ class _GapChip extends StatelessWidget {
   }
 }
 
-/// One transit leg: the mode's glyph and the line's name in a single pill,
-/// on an achromatic surface, with the line's own colour carried by the glyph
-/// alone.
-///
-/// The chip used to be filled with the line colour. Four filled chips in a row
-/// is four saturated blocks competing for the same glance, on a screen whose
-/// only accent is meant to be Ink. Moving the colour onto the glyph keeps the
-/// line identity — the Domain Colour Rule names icons as a carrier — and hands
-/// the row's visual weight back to the route names.
 class _LegPill extends StatelessWidget {
   const _LegPill({
     required this.icon,
@@ -390,7 +347,12 @@ class _LegPill extends StatelessWidget {
     final surface = cs.surfaceContainerHighest;
     return Container(
       height: _kLegChipHeight,
-      padding: const EdgeInsets.fromLTRB(6, 0, 8, 0),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space6,
+        0,
+        AppTheme.space8,
+        0,
+      ),
       decoration: BoxDecoration(
         color: surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusChip),
@@ -405,7 +367,7 @@ class _LegPill extends StatelessWidget {
           Container(
             width: 1,
             height: 12,
-            margin: const EdgeInsets.symmetric(horizontal: 6),
+            margin: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
             color: cs.outline,
           ),
           Text(

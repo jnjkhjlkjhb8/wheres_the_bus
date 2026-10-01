@@ -18,10 +18,6 @@ class LocationService {
   /// last real answer from the OS rather than a stale first-launch guess.
   static final denial = ValueNotifier<LocationDenial?>(null);
 
-  /// Returns current position, requesting permission if needed.
-  /// Throws [LocationServiceDisabledException] or [PermissionDeniedException]
-  /// if unavailable — callers fall back to manual station selection, and
-  /// [denial] carries the reason for the notice rail.
   Future<Position> currentPosition() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -56,21 +52,10 @@ class LocationService {
 
   Future<Position?>? _prefetchedLastKnown;
 
-  /// Starts the cached-fix lookup early — call from `main()`.
-  ///
-  /// Despite the name, `getLastKnownPosition` is not free: on Android the first
-  /// call costs ~370 ms of plugin/platform setup. Home needs that fix straight
-  /// after the bootstrap splash, where it is the only thing between the map and
-  /// the first nearby query, so it runs during the splash instead.
   void prefetchLastKnown() {
     _prefetchedLastKnown ??= _readLastKnown();
   }
 
-  /// Last OS-cached fix, if any — no GPS wait. Null when the OS has no cached
-  /// position or permission is missing.
-  ///
-  /// Consumes a [prefetchLastKnown] result once, then goes back to reading the
-  /// OS directly, so a later caller never gets a stale startup value.
   Future<Position?> lastKnownPosition() {
     final prefetched = _prefetchedLastKnown;
     _prefetchedLastKnown = null;
@@ -93,13 +78,6 @@ class LocationService {
     ),
   );
 
-  /// Higher-accuracy stream for active navigation; stops when the subscription
-  /// is cancelled at journey end.
-  ///
-  /// Foreground only, on both platforms. The app ships neither the iOS
-  /// `location` background mode nor Android's ACCESS_BACKGROUND_LOCATION, so
-  /// the OS stops delivering fixes once the app leaves the screen and the
-  /// journey card resumes from the next fix after the app comes back.
   Stream<Position> navigationStream() {
     late final LocationSettings settings;
     if (defaultTargetPlatform == TargetPlatform.iOS) {
@@ -117,11 +95,6 @@ class LocationService {
     return Geolocator.getPositionStream(locationSettings: settings);
   }
 
-  /// Device compass heading (degrees clockwise from magnetic north), for
-  /// rotating the navigation camera as the phone turns. Emits only non-null
-  /// headings; on a device with no magnetometer (or the plugin returning no
-  /// stream) this is an empty stream and callers keep the GPS-course fallback.
-  /// The plugin type stays inside core/ — callers see a plain `Stream<double>`.
   Stream<double> compassStream() {
     final events = FlutterCompass.events;
     if (events == null) return const Stream.empty();

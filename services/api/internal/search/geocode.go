@@ -1,22 +1,5 @@
 package search
 
-// The geocoding endpoint (ADR-0022).
-//
-// MOTIS sits on the internal routing network, so the app cannot reach it. This
-// is the proxy: it takes what the rider has typed, asks MOTIS's OSM-backed
-// geocoder, and returns the matches in the small shape the planner's
-// origin/destination picker needs.
-//
-// It is deliberately not folded into /api/search. That endpoint answers "which
-// stop or route is this", from the PowerSync-replicated search_vector table,
-// offline-capable and phonetic-alias aware. This one answers "which address or
-// place is this", online only, from OpenStreetMap. Same-looking question,
-// different data, different failure modes, different caching.
-//
-// The app treats this as the first source and falls back to Google Places when
-// it returns nothing: Taiwan OSM covers addresses reasonably and named
-// businesses poorly, and the planner's entry point is not a place to regress.
-
 import (
 	"net/http"
 	"strconv"
@@ -71,10 +54,6 @@ type geocodeSuggestion struct {
 	Type      string  `json:"type"`
 }
 
-// RegisterGeocodeRoutes mounts the proxy. A nil client means MOTIS is not the
-// configured planner, in which case there is nothing to proxy and the route
-// stays unmounted -- the app's Google Places fallback is then its only source,
-// which is exactly the degraded behaviour a kill switch should produce.
 func RegisterGeocodeRoutes(r gin.IRoutes, baseURL string, mounted bool, limit gin.HandlerFunc) {
 	if !mounted || baseURL == "" {
 		return
@@ -83,10 +62,6 @@ func RegisterGeocodeRoutes(r gin.IRoutes, baseURL string, mounted bool, limit gi
 	r.GET(GeocodePath, limit, handleGeocode(client))
 }
 
-// handleGeocode answers with suggestions, or with an empty list. An upstream
-// failure is 503 rather than an empty 200: the app falls back to Google Places
-// on an error, and an empty 200 would tell it there is genuinely nothing there,
-// which is a different and wrong claim.
 func handleGeocode(client *resty.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		text := strings.TrimSpace(c.Query("text"))
@@ -129,10 +104,6 @@ func handleGeocode(client *resty.Client) gin.HandlerFunc {
 	}
 }
 
-// geocodeBias renders the lat/lon bias parameter, reporting whether the caller
-// supplied a usable pair. A malformed or null-island coordinate is dropped
-// rather than sent: biasing towards 0,0 pulls every Taiwan result away from the
-// rider.
 func geocodeBias(latText, lonText string) (string, bool) {
 	lat, latErr := strconv.ParseFloat(strings.TrimSpace(latText), 64)
 	lon, lonErr := strconv.ParseFloat(strings.TrimSpace(lonText), 64)

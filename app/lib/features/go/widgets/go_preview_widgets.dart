@@ -107,7 +107,12 @@ class _PreviewSummaryHeader extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final minutes = routeMinutes(route);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 16, 12),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space12,
+        0,
+        AppTheme.space16,
+        AppTheme.space12,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -140,7 +145,9 @@ class _PreviewSummaryHeader extends StatelessWidget {
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppTheme.space6,
+                      ),
                       child: Icon(
                         Icons.arrow_forward_rounded,
                         size: 13,
@@ -164,9 +171,9 @@ class _PreviewSummaryHeader extends StatelessWidget {
               _PreviewSaveButton(saved: isSaved, onTap: onToggleSave),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.space4),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -186,9 +193,11 @@ class _PreviewSummaryHeader extends StatelessWidget {
                               color: cs.onSurface,
                             ),
                           ),
-                          const SizedBox(width: 2),
+                          const SizedBox(width: AppTheme.space2),
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
+                            padding: const EdgeInsets.only(
+                              bottom: AppTheme.space2,
+                            ),
                             child: Text(
                               AppI18n.of(context).goMinutesUnit,
                               style: AppTextStyles.bodySmall.copyWith(
@@ -197,19 +206,19 @@ class _PreviewSummaryHeader extends StatelessWidget {
                             ),
                           ),
                           if (isFastest) ...[
-                            const SizedBox(width: 8),
+                            const SizedBox(width: AppTheme.space8),
                             _PreviewBadge(
                               label: AppI18n.of(context).goBadgeFastest,
                             ),
                           ],
                         ],
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: AppTheme.space6),
                       _PreviewMeta(route: route),
                     ],
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppTheme.space12),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -217,7 +226,7 @@ class _PreviewSummaryHeader extends StatelessWidget {
                       label: AppI18n.of(context).busDepart,
                       value: formatClock(route.startTime),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppTheme.space4),
                     _PreviewClock(
                       label: AppI18n.of(context).railColArrive,
                       value: formatClock(route.endTime),
@@ -249,13 +258,13 @@ class _PreviewMeta extends StatelessWidget {
           size: 14,
           color: cs.onSurfaceVariant,
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: AppTheme.space4),
         Text(
           AppI18n.of(context).walkMinutes(walkMinutes(route)),
           style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
         ),
         if (route.totalFare > 0) ...[
-          const SizedBox(width: 12),
+          const SizedBox(width: AppTheme.space12),
           Text(
             r'NT$ ',
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
@@ -293,7 +302,7 @@ class _PreviewClock extends StatelessWidget {
           label,
           style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
         ),
-        const SizedBox(width: 6),
+        const SizedBox(width: AppTheme.space6),
         Text(
           value,
           style: AppTextStyles.timeValue(
@@ -317,7 +326,10 @@ class _PreviewBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space6,
+        vertical: AppTheme.space2,
+      ),
       decoration: BoxDecoration(
         color: cs.onSurface,
         borderRadius: BorderRadius.circular(4),
@@ -364,10 +376,6 @@ class _PreviewSaveButton extends StatelessWidget {
   }
 }
 
-/// Vertical timeline of the previewed route. The left rail echoes the map
-/// marker language — origin node (Ink ring), transit boundary nodes (leg-color
-/// ring), destination node (Ink filled); connectors are dotted gray for walk
-/// sections and solid leg-color for transit sections.
 class _PreviewItinerary extends StatelessWidget {
   const _PreviewItinerary({required this.route, required this.destName});
 
@@ -417,7 +425,7 @@ class _PreviewItinerary extends StatelessWidget {
               ),
             ),
             if (formatClock(route.endTime).isNotEmpty) ...[
-              const SizedBox(height: 2),
+              const SizedBox(height: AppTheme.space2),
               Text(
                 AppI18n.of(context).arriveAtTime(formatClock(route.endTime)),
                 style: AppTextStyles.bodySmall.copyWith(
@@ -431,7 +439,12 @@ class _PreviewItinerary extends StatelessWidget {
       ),
     );
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space14,
+        AppTheme.space20,
+        AppTheme.space12,
+      ),
       children: rows,
     );
   }
@@ -483,10 +496,10 @@ class _PreviewItinerary extends StatelessWidget {
       children: [
         if (wait > 0) ...[
           _WaitLine(minutes: wait),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppTheme.space6),
         ],
         AppBadge(label: sectionLabel(AppI18n.of(context), s), color: color),
-        const SizedBox(height: 6),
+        const SizedBox(height: AppTheme.space6),
         Text(
           '${s.departure.name} → ${s.arrival.name}',
           maxLines: 2,
@@ -496,7 +509,7 @@ class _PreviewItinerary extends StatelessWidget {
             color: cs.onSurface,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: AppTheme.space2),
         Text(
           legLine,
           maxLines: 1,
@@ -509,26 +522,21 @@ class _PreviewItinerary extends StatelessWidget {
 }
 
 /// Scheduled waiting at a boarding place, stated on the leg that departs from
-/// it. Shared by the preview itinerary and the navigation sheet's step list —
-/// both are `part of go_screen.dart`, so one private widget serves both.
+/// it.
 class _WaitLine extends StatelessWidget {
-  const _WaitLine({required this.minutes, this.color});
+  const _WaitLine({required this.minutes});
 
   final int minutes;
-
-  /// Overrides the muted default so the navigation sheet can dim the line on a
-  /// completed leg along with the rest of that row.
-  final Color? color;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final tone = color ?? cs.onSurfaceVariant;
+    final tone = cs.onSurfaceVariant;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.hourglass_empty_rounded, size: 14, color: tone),
-        const SizedBox(width: 4),
+        const SizedBox(width: AppTheme.space4),
         Text(
           AppI18n.of(context).transferWaitMinutes(minutes),
           style: AppTextStyles.bodySmall.copyWith(color: tone),
@@ -584,15 +592,17 @@ class _PreviewRow extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: AppTheme.space14),
           Expanded(
             child: Padding(
-              padding: EdgeInsets.only(bottom: showConnector ? 20 : 0),
+              padding: EdgeInsets.only(
+                bottom: showConnector ? AppTheme.space20 : 0,
+              ),
               child: content,
             ),
           ),
           if (minutes != null) ...[
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Text(
               AppI18n.of(context).minutesValue(minutes!),
               style: AppTextStyles.timeValue(
@@ -653,7 +663,12 @@ class _PreviewFooter extends StatelessWidget {
         color: cs.surface,
         border: Border(top: BorderSide(color: cs.outlineVariant)),
       ),
-      padding: EdgeInsets.fromLTRB(20, 12, 20, 12 + bottomInset),
+      padding: EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space12,
+        AppTheme.space20,
+        AppTheme.space12 + bottomInset,
+      ),
       child: SizedBox(
         width: double.infinity,
         child: AppButton(
@@ -663,4 +678,36 @@ class _PreviewFooter extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Vertical spine line, centered in its box. Dashed for walk segments to match
+/// the map's dotted-walk polylines.
+class _ConnectorPainter extends CustomPainter {
+  const _ConnectorPainter({required this.color, required this.dashed});
+
+  final Color color;
+  final bool dashed;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+    final x = size.width / 2;
+    if (!dashed) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+      return;
+    }
+    const dash = 3.0;
+    const gap = 5.0;
+    for (var y = 0.0; y < size.height; y += dash + gap) {
+      final end = (y + dash).clamp(0.0, size.height);
+      canvas.drawLine(Offset(x, y), Offset(x, end), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ConnectorPainter old) =>
+      old.color != color || old.dashed != dashed;
 }

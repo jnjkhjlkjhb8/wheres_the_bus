@@ -7,9 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart'
-    show LocationServiceDisabledException, PermissionDeniedException;
+    show
+        Geolocator,
+        LocationServiceDisabledException,
+        PermissionDeniedException;
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/app.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
@@ -19,6 +23,7 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
+import 'package:wheres_the_bus/core/update/update_gate.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/models/near_models.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
@@ -44,11 +49,12 @@ import 'package:wheres_the_bus/shared/map/map_color_scheme.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
+import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/route_tab_bar.dart';
-import 'package:wheres_the_bus/shared/widgets/state_cards.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 part 'widgets/home_marker_helpers.dart';
@@ -67,10 +73,6 @@ const _kDefaultPosition = LatLng(25.0330, 121.5654);
 /// logo flush on the sheet edge, larger values lift it further up the map.
 const _kMapLogoGap = 2.0;
 
-/// How far a settled camera may sit from where the app aimed it and still
-/// count as that move arriving — see [_HomeScreenState._selfDrivenTarget]. A
-/// bounds fit lands on the centre of the padded viewport rather than the exact
-/// midpoint of the poles, so the match has to be approximate.
 const _kSelfDrivenSlackMeters = 100.0;
 
 /// One frame's worth of scan-ring geometry — see [_HomeScreenState._scanRing].
@@ -85,12 +87,6 @@ const _ScanRing _kScanRingIdle = (
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, this.station, this.showRailQuery = false});
 
-  /// The station the sheet's second layer is showing, from
-  /// `/near/:type/:id`. Null puts the sheet on its nearby list.
-  ///
-  /// The location leads and the sheet follows — a tap writes the location and
-  /// [_HomeScreenSheetX._syncSheetToLocation] opens the page — so arriving on a
-  /// link and tapping a marker take exactly the same path in.
   final NearStationRouteArgs? station;
 
   /// Whether `/rail-query` is showing the rail form as the sheet's second
@@ -122,30 +118,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   double _zoom = 15;
   _MarkerStyle _markerStyleCache = _MarkerStyle.largeDot;
 
-  /// Markers feed the [GoogleMap] leaf and nothing else, so they publish
-  /// through a notifier rather than setState. A camera settle refreshes them
-  /// while the sheet is showing its own bloc-driven list update; routing both
-  /// through the root element relaid the whole home tree twice per pan.
   final ValueNotifier<Set<Marker>> _markers = ValueNotifier(const {});
   int _markerRevision = 0;
   Timer? _idleDebounce;
   Timer? _metroPrecacheTimer;
 
-  /// Owned here rather than created by the `BlocProvider` in [build] so the
-  /// State can reach it before its first frame: the startup query fires from
-  /// [initState]'s post-frame callback, whose context sits above any provider
-  /// [build] would install.
   late final NearbyBloc _nearbyBloc = NearbyBloc();
 
   /// Attempted/succeeded nearby-query centers — see [NearbyViewportQuery]:
   /// a failed attempt never suppresses a retry, only a successful one does.
   NearbyViewportQuery _viewportQuery = const NearbyViewportQuery();
 
-  /// True once the camera sits on a position that came from the device rather
-  /// than [_kDefaultPosition] — the position persisted by the previous session
-  /// ([HiveStore.lastDevicePosition]), the OS-cached fix, or the fresh GPS one.
-  /// Nearby queries are gated on this so the default-Taipei centre the map
-  /// falls back to never itself triggers a station fetch.
   bool _deviceLocationResolved = false;
 
   bool _tabApplied = false;
@@ -186,9 +169,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   BusStopBloc? _stopBloc;
   StreamSubscription<BusStopState>? _stopSub;
 
-  /// Bumped per station-detail push. A superseded detail route completes its
-  /// pop future the moment it is removed from under the new one, so the
-  /// unfocus that follows must only fire for the detail still on screen.
   int _detailToken = 0;
 
   /// Latest nearby stations, mirrored from [NearbyBloc] by the listener in
@@ -206,10 +186,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _shownStationBack;
   bool _railQueryShown = false;
 
-  /// The nearby model behind the location being navigated to, when it came
-  /// from a tap that already had it. A location carries only what a link can;
-  /// rebuilding a model from it would throw away the walking time and the
-  /// group's own coordinates for no reason.
   NearStationViewModel? _tappedStation;
 
   /// True while a manual "locate me" tap is acquiring the GPS fix — drives the
@@ -219,13 +195,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   /// Drives the one-shot scan ring — see [_playScanSweep].
   late final AnimationController _scanController;
 
-  /// Where the ring is anchored, how far it reaches in logical pixels, and
-  /// whether it is the quiet variant that holds at its final radius instead of
-  /// expanding (see [_playScanSweep]). A zero radius means it has never played
-  /// and nothing is painted.
-  ///
-  /// Only [_ScanRingPainter] reads this, so it publishes through a notifier —
-  /// see the note on [_markers] for why the root element stays out of it.
   final ValueNotifier<_ScanRing> _scanRing = ValueNotifier(_kScanRingIdle);
 
   /// Set by [_locateUser] so the search its recentre triggers is answered with
@@ -233,26 +202,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   /// search is decided. A deliberate tap is a question; a pan is not.
   bool _scanFromLocate = false;
 
-  /// Where a camera move the app made for the rider is heading — the pan onto
-  /// a tapped station, the fit around its poles. Drilling into a station is
-  /// not a request to search somewhere else, so the idle those moves end on
-  /// must not re-query: the list the rider tapped from stays exactly as they
-  /// left it, and no ring claims a search nobody asked for.
-  ///
-  /// Held as the destination rather than a bare flag so a move that never
-  /// happened (target already on screen, animation coalesced away) cannot
-  /// swallow the rider's next real pan — only an idle that actually landed on
-  /// this spot is skipped.
   LatLng? _selfDrivenTarget;
 
   @override
   void initState() {
     super.initState();
-    // Where the device was last seen. Opens the map on the right city and lets
-    // the first nearby query go out on the frame after this one, instead of
-    // behind the OS location lookup. A stale-by-one-session centre is corrected
-    // by the real fix a moment later; the dedup in [_viewportQuery] then
-    // decides whether that costs a second query.
     final resumed = HiveStore.lastDevicePosition;
     if (resumed != null) {
       _center = LatLng(resumed[0], resumed[1]);
@@ -281,13 +235,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_initializeMapPosition());
-      // A position carried over from the last session is already good enough to
-      // query on, and the estimated-radius path needs no map controller — so
-      // this asks the router while the platform view and the location lookup
-      // are both still in flight. Without one, the query waits for a real fix.
       if (_deviceLocationResolved) _scheduleNearbyForViewport();
-      // Deferred so the SVG rasterization doesn't compete with home's first
-      // interactive frame; still warm well before a user reaches metro.
       _metroPrecacheTimer = Timer(const Duration(seconds: 4), () {
         if (mounted) MetroSvgMap.precache(context);
       });
@@ -331,12 +279,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // Home has no text input of its own, but it stays mounted under pushed
-    // routes that do (search). The keyboard's inset would otherwise shrink the
-    // sheet viewport here, which moves `_mapBottomPadding`, which writes a new
-    // camera padding to the map platform view — a camera shift on a page
-    // nobody can see, undone again on the way back. Pinning the insets keeps
-    // the map still while it is covered.
     return MediaQuery.removeViewInsets(
       context: context,
       removeBottom: true,
@@ -371,10 +313,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 /// What Android back does on home, in the order the page offers it.
 enum HomeBackStep { popSheetPage, collapseSheet, popRoute, exitApp }
 
-/// The step back takes given what home currently has to unwind.
-///
-/// Split out from the [PopScope] callback so the ordering — the only part
-/// that can silently go wrong — is a plain table a unit test can read.
 HomeBackStep homeBackStep({
   required bool sheetPagePushed,
   required bool sheetAbovePeek,

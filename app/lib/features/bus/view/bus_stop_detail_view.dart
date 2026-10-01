@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
@@ -19,6 +20,7 @@ import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/eta_list_tile.dart';
+import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';
 
 part '../widgets/bus_stop_sheet_widgets.dart';
@@ -64,16 +66,6 @@ class _BusStopDetailViewState extends State<BusStopDetailView> {
     super.dispose();
   }
 
-  /// The caller's bloc when it has one, ours otherwise — but always handed to
-  /// `BlocProvider.value`. The home map drops its bloc the moment the station
-  /// group closes, while the sheet showing it is still animating away and so
-  /// still rebuilding; picking the provider constructor per build would swap
-  /// `.value` for `create:` at the same tree position on that frame, which
-  /// provider rejects outright ("Rebuilt ... using a different constructor").
-  ///
-  /// A dropped bloc keeps the one already on screen rather than building a
-  /// replacement: the only caller that drops one is on its way out, and the
-  /// substitute would load a stop nobody is going to look at.
   BusStopBloc _bloc() {
     final supplied = widget.bloc;
     if (supplied != null) return _provided = supplied;

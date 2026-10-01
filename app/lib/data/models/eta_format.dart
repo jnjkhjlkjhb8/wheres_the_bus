@@ -9,12 +9,6 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 /// never round or floor. Non-positive seconds mean "no estimate" -> 0.
 int etaCeilMinutes(int seconds) => seconds > 0 ? (seconds / 60).ceil() : 0;
 
-/// The one arrival-instant decay derivation, shared by decode (fresh frame) and
-/// local decay (between frames). Given the canonical [arrivalUnix] (absolute
-/// wall-clock arrival, Unix seconds) it derives remaining seconds against [now]
-/// so the countdown stays accurate without a new server frame; a just-passed
-/// instant clamps to 0. When [arrivalUnix] is non-positive (server sent no
-/// absolute instant) the server-provided [serverEstimateSeconds] is used as-is.
 int etaRemainingSeconds({
   required int arrivalUnix,
   required int serverEstimateSeconds,
@@ -24,6 +18,8 @@ int etaRemainingSeconds({
   final seconds = arrivalUnix - now.millisecondsSinceEpoch ~/ 1000;
   return seconds > 0 ? seconds : 0;
 }
+
+const int busStopStatusNoReading = 67;
 
 /// Exhaustive interpretation of a bus stop's estimate + TDX stop-status code.
 enum BusStopDisplayStatus {
@@ -49,12 +45,6 @@ BusStopDisplayStatus busStopDisplayStatus({
   required int estimateSeconds,
   required int stopStatus,
 }) {
-  // A positive estimate reads as a countdown, whatever the status code: the
-  // backend fills status-1 gaps with a predicted NextBusTime and derives
-  // arrivalUnix from it precisely so the app can count down (bus_eta.go). Only
-  // a live bus (status 0) may read as arriving when the countdown hits zero;
-  // a predicted status-1 estimate that decays to zero falls back to its
-  // status label instead.
   if (stopStatus == 0 && estimateSeconds == 0) {
     return BusStopDisplayStatus.arriving;
   }
@@ -105,21 +95,8 @@ String? busStopDisplayLabel({
       };
 }
 
-/// Whether [stopStatus] means this stop has no more service today.
-///
-/// Reads the raw status rather than the rendered label: the label is localized,
-/// so comparing against its words would silently stop matching in any locale
-/// but the one it was written in.
 bool busStopServiceEnded(int stopStatus) => stopStatus == 3 || stopStatus == 4;
 
-/// Whether [busStopDisplayLabel] is about to return a *live* countdown ('2分',
-/// '進站中') rather than a scheduled departure clock ('20:40') or a
-/// service-state word ('末班已過').
-///
-/// The two read identically once they are strings, which is exactly the
-/// problem: a stop list that prints '20:40' and '2分' in one column is showing
-/// two different facts in one voice. Callers use this to style them apart, and
-/// to find where along a route the live run begins.
 bool busStopLabelIsLive({
   required int estimateSeconds,
   required int stopStatus,

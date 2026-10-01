@@ -20,9 +20,6 @@ class MetroArrival extends Equatable {
   /// countdown) and re-synced when the next ~15s frame lands.
   final int estimateSeconds;
 
-  /// Per-train identity threaded through for the 捷運下車提醒 bell + setup
-  /// sheet (ADR-0015). All default empty for arrivals that carry no binding
-  /// data (unpaired trains, non-TRTC systems).
   final String stationId;
   final String destinationStationId;
   final String system;
@@ -32,8 +29,6 @@ class MetroArrival extends Equatable {
   /// Per-car congestion levels (1..3) in car order, only the reported cars.
   final List<int> congestion;
 
-  /// Whether this arrival can host an alight-reminder bell: high-capacity TRTC
-  /// trains only — the Wenhu line (BR) is excluded (ADR-0015).
   bool get supportsAlightReminder => system == 'TRTC' && line != 'BR';
 
   @override
@@ -83,17 +78,18 @@ class MetroEtaState extends Equatable {
     this.schedule = const [],
     this.loading = false,
     this.error,
+    this.updatedAt,
   });
   final List<MetroArrival> arrivals;
   final List<MetroSchedule> schedule;
   final bool loading;
 
-  /// Live-stream health: set when the underlying ResilientSubscription gives
-  /// up (the feed exhausted its reconnect attempts) and cleared only when it
-  /// recovers. `arrivals` can go stale while this is set — the feed keeps
-  /// showing the last-known list rather than blanking it, so this field is
-  /// what lets the UI distinguish "current" from "silently stale" (F28).
   final AppError? error;
+
+  /// When the last live frame landed, or null before the first one. Paired
+  /// with [error]: the feed keeps showing its last-known arrivals after the
+  /// stream dies, and this is what tells a rider how old that list is.
+  final DateTime? updatedAt;
 
   MetroEtaState copyWith({
     List<MetroArrival>? arrivals,
@@ -101,13 +97,21 @@ class MetroEtaState extends Equatable {
     bool? loading,
     AppError? error,
     bool clearError = false,
+    DateTime? updatedAt,
   }) => MetroEtaState(
     arrivals: arrivals ?? this.arrivals,
     schedule: schedule ?? this.schedule,
     loading: loading ?? this.loading,
     error: clearError ? null : (error ?? this.error),
+    updatedAt: updatedAt ?? this.updatedAt,
   );
 
   @override
-  List<Object?> get props => [arrivals, schedule, loading, error];
+  List<Object?> get props => [
+    arrivals,
+    schedule,
+    loading,
+    error,
+    updatedAt,
+  ];
 }

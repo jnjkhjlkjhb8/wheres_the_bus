@@ -1,10 +1,5 @@
 import 'package:wheres_the_bus/core/powersync/local_db.dart';
 
-/// In-memory [LocalDb] that returns canned rows per query, so repository tests
-/// exercise their SQL-to-domain mapping without initializing PowerSync.
-///
-/// Rows are matched by the first positional parameter (the query's bind value,
-/// e.g. a station id or name); an unmatched key yields an empty result.
 class FakeLocalDb implements LocalDb {
   FakeLocalDb(this._rowsByKey) : _error = null;
 
@@ -30,8 +25,7 @@ class FakeLocalDb implements LocalDb {
     calls.add((sql: sql, parameters: parameters));
     final error = _error;
     if (error != null) {
-      // Tests intentionally throw whatever error type the real failure mode
-      // would produce (Exception, StateError, ...).
+      // The fake reproduces the supplied failure object.
       // ignore: only_throw_errors
       throw error;
     }

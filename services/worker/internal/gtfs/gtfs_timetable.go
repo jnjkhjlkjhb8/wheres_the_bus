@@ -9,10 +9,6 @@ import (
 // transfers and shapes. Split out of gtfs_files.go for size; that file
 // documents the identifier scheme every statement assumes.
 
-// ---------------------------------------------------------------------------
-// Timetable files: trips, calls, service days and metro headways.
-// ---------------------------------------------------------------------------
-
 // _gtfsMidnightGap is the longest wait between two consecutive calls that a
 // midnight rollover may imply. Beyond it a time that moves backwards is read as
 // bad data rather than as a new day (gtfsStopTimesSQL).
@@ -22,27 +18,8 @@ const _gtfsMidnightGap = 3 * time.Hour
 // which is what the statement can splice.
 var _gtfsMidnightGapSecs = strconv.Itoa(int(_gtfsMidnightGap / time.Second))
 
-// _gtfsCalendarDays is how many days of service the feed states, counting from
-// the day it is built.
-//
-// Rail is the only mode landed as a per-date expansion, so before this bound
-// existed the window was simply however far TDX had landed — ~85 days, which is
-// 91,875 of the feed's 209,894 trips and a third of its calls. Nothing needs
-// that reach: the app answers a rail timetable query straight out of PostgreSQL
-// (ADR-0005), and this feed exists to plan journeys, which nobody does three
-// months out. The feed is rebuilt nightly, so the window always carries a
-// fortnight of slack against a run that fails.
 const _gtfsCalendarDays = 15
 
-// _railTripRows flattens both daily-timetable tables to one shape.
-//
-// The two differ in ways that have to be reconciled before anything else can be
-// shared: tra_dailytimetable.traindate is text while thsr_dailytimetable's is
-// timestamptz landed at Taipei midnight (so it must be read back in Taipei, not
-// in the services' UTC session), and only TRA carries train types, suspension
-// flags and wheelchair flags.
-//
-// Read railTripSource, not this: every consumer wants the windowed set.
 const _railTripRows = `
   SELECT
     'TRA' AS operator,
@@ -71,34 +48,12 @@ const _railTripRows = `
   FROM raw_tdx.thsr_dailytimetable
   WHERE COALESCE(dailytraininfo->>'TrainNo', '') <> ''`
 
-// _railTripSource is railTripRows cut to the feed's window.
-//
-// The bound lives here rather than on calendar_dates because trips.txt and
-// stop_times.txt read this set too and derive their service_id from the date in
-// it. Trimming only the calendar would leave every trip past the window naming
-// a service no date ever states, which is not a shorter feed but a broken one.
-//
-// now() is stable for the length of a transaction, and the whole archive is
-// written inside one (writeGTFSArchive), so every file resolves the window to
-// the same fortnight however long the build runs.
 var _railTripSource = `
   SELECT * FROM (` + _railTripRows + `) w
   WHERE w.service_date >= (now() AT TIME ZONE 'Asia/Taipei')::date
     AND w.service_date < (now() AT TIME ZONE 'Asia/Taipei')::date + ` +
 	strconv.Itoa(_gtfsCalendarDays)
 
-// _gtfsCalendarDatesSQL emits one service per date the timetable covers.
-//
-// calendar.txt is not used: rail is landed as a per-date expansion, so its
-// services are single dates and there is no weekly pattern to state. Expanding
-// rather than inferring is also what makes public holidays and added or
-// cancelled workings correct for free — they are already baked into the dates
-// TDX served.
-//
-// The range every weekly mask is expanded over is the dates rail states, which
-// railTripSource has already cut to gtfsCalendarDays. Rail is what sets it
-// because it is the only mode landed per date — the bus daily timetable lands
-// one day and is published here as a weekday mask.
 var _gtfsCalendarDatesSQL = `
 WITH day AS (
   -- The feed's calendar range: every date any timetable covers. Only rail
@@ -133,11 +88,6 @@ FROM day CROSS JOIN svc
 WHERE svc.week[EXTRACT(DOW FROM day.service_date)::int + 1]
 ORDER BY 1, 2`
 
-// _gtfsTripsSQL emits one trip per train per service date.
-//
-// trip_id embeds the train number and the date rather than being a surrogate:
-// it has to stay stable across nightly rebuilds so a GTFS-RT TripUpdate can name
-// it, and TrainNo is the identifier the realtime delay feed reports against.
 var _gtfsTripsSQL = `
 -- DISTINCT ON collapses the handful of subroutes that run two departures in the
 -- same minute, which would otherwise share a trip_id. Merging them loses one
@@ -222,19 +172,6 @@ WHERE trip_id <> ''
   AND trip_id IN (SELECT trip_id FROM ` + _gtfsStopTimeTable + `)
 ORDER BY trip_id`
 
-// _gtfsStopTimesSQL emits each trip's calls.
-//
-// Times cross midnight and GTFS requires them to increase within a trip, so a
-// train that departs 23:50 and arrives 00:20 must be written 24:20:00, not
-// 00:20:00. TDX wraps instead, and nothing in the payload says it wrapped, so
-// the rollover is recovered by watching for a time that moves backwards along
-// the stop sequence and adding a day from there on. Getting this wrong does not
-// fail anything loudly — it silently produces last trains that cannot be
-// boarded.
-//
-// A stop flagged suspended stays in the sequence with pickup and drop-off
-// disabled rather than being removed: the train still passes through, and
-// deleting the row would make the surrounding times look like a direct run.
 var _gtfsStopTimesSQL = `
 WITH calls AS (
   -- Rail and bus share a shape: a per-call list with wall-clock HH:MM.
@@ -366,16 +303,6 @@ SELECT DISTINCT
 FROM timed
 ORDER BY trip_id, stop_sequence`
 
-// _gtfsFrequenciesSQL states how often each metro template trip repeats.
-//
-// exact_times is 0: the headway is a band ("a train every 4 to 6 minutes"), not
-// a schedule, so a planner should treat departures as evenly spread rather than
-// timetabled. MinHeadwayMins is used because a rider's wait is bounded by the
-// shortest interval on offer, and the difference between the two is a minute or
-// two on the systems this covers.
-//
-// A headway row carries no direction while a trip does, so each band applies to
-// both directions of its route.
 var _gtfsFrequenciesSQL = `
 SELECT DISTINCT ON (trip_id, start_time, end_time)
   trip_id, start_time, end_time, headway_secs, exact_times
@@ -406,18 +333,6 @@ WHERE jsonb_typeof(f.headways) = 'array'
 -- best service on offer.
 ORDER BY trip_id, start_time, end_time, headway_secs`
 
-// _metroPatternSQL is the ordered station list of every metro route direction,
-// with each station's cumulative seconds from the route's origin.
-//
-// Metro stop_times are derived rather than read. StationTimeTable has no train
-// identifier — its Sequence is the Nth departure at that station, and it does
-// not line up across stations once a route has any short working, which is
-// demonstrable on the Bannan line — so joining stations on it invents trips that
-// do not run. What is reliable is the running time between adjacent stations,
-// which S2STravelTime states directly, so the shape of a journey is built from
-// the segment times and the departure list only anchors it.
-//
-// StopTime is added to RunTime because a rider's clock includes the dwell.
 const _metroPatternSQL = `
   WITH system_size AS (
     -- The longest route each system runs, in hops. Used to reject segment rows
@@ -479,16 +394,6 @@ const _metroPatternSQL = `
                  AND g.from_id = l.prev_station
                  AND g.to_id = l.station_id`
 
-// gtfsWeekMaskSQL and gtfsWeekArraySQL turn a TDX ServiceDay object into a
-// service identity shared by every mode that runs to a weekly pattern.
-//
-// The mask is spelled out rather than hashed so a service id says what it means:
-// W:1111100 is Monday to Friday. Anything with the same mask is the same
-// service, which keeps the count at a handful rather than one per route, and
-// lets metro headways and bus schedules share one set of services instead of
-// each inventing its own.
-//
-// The array is ordered from Sunday because EXTRACT(DOW) is 0 for Sunday.
 func gtfsWeekMaskSQL(col string) string {
 	return `'W:' || (` + col + `->>'Monday')::boolean::int::text
 	     || (` + col + `->>'Tuesday')::boolean::int::text
@@ -507,24 +412,6 @@ func gtfsWeekArraySQL(col string) string {
 		(` + col + `->>'Saturday')::boolean]`
 }
 
-// _busScheduleSource is the weekly bus timetable, and with busOriginTripSource
-// the only thing the static feed is built from.
-//
-// bus_dailytimetable is deliberately not a source here. It is a single-day
-// expansion — TDX serves today only and the landing keeps one date — so a trip
-// taken from it can state no recurrence, and on the 2026-07-31 build 24,875 bus
-// trips were pinned to that one date while the rail half of the same feed ran
-// 85. bus_schedule states a ServiceDay mask per departure, which is what a
-// planner asked about next Tuesday needs. The cost is measured and paid: 73 of
-// the 2,976 route directions the daily timetable carries have no schedule
-// row or no usable pattern and leave the feed with this change.
-//
-// It is filtered to trips that carry real per-stop times. Measured across the
-// landed data, only Kaohsiung does (averaging 31.9 calls per trip); Taipei, New
-// Taipei, Tainan and Taichung all average 1.0, meaning a departure time at the
-// origin and nothing else. Those go through busOriginTripSource instead, which
-// takes exactly the entries this one rejects, so the two never emit the same
-// departure twice.
 var _busScheduleSource = `
   SELECT
     s.routeuid,
@@ -567,11 +454,6 @@ var _busScheduleServiceSQL = `
   WHERE jsonb_typeof(s.timetables) = 'array'
     AND jsonb_typeof(t.value->'ServiceDay') = 'object'`
 
-// _metroServiceSQL turns each headway row's weekday mask into a service id.
-//
-// The mask is spelled out rather than hashed so a service id says what it means:
-// M:1111100 is Monday to Friday. Two routes with the same mask share a service,
-// which is what keeps the count at a handful rather than one per route.
 var _metroServiceSQL = `
   SELECT DISTINCT
     ` + gtfsWeekMaskSQL("serviceday") + ` AS service_id,
@@ -580,29 +462,6 @@ var _metroServiceSQL = `
   WHERE jsonb_typeof(serviceday) = 'object'
     AND system IN (SELECT DISTINCT system FROM raw_tdx.metro_s2straveltime)`
 
-// _gtfsTransfersSQL states the interchanges a planner cannot work out for itself.
-//
-// Only metro line-to-line transfers are emitted. TDX measured these — the walk
-// from one platform to another inside a station — and no amount of street data
-// recovers them, because the walk never leaves the building. Taipei Main's
-// Bannan-to-Tamsui interchange is four minutes; routing it over the pavement
-// above would be both longer and wrong.
-//
-// Bus station groups are deliberately not emitted, though the data is landed and
-// the idea is tempting. Those are stops a few metres apart on a street, which is
-// exactly what a router's own footpath computation over OSM is good at, and the
-// volume is prohibitive: the largest group holds 151 stops, and even capped at
-// eight members per group the stop-level pairs come to 240,118 rows. That is a
-// large feed for something the router already does better with real geometry.
-//
-// Rows are attached to the station rather than the platform, so the rule applies
-// to every platform beneath it. A transfer naming a station the feed does not
-// carry is dropped: TDX states ten whose destination is absent from
-// Metro/Station, and a dangling reference is a validator error.
-//
-// The direction TDX states is the direction emitted. Thirty-one of the
-// forty-one rows already carry their reverse, and synthesising the rest would
-// assert a symmetry that platform layouts do not always have.
 var _gtfsTransfersSQL = `
 SELECT
   t.system || ':' || t.fromstationid AS from_stop_id,
@@ -619,34 +478,6 @@ WHERE t.transfertime > 0
               WHERE p.complete AND p.system = t.system AND p.station_id = t.tostationid)
 ORDER BY from_stop_id, to_stop_id`
 
-// _gtfsShapesSQL emits the drawn path of each route.
-//
-// Geometry is passed through unsimplified. It was briefly reduced with a
-// five-metre Douglas-Peucker tolerance, which cut 6,044,458 points to 1,500,775,
-// on the argument that five metres is sub-pixel on a map. That argument is
-// wrong: this file exists to be drawn, a rider zoomed to street level can see
-// five metres, and TDX's own sampling precision is unknown — degrading it a
-// second time is not ours to do. Disk and build time are the cheap side of that
-// trade.
-//
-// Bus geometry keyed by subroute and direction, and metro by line. Both are
-// assignable to a trip: a bus trip runs one subroute in one direction, and a
-// metro route belongs to one line.
-//
-// TRA and THSR are stitched rather than stored: rail_shapes is keyed by line and
-// a train crosses lines freely, so their geometry is assembled per stop sequence
-// in gtfs_rail_shape.go and appended here.
-//
-// A trip claims a shape only when one exists, checked on the trips side. The
-// check has to live in exactly one place: when both files filtered independently
-// they disagreed — shapes.txt considered only the daily-timetable trips while
-// trips.txt also emitted the weekly-schedule ones — and 14,334 trips pointed at
-// shapes that were never written.
-//
-// Bus rows with no SubRouteUID apply to every subroute of the route. They are
-// skipped rather than fanned out: the fan-out would repeat a few thousand points
-// per subroute for geometry that is already approximate, and a missing shape
-// costs only a straight line on a map.
 var _gtfsShapesSQL = `
 WITH shape AS (
   SELECT

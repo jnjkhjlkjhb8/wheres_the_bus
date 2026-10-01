@@ -2,10 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce_flutter/adapters.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 
-/// Guards the sweep rules in [HiveStore.pruneStaticCache] (ADR-0017).
-/// Both fail silently in production if they are wrong — a too-greedy key match
-/// just looks like "the offline cache never works", which is the hardest
-/// possible symptom to trace back to here.
 void main() {
   setUp(() async {
     Hive.init('./.dart_tool/hive_test_static_cache');

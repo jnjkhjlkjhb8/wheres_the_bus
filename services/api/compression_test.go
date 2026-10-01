@@ -26,12 +26,6 @@ const (
 	_compressionStreamFrames = 3
 )
 
-// The router registers no compressor of its own; it relies on grpc-go answering
-// a request in whatever encoding the request arrived in, which only works
-// because main.go blank-imports encoding/gzip. That is an assumption about the
-// library, so pin it end to end rather than asserting the import exists: a
-// gzipped request must come back with a response smaller on the wire than the
-// message it carries.
 func TestServerMirrorsGzipFromClient(t *testing.T) {
 	conn, seen := compressionTestConn(t)
 
@@ -45,10 +39,6 @@ func TestServerMirrorsGzipFromClient(t *testing.T) {
 	assertCompressed(t, seen, 1)
 }
 
-// The same mirroring has to hold for every frame of a server stream, not just
-// the unary reply — that is what GrpcCompressionInterceptor.interceptStreaming
-// is buying, and grpc-go picks the send compressor once per stream rather than
-// per message, so a regression here would be silent.
 func TestServerMirrorsGzipOnServerStream(t *testing.T) {
 	conn, seen := compressionTestConn(t)
 

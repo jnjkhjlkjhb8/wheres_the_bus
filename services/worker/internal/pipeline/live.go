@@ -13,10 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// LiveSource is the seam between a live job and TDX. The production adapter
-// (RESTLiveSource) wraps the shared TDX client's Get; the test adapter
-// (fakeLiveSource) serves committed fixture bytes. fetch mirrors Get's contract
-// A Modified=false fetch is a 304 Not-Modified (cached live data still valid).
 type LiveSource interface {
 	Fetch(ctx context.Context, url, name string) (*shared.TDXFetch, error)
 }
@@ -35,19 +31,10 @@ type LivePipe interface {
 	Exec(ctx context.Context) error
 }
 
-// LiveSink is the seam between a live job and Redis. The production adapter
-// (RedisLiveSink) wraps *redis.Client; the test adapter (captureLiveSink)
-// records every write. pipeline builds one buffered batch; refreshTTL re-arms
-// the TTL on every key matching the given patterns (SCAN + EXPIRE), the
-// operation the 304 path needs.
 type LiveSink interface {
 	Pipe() LivePipe
 	RefreshTTL(ctx context.Context, patterns []TTLPattern) error
 	RefreshOwnedTTL(ctx context.Context, key string, ttl time.Duration) error
-	// getString and getHash close the read seam: two jobs need to read a value
-	// back from Redis mid-tick (bus reads the cached weather snapshot for
-	// prediction features; tra reads the delay hash to merge into the live board),
-	// so those reads go through the sink instead of a raw *redis.Client capture.
 	GetString(ctx context.Context, key string) (string, error)
 	GetHash(ctx context.Context, key string) (map[string]string, error)
 }
@@ -60,11 +47,6 @@ type TTLPattern struct {
 	TTL     time.Duration
 }
 
-// LiveSpec is one realtime dataset's recipe: its registry key, cron cadence, the
-// key patterns+TTL to re-arm on a 304, and the transform. run receives a
-// BoundFetch (a fetch wrapper that auto-refreshes ttlPatterns on a 304) and the
-// sink, mirroring loadSpec.load receiving a decoder and db/rc. Transforms keep
-// their existing bodies; the spec only injects the source and sink.
 type LiveSpec struct {
 	Key         string
 	Cadence     string
@@ -74,12 +56,6 @@ type LiveSpec struct {
 	Run         func(ctx context.Context, fetch BoundFetch, sink LiveSink) error
 }
 
-// BoundFetch is the fetch a LiveSpec's run closure calls. It is LiveSource.fetch
-// pre-bound to one spec: on a 304 Not-Modified it refreshes that spec's
-// ttlPatterns before returning, generalizing the bus-only 304→TTL rule to every
-// live job; without it mrt/tra/bike would skip and let their snapshots expire.
-// run still checks modified and returns on false; the TTL refresh has already
-// happened by then.
 type BoundFetch func(ctx context.Context, url, name string) (*shared.TDXFetch, error)
 
 // BindFetch wraps src.fetch so a 304 for this spec re-arms its Redis TTLs
@@ -121,10 +97,6 @@ func bufferedPrefix(dec *json.Decoder) string {
 	return string(buf[:n])
 }
 
-// DecodeLiveItems strictly consumes one JSON array. Unlike the static-loader
-// decoder, realtime snapshots must fail closed: skipping a malformed element
-// and acknowledging the response would make the partial Redis snapshot look
-// complete on the next conditional request.
 func DecodeLiveItems[T any](dec *json.Decoder, fn func(T) error) error {
 	opening, err := dec.Token()
 	if err != nil {
@@ -194,10 +166,6 @@ func AcknowledgeTDXFetch(fetch *shared.TDXFetch) error {
 	return nil
 }
 
-// RunLive executes the named live jobs once. keys selects registry entries by
-// LiveSpec.key; an empty keys slice runs every registered job. Each job runs
-// under its own isolation: a panic or error is logged and does not abort the
-// others (mirrors runLoadSpecs' per-partition isolation).
 func RunLive(ctx context.Context, src LiveSource, sink LiveSink, specs []LiveSpec, keys []string) {
 	if len(keys) > 0 {
 		want := map[string]bool{}
@@ -338,6 +306,9 @@ func (s RedisLiveSink) RefreshOwnedTTL(ctx context.Context, key string, ttl time
 	expires := make([]*redis.BoolCmd, 0, len(members))
 	for _, member := range members {
 		expires = append(expires, pipe.Expire(ctx, member, ttl))
+		if len(member) > len("bike_availability:") && member[:len("bike_availability:")] == "bike_availability:" {
+			pipe.Expire(ctx, shared.BikeAvailabilityObservedAtKey(member[len("bike_availability:"):]), ttl)
+		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return _oops.With("key", key).Wrapf(err, "refresh ownership set")
@@ -371,12 +342,6 @@ func (s RedisLiveSink) RefreshOwnedTTL(ctx context.Context, key string, ttl time
 	return nil
 }
 
-// redisLivePipe adapts a go-redis Pipeliner to the LivePipe interface, dropping
-// the per-command result handles the live jobs never inspect (they only Exec).
-//
-// Queuing a command never touches the network — the v9 pipeline appends to a
-// buffer and discards the context it is handed — so the buffering methods pass
-// context.Background() and Exec's context is the one that governs the round-trip.
 type redisLivePipe struct {
 	pipe       redis.Pipeliner
 	finiteWait bool
@@ -421,19 +386,10 @@ func (p *redisLivePipe) Exec(ctx context.Context) error {
 	if !p.finiteWait {
 		return errors.New("live Redis pipeline requires finite Redis read timeout and connection timeouts")
 	}
-	// EXEC now runs under the caller's context, but the finite client timeouts
-	// are kept as a floor: an unbounded context must still not let a transaction
-	// land after this returns and overwrite a newer run. A context that expires
-	// during the wait is joined with the Redis result so callers never
-	// acknowledge their TDX marker, even if EXEC itself succeeded.
 	_, execErr := p.pipe.Exec(ctx)
 	return errors.Join(execErr, ctx.Err())
 }
 
-// TTL windows re-armed on a 304, per the CONTEXT.md operating rule. They match
-// the SET TTLs each job writes on the success path so a 304 extends a snapshot
-// by exactly one more validity window: bus 180s, mrt/bike 2min, tra 3min, thsr
-// seats 15min (a slow 10min cadence, so the snapshot outlives one missed refresh).
 const (
 	BusLiveTTL       = 180 * time.Second
 	MrtLiveTTL       = 2 * time.Minute
@@ -443,35 +399,10 @@ const (
 	OwnedKeysTTL     = 24 * time.Hour
 )
 
-// The reduced cadence an unwatched city falls back to, and the window a rider's
-// live subscription keeps their city at full cadence for (FDPL-90). Bus and bike
-// poll all 23 TDX cities every 30s regardless of whether anyone is looking,
-// which is ~99% of this project's TDX request budget; a city nobody is watching
-// does not need a 30s refresh, only a fresh enough one to answer the next rider.
-//
-// The two are a pair, not independent knobs. liveDemandTTL must stay above
-// liveColdCadence: a cold city publishes nothing, so a subscriber's own initial
-// write is the only thing that can mark it watched, and that write has to
-// outlive the gap until the next reduced-cadence tick actually produces a frame.
-// Invert them and a cold city can never warm up.
 const (
 	LiveColdCadence = 5 * time.Minute
 )
 
-// LiveDemandGate reports whether dataset's city should be fetched this tick.
-//
-// A watched city always is. An unwatched one is fetched once per
-// liveColdCadence, which the cold marker's own TTL times: while the marker
-// exists the tick is skipped, and its expiry is what lets the next one through.
-// No timestamp is stored anywhere; Redis expiry is the clock.
-//
-// A Redis read that fails outright answers true. Losing freshness for every
-// city is a far worse failure than spending the requests the job would have
-// spent anyway, so the gate degrades to the pre-FDPL-90 behaviour.
-// Setting LIVE_DEMAND_GATE=off disables the gate entirely: every city is
-// fetched every tick, as before FDPL-90. It is a manual kill switch for when
-// the reduced cadence has to be taken out of the picture; it costs the full
-// TDX request budget for as long as it is set.
 func LiveDemandGate(ctx context.Context, sink LiveSink, dataset, city string) bool {
 	if os.Getenv("LIVE_DEMAND_GATE") == "off" {
 		return true

@@ -12,6 +12,13 @@ import 'package:wheres_the_bus/features/alerts/bloc/alert_state.dart';
 import '../../../support/helpers/in_memory_settings_store.dart';
 
 void main() {
+  test('AlertBloc does not subscribe on construction', () async {
+    final bloc = AlertBloc();
+    addTearDown(bloc.close);
+
+    expect(bloc.hasActiveSubscriptions, isFalse);
+  });
+
   const traSource = AlertSourceId(AlertSourceKind.tra);
   const busSource = AlertSourceId(AlertSourceKind.busAlert, 'Taipei');
 

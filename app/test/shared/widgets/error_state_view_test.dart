@@ -36,10 +36,6 @@ void main() {
     expect(tapped, isTrue);
   });
 
-  // Real call sites place this in unbounded-height contexts: bus stop detail
-  // wraps it in a SliverToBoxAdapter, rail search returns it as a ListView
-  // child. Both hand down an infinite maxHeight, which the centring
-  // ConstrainedBox must not adopt as a minimum.
   testWidgets('lays out inside a sliver', (tester) async {
     await pump(
       tester,

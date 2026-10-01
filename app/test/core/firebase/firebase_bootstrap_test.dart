@@ -3,15 +3,6 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_bootstrap.dart';
 
-/// `FirebaseBootstrap.ensureCoreInitialized`'s single-flight
-/// guard and `initFailSoft` propagating a failure instead of swallowing it.
-///
-/// `singleFlightCoreInit` is tested directly (via `@visibleForTesting`)
-/// rather than through `ensureCoreInitialized`/`init` because
-/// `FirebaseGate.enabled` is compile-time `false` under `flutter test`
-/// (no `--dart-define=FIREBASE_ENABLED=true`), which would make every call
-/// through the public entry points a no-op regardless of what's being
-/// tested.
 void main() {
   setUp(FirebaseBootstrap.resetCoreInitForTesting);
 
@@ -48,8 +39,6 @@ void main() {
           FirebaseBootstrap.singleFlightCoreInit(failingOnce),
           throwsA(isA<StateError>()),
         );
-        // The in-flight future's catchError (which clears the memoized
-        // future) runs in a microtask after the throw above is observed.
         await Future<void>.delayed(Duration.zero);
 
         await FirebaseBootstrap.singleFlightCoreInit(failingOnce);

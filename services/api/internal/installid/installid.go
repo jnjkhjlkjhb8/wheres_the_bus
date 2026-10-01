@@ -1,7 +1,3 @@
-// Package installid authenticates a device-scoped call. Riders are anonymous —
-// there is no account system — so the caller is identified by the installation
-// id it registered with and authenticated against that installation's secret.
-// Every device-scoped service shares this one credential check.
 package installid
 
 import (
@@ -23,10 +19,6 @@ const (
 	SecretMetadataKey = "x-install-secret"
 )
 
-// Authorizer is the slice of the device store a device-scoped service
-// needs:
-// it authenticates the caller against the per-installation secret without
-// giving this service any way to read or write device rows.
 type Authorizer interface {
 	AuthorizeInstall(context.Context, string, []byte) (bool, error)
 }
@@ -35,10 +27,6 @@ func SecretHash(ctx context.Context, installID string) ([]byte, error) {
 	metadataInstallID, ok := CallerID(ctx)
 	secrets := metadata.ValueFromIncomingContext(ctx, SecretMetadataKey)
 	if !ok || metadataInstallID != installID || len(secrets) != 1 || !ValidText(secrets[0], 256) || len(secrets[0]) < 32 {
-		// Logged because the caller-facing failure is silent by design: the app
-		// reverts its optimistic UI and shows nothing, so without this line a
-		// device that never sends the credential is indistinguishable from one
-		// that never made the call.
 		zap.S().Warnw("credential rejected",
 			"component", "firebase",
 			"action", "installation_secret",
@@ -53,10 +41,6 @@ func SecretHash(ctx context.Context, installID string) ([]byte, error) {
 	return hash[:], nil
 }
 
-// CallerID extracts the stable installation identifier used to
-// avoid grouping distinct app installations behind the same carrier NAT into
-// one rate-limit bucket. Authentication still happens independently through
-// installationSecretHash and App Check; this value is only a fairness key.
 func CallerID(ctx context.Context) (string, bool) {
 	values := metadata.ValueFromIncomingContext(ctx, MetadataKey)
 	if len(values) != 1 || !ValidText(values[0], 128) {

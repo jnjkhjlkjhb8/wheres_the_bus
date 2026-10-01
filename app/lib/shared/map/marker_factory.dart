@@ -9,49 +9,20 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 class MapMarkers {
   const MapMarkers._();
 
-  // LRU-bounded: stop plates x live states x themes, plus selected capsules,
-  // would otherwise grow the cache monotonically for the life of the app. Sized
-  // so one frame of the longest route plus its vehicles fits without evicting
-  // itself — asserted by stop_marker_test.
   static const int _cacheCap = 256;
   static final LinkedHashMap<String, Object> _cache =
       LinkedHashMap<String, Object>();
 
-  // Bubbles get their own cache because their key carries the GPS-freshness
-  // text, which changes every second through the 15–59 s window. Sharing the
-  // main cache meant one open bubble minted ~45 write-once entries a minute and
-  // evicted the stop plates behind it, so the next live frame had to re-paint
-  // plates it had already drawn. Measured on a 66-stop route: frames needing
-  // fresh plates cost 53 ms against 2 ms for frames that still had them.
-  //
-  // Small on purpose: only a pinned bus and any vehicle in a warning state
-  // carries a bubble, and each is re-keyed every second regardless.
   static const int _bubbleCacheCap = 16;
   static final LinkedHashMap<String, Object> _bubbleCache =
       LinkedHashMap<String, Object>();
 
   static double _dpr = 3;
 
-  /// Ceiling on [_textScale]. A 32pt stop disc grows to ~42pt here, which is
-  /// about the 44pt touch-target floor — past that, adjacent stops on a dense
-  /// urban route start to occlude the line they annotate and the marker stops
-  /// being an annotation. Map furniture earns less headroom than body text.
   static const double _maxTextScale = 1.3;
 
-  /// Uniform scale applied to a text-bearing marker's type *and* its geometry,
-  /// so the ladder's proportions (ring weights, wash, pill shape — see
-  /// `docs/design.md`) survive it instead of a bigger label bursting a fixed
-  /// plate.
-  ///
-  /// Only ever raised, never lowered: the sizes in `docs/design.md` are the
-  /// designed minimum, and the map underneath does not shrink with the text
-  /// setting, so shrinking its labels buys nothing.
   static double _textScale = 1;
 
-  /// Layout unit — device pixels per logical pixel, enlarged for the text
-  /// setting. [_dpr] alone still governs the bitmap's own `imagePixelRatio`, so
-  /// a scaled marker is genuinely bigger on screen rather than the same size
-  /// rendered at more detail.
   static double get _unit => _dpr * _textScale;
 
   /// Called from the root `MaterialApp.router` builder, which is the one place
@@ -86,39 +57,6 @@ class MapMarkers {
     });
   }
 
-  /// Live-vehicle mark: a solid disc carrying a heading chevron, painted
-  /// north-up and published with `Marker.rotation`, so heading is a continuous
-  /// marker property rather than one of 60 pre-rendered perspective frames. A
-  /// turning bus turns instead of cutting between 6° steps, one bitmap serves
-  /// every heading, and the rotation can be interpolated by the caller's glide.
-  ///
-  /// **The silhouette stays a plain circle; the heading cue lives inside it.**
-  /// That is the load-bearing decision here, arrived at by building the
-  /// alternative and looking at it: a disc with a point on one side is pin
-  /// geometry, and a pin means *a place*, not a vehicle — at 28pt it renders as
-  /// a map pin or a blood drop however the corner where point meets disc is
-  /// tuned. A circle also cannot restyle itself as it rotates, the way a
-  /// rounded square turns into a diamond at 45°, so a whole fleet keeps one
-  /// silhouette while driving.
-  ///
-  /// States escalate by **fill before colour**, the grammar the stop ladder
-  /// already uses (`docs/design.md`) — an ink [body] with no [ring] is a bus
-  /// with nothing to report, an ink body plus a status [ring] is a notice, and
-  /// a status-coloured [body] is a warning. [halo] is the basemap-coloured
-  /// outline every state carries, separating the mark from the route polyline
-  /// it rides on; the chevron is drawn in it too, so it reads at full contrast
-  /// on every body colour without needing a colour of its own.
-  ///
-  /// Solid body against the stop ladder's hollow plates is what keeps the two
-  /// apart at a glance, so the disc must never be painted hollow here.
-  ///
-  /// [showHeading] false drops the chevron, for a vehicle with no usable
-  /// heading — a plain disc, which is honest. The sprite atlas had no way to
-  /// say that, and pointed such a bus at true north.
-  ///
-  /// Scaled by [_dpr] alone rather than [_unit]: the mark carries no text, so
-  /// the text setting has nothing to scale here — the same reasoning as
-  /// [busBubble]'s clearance.
   static Future<BitmapDescriptor> busMark({
     required Color body,
     required Color halo,
@@ -134,10 +72,6 @@ class MapMarkers {
       // One unit = one logical px at the designed 28pt body, so every constant
       // below reads as its measurement from the design mock.
       final u = size / 28 * _dpr;
-      // Square canvas with the body dead centre, because `Marker.rotation`
-      // turns the bitmap about its anchor — an off-centre body would orbit its
-      // own position as it turned. 24 = radius 14 + the halo's 4 + room for
-      // the shadow's offset and blur.
       final half = 24 * u;
       final c = Offset(half, half);
       final disc = Path()..addOval(Rect.fromCircle(center: c, radius: 14 * u));
@@ -180,27 +114,6 @@ class MapMarkers {
     });
   }
 
-  /// Member-stop capsule: the marker asset's own plate with a label welded to
-  /// its side, as one rounded rect.
-  ///
-  /// A bitmap rather than a Flutter overlay on purpose. An overlay has to be
-  /// projected from `onCameraMove`, whose events arrive on the platform
-  /// channel out of step with the map's own frames — the capsule then lags the
-  /// tiles by an irregular amount and visibly shakes through every pan. A
-  /// marker is composited by the map in the same frame as the ground under it,
-  /// so it cannot drift. The price is that a [BitmapDescriptor] can't be
-  /// tweened, which is why the spread arrives staggered rather than travelling.
-  ///
-  /// Returns the anchor to pin it by as well as the bitmap, because the
-  /// plate is at one end rather than the middle. Padding the bitmap to centre
-  /// the plate would be simpler, but a marker's whole bitmap takes taps — the
-  /// transparent half would sit there stealing them from the map beside it.
-  ///
-  /// [plateGround] is the asset's own plate colour — white for bus, bike and
-  /// rail. It is painted under the asset with only its outer corners rounded,
-  /// squaring the two corners that meet the label: the asset rounds all four,
-  /// and on a selected capsule the ink label would otherwise show through
-  /// those corners as notches biting into the plate.
   static Future<({BitmapDescriptor icon, Offset anchor})> stationCapsule({
     required String asset,
     required String label,
@@ -336,28 +249,6 @@ class MapMarkers {
     });
   }
 
-  /// One bus-route stop marker, in any of its live states, optionally with the
-  /// stop name welded to its side as a selected capsule.
-  ///
-  /// A single painter for the whole state ladder, because the states differ
-  /// only in [fill] / [ring] / [content] and in whether the plate is a disc or
-  /// a pill. The shape changes only when the content does: a countdown or a
-  /// status glyph fits a disc, while 進站中 is a word, so it gets a [pill] sized
-  /// to the text. Which state maps to which values is the caller's business
-  /// (`bus_route_data_helpers.dart`) — this file knows nothing about ETAs.
-  ///
-  /// A bitmap rather than a Flutter overlay for the reason spelled out on
-  /// [stationCapsule]: an overlay projected from `onCameraMove` shakes through
-  /// every pan. The same trade applies — a [BitmapDescriptor] cannot be
-  /// tweened, so a state change is a swapped image and the capsule appears
-  /// rather than growing out of the plate.
-  ///
-  /// [ring] null paints no ring, which is what the solid 進站中 plate wants.
-  ///
-  /// Returns the anchor to pin by rather than assuming (0.5, 0.5): on a capsule
-  /// the plate sits at one end, and even a bare plate is inset by the shadow
-  /// margin. That margin doubles as tap area — a 32pt plate reads ~42pt to the
-  /// finger, nearer the 44pt floor than the tight bitmap it replaces.
   static Future<({BitmapDescriptor icon, Offset anchor})> stopMarker({
     required Color fill,
     required Color content,
@@ -491,14 +382,6 @@ class MapMarkers {
     });
   }
 
-  /// User-position puck for active navigation: a solid ink disc inside a thin
-  /// card-colored ring, with an ink heading arrow (matching the recenter button
-  /// glyph) knocked out in the ring color and a soft drop shadow. [disc] is the
-  /// solid body (ink), [ring] the outer ring / arrow glyph (card color). The
-  /// glyph points up (bitmap north); rendered as a flat marker rotated by the
-  /// camera bearing so it tracks the travel/heading direction on the map.
-  /// Proportions follow the 48px mock: outer ring radius 20, ink disc radius 17
-  /// (3px ring), arrow ~26/48 of the marker.
   static Future<BitmapDescriptor> navArrow(
     Color disc,
     Color ring, {
@@ -542,20 +425,6 @@ class MapMarkers {
     });
   }
 
-  /// Live-vehicle info bubble: the vehicle's headline status on top (勤務／行車
-  /// 狀況, colored by [statusColor]), plate + GPS freshness below, with a tail
-  /// pointing down at the vehicle mark. Rendered as its own marker anchored
-  /// (0.5, 1.0) at the vehicle position; [clearance] is transparent space below
-  /// the tail so the bubble floats above the mark.
-  ///
-  /// Only the pinned bus and any vehicle in a warning state gets one — see
-  /// `bus_route_screen.dart`, which decides that.
-  ///
-  /// [clearance] is the one measurement here scaled by the raw device pixel
-  /// ratio rather than [_unit]: it has to clear [busMark], which carries no
-  /// text and so does not grow with the text setting. Scaling it would lift the
-  /// bubble off a mark that never moved. The default clears the mark's 14pt
-  /// radius plus its halo, with a few pt of air left over.
   static Future<BitmapDescriptor> busBubble({
     required String plate,
     required Color fill,
@@ -681,10 +550,6 @@ class MapMarkers {
   }) async {
     final cache = store ?? _cache;
     final cacheCap = cap ?? _cacheCap;
-    // Both scales join every key here rather than in each entry point's own
-    // key: a painter that forgets one serves a bitmap built for the wrong size,
-    // and this is the single place that cannot be forgotten. The markers that
-    // paint no text pay one redundant rebuild after a text-size change.
     final cacheKey = '$key:$_dpr:$_textScale';
     final hit = cache.remove(cacheKey);
     if (hit != null) {
@@ -712,10 +577,6 @@ class MapMarkers {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     draw(canvas);
-    // The recorded picture holds native memory of its own, separate from the
-    // image rasterised out of it, and is dead the moment toImage resolves.
-    // Leaving it to the GC finaliser strands that memory on every cache miss —
-    // and every marker in the app is built through here.
     final picture = recorder.endRecording();
     try {
       return await picture.toImage(w, h);

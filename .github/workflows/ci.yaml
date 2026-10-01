@@ -21,7 +21,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+        image: postgis/postgis:16-3.5
         env:
           POSTGRES_DB: bus_test
           POSTGRES_USER: bus
@@ -49,6 +49,12 @@ jobs:
         with:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: provision required database fixtures
+        env:
+          REQUIRE_DB_TESTS: "1"
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          ./scripts/prepare-ci-db.sh
       - name: generate pinned protobuf stubs
         run: make proto-go
       - run: go install gotest.tools/gotestsum@v1.12.3
@@ -56,6 +62,8 @@ jobs:
         env:
           GO_JUNIT_FILE: junit.xml
           GO_TEST_ARGS: -coverprofile=coverage.out
+          REQUIRE_DB_TESTS: "1"
+          BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: ./scripts/ci.sh go
       - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
@@ -129,6 +137,12 @@ jobs:
         run: ./scripts/check-govulncheck.sh
       - name: guardrail tests still present and passing
         run: ./scripts/check-guardrail-tests-present.sh
+      - name: effective Compose and release input contracts
+        run: |
+          ./scripts/check-compose-effective.sh
+          ./scripts/check-release-manifest.sh
+      - name: per-service env contract
+        run: ./scripts/check-env-allowlist.sh
 
   flutter:
     runs-on: ubuntu-latest

@@ -1,15 +1,3 @@
-# Container hardening (all services except the one-shot osrm-fetch and
-# motis-import jobs, which need a writable root to `apk`-free wget/sha256sum
-# into ./osrm-data and to build the MOTIS data set): no-new-privileges, all
-# Linux capabilities dropped, read-only root filesystem with an explicit
-# tmpfs/volume for the one path each service actually writes, and pids/cpu
-# ceilings so a runaway process can't take down the host. Memory budget:
-# router 256m + functions 768m + ingestor 384m + loader 384m + redis 512m +
-# powersync 384m + motis 2048m = 4736m, leaving ~1.4 GB of headroom on the
-# 6 GB host for the OS and Docker daemon. The ingestor, loader and
-# motis-import are cron- or deploy-driven and idle between runs, so the
-# ceilings above are not all claimed at once -- motis-import's 3072m in
-# particular is a build-time peak that never overlaps a steady state.
 services:
   redis:
     image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
@@ -20,11 +8,6 @@ services:
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass "${REDIS_PASSWORD:-}"
     networks:
       - backend
-    # The official entrypoint normally drops from root to uid 999 itself via
-    # setpriv, which needs CAP_SETUID/CAP_SETGID -- capabilities cap_drop:
-    # ALL removes. Starting directly as uid 999 (the image's built-in
-    # "redis" user) skips that step entirely instead of clawing back a
-    # capability just to drop it again.
     user: "999:999"
     mem_limit: 512m
     pids_limit: 64
@@ -50,47 +33,22 @@ services:
     build:
       context: .
       dockerfile: services/api/Dockerfile
-    # ROUTER_IMAGE lets a deploy pin an exact CI-built digest
-    # (ghcr.io/.../bus-router@sha256:...) via `docker compose pull` without a
-    # host build; build: above stays so a bare `docker compose up --build`
-    # (local dev, make up-test) keeps working unchanged (compose permits
-    # build + image together -- image just names what gets built/pulled).
     image: ${ROUTER_IMAGE:-router}
     ports:
-      - "${BIND_HOST:-127.0.0.1}:${GRPC_PORT:-50051}:50051"
-      - "${BIND_HOST:-127.0.0.1}:${ROUTER_HTTP_PORT:-8080}:8080"
-    # ENV_FILE_ROUTER is router's own allowlisted env file, rendered by
-    # scripts/render-env.sh from the operator's single env/<env>.env (see
-    # Makefile render-env-% and docs/config.md). The ${ENV_FILE:-./.env}
-    # fallback is what check-compose-isolation.sh / check-container-
-    # hardening.sh (which only ever set ENV_FILE) and an ad-hoc `docker
-    # compose up` without a Makefile target still resolve to.
+      - "${GRPC_BIND_HOST:-127.0.0.1}:${GRPC_PORT:-50051}:50051"
+      - "${HTTP_BIND_HOST:-127.0.0.1}:${ROUTER_HTTP_PORT:-8080}:8080"
     env_file: ${ENV_FILE_ROUTER:-${ENV_FILE:-./.env}}
     environment:
       TZ: Asia/Taipei
       GOMEMLIMIT: ${ROUTER_GOMEMLIMIT:-230MiB}
       REDIS_ADDR: redis:6379
-      # Which planner answers MaasService.plan (ADR-0022). A manual switch with
-      # no automatic fallback: flipping it to tdx and restarting the router is
-      # the documented way back.
       MAAS_BACKEND: ${MAAS_BACKEND:-motis}
       MOTIS_BASE_URL: ${MOTIS_BASE_URL:-http://motis:8080}
-    # frontend: reachable by/reaches powersync (jwks_uri in powersync/
-    # config.yaml points at router). backend: redis, DB (via DATABASE_URL,
-    # external). routing: MOTIS (route planning, nearby walking times,
-    # geocoding) -- router is the only service that talks to MOTIS, so MOTIS
-    # stays off backend/frontend entirely (O7 / review_results.md P2-03
-    # network segmentation).
     networks:
       - frontend
       - backend
       - routing
     volumes:
-      # Only /data is writable — that's where the router persists its
-      # PowerSync RSA signing key (persistKeyAtomically in http.go writes a
-      # same-directory temp file then renames it into place). Everything
-      # else the router reads is either baked into the image or injected via
-      # env vars, so the rest of the root filesystem stays read-only.
       - router_keys:/data
     mem_limit: ${ROUTER_MEM_LIMIT:-256m}
     pids_limit: 128
@@ -118,9 +76,6 @@ services:
     build:
       context: .
       dockerfile: services/worker/Dockerfile
-    # FUNCTIONS_IMAGE is shared by functions/ingestor/loader (one image, three
-    # ROLE values) -- see the ROUTER_IMAGE comment above for why build: and
-    # image: coexist.
     image: ${FUNCTIONS_IMAGE:-functions}
     env_file: ${ENV_FILE_FUNCTIONS:-${ENV_FILE:-./.env}}
     environment:
@@ -129,10 +84,6 @@ services:
       REDIS_ADDR: redis:6379
     networks:
       - backend
-    # TDXClient.GetInto (services/shared/tdx.go) spools each response to
-    # os.CreateTemp("", ...), i.e. the default $TMPDIR (/tmp) — that's the
-    # only path this binary writes to. touchHealthFile (services/worker/
-    # healthfile.go) also writes its liveness marker here on every cron tick.
     tmpfs:
       - /tmp:size=256m
     mem_limit: ${FUNCTIONS_MEM_LIMIT:-768m}
@@ -148,11 +99,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # This role's fastest cron (mrtEta) ticks every 10s, so a marker older
-      # than 2 minutes means the scheduler loop has stalled -- addStaticCron
-      # touches /tmp/healthy after every job returns, success or failure
-      # (services/worker/healthfile.go), so this proves cron dispatch is
-      # alive, not that any single TDX-dependent job succeeded.
       test: ["CMD-SHELL", "find /tmp/healthy -mmin -2 2>/dev/null | grep -q ."]
       interval: 30s
       timeout: 5s
@@ -190,15 +136,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # ingestor only runs its landing job once a day (03:00), so a
-      # touch-file freshness check (as functions above uses) would report
-      # unhealthy for the ~23.5 idle hours between ticks. Just prove the
-      # process itself is alive.
-      # busybox pgrep's -x matches the full command line (e.g. "./worker
-      # run changetovector"), not just the process name, so it never matches
-      # plain "functions" -- verified against this image directly. The
-      # unqualified pgrep matches by process name (comm), which is exactly
-      # "functions" for this binary.
       test: ["CMD-SHELL", "pgrep worker"]
       interval: 30s
       timeout: 5s
@@ -220,15 +157,6 @@ services:
     networks:
       - backend
     volumes:
-      # The GTFS static feed the loader publishes at the end of its nightly
-      # chain (GTFS_OUT_DIR, services/worker/gtfs.go). It has to outlive the
-      # container — the root filesystem is read-only and anything written to a
-      # container layer would vanish on the next deploy — and it has to be
-      # readable by the planner that consumes it, which is a different
-      # container. A named volume is both. Mount the same volume :ro on MOTIS
-      # when it lands, and point it at gtfs.zip: the publish is a rename of a
-      # symlink, so a reader never sees a half-written archive and rolling back
-      # to the previous night is a one-line change.
       - gtfs_feed:/data/gtfs
     tmpfs:
       - /tmp:size=256m
@@ -245,12 +173,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # Daily cron like ingestor above -- process-alive only, not freshness.
-      # busybox pgrep's -x matches the full command line (e.g. "./worker
-      # run changetovector"), not just the process name, so it never matches
-      # plain "functions" -- verified against this image directly. The
-      # unqualified pgrep matches by process name (comm), which is exactly
-      # "functions" for this binary.
       test: ["CMD-SHELL", "pgrep worker"]
       interval: 30s
       timeout: 5s
@@ -259,7 +181,7 @@ services:
   powersync:
     image: journeyapps/powersync-service:1.23.3@sha256:b6b22fa7d0d862f04bdff62846e656756d17bcf3dd6eca399a0633671051438b
     ports:
-      - "${BIND_HOST:-127.0.0.1}:${POWERSYNC_PORT:-8081}:8080"
+      - "${POWERSYNC_BIND_HOST:-127.0.0.1}:${POWERSYNC_PORT:-8081}:8080"
     volumes:
       - ./powersync/config.yaml:/config/config.yaml:ro
       - ./powersync/sync-rules.yaml:/config/sync-rules.yaml:ro
@@ -268,10 +190,6 @@ services:
       TZ: Asia/Taipei
       POWERSYNC_CONFIG_PATH: /config/config.yaml
       POWERSYNC_SYNC_RULES_PATH: /config/sync-rules.yaml
-    # frontend only: powersync replicates from Postgres directly
-    # (PS_SOURCE_DATABASE_URL, external) and calls router's jwks_uri over
-    # frontend -- it never touches Redis, so it has no reason to be on
-    # backend (O7 / review_results.md P2-03).
     networks:
       - frontend
     tmpfs:
@@ -289,27 +207,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # The image ships neither curl nor wget, and /api/status is a 404 — the
-      # service exposes /probes/readiness. node is the only HTTP client present.
       test: ["CMD", "node", "-e", "fetch('http://localhost:8080/probes/readiness').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
   cloudflared:
     image: cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
-    # Publishes router (gRPC + HTTP) and powersync to rabbitsayhello.me over
-    # an outbound-only tunnel, so no port on this host faces the internet and
-    # the origin address never appears in DNS.
-    #
-    # --config makes this a locally-managed tunnel: ingress comes from the
-    # mounted YAML rather than the dashboard. The config and credentials
-    # files are mounted per environment in docker-compose.{staging,prod}.yaml,
-    # because each stack runs its own tunnel with its own id, credentials,
-    # and hostnames.
-    #
-    # --metrics fixes the diagnostics port (it is otherwise bound to a random
-    # free port), which is what makes the `tunnel ready` healthcheck below
-    # addressable. It stays on loopback inside the container's namespace.
     command:
       - tunnel
       - --no-autoupdate
@@ -320,14 +223,8 @@ services:
       - --protocol
       - http2
       - run
-    # No env_file, and deliberately off the ENV_FILE_<SERVICE> render
-    # pipeline: this container's only secret is the credentials file mounted
-    # below, so nothing it needs has to travel through render-env.sh, five
-    # allowlists, and three Makefile variables.
     environment:
       TZ: Asia/Taipei
-    # frontend reaches both origins: router (gRPC 50051 + HTTP 8080) and
-    # powersync. It has no reason to see redis, the DB, or osrm.
     networks:
       - frontend
     mem_limit: 128m
@@ -343,23 +240,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # cloudflared's own metrics endpoint; /ready is 200 only while at least
-      # one edge connection is registered, which is exactly the condition
-      # that matters here (the process staying alive proves nothing).
-      # --metrics is a flag of the `tunnel` subcommand, not a global one, so it
-      # has to sit after `tunnel` here exactly as it does in command: above.
       test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:2000", "ready"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-  # Kept after OSRM itself was retired (ADR-0022): MOTIS needs the same
-  # Geofabrik extract, and this job already gets it right -- checksum verified
-  # before the file is trusted, temp file renamed into place, short-circuit
-  # when the extract has not moved. Profile-gated with the MOTIS services it
-  # now feeds; the directory name stays ./osrm-data because renaming it would
-  # touch four env vars, three env examples, the Makefile and the docs for no
-  # functional change.
   osrm-fetch:
     image: alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
     profiles:
@@ -373,22 +258,6 @@ services:
     pids_limit: 32
     cpus: 0.5
     entrypoint: ["/bin/sh", "-c"]
-    # Downloads to a same-directory temp file, verifies it against a
-    # checksum before it is ever trusted, and only then renames it into
-    # place atomically (rename is atomic within one filesystem, so a reader
-    # never observes a partial/corrupt PBF and a failed verify never
-    # clobbers a good previous download). Geofabrik publishes MD5 checksums
-    # for its extracts, not SHA256 (verified against
-    # download.geofabrik.de/asia/taiwan-latest.osm.pbf.sha256 returning 404
-    # while .md5 returns 200) — MD5 is the strongest integrity check
-    # Geofabrik itself offers for this file, so that's what's verified here.
-    # OSRM_PBF_URL defaults to the `-latest` alias, and OSRM_PBF_MD5 (when
-    # unset) is fetched from that alias's `.md5` sidecar at run time — unlike
-    # `-latest.osm.pbf`, the `.md5` sidecar resolves directly (200, no
-    # redirect) so it always matches whatever `-latest` currently points to.
-    # This avoids pinning a dated snapshot filename, which 404s once
-    # Geofabrik rotates it out of their retention window. Set both
-    # OSRM_PBF_URL and OSRM_PBF_MD5 to pin a specific reproducible extract.
     command:
       - >
         set -e; cd /data;
@@ -411,15 +280,8 @@ services:
         mv "$$tmp" "$$target";
         echo "osrm-fetch: downloaded and verified $$target (md5 $$actual_md5)"
     restart: "no"
-    # routing: this one-shot job needs internet egress to Geofabrik, which
-    # any bridge network provides regardless of name; grouping it with motis
-    # keeps it out of backend/frontend, where it has no reason to be.
     networks:
       - routing
-  # MOTIS import and server (ADR-0022). Both carry profiles: ["motis"] so that
-  # only the Compose targets that opt in create them -- staging deliberately
-  # does not, because its router points at prod's MOTIS and a second copy of
-  # the street graph plus timetable does not fit on the 6 GB host.
   motis-import:
     image: ghcr.io/motis-project/motis:2.11.2@sha256:6055f51eec43eeed28524037ca0161b96efe9cd05728eaa9ac04c20c2826d330
     profiles:
@@ -427,17 +289,17 @@ services:
     depends_on:
       osrm-fetch:
         condition: service_completed_successfully
-    # GTFS_RT_CREDENTIAL is the only value substituted into the config; see
-    # motis/config.yml for why it has to be in the file rather than the URL.
     env_file: ${ENV_FILE_MOTIS:-${ENV_FILE:-./.env}}
+    environment:
+      # Kept beside the pinned image ref so cache identity cannot drift from
+      # the importer actually executed. The rendered env may override it only
+      # for an intentional image upgrade.
+      MOTIS_IMPORT_IMAGE_IDENTITY: ${MOTIS_IMPORT_IMAGE_IDENTITY:-ghcr.io/motis-project/motis:2.11.2@sha256:6055f51eec43eeed28524037ca0161b96efe9cd05728eaa9ac04c20c2826d330}
     volumes:
       - ./motis/config.yml:/conf/config.yml:ro
       - gtfs_feed:/data/gtfs:ro
       - ./osrm-data:/osm:ro
       - motis_data:/data/motis
-    # Runs as root because a freshly created named volume is root-owned and the
-    # image's own `motis` user could not write into it. The server below does
-    # not: it reads the same volume :ro as an unprivileged user.
     user: "0:0"
     security_opt:
       - no-new-privileges:true
@@ -447,46 +309,33 @@ services:
     cpus: 2.0
     mem_limit: ${MOTIS_IMPORT_MEM_LIMIT:-3072m}
     entrypoint: ["/bin/sh", "-c"]
-    # The built directory is content-addressed on both inputs, so its existence
-    # is the marker -- there is no separate marker file to go stale or to
-    # survive a half-finished build. A rebuild happens when gtfs.zip or the PBF
-    # changes and not otherwise, and `first_day: TODAY` is resolved at that
-    # moment (motis/config.yml explains why that is the wanted behaviour).
-    #
-    # The import writes into .build/ and the finished directory is only then
-    # renamed into place, because `motis server` mmaps the data set and may be
-    # serving while this runs -- the same reason osrm-init builds out of line.
-    # Repointing `current` is an unlink+symlink, not a rename: busybox `mv` has
-    # no -T, and `mv link dir` would move the link *into* the old directory.
-    # The window is sub-millisecond, the server is restarted immediately after,
-    # and the previous data set is never touched, so the worst case is a start
-    # that fails loudly and is retried -- not a server reading a half-built set.
-    #
-    # The trailing `|| exit 1` on the import is what reports failure: `set -e`
-    # does not fire inside an && list in an if branch, so without it a failed
-    # import still exits 0 and `motis` would start on the previous data while
-    # claiming the build succeeded.
     command:
       - >
-        set -e; cd /data/motis;
+        set -eu; cd /data/motis;
         gtfs_sha="$$(sha256sum /data/gtfs/gtfs.zip | cut -d' ' -f1)";
         pbf_sha="$$(sha256sum /osm/${OSRM_PBF_FILE:-taiwan.osm.pbf} | cut -d' ' -f1)";
-        target="data-$$(printf '%s%s' "$$gtfs_sha" "$$pbf_sha" | sha256sum | cut -c1-16)";
-        if [ -d "$$target" ] && [ -f "$$target/config.yml" ]; then
+        config_sha="$$(sha256sum /conf/config.yml | cut -d' ' -f1)";
+        image_sha="$${MOTIS_IMPORT_IMAGE_IDENTITY:?MOTIS_IMPORT_IMAGE_IDENTITY is required}";
+        credential_sha="$$(printf '%s' "$${GTFS_RT_CREDENTIAL:-}" | sha256sum | cut -d' ' -f1)";
+        target="data-$$(printf '%s%s%s%s%s' "$$gtfs_sha" "$$pbf_sha" "$$config_sha" "$$image_sha" "$$credential_sha" | sha256sum | cut -c1-32)";
+        if [ -d "$$target" ] && [ -f "$$target/config.yml" ] && [ -f "$$target/.complete" ]; then
           echo "motis-import: $$target already built";
         else
           rm -rf .build && mkdir -p .build &&
-          sed "s|__GTFS_RT_CREDENTIAL__|$$GTFS_RT_CREDENTIAL|" /conf/config.yml > .build/config.yml &&
+          umask 077; sed "s|__GTFS_RT_CREDENTIAL__|$${GTFS_RT_CREDENTIAL:-}|" /conf/config.yml > .build/config.yml &&
           /motis import -c .build/config.yml -d .build/data &&
+          touch .build/data/.complete &&
           mv .build/data "$$target" &&
           rm -rf .build || exit 1;
         fi;
-        chmod -R a+rX "$$target";
+        find "$$target" -type d -exec chmod 750 {} +;
+        find "$$target" -type f -exec chmod 640 {} +;
+        chown -R motis:motis "$$target";
         rm -f .current.tmp;
         ln -sfn "$$target" current;
-        for old in data-*; do
-          [ "$$old" = "$$target" ] || rm -rf "$$old";
-        done
+        # Keep the active dataset and one previous complete dataset for a
+        # fast operator rollback; never remove a dataset during import.
+        ls -dt data-* 2>/dev/null | tail -n +3 | while IFS= read -r old; do rm -rf "$$old"; done
     restart: "no"
     networks:
       - routing
@@ -497,23 +346,14 @@ services:
     depends_on:
       motis-import:
         condition: service_completed_successfully
-    # Published so staging's router, which runs in a different Compose project
-    # on this host, can reach prod's MOTIS over the host gateway (ADR-0022).
     ports:
       - "127.0.0.1:${MOTIS_PORT:-8082}:8080"
     volumes:
       - motis_data:/data/motis:ro
-    # The image's own unprivileged user; the data set is read-only here and
-    # motis-import already chmod'd it a+rX.
     user: "motis"
     networks:
       - routing
     command: ["/motis", "server", "-d", "/data/motis/current"]
-    # Sized above the on-disk data set for the same reason osrm was: nigiri and
-    # the street graph are mmap'd and the cgroup counts those pages as the
-    # container's own, so a limit under the data forces every query to re-fault
-    # its pages in. This ceiling is a starting point, not a measurement -- the
-    # first prod import is what will size it.
     mem_limit: ${MOTIS_MEM_LIMIT:-2048m}
     pids_limit: 128
     cpus: 2.0
@@ -526,57 +366,21 @@ services:
       - /tmp:size=64m
     restart: unless-stopped
     healthcheck:
-      # /api/v1/health answers 200 only once at least one full update cycle has
-      # completed over every configured feed, and 400 until then -- so this
-      # proves MOTIS is actually consuming the router's GTFS-RT and GBFS, not
-      # merely that the process is up. That is the failure this stack is most
-      # likely to hit quietly: a MOTIS serving a plausible plan off a static
-      # timetable while the realtime feed it was pointed at has been 401ing all
-      # day.
-      #
-      # The stricter definition has a consequence worth stating: with
-      # GTFS_RT_CREDENTIAL empty the router leaves that route unmounted
-      # (ADR-0019), MOTIS never completes an rt cycle, and this container stays
-      # unhealthy forever -- `up --wait` will not return. That is the intended
-      # reading here: an environment that means to run MOTIS must give it a
-      # credential.
-      #
-      # The image is Alpine, so busybox wget exists (unlike the OSRM image this
-      # replaced, which shipped no HTTP client at all) and it exits non-zero on
-      # the 400, which is exactly the signal wanted.
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
-      # Longer than the 60s GTFS-RT poll interval in motis/config.yml, because
-      # the first cycle cannot complete faster than that -- plus room for the
-      # street graph and timetable to be mmap'd at start.
       start_period: 180s
 volumes:
   redis_data:
   router_keys:
   ingestor_spool:
   gtfs_feed:
-  # The imported MOTIS data set: street graph, timetable, geocoding index, and
-  # the config.yml `motis server` reads. Built by motis-import, mounted :ro by
-  # motis. A named volume rather than a bind mount for the same reason
-  # gtfs_feed is one -- it has to outlive a read-only container and be shared
-  # between two of them.
   motis_data:
 
-# O7 / review_results.md P2-03 network segmentation: frontend carries only
-# router (gRPC/HTTP ingress) and powersync (edge-proxied sync); backend
-# carries router plus everything that needs Redis or talks to Postgres
-# (functions, ingestor, loader); routing
-# is router plus osrm-fetch and MOTIS, kept off backend/frontend since
-# nothing there needs Redis, the DB, or a client-facing address -- MOTIS
-# reaches the router's GTFS-RT and GBFS feeds across this network, and the
-# router reaches MOTIS's API across it. A compromised
-# functions/ingestor/loader container therefore cannot reach powersync or
-# MOTIS, and a compromised powersync cannot reach Redis, the ingestion
-# pipeline, or MOTIS. Only router spans all three, by necessity (it is the
-# shared dependency of every other network).
 networks:
   frontend:
   backend:
   routing:
+    name: ${ROUTING_NETWORK:-bus-routing}
+    external: true

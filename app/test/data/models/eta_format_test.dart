@@ -104,10 +104,6 @@ void main() {
         BusStopDisplayStatus.notDeparted,
       );
     });
-    // A status-1 prediction beyond the cap (bus_eta.go's schedule+running-time
-    // guess for a bus that hasn't left yet) reads as an absurd countdown
-    // ("200分") rather than useful data, so it falls back to notDeparted --
-    // the caller then renders the scheduled clock time instead.
     test('status 1 beyond the countdown cap falls back to notDeparted', () {
       expect(
         busStopDisplayStatus(
@@ -265,15 +261,6 @@ void main() {
       );
     });
 
-    // `_clockLabel` (eta_format.dart:81-96) runs the `H:MM` regex BEFORE
-    // DateTime.tryParse, so on an RFC3339 string it extracts the literal
-    // hour:minute substring as written -- it does NOT parse the timezone
-    // offset and convert to local time. The backend (bus_eta.go) formats
-    // NextBusTime already in Taipei time and users are in Taipei, so the
-    // literal hour happens to be correct today. This is a real coupling: if
-    // the backend ever emits a non-Taipei offset, this label would silently
-    // show the wrong (source-timezone) clock time instead of local time.
-    // Pinning current behavior here, not fixing it -- see findings.
     test(
       'clock label on an RFC3339 string extracts the literal hour, '
       'not the timezone-converted local hour',

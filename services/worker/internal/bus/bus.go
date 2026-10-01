@@ -1,8 +1,3 @@
-// Package bus owns the bus domain: landing TDX route, stop, schedule and fare
-// data into an atomic per-city snapshot, and publishing live ETA. ETA has two
-// upstreams — TDX for most cities, Data.taipei's blob for Taipei and New Taipei
-// (FDPL-66) — behind one job, and gaps TDX leaves blank are filled from the
-// schedule and the prediction model rather than left empty.
 package bus
 
 import (
@@ -72,15 +67,6 @@ const _busSubroutesUpsertSQL = `
 				updated_at = NOW();
 			`
 
-// _busScheduleInsertSQL inserts the write-ready timetable and frequency rows
-// from temp_bus_schedule after the atomic writer has deleted the city's
-// partition in the same transaction. No DISTINCT ON and no ON CONFLICT: the
-// natural key (sub_route_uid, direction, type, service_day, tripid,
-// "stop_uid/MinHeadwayMins") is not unique in real data — a circular route
-// visits the same stop twice in one trip — so every raw row must survive rather
-// than be collapsed. The dual-purpose column names (e.g.
-// "stop_uid/MinHeadwayMins") hold either a fixed timetable stop or a
-// frequency-based headway depending on the type flag.
 const _busScheduleInsertSQL = `INSERT INTO bus_schedule (sub_route_uid, direction, type, tripid, islowfloor, stopsequence, "stop_uid/MinHeadwayMins", "stop_name/MaxHeadwayMins", "arrival_time/StartTime", "departure_time/EndTime", service_day, updated_at)
 				SELECT uid, dir, type, id, floor, seq, stopuid, stopname, arrival::time, departure::time, sdays, NOW()
 				FROM temp_bus_schedule`
@@ -94,10 +80,6 @@ func sanitizeOperatorPhone(s string) string {
 	return strings.Join(_operatorPhoneRun.FindAllString(s, -1), " / ")
 }
 
-// DailyTimetableLoadSkip lists cities with no bus_dailytimetable partition to
-// load. It is busDailyTimetableSkip minus the cities landed from a source other
-// than TDX: Taipei's partition comes from Data.taipei (datataipei_static.go), so
-// TDX serving nothing for it no longer means there is nothing to load.
 func DailyTimetableLoadSkip(city string) bool {
 	return dataset.BusDailyTimetableSkip(city) && city != dataset.DataTaipeiCity
 }
@@ -172,13 +154,6 @@ func newBusDailyOriginFilter(ctx context.Context, src pipeline.LoadSource, city 
 	return f
 }
 
-// keep reports whether a trip whose first timed stop is firstStopUID belongs
-// to (uid, dir). TDX registers a circular route's return-leg trips under both
-// direction arrays (Taoyuan does this route-wide), so a trip departing the
-// opposite direction's origin is a misfiled return trip, not a schedule.
-// Names decide, not UIDs: TDX gives paired roadside stops distinct UIDs.
-// Every uncertain case keeps the trip — unknown stop, no StopOfRoute entry,
-// or both termini sharing a name (a loop that starts and ends at one station).
 func (f *busDailyOriginFilter) keep(uid string, dir uint8, firstStopUID string) bool {
 	if f == nil {
 		return true
@@ -210,13 +185,6 @@ func (f *busDailyOriginFilter) keep(uid string, dir uint8, firstStopUID string) 
 	return true
 }
 
-// LoadDailyTimetable assembles one city's daily timetables from an opened
-// decoder and writes each subroute's protobuf into Redis under
-// bus_daily_timetable:<subRouteUID> (TTL 26h). It consumes the decoder from
-// the opening '[' onward; the loader hands it an unopened decoder over
-// reconstructed raw_tdx.bus_dailytimetable bytes. src supplies the city's raw
-// StopOfRoute landing for the direction filter (nil disables it). db is unused
-// (this dataset is Redis-only); the parameter keeps the loadSpec signature.
 func LoadDailyTimetable(ctx context.Context, dec *json.Decoder, src pipeline.LoadSource, _ *pgxpool.Pool, rc *redis.Client, city string) error {
 	if strings.TrimSpace(city) == "" {
 		return errors.New("bus daily timetable: city is required")
@@ -449,14 +417,6 @@ func cloneBusFare(f *models.Bus_Fare) *models.Bus_Fare {
 	return proto.Clone(f).(*models.Bus_Fare)
 }
 
-// mergeBusFares combines a canonical InterCity subroute's per-direction
-// RouteFare candidates (e.g. 208801 and 208802, merged onto one UID by
-// CanonicalSubroute/ADR-0006) into one Bus_Fare. TDX prices each direction
-// separately — every Section/Stage/OD entry carries its own Direction plus an
-// origin and destination — so two direction candidates never describe the
-// same leg and can simply be unioned (FDPL-67). FarePricingType/IsFreeBus are
-// route-level flags rather than per-leg data, so the first candidate's values
-// are kept.
 func mergeBusFares(candidates []*models.Bus_Fare) *models.Bus_Fare {
 	if len(candidates) == 1 {
 		return cloneBusFare(candidates[0])
@@ -478,12 +438,6 @@ func mergeBusFares(candidates []*models.Bus_Fare) *models.Bus_Fare {
 	}
 }
 
-// mergeFareJSONArrays unions the fare-entry arrays of several RouteFare
-// candidates, deduplicating entries that are byte-for-byte the same offer
-// under different key ordering. Each entry is re-marshaled (encoding/json
-// sorts map keys, at every nesting depth) purely to derive a stable dedup
-// key; the original bytes are kept in the output so formatting is untouched.
-// A malformed candidate payload is skipped rather than failing the merge.
 func mergeFareJSONArrays(payloads ...[]byte) []byte {
 	seen := make(map[string]struct{})
 	var merged []json.RawMessage

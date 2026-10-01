@@ -70,16 +70,6 @@ double metersPerPixel(double latitude, double zoom) =>
     math.cos(latitude * math.pi / 180) /
     math.pow(2, zoom);
 
-/// Search radius for a viewport of [size] logical pixels whose camera target
-/// sits [bottomPadding] pixels' worth above centre, computed from the Mercator
-/// scale instead of read back from the map.
-///
-/// [nearbyRadiusForViewport] needs `GoogleMapController.getVisibleRegion`,
-/// which means waiting for the platform view — ~1 s on an Android cold start,
-/// and the only thing the first nearby query would be waiting for. At startup
-/// the camera has no tilt or bearing, so the visible region is exactly the
-/// rectangle this measures, and the two agree closely enough that the
-/// camera-idle re-query dedupes against it.
 int estimatedNearbyRadius({
   required Size size,
   required double bottomPadding,
@@ -112,24 +102,11 @@ class NearbyCoverage {
   final LatLng center;
   final int radiusMeters;
 
-  /// Whether a query at [center] out to [radiusMeters] would return
-  /// substantially what this one already did. A heuristic, not containment:
-  /// true containment (`distance + radius <= this.radiusMeters`) would fail on
-  /// any pan at all, which is the opposite of what the dedup is for.
   bool covers(LatLng center, int radiusMeters, double thresholdMeters) =>
       haversineMeters(center, this.center) < thresholdMeters &&
       radiusMeters <= this.radiusMeters * _radiusGrowthTolerance;
 }
 
-/// Viewport-query bookkeeping for the home map. [inFlight] is the query
-/// currently awaiting a response and [lastSuccessful] the newest one that
-/// returned; a query is skipped when either already covers the viewport.
-///
-/// Tracking the in-flight query is what stops a burst of camera-idle events
-/// from firing three overlapping requests before the first one lands — the
-/// bloc's generation guard discards those late results, but the router has
-/// already paid for them. A failure clears [inFlight] without advancing
-/// [lastSuccessful], so a failed request never suppresses the retry.
 class NearbyViewportQuery {
   const NearbyViewportQuery({this.inFlight, this.lastSuccessful});
 

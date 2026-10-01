@@ -6,12 +6,6 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 enum BusStopStatus { loading, loaded, empty, error }
 
-/// One arrival mapped to the shared tile contract ([ArrivalDisplay]) plus the
-/// routing identifiers the stop sheet still needs: [stationId] for per-stop
-/// grouping and [subRouteUid] for the tap target. The map/sort/group derivation
-/// runs in the bloc when arrivals change, so the sheet build stays pure layout.
-/// Equality flows from the source arrival (itself Equatable), keeping items
-/// stable across an unchanged re-push.
 class BusStopArrivalItem extends Equatable {
   BusStopArrivalItem(AppI18n i18n, this.source)
     : display = ArrivalDisplay.fromBusStop(i18n, source);
@@ -32,20 +26,8 @@ class BusStopArrivalItem extends Equatable {
   List<Object?> get props => [source];
 }
 
-/// Marks a member label as naming where the pole's routes go, rather than
-/// repeating the station name. The map reads it to decide whether a label is
-/// worth the space: every pole in a group shares the station name, so three
-/// capsules carrying it answer nothing.
 const String kMemberDestinationPrefix = '往';
 
-/// Chip / header / map-capsule labels for member stops, in commuter language
-/// instead of ordinals: a member is named by where its routes go (往 X),
-/// because riders pick a pole by their destination, not by a number. Members
-/// with no routes fall back to the station name; colliding labels get an
-/// ordinal appended. The raw StationID is never exposed.
-///
-/// Lives here rather than in the sheet so the stop list and the map's member
-/// capsules call the same pole by the same name.
 Map<String, String> memberStopLabels(
   List<BusStationMember> members,
   Map<String, List<BusStopArrivalItem>> byStation,

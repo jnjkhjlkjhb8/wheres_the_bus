@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/features/favorites/favorite_actions.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
@@ -21,7 +22,10 @@ class FavoriteTile extends StatelessWidget {
           : '${fav.title} ${fav.subtitle}',
       child: Container(
         constraints: const BoxConstraints(minHeight: 62),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space12,
+        ),
         decoration: BoxDecoration(
           border: Border(
             top: BorderSide(
@@ -33,7 +37,7 @@ class FavoriteTile extends StatelessWidget {
         child: Row(
           children: [
             TransportIcon(type: transportTypeForFavorite(fav)),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -62,7 +66,7 @@ class FavoriteTile extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Icon(
               Symbols.chevron_right_rounded,
               size: 24,

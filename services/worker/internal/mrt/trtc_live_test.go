@@ -105,14 +105,6 @@ func TestTrtcPublishExecFailure(t *testing.T) {
 	}
 }
 
-// captureLiveSink is the pipeline.LiveSink seam's recording adapter. It captures every
-// pipelined write and every refreshTTL call so a test can assert on exact keys,
-// channels, TTLs, and decoded protobuf payloads without a real Redis.
-//
-// runBusEtaCities runs several cities' jobs concurrently against one shared
-// sink (a bounded worker pool, not sequential), so every accessor below takes
-// mu — a real Redis client tolerates that concurrency by construction, and a
-// fake standing in for one has to as well.
 type captureLiveSink struct {
 	mu       sync.Mutex
 	sets     []setWrite
@@ -174,10 +166,6 @@ type expireWrite struct {
 	ttl time.Duration
 }
 
-// capturePipe records writes into its sink; Exec is a no-op that never errors.
-// Each call to captureLiveSink.pipeline() returns its own capturePipe, but
-// every one shares the same underlying sink, so its methods lock like the
-// sink's own do.
 type capturePipe struct {
 	sink                *captureLiveSink
 	pendingOwnedKey     string

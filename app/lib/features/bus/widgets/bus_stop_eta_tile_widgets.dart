@@ -32,7 +32,7 @@ class _EtaChevronTile extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.only(right: 12),
+          padding: const EdgeInsets.only(right: AppTheme.space12),
           child: Icon(
             Icons.chevron_right_rounded,
             size: 20,

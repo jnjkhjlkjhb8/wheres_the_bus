@@ -36,11 +36,6 @@ typedef FareRow = ({String label, String price, int fareClass});
 /// single flat section (typical city bus), where the rows stand alone.
 typedef FareGroup = ({String? segment, List<FareRow> rows});
 
-/// The full fare table. TDX stores section / stage / OD fares verbatim; every
-/// entry carries a `Fares` array of FareClass / TicketType / Price / FareName.
-/// We emit one group per segment (or per section), each listing a row per fare
-/// class — split by ticket type (現金 / 電子票證) only when the price differs.
-/// Prices of -1 mean "no fare" and are dropped; malformed payloads are skipped.
 List<FareGroup> decodeFareTable(AppI18n i18n, BusFareInfo? fare) {
   if (fare == null) return const [];
   final groups = <FareGroup>[];
@@ -54,10 +49,6 @@ List<FareGroup> decodeFareTable(AppI18n i18n, BusFareInfo? fare) {
 /// fare rows. `destination` is the arrival stop name.
 typedef OdDestination = ({String destination, List<FareRow> rows});
 
-/// Origin-grouped 起迄 / 分段 fare table (公路客運). One entry per boarding
-/// stop, so the UI can present "from stop X, fares to …" instead of repeating
-/// the origin on every row. Empty for flat-fare city buses, where
-/// [decodeFareTable] already yields inline rows.
 typedef OdOrigin = ({String origin, List<OdDestination> destinations});
 
 List<OdOrigin> decodeOdFares(AppI18n i18n, BusFareInfo? fare) {
@@ -88,13 +79,6 @@ List<OdOrigin> decodeOdFares(AppI18n i18n, BusFareInfo? fare) {
   return [for (final o in order) (origin: o, destinations: byOrigin[o]!)];
 }
 
-/// The row a rider on [type] pays, or null when the group prices nothing.
-///
-/// Walks [FareType.busFareClasses] so a 敬老 rider gets 敬老票 where the operator
-/// publishes one, then 愛心票 or 半票 (operators publish the same price under any
-/// of the three), and only then 全票. `matched` reports which type the row
-/// actually is, so a fallback to 全票 is labelled as 全票 rather than passed off
-/// as a concession price.
 ({FareRow row, FareType matched})? pickFareRow(
   List<FareRow> rows,
   FareType type,
@@ -114,10 +98,6 @@ List<OdOrigin> decodeOdFares(AppI18n i18n, BusFareInfo? fare) {
   return rows.isEmpty ? null : (row: rows.first, matched: type);
 }
 
-/// Cheapest and dearest fare across the origin-grouped table, for the
-/// at-a-glance 票價範圍 summary. Scoped to what a rider on [type] would pay, so
-/// the range matches the prices listed underneath it rather than spanning every
-/// ticket type at once. Null when [origins] carry no priced rows.
 ({int min, int max})? odFareRange(List<OdOrigin> origins, FareType type) {
   var min = -1;
   var max = -1;

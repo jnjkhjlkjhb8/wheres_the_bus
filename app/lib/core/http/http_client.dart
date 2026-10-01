@@ -4,10 +4,6 @@ import 'package:flutter/foundation.dart'
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 
-/// Matches a JSON-shaped `"key": "value"` log line whose key is a common
-/// spelling of a credential. Values that survive as far as this line
-/// (install secrets, bearer tokens) must never reach the console verbatim,
-/// even in debug builds (F41).
 final _sensitiveKeyPattern = RegExp(
   r'("(?:authorization|token|secret|password|apikey|api_key)"\s*:\s*")[^"]*(")',
   caseSensitive: false,

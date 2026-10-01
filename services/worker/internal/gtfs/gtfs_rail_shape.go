@@ -2,36 +2,8 @@ package gtfs
 
 import "strconv"
 
-// Rail geometry for the GTFS feed: the drawn path of a TRA or THSR trip.
-//
-// rail_shapes holds one geometry per line, and a train crosses lines freely — a
-// 自強 runs the 西部幹線 into the 南迴線 — so no stored geometry describes a
-// train's path. It is assembled here instead: a trip's path is decided by the
-// stops it calls at, so every train sharing a stop sequence shares one shape,
-// built by clipping the line geometry between each consecutive pair of stops
-// and stitching the clips together.
-//
-// This is the same construction the router runs per MaaS section
-// (services/api/maas_geometry.go). It is not shared code: that one clips one
-// stop pair at a time with bind parameters, this one clips every distinct pair
-// in the feed in a single set-based pass, and the two statements have no useful
-// overlap beyond the idea. The tolerances below are the ones to keep in step.
-
 const (
-	// railShapeSnapMeters is how far a station may sit from a line before that
-	// line is rejected as the one it is served by. Matches the router's constant
-	// of the same name: 500 m tolerates the walk-in access point TDX reports for
-	// some stations without matching an unrelated line.
-	railShapeSnapMeters = 500
-	// railShapeSimplifyTolerance is the ST_SimplifyPreserveTopology tolerance, in
-	// degrees (~11 m), applied to each clipped segment.
-	//
-	// shapes.txt passes bus and metro geometry through unsimplified, and rail is
-	// the exception on purpose: those two emit each stored geometry once, while a
-	// rail segment is re-emitted in every stop sequence that traverses it —
-	// thousands of them — so density that costs a bus shape a few thousand points
-	// costs the feed millions. The tolerance is the router's, which is already
-	// what the app draws this same geometry with.
+	railShapeSnapMeters        = 500
 	railShapeSimplifyTolerance = 0.0001
 )
 
@@ -50,25 +22,6 @@ const (
 	_gtfsRailTripShapeTable = "gtfs_rail_trip_shape"
 )
 
-// _gtfsRailSegSQL clips one rail line between every distinct pair of
-// consecutive stops the feed's rail trips call at.
-//
-// Matching is geometric, as the router's is: the daily timetable names no line,
-// only stations. A candidate is a component of a merged line geometry that both
-// stops sit within railShapeSnapMeters of, and the best candidate is the one
-// minimising the larger of the two distances. Requiring both stops on the same
-// component is what keeps a junction station from matching the line its
-// neighbour is not on.
-//
-// Distances are computed per station rather than per pair. There are a few
-// hundred stations and a few thousand pairs, and the pair count is what would
-// multiply the cost of measuring a point against a line of a hundred thousand
-// vertices.
-//
-// ST_LineSubstring needs a simple LINESTRING, hence the dump; the fractions are
-// ordered low-to-high because the pair's travel direction need not match the
-// line's digitized direction, and the substring is reversed back into travel
-// order afterwards so the stitched shape runs the way the train does.
 var _gtfsRailSegSQL = `
 WITH rail_stop AS (
   SELECT s.stop_id,
@@ -122,21 +75,6 @@ FROM matched
 -- point, which is not a segment. The stitch falls back to a straight line.
 WHERE f1 <> f2`
 
-// _gtfsRailTripShapeSQL names the shape each rail trip draws.
-//
-// The id is the digest of the stop sequence, so the thousands of trains running
-// the same calls share one shape rather than repeating its geometry per train
-// per date. The operator is kept in the clear so a shape can be read.
-//
-// This mapping is the single place a rail trip and its shape are decided: both
-// trips.txt and shapes.txt read it, which is what stops them from disagreeing
-// about which shapes exist — the failure the bus branch already learned, where
-// two independent filters left 14,334 trips pointing at shapes never written.
-//
-// A trip with one call has no path to draw and gets no shape. Neither does one
-// calling anywhere stops.txt has no coordinates for: the shape is drawn between
-// stop positions, so a trip missing one has legs that cannot be built, and a
-// shape claimed by a trip has to be a shape shapes.txt writes.
 var _gtfsRailTripShapeSQL = `
 SELECT
   st.trip_id,
@@ -148,21 +86,6 @@ WHERE st.trip_id LIKE 'TRA:%' OR st.trip_id LIKE 'THSR:%'
 GROUP BY st.trip_id
 HAVING count(*) > 1 AND count(*) = count(s.stop_id)`
 
-// _gtfsRailShapePointsSQL is the rail branch of shapes.txt: each shape's stitched
-// points, in travel order.
-//
-// One representative trip per shape supplies the call order; every other trip
-// with that shape calls at the same stops in the same order, which is what the
-// id says.
-//
-// A pair with no clipped segment contributes the straight line between its two
-// stops rather than nothing, so one unmatched pair costs a shape one straight
-// leg instead of leaving a gap in it — the same degradation the router's
-// transit path makes.
-//
-// Each leg after the first drops its own first point: it is the joint with the
-// previous leg's last point, and emitting both would repeat a coordinate at
-// every intermediate station.
 var _gtfsRailShapePointsSQL = `
 SELECT
   leg.shape_id,

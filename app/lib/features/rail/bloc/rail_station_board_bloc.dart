@@ -11,11 +11,6 @@ import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_station_board_event.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_station_board_state.dart';
 
-/// Serves one station's departure board, one direction at a time.
-///
-/// Separate from `RailBloc` rather than a mode of it: that bloc is shaped
-/// around an origin/destination query — fares, arrival times, a date the rider
-/// picked — and none of it applies to "what leaves from here next".
 class RailStationBoardBloc
     extends Bloc<RailStationBoardEvent, RailStationBoardState> {
   RailStationBoardBloc({
@@ -54,10 +49,6 @@ class RailStationBoardBloc
   ) async {
     final generation = ++_generation;
     final direction = event.direction;
-    // Captured before the loading state overwrites it. The delay stream is
-    // system-wide and subscribed once, so the map the previous direction was
-    // showing is still true for this one; dropping it would blank the 誤點
-    // column until the next frame, which can be 30s away.
     final carriedDelays = switch (state) {
       RailStationBoardLoaded(:final delays) => delays,
       _ => const <String, int>{},
@@ -96,10 +87,6 @@ class RailStationBoardBloc
     }
   }
 
-  /// TRA delays only, and only once: the RPC streams the *system-wide* delay
-  /// board (the router ignores the origin/destination it is handed — see
-  /// `Tra_TimetableServer.Delay`), so one subscription covers every train on
-  /// every direction of this board. THSR publishes no such stream.
   void _subscribeDelays() {
     if (system != RailSystem.tra || _delaySub != null) return;
     _delaySub =
@@ -120,7 +107,12 @@ class RailStationBoardBloc
   ) {
     final current = state;
     if (current is! RailStationBoardLoaded) return;
-    emit(current.copyWith(delays: event.delays));
+    emit(
+      current.copyWith(
+        delays: event.delays,
+        delaysUpdatedAt: _clock(),
+      ),
+    );
   }
 
   @override

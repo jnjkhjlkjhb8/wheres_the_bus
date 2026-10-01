@@ -54,7 +54,10 @@ class _RoutePill extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space16,
+        vertical: AppTheme.space10,
+      ),
       decoration: BoxDecoration(
         color: cs.brightness == Brightness.light
             ? Colors.white
@@ -63,7 +66,7 @@ class _RoutePill extends StatelessWidget {
         boxShadow: AppShadows.floating,
       ),
       child: Row(
-        spacing: 6,
+        spacing: AppTheme.space6,
         children: [
           Text(
             routeName,

@@ -1,24 +1,4 @@
 #!/usr/bin/env bash
-# check-file-budgets.sh
-#
-# File-size ratchet: fails only on regressions, never on today's code.
-#
-#   - scripts/testdata/file-budgets.txt records every tracked Go/Dart source
-#     file currently over the default cap, as "<file>|<budget-lines>" with
-#     the budget frozen at the file's size when it was ratcheted. A listed
-#     file FAILs if it grows past its budget; shrinking is always fine (and
-#     the budget should then be lowered in review).
-#   - Any file NOT in the budget file FAILs if it exceeds DEFAULT_CAP lines
-#     — new code does not get to introduce new giants.
-#   - A budget entry whose file no longer exists (or is now under the cap)
-#     is reported as a stale entry to prune; stale entries WARN, not FAIL.
-#
-# Generated sources (app/lib/data/generated, *.pb.go) are excluded; they are
-# gitignored anyway, but the filter keeps the check honest if that changes.
-#
-# Usage: scripts/check-file-budgets.sh [--self-test]
-#   --self-test  fabricates an over-budget file in a temp tree, asserts the
-#                ratchet flags it (RED), then runs the real check (GREEN).
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

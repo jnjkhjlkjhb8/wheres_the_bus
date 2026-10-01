@@ -8,10 +8,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
 )
 
-// TestBuildGTFSRTDelays covers the join and every reason a reported delay is
-// dropped. The conversion is the part worth pinning: tra:delay is minutes and
-// GTFS-RT is seconds, and getting that wrong is a feed that under-reports every
-// delay by a factor of sixty without failing anything.
 func TestBuildGTFSRTDelays(t *testing.T) {
 	now := time.Date(2026, 8, 7, 9, 0, 0, 0, pipeline.Taipei)
 	index := map[string]railDelayTrip{

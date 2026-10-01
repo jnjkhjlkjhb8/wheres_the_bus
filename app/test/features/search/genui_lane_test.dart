@@ -59,11 +59,6 @@ BusStopArrival _arrival(String name, int seconds) => BusStopArrival(
   estimateSeconds: seconds,
 );
 
-/// Waits for the bloc to reach [status] before the widget is pumped.
-///
-/// The loading state runs an indefinite spinner, so `pumpAndSettle` can only
-/// be used on frames where one is not on screen — the tests reach the state
-/// they are about first, then pump.
 Future<void> _reach(GenUiBloc bloc, GenUiStatus status, GenUiEvent event) {
   final reached = bloc.stream.firstWhere((s) => s.status == status);
   bloc.add(event);
@@ -134,8 +129,6 @@ void main() {
         (_) => call++ == 0 ? Future.value(_answer) : gate.future,
       ),
     );
-    // Releasing the gate first: closing a bloc waits on its in-flight handler,
-    // and the cancelled request is still parked on this future.
     addTearDown(() {
       if (!gate.isCompleted) gate.complete(_answer);
       return bloc.close();

@@ -70,10 +70,6 @@ message CreateArrivalReminderRequest {
   // Non-empty pins the reminder to one vehicle: it fires only when this plate
   // is the bus arriving at stop_key. Empty keeps the legacy next-bus behaviour.
   string plate = 8;
-  // Which 下車提醒 buzz this row fires — "lead" or "alight" (ADR-0020). A 下車
-  // 提醒 arms two rows on two stops and they must feel different, so the event
-  // rides back out on the push. Empty means the legacy arrival notification,
-  // which still carries a banner.
   string alight_event = 9;
 }
 

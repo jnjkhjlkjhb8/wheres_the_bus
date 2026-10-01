@@ -11,24 +11,8 @@ import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/features/alerts/view/notification_toast.dart';
 import 'package:wheres_the_bus/features/metro/bloc/mrt_track_bloc.dart';
 
-/// Covers: `app.dart` must gate on the real
-/// [AppBootstrapState] — `initializing`/`failed` never mount the router or
-/// providers, and `ready`/`degraded` do.
-///
-/// [App.debugRouter] swaps in a trivial route for the `ready`/`degraded`
-/// cases so these tests exercise the bootstrap gate itself rather than the
-/// production home screen (Google Maps, gRPC — unavailable under
-/// `flutter test`). [NotificationToastHost] wraps every route in
-/// `_AppShell`, so its presence/absence is the "main UI mounted or not"
-/// signal.
 void main() {
   setUpAll(() async {
-    // `_AppShell` (mounted once bootstrap reaches ready/degraded) reads
-    // HiveStore.settings synchronously and FavoritesBloc watches the
-    // `favorites` box on construction — both throw on an unopened box, so
-    // every box HiveStore.init() opens must be open before a test reaches
-    // that state. Hive.init() points at a real directory to dodge
-    // path_provider's missing platform channel under `flutter test`.
     Hive.init('./.dart_tool/hive_test_app_gate');
     Future<void> noopBinding() async {}
     await HiveStore.init(initBinding: noopBinding);
@@ -88,7 +72,6 @@ void main() {
     expect(controller.state, AppBootstrapState.failed);
     expect(find.byKey(const Key('bootstrapRetryButton')), findsOneWidget);
     expect(find.byType(NotificationToastHost), findsNothing);
-    // Storage-phase failure gets a specific message, not the generic one.
     expect(find.textContaining('儲存空間'), findsOneWidget);
   });
 

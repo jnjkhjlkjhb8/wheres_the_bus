@@ -1,24 +1,13 @@
-import 'dart:io' show Platform;
-
 import 'package:flutter/material.dart' show Locale, ThemeMode;
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/data/models/fare_type.dart';
 
-/// Key-value backing store for [SettingsRepository].
-///
-/// The real implementation reads and writes the Hive settings box; tests
-/// inject an in-memory map so no box needs opening.
 abstract interface class SettingsStore {
   Object? get(String key, {Object? defaultValue});
   Future<void> put(String key, Object? value);
   bool get ready;
 }
 
-/// Reads and writes user preferences persisted in the settings box.
-///
-/// Features depend on this repository instead of reaching [HiveStore]
-/// directly, keeping the storage engine behind the data layer. The setting
-/// keys and defaults mirror the ones previously owned by [HiveStore].
 class SettingsRepository {
   SettingsRepository({SettingsStore? store})
     : _store = store ?? const _HiveSettingsStore();
@@ -30,27 +19,11 @@ class SettingsRepository {
   bool _boolValue(String key, {required bool defaultValue}) =>
       _store.get(key, defaultValue: defaultValue) as bool? ?? defaultValue;
 
-  /// Guarded on [SettingsStore.ready] because it is read on the Live Activity
-  /// session-start path, which can run before the settings box opens and must
-  /// not throw. Written as `||` rather than the ternary used by [fareType] and
-  /// [appearanceMode] because `avoid_bool_literals_in_conditional_expressions`
-  /// rejects a ternary yielding a bool literal; the `true` fallback is this
-  /// setting's declared default.
-  /// Android is force-disabled: the Live Update notification surface is
-  /// paused, so every session/board/track start path short-circuits here
-  /// rather than being torn out of each feature.
   bool get liveActivityEnabled =>
-      !Platform.isAndroid &&
-      (!_store.ready ||
-          _boolValue('live_activity_enabled', defaultValue: true));
+      !_store.ready || _boolValue('live_activity_enabled', defaultValue: true);
   set liveActivityEnabled(bool value) =>
       _store.put('live_activity_enabled', value);
 
-  /// Whether shaking the phone offers to open the report form.
-  ///
-  /// Guarded on [SettingsStore.ready] like [liveActivityEnabled]: the listener
-  /// that owns the accelerometer subscription starts with the first frame,
-  /// which can precede the settings box opening.
   bool get shakeToReport =>
       !_store.ready || _boolValue(shakeToReportKey, defaultValue: true);
   set shakeToReport(bool value) => _store.put(shakeToReportKey, value);
@@ -73,24 +46,12 @@ class SettingsRepository {
   /// of showing the old ticket type until the screen is rebuilt.
   static const String fareTypeKey = 'fare_type';
 
-  /// Whether the planner must route step-free.
-  ///
-  /// Lives here rather than in the planner's per-trip options because needing
-  /// it is a fact about the rider, not about one journey: it has to survive a
-  /// restart and apply by default, never be re-picked before each search.
   bool get stepFreeRouting =>
       _boolValue(stepFreeRoutingKey, defaultValue: false);
   set stepFreeRouting(bool value) => _store.put(stepFreeRoutingKey, value);
 
   static const String stepFreeRoutingKey = 'step_free_routing';
 
-  /// Walking pace handed to the planner, in centimetres per second.
-  ///
-  /// 0 means "leave the planner's own default alone" (1.4 m/s), which is what
-  /// the middle option offers; it is not a missing value. Stored as an integer
-  /// because the UI offers three discrete paces and a float on the wire would
-  /// invite two clients that both picked "slower" to disagree in the third
-  /// decimal.
   int get walkSpeedCmPerSec =>
       _store.get(walkSpeedKey, defaultValue: 0) as int? ?? 0;
   set walkSpeedCmPerSec(int value) => _store.put(walkSpeedKey, value);

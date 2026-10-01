@@ -62,12 +62,7 @@ class _NotificationSheet extends StatelessWidget {
   }
 
   void _clearAll(BuildContext context, List<AlertViewModel> alerts) {
-    // A maintenance window is ops-controlled; 清除全部 skips it rather than
-    // appearing to clear something that reappears on the next rebuild.
-    final messages = alerts
-        .where((a) => a.dismissible)
-        .map((a) => a.message)
-        .toList();
+    final messages = alerts.map((a) => a.message).toList();
     context.read<AlertBloc>().add(AlertAllDismissed(messages));
     _showUndo(
       context,
@@ -124,7 +119,12 @@ class _NotificationSheet extends StatelessWidget {
             children: [
               const SheetDragHandle(),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 12, 8),
+                padding: const EdgeInsets.fromLTRB(
+                  AppTheme.space20,
+                  AppTheme.space4,
+                  AppTheme.space12,
+                  AppTheme.space8,
+                ),
                 child: Row(
                   children: [
                     Text(
@@ -142,8 +142,8 @@ class _NotificationSheet extends StatelessWidget {
                         ).alertsClearAllSemantics,
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                            horizontal: AppTheme.space12,
+                            vertical: AppTheme.space8,
                           ),
                           child: Text(
                             AppI18n.of(context).alertsClearAll,
@@ -161,7 +161,9 @@ class _NotificationSheet extends StatelessWidget {
                 child: entries.isEmpty
                     ? const _NotificationEmpty()
                     : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 24),
+                        padding: const EdgeInsets.only(
+                          bottom: AppTheme.space24,
+                        ),
                         itemCount: entries.length,
                         itemBuilder: (context, i) => switch (entries[i]) {
                           final _GroupHeading heading => _GroupHeader(
@@ -198,9 +200,14 @@ class _GroupHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space16,
+        AppTheme.space20,
+        AppTheme.space6,
+      ),
       child: Row(
-        spacing: 8,
+        spacing: AppTheme.space8,
         children: [
           Text(
             label,
@@ -237,14 +244,12 @@ class _DismissibleRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final row = _NotificationRow(alert: notice, unread: unread);
-    if (!notice.dismissible) return row;
     return Dismissible(
       key: ValueKey(notice.message),
       direction: DismissDirection.endToStart,
       onDismissed: (_) => onDismissed(),
       background: _DismissBackground(),
-      child: row,
+      child: _NotificationRow(alert: notice, unread: unread),
     );
   }
 }
@@ -316,7 +321,8 @@ class _NotificationRowState extends State<_NotificationRow> {
                   source: alert.source,
                   department: alert.department,
                 ),
-                if (alert.source != null && isRed) const SizedBox(width: 8),
+                if (alert.source != null && isRed)
+                  const SizedBox(width: AppTheme.space8),
                 if (isRed) _SeverityTag(accent: colors.accent, cs: cs),
                 const Spacer(),
                 if (time != null)
@@ -330,7 +336,7 @@ class _NotificationRowState extends State<_NotificationRow> {
                   ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppTheme.space8),
             Text(
               titleText,
               maxLines: bodyText == null && !_expanded ? 2 : null,
@@ -340,7 +346,7 @@ class _NotificationRowState extends State<_NotificationRow> {
               style: _titleStyle(cs, unread),
             ),
             if (bodyText != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: AppTheme.space4),
               Text(
                 bodyText,
                 maxLines: _expanded ? null : 2,
@@ -349,7 +355,7 @@ class _NotificationRowState extends State<_NotificationRow> {
               ),
             ],
             if (_expanded && time != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               Text(
                 _publishFooter(AppI18n.of(context), alert),
                 style: AppTextStyles.memo.copyWith(
@@ -380,26 +386,26 @@ class _NotificationRowState extends State<_NotificationRow> {
                 ),
               ),
               padding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 16,
+                horizontal: AppTheme.space20,
+                vertical: AppTheme.space16,
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(child: content),
                   if (unread) ...[
-                    const SizedBox(width: 12),
+                    const SizedBox(width: AppTheme.space12),
                     Container(
                       width: 8,
                       height: 8,
-                      margin: const EdgeInsets.only(top: 4),
+                      margin: const EdgeInsets.only(top: AppTheme.space4),
                       decoration: BoxDecoration(
                         color: dotColor,
                         shape: BoxShape.circle,
                       ),
                     ),
                   ] else if (canExpand) ...[
-                    const SizedBox(width: 12),
+                    const SizedBox(width: AppTheme.space12),
                     Icon(
                       _expanded
                           ? Icons.keyboard_arrow_up_rounded
@@ -469,7 +475,7 @@ class _SeverityTag extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 20,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: cs.surface,
@@ -497,7 +503,7 @@ class _DismissBackground extends StatelessWidget {
     return Container(
       color: cs.surfaceContainerHighest,
       alignment: Alignment.centerRight,
-      padding: const EdgeInsets.only(right: 24),
+      padding: const EdgeInsets.only(right: AppTheme.space24),
       child: Icon(
         Icons.delete_outline_rounded,
         size: 22,
@@ -552,7 +558,7 @@ class _NotificationEmpty extends StatelessWidget {
             size: 44,
             color: cs.outline,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppTheme.space14),
           Text(
             AppI18n.of(context).alertsEmpty,
             style: AppTextStyles.bodyLarge.copyWith(
@@ -560,7 +566,7 @@ class _NotificationEmpty extends StatelessWidget {
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppTheme.space4),
           Text(
             AppI18n.of(context).alertsEmptyHint,
             style: AppTextStyles.bodySmall.copyWith(

@@ -25,10 +25,6 @@ class Pressable extends StatefulWidget {
   /// Optional semantic label for assistive technologies.
   final String? semanticLabel;
 
-  /// Minimum tap-target extent in logical pixels. When set, the child is
-  /// centred inside a box at least this large so a visually small control
-  /// (a 28px chip or icon button) still meets the 44px accessibility floor.
-  /// The child's own painted size is unchanged.
   final double? minTapSize;
 
   @override

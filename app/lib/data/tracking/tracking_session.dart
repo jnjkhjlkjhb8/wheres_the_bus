@@ -1,16 +1,4 @@
-/// The 追蹤 session's construction and ownership seam (CONTEXT.md: 追蹤).
-///
-/// Starting a 追蹤 used to mean hand-building a thirteen-field [JourneyLeg] and
-/// a six-field [PlanIdentity] at the call site: three bus-side sites and one
-/// rail-side one did it, and two of them spelled out the same `routeLabel`
-/// recipe independently. Recognising "is the running session mine?" was written
-/// out twice more. Both now live here, so a surface starting a 追蹤 supplies
-/// only what it actually knows.
-///
-/// A trackOnly leg is deliberately sparse. It never rides, so the riding
-/// progress lists ([JourneyLeg.stopNames], [JourneyLeg.stopLocations]) stay
-/// empty and [PlanIdentity.supported] is false: these identities are not
-/// bookable plan sections, they are just enough to name one vehicle.
+/// Builders and lookups for active transit tracking sessions.
 library;
 
 import 'package:wheres_the_bus/data/models/bus_models.dart';
@@ -27,52 +15,42 @@ String busTrackingLabel({
   required String headsign,
 }) => headsign.isEmpty ? routeName : '$routeName 往$headsign';
 
-/// Builds the leg for a bus 追蹤 session counting down to [stops]\[boardIndex].
-///
-/// The 目標站 is that stop; [JourneyLeg.alightStop] carries the route's terminus
-/// only so the card can name where the bus is ultimately headed.
 JourneyLeg busTrackingLeg({
   required BusRouteViewModel route,
   required List<BusStopModel> stops,
   required int boardIndex,
+  required int targetIndex,
   required int direction,
 }) {
-  final stop = stops[boardIndex];
+  final target = stops[targetIndex];
+  final from = boardIndex.clamp(0, targetIndex);
+  // Empty when the bus already stands at the target: sublist(n, n).
+  final ahead = stops.sublist(from + 1, targetIndex + 1);
   return JourneyLeg(
     kind: JourneyLegKind.bus,
     routeLabel: busTrackingLabel(
       routeName: route.routeName,
       headsign: direction == 0 ? route.headsignGo : route.headsignReturn,
     ),
-    boardStop: stop.stopName,
-    alightStop: stops.last.stopName,
-    stopNames: const [],
+    boardStop: stops[from].stopName,
+    alightStop: target.stopName,
+    stopNames: [for (final s in ahead) s.stopName],
     identity: PlanIdentity(
       routeType: 'bus',
       routeKey: route.subRouteUid,
       direction: '$direction',
-      departureStopKey: stop.stopUid,
+      departureStopKey: target.stopUid,
       arrivalStopKey: '',
       supported: false,
     ),
     leadingWalkMinutes: 0,
     scheduledDeparture: null,
     scheduledArrival: null,
-    boardLocation: PlanPoint(lat: stop.lat, lng: stop.lon),
-    stopLocations: const [],
+    boardLocation: PlanPoint(lat: stops[from].lat, lng: stops[from].lon),
+    stopLocations: [for (final s in ahead) PlanPoint(lat: s.lat, lng: s.lon)],
   );
 }
 
-/// Builds the leg for a rail 追蹤 session from [boardName] to [alightName].
-///
-/// A trackOnly rail leg has no real O/D keys, so the identity borrows two
-/// fields to carry the train's identity instead: `routeKey` is the train
-/// number and `direction` is the service date. [isTrackingTrain] reads them
-/// back — the two must agree, which is why both live in this file.
-///
-/// [delayMinutes] is folded into the scheduled departure so the countdown
-/// reflects live 誤點, but deliberately not into [railSchedule]: the tracker
-/// applies live delay to the schedule itself as it advances.
 JourneyLeg railTrackingLeg({
   required AppI18n i18n,
   required bool isThsr,
@@ -109,10 +87,6 @@ JourneyLeg railTrackingLeg({
   railSchedule: railSchedule,
 );
 
-/// The stop UID a bus 追蹤 is counting down to on [subRouteUid], or null.
-///
-/// Only a waiting trackOnly session on that very subroute counts: a navigation
-/// session, or another route's session, must leave this route's toggles idle.
 String? trackedBusStopUid(JourneySessionState state, String? subRouteUid) {
   final leg = _waitingTrackLeg(state);
   if (leg == null ||
@@ -124,10 +98,6 @@ String? trackedBusStopUid(JourneySessionState state, String? subRouteUid) {
   return leg.identity.departureStopKey;
 }
 
-/// Whether a rail 追蹤 is running for [trainNo] on [serviceDate].
-///
-/// Both must match: a train number repeats every service day, so the date is
-/// what distinguishes today's 152 次 from tomorrow's.
 bool isTrackingTrain(
   JourneySessionState state, {
   required String trainNo,

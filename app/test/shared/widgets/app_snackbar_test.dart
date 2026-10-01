@@ -62,4 +62,40 @@ void main() {
     expect(undone, isTrue);
     expect(find.text('已清除 3 則通知'), findsNothing);
   });
+
+  testWidgets('an action does not make the pill a different component', (
+    tester,
+  ) async {
+    final pill = find
+        .ancestor(of: find.byType(Row), matching: find.byType(Container))
+        .first;
+
+    await tap(tester, (c) => AppSnackbar.show(c, '文湖線即將推出'));
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+    final plain = tester.getSize(pill).height;
+
+    await tap(
+      tester,
+      (c) => AppSnackbar.show(c, '已移除收藏', action: '復原', onAction: () {}),
+    );
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+
+    expect(tester.getSize(pill).height, plain);
+    // The action still clears the 44px tap-target floor by filling the pill.
+    expect(
+      tester
+          .getSize(
+            find
+                .ancestor(
+                  of: find.text('復原'),
+                  matching: find.byType(ConstrainedBox),
+                )
+                .first,
+          )
+          .longestSide,
+      greaterThanOrEqualTo(44),
+    );
+  });
 }

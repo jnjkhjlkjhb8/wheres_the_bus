@@ -13,26 +13,10 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 import '../../support/helpers/i18n.dart';
 
-/// The home map owns the bloc for the station group it has open, and drops it
-/// the moment the group closes — while the sheet showing it is still animating
-/// away, and so still rebuilding. A view that picked its provider per build
-/// would swap `BlocProvider.value` for `BlocProvider(create:)` at the same
-/// tree position mid-pop, which provider rejects outright:
-///
-///     Bad state: Rebuilt _InheritedProviderScope<BusStopBloc?> using a
-///     different constructor.
-///
-/// Whatever the caller does with the parameter, the view has to keep providing
-/// the same way.
 void main() {
   testWidgets('the supplied bloc going away does not swap providers', (
     tester,
   ) async {
-    // Empty stopId on purpose: it settles the bloc straight to `empty` without
-    // opening an arrival feed, whose decay timer would still be pending when
-    // testWidgets checks its no-stray-timers invariant. What this test watches
-    // is which provider constructor the view picks, which the feed plays no
-    // part in.
     final bloc = BusStopBloc(
       i18n: zhStrings,
       stopId: '',

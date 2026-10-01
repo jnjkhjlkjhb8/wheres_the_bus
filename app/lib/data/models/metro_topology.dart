@@ -16,20 +16,11 @@ class MetroPathStop {
   final String line;
 }
 
-/// Client-side Taipei Metro line topology, derived from [metroMapStations]
-/// (the only local station data — PowerSync is search-only, no adjacency
-/// table). Used to build the board→alight path offered in the setup sheet
-/// before a track session exists; the backend recomputes the authoritative
-/// path from `mrt_adjacency` at CreateTrack time (ADR-0015).
 abstract final class MetroTopology {
   /// Single-line code → station name, expanded from the interchange-combined
   /// ids in [metroMapStations] (e.g. `BL12_R10` → `BL12` and `R10`).
   static final Map<String, String> stationNames = _buildNames();
 
-  /// Branch chains that numeric ordering alone cannot express. Each entry is a
-  /// connect station on the trunk and the ordered spur hanging off it — the
-  /// only three splices in the network (ADR-0015): 蘆洲支線 O12→O50..O54,
-  /// 新北投支線 R22→R22A, 小碧潭支線 G03→G03A.
   static const Map<String, List<_Branch>> _branches = {
     'O': [
       _Branch(connect: 'O12', chain: ['O50', 'O51', 'O52', 'O53', 'O54']),
@@ -42,11 +33,6 @@ abstract final class MetroTopology {
     ],
   };
 
-  /// The stations strictly ahead of [boardCode] on a train running [line]
-  /// toward [terminalCode], in travel order (board excluded, terminal
-  /// included). Empty when the board/terminal pair does not resolve to a path
-  /// (e.g. a terminal that is not actually reachable forward), which the sheet
-  /// treats as "no selectable targets".
   static List<MetroPathStop> aheadStations({
     required String line,
     required String boardCode,

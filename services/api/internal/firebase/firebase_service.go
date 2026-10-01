@@ -38,28 +38,13 @@ type firebasePersistence interface {
 	ListDeviceState(context.Context, string) (*pb.DeviceState, error)
 }
 
-// FirebaseServer implements the device-registration and arrival-reminder RPCs.
-// It authenticates each caller against a per-installation secret hash carried in
-// gRPC metadata (see installationSecretHash) rather than any Firebase identity.
-// now is injectable so tests can control reminder expiry checks; it defaults to
-// time.Now when nil.
 type FirebaseServer struct {
 	pb.UnimplementedFirebase_ServiceServer
 	store firebasePersistence
 	now   func() time.Time
-	// live carries the demand touch for a new bus reminder. A bus reminder
-	// fires from busEta's own tick, so the city it names has to stay on full
-	// cadence until the reminder expires even though nobody is streaming it
-	// (FDPL-90). Nil leaves reminders with no effect on polling, which is what
-	// the tests that do not exercise the gate run with.
-	live livestream.LiveSource
+	live  livestream.LiveSource
 }
 
-// UpsertDevice registers or updates a device installation and its notification
-// preferences. It requires android/ios platform and an fcm_token whenever push
-// is enabled. The install secret from metadata must match any existing row, or
-// the store reports the row as unauthorized and PermissionDenied is returned.
-// The fcm_token is cleared from the response so it is never echoed back.
 func (s *FirebaseServer) UpsertDevice(ctx context.Context, request *pb.UpsertDeviceRequest) (*pb.DeviceState, error) {
 	identity, prefs := request.GetIdentity(), request.GetPrefs()
 	if identity == nil || prefs == nil || !installid.ValidText(identity.GetInstallId(), 128) || !installid.ValidText(identity.GetPlatform(), 16) {
@@ -96,12 +81,6 @@ func (s *FirebaseServer) UpsertDevice(ctx context.Context, request *pb.UpsertDev
 	return state, nil
 }
 
-// ReplaceRouteSubscriptions stores the device's whole 訂閱範圍, replacing
-// whatever was there. The app derives the set from its 收藏 and resends all of
-// it on every change, so this is the only write path — there is no per-route
-// toggle to drift out of sync with. An empty list is valid and clears the
-// device. The caller is authorized against its install secret before the store
-// is touched.
 func (s *FirebaseServer) ReplaceRouteSubscriptions(ctx context.Context, request *pb.RouteSubscriptionsRequest) (*pb.Ack, error) {
 	// maxRouteSubscriptions bounds one device's 訂閱範圍. It is far above any
 	// plausible 收藏 list and exists only so a malformed or hostile client
@@ -146,10 +125,6 @@ func validAlertRoute(routeType string) bool {
 	return false
 }
 
-// CreateArrivalReminder registers a one-shot arrival reminder for a bus stop.
-// It rejects non-bus routes, directions other than "0"/"1", lead times outside
-// 1..120 minutes, and expiry timestamps not in the future (measured against
-// s.now). It generates a UUIDv4 reminder ID and persists the reminder as pending.
 func (s *FirebaseServer) CreateArrivalReminder(ctx context.Context, request *pb.CreateArrivalReminderRequest) (*pb.ArrivalReminder, error) {
 	if !installid.ValidText(request.GetInstallId(), 128) || !validRoute(request.GetRouteType()) ||
 		!installid.ValidText(request.GetRouteKey(), 256) || !installid.ValidText(request.GetStopKey(), 256) || !installid.ValidText(request.GetDirection(), 32) {
@@ -181,6 +156,9 @@ func (s *FirebaseServer) CreateArrivalReminder(ctx context.Context, request *pb.
 	expiresAt := time.Unix(request.ExpiresAtUnix, 0)
 	if !expiresAt.After(now()) {
 		return nil, status.Error(codes.InvalidArgument, "expires_at_unix must be in the future")
+	}
+	if expiresAt.After(now().Add(24 * time.Hour)) {
+		return nil, status.Error(codes.InvalidArgument, "expires_at_unix must be within 24 hours")
 	}
 	if err := s.authorizeInstall(ctx, request.InstallId); err != nil {
 		return nil, err
@@ -216,6 +194,12 @@ func (s *FirebaseServer) CreateArrivalReminder(ctx context.Context, request *pb.
 			"install", request.InstallId,
 			"err", err,
 		)
+		if errors.Is(err, ErrReminderLimitReached) {
+			return nil, status.Error(codes.ResourceExhausted, "too many active arrival reminders")
+		}
+		if errors.Is(err, ErrReminderDuplicate) {
+			return nil, status.Error(codes.AlreadyExists, "arrival reminder already exists")
+		}
 		return nil, status.Error(codes.Internal, "failed to save arrival reminder")
 	}
 	s.claimReminderDemand(ctx, stored)
@@ -286,8 +270,6 @@ func (s *FirebaseServer) authorizeInstall(ctx context.Context, installID string)
 	return installid.Authorize(ctx, s.store, installID)
 }
 
-// validAlightEvent gates the two 下車提醒 buzzes (ADR-0020). Empty stays legal:
-// it is the legacy banner reminder, which has no vibration to choose between.
 func validAlightEvent(event string) bool {
 	switch event {
 	case "", "lead", "alight":
@@ -364,10 +346,6 @@ func firebaseEnabledFromEnv() bool {
 	return strings.EqualFold(os.Getenv("FIREBASE_ENABLED"), "true") && !strings.EqualFold(os.Getenv("APP_ENV"), "dev")
 }
 
-// grpcTLSEnabledFromEnv reports whether the gRPC server should terminate
-// TLS. This is independent of Firebase/App Check: staging and prod both
-// terminate TLS at the router regardless of whether App Check enforcement
-// is on, so the two concerns must not share one flag.
 func grpcTLSEnabledFromEnv() bool {
 	return strings.EqualFold(os.Getenv("GRPC_TLS"), "true")
 }
@@ -418,10 +396,6 @@ func AppCheckStreamInterceptor(verifier AppCheckVerifier, enabled bool) grpc.Str
 }
 
 func verifyAppCheck(ctx context.Context, verifier AppCheckVerifier, method string) error {
-	// Both rejections are logged: the app drops an unobtainable App Check token
-	// rather than failing the call, so an unregistered debug token reaches the
-	// rider as a reminder that silently does not arm, with nothing on either
-	// side naming the cause.
 	values := metadata.ValueFromIncomingContext(ctx, AppCheckMetadataKey)
 	if len(values) != 1 || values[0] == "" || verifier == nil {
 		zap.S().Warnw("app check rejected",
@@ -446,18 +420,6 @@ func verifyAppCheck(ctx context.Context, verifier AppCheckVerifier, method strin
 	return nil
 }
 
-// claimReminderDemand keeps a bus reminder's city on full polling cadence for
-// the reminder's whole life.
-//
-// Only bus needs it: rail reminders carry a fire_at and are dispatched on a
-// schedule, while a bus reminder has no known arrival time and is dispatched
-// from inside busEta's per-city run. A rider who sets one and pockets their
-// phone holds no live stream, so without this the city goes cold and the
-// reminder arrives late or not at all.
-//
-// The TTL runs to the reminder's own expiry, so no renewal is needed. A Redis
-// failure is dropped rather than failing the create: the reminder is already
-// persisted, and functions re-asserts these keys at startup.
 func (s *FirebaseServer) claimReminderDemand(
 	ctx context.Context,
 	reminder FirebaseArrivalReminder,

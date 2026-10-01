@@ -42,14 +42,6 @@ class MaasRepository {
   final MaasServiceClient? _client;
   MaasServiceClient get _grpc => _client ?? GrpcClient.instance.maas;
 
-  /// Streams the plan in stages — routes first, map geometry second — so the
-  /// results list can appear without waiting for the walk paths. Cancelling
-  /// the subscription cancels the RPC.
-  ///
-  /// [pageCursor] echoes a cursor from a previous response to ask for earlier
-  /// or later departures; anything else is rejected upstream. [legAlternatives]
-  /// asks for that many replacement services per transit leg — 0, the default,
-  /// asks for none.
   Stream<PlanUpdate> planStream({
     required double fromLat,
     required double fromLon,

@@ -22,10 +22,6 @@ func newHealthFile(path string) *healthFile {
 	return &healthFile{path: path}
 }
 
-// defaultHealthFilePath resolves the marker path: HEALTH_FILE overrides the
-// default so tests don't share a fixed path with a real deployment; the
-// default matches the tmpfs every role's compose service already mounts at
-// /tmp (docker/docker-compose.yaml).
 func defaultHealthFilePath() string {
 	if p := os.Getenv("HEALTH_FILE"); p != "" {
 		return p

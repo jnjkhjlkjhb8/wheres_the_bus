@@ -19,15 +19,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// This file is the single TDX HTTP client shared by both binaries. It owns the
-// OAuth token refresh, the conditional-GET (If-Modified-Since) + 304 rule, the
-// 4xx/429/401-retry handling, and the auth'd resty client construction. Before
-// it, functions and router each carried their own callApi/getToken copies that
-// had drifted: the router's had no 4xx guard (a 500 cached a bad Last-Modified
-// marker and decoded an error body) and only knew the legacy token key. Both
-// call patterns are served here, so neither binary constructs a TDX client or
-// token exchange inline anymore.
-
 // TDX endpoints and token lifetime.
 const (
 	_tdxBasicBaseURL = "https://tdx.transportdata.tw/api/basic"
@@ -35,12 +26,6 @@ const (
 	_tdxTokenTTL     = 6 * time.Hour
 )
 
-// TDXStore is the small Redis surface the TDX client needs: the auth-token cache
-// (read/write/delete) and the If-Modified-Since markers (read/write). It is an
-// interface so unit tests can substitute an in-memory fake for the token-refresh,
-// 304, and 401 re-auth paths without a live Redis. *redis.Client satisfies it
-// through RedisTDXStore. Get returns ("", nil) — not an error — for a missing
-// key, matching how the client treats a cold cache.
 type TDXStore interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key, value string, ttl time.Duration) error
@@ -73,11 +58,6 @@ func (s RedisTDXStore) Del(ctx context.Context, keys ...string) error {
 	return s.RC.Del(ctx, keys...).Err()
 }
 
-// TDXConfig configures a TDXClient. Store is required. IMSKey maps a fetch name
-// to its If-Modified-Since cache key; the two binaries namespace it differently
-// (raw vs legacy), so it is injected. SinceFallback supplies an IMS value when
-// the cache is cold and returns "" for none — it may be nil. BaseURL overrides
-// the TDX basic API base (used by the MaaS family).
 type TDXConfig struct {
 	Store         TDXStore
 	IMSKey        func(name string) string
@@ -86,16 +66,6 @@ type TDXConfig struct {
 	Tap           TDXTap
 }
 
-// TDXTap opens a sink for one fetch's response body, so a caller can keep the
-// bytes upstream actually served rather than only what the decoder made of them
-// (ADR-0023). It is consulted once per modified response; returning nil means
-// this fetch is not observed, which is the answer for every name not on the
-// caller's whitelist and for every environment with archiving switched off.
-//
-// The returned writer is closed when the fetch is, and the close is where the
-// caller does whatever it does with the bytes. A write or close failure is the
-// tap's own problem: it must never fail the fetch, because the observation is
-// worth strictly less than the live data it observes.
 type TDXTap func(name string) io.WriteCloser
 
 // TDXClient performs authenticated TDX requests. The zero value is not usable;
@@ -117,10 +87,6 @@ type TDXClient struct {
 	tokenURL string
 }
 
-// NewTDXClient builds a TDX client for the basic conditional-GET API: base URL,
-// response compression negotiation, a 30s timeout, transport/429 retries, a
-// per-request bearer token from Store, and a 401 handler that drops both token
-// keys so the retry re-authenticates. TDX API docs: https://tdx.transportdata.tw/
 func NewTDXClient(cfg TDXConfig) *TDXClient {
 	base := cfg.BaseURL
 	if base == "" {
@@ -170,11 +136,6 @@ func IsTDXAuthError(err error) bool {
 	return errors.As(err, &authErr)
 }
 
-// NewAuthedClient builds a resty client for a TDX API family with a different
-// base URL and retry policy than the basic conditional-GET client (e.g. MaaS):
-// it installs the shared bearer-token auth hook and a finite timeout, leaving
-// retry conditions to the caller. This keeps the token exchange in one place
-// while letting each family keep its own request shape.
 func (c *TDXClient) NewAuthedClient(baseURL string) *resty.Client {
 	return resty.New().
 		SetBaseURL(baseURL).
@@ -189,12 +150,6 @@ func (c *TDXClient) NewAuthedClient(baseURL string) *resty.Client {
 		})
 }
 
-// Token returns a TDX OAuth bearer token, preferring the cached value in Redis
-// (namespaced key, then legacy key). On a cache miss it does a client_credentials
-// exchange using TDX_CLIENT_ID / TDX_CLIENT_SECRET and caches the token for 6
-// hours. Concurrent cache misses share a single exchange. The cache is checked
-// again inside the singleflight call so a waiter cannot start a redundant
-// exchange after another caller has already populated it.
 func (c *TDXClient) Token(ctx context.Context) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -387,12 +342,6 @@ func (c *TDXClient) get(ctx context.Context, url, marker string) (*resty.Respons
 	}
 }
 
-// TDXFetch is one conditional response. Ack advances its Last-Modified marker;
-// consumers call it only after the payload has decoded and its Redis pipeline
-// has committed. Invalidate clears a stale conditional marker so the next call
-// is forced to fetch a full frame. Close drains the decoded stream before
-// closing it, surfacing gzip checksum/truncation failures even when a consumer
-// stopped decoding early.
 type TDXFetch struct {
 	Decoder    *json.Decoder
 	Modified   bool
@@ -436,13 +385,6 @@ func decodedTDXBody(resp *resty.Response) (io.ReadCloser, error) {
 	}
 }
 
-// tappedBody mirrors the response body into the tap's sink as the decoder reads
-// it, so observing costs one copy of the stream rather than a second buffer of
-// the whole payload. With no tap the body is returned untouched.
-//
-// The tap's errors are deliberately swallowed here: a broken observer must not
-// break the fetch it is observing. What it must not do is hide — the sink's
-// Close is where the caller counts what it did and did not store.
 func tappedBody(body io.ReadCloser, tap TDXTap, name string) io.ReadCloser {
 	if tap == nil {
 		return body
@@ -543,32 +485,17 @@ func (c *TDXClient) Get(ctx context.Context, url, name string) (*TDXFetch, error
 	}, nil
 }
 
-// TDXIntoCommit is the durable callback input for GetInto. Marker is the fresh
-// response's Last-Modified value and must be committed with Body when the
-// caller's durable store uses the marker to validate later 304 responses. Body
-// remains owned by GetInto; the callback may seek it but must not close it.
 type TDXIntoCommit struct {
 	Body   io.ReadSeeker
 	Marker string
 }
 
-// TDXIntoResult describes a completed conditional request. Marker is the fresh
-// Last-Modified value for a 200 response and the If-Modified-Since value that
-// produced a 304 response. Invalidate deletes that conditional marker, allowing
-// a caller whose durable state disagrees with a 304 to force one full refetch.
 type TDXIntoResult struct {
 	Modified   bool
 	Marker     string
 	Invalidate func() error
 }
 
-// GetInto is the disk-spooled conditional GET for callers that must durably
-// handle the whole body before the If-Modified-Since marker advances (the
-// raw_tdx landing). Fresh response bytes are streamed into a temporary file so
-// large static datasets do not require an equally large heap allocation. The
-// file is rewound before commit and remains owned by GetInto; commit may seek it
-// for transaction retries but must not close it. The marker advances only after
-// commit succeeds, so a failed durable write refetches on the next run.
 func (c *TDXClient) GetInto(ctx context.Context, url, name string, commit func(TDXIntoCommit) error) (result TDXIntoResult, err error) {
 	if ctx == nil {
 		ctx = context.Background()

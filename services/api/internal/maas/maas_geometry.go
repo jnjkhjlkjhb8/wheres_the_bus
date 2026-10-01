@@ -16,21 +16,6 @@ import (
 // geometry enrichment for MaaS plan responses. Split out of maas.go to
 // keep that file within its size budget; no behavior change.
 
-// enrichWalkSections is the TDX planner's walk geometry. It is reached only
-// when MAAS_BACKEND=tdx, and OSRM is no longer part of the stack (ADR-0022), so
-// in practice every lookup here now fails and the sections keep their straight
-// departure-to-arrival line. That is deliberate: the kill switch is a degraded
-// mode, not an equivalent one -- routes, times, fares, transfers and
-// notification identities all still resolve, only the walk leg's map line is a
-// straight line. The code is kept rather than deleted because restoring it is
-// then a matter of putting the osrm services back in the compose file, and
-// because it carries the Traditional Chinese turn phrasing MOTIS's own steps
-// reuse (motisStepInstruction).
-//
-// It treats OSRM as optional enrichment: cancellation, timeout,
-// and routing failures leave the TDX duration and empty geometry untouched. The
-// indexed section references preserve response order while errgroup bounds the
-// number of concurrent OSRM requests.
 func enrichWalkSections(ctx context.Context, osrmClient *resty.Client, refs []maasSectionRef) {
 	if osrmClient == nil {
 		return
@@ -58,11 +43,6 @@ func enrichWalkSections(ctx context.Context, osrmClient *resty.Client, refs []ma
 	_ = group.Wait()
 }
 
-// isWalkSection reports whether a section is a pedestrian leg. Keyed off the
-// section type: live TDX MaaS responses emit type "pedestrian" with mode
-// "pedestrian" (not the documented "WALK"), and walk legs still carry a
-// transport block, so the type field is the reliable discriminator — mirrors
-// the app's isWalk. The legacy ""/"walk" modes are kept for older payloads.
 func isWalkSection(sec tdxSection) bool {
 	return strings.EqualFold(sec.Type, "pedestrian") ||
 		sec.Transport.Mode == "" || strings.EqualFold(sec.Transport.Mode, "walk")
@@ -93,11 +73,6 @@ type osrmRouteResponse struct {
 	} `json:"routes"`
 }
 
-// walkRoute resolves the OSRM foot route between two points for a walk section.
-// It returns the real travel time (seconds), the route geometry, and the
-// turn-by-turn steps from a single /route call. ok is false when either point
-// lacks coordinates or OSRM returns no usable route, so the caller keeps the
-// fixed TDX estimate and leaves the path and steps empty.
 func walkRoute(ctx context.Context, osrmClient *resty.Client, from, to *pb.Location) (int64, []*pb.Location, []*pb.WalkStep, bool) {
 	if osrmClient == nil || from == nil || to == nil {
 		return 0, nil, nil, false
@@ -145,10 +120,6 @@ func walkRoute(ctx context.Context, osrmClient *resty.Client, from, to *pb.Locat
 	return int64(route.Duration), path, steps, true
 }
 
-// walkInstruction composes a Traditional Chinese turn-by-turn sentence from one
-// OSRM maneuver. Taiwan OSM street names are already Chinese, so the street
-// name (when present) is used verbatim. Unknown maneuver types fall back to a
-// generic "continue straight" sentence so navigation never shows an empty line.
 func walkInstruction(maneuverType, modifier, name string) string {
 	switch maneuverType {
 	case "arrive":
@@ -198,10 +169,6 @@ func isBusMode(mode string) bool {
 // way _maasOSRMConcurrency bounds OSRM lookups in enrichWalkSections.
 const _maasTransitPathConcurrency = 4
 
-// _railShapeSnapMeters is the maximum distance (in meters) a section's
-// departure/arrival stop may sit from a candidate line before that line is
-// rejected as a match. 500m tolerates the walk-in access point TDX sometimes
-// reports for a station without matching an unrelated line.
 const _railShapeSnapMeters = 500.0
 
 // _railShapeSimplifyTolerance is the ST_SimplifyPreserveTopology tolerance (in
@@ -209,20 +176,6 @@ const _railShapeSnapMeters = 500.0
 // coordinate density without visibly changing the drawn path.
 const _railShapeSimplifyTolerance = 0.0001
 
-// _transitPathClipSQL finds the rail_shapes line that best matches one stop
-// pair for a given mode and returns it clipped between the two stops.
-//
-// Matching is purely geometric (MaaS sections carry no LineID): "best" is the
-// line minimizing the larger of the two stop-to-line distances, computed over
-// ST_LineMerge(geom) so a MULTILINESTRING scores as one shape. Once a
-// candidate merged geometry is chosen, its individual components are dumped
-// (ST_Dump) so ST_LineLocatePoint/ST_LineSubstring — which require a simple
-// LINESTRING — operate on the one component whose distance to both stops is
-// within _railShapeSnapMeters; a shape whose components each miss one stop
-// (no single component holds both) yields no row, so the caller falls back to
-// a straight line for that pair. ST_LineLocatePoint fractions are ordered
-// low-to-high before ST_LineSubstring, since the stop pair's travel direction
-// does not necessarily match the shape's digitized direction.
 const _transitPathClipSQL = `
 WITH candidates AS (
 	SELECT ST_LineMerge(geom) AS merged
@@ -263,10 +216,6 @@ SELECT ST_AsText(
 )
 FROM located`
 
-// railShapeMode maps a MaaS transport mode string to the rail_shapes.mode
-// value it should be matched against, reusing the same mode classifiers
-// batchSectionFares uses. "" means the section is out of scope for transit-
-// path enrichment (bus and anything else).
 func railShapeMode(mode string) string {
 	switch {
 	case isMetroMode(mode):
@@ -299,10 +248,6 @@ func sectionStopPoints(sec tdxSection) []transitStopPoint {
 	return points
 }
 
-// appendTransitSegment appends seg to path, dropping seg's first point when
-// it duplicates path's current last point — the joint between two
-// consecutive stop-pair clips — so the assembled path has no repeated point
-// at each intermediate stop.
 func appendTransitSegment(path []*pb.Location, seg []*pb.Location) []*pb.Location {
 	if len(seg) == 0 {
 		return path
@@ -350,11 +295,6 @@ func parseWKTLineString(wkt string) ([]*pb.Location, error) {
 	return points, nil
 }
 
-// clipRailShape looks up and clips the rail_shapes line best matching one
-// stop pair. ok is false whenever the enrichment does not apply: missing
-// coordinates, a query error, no candidate line, or every candidate's snap
-// distance exceeding _railShapeSnapMeters. The caller falls back to a straight
-// line between the two stops in every ok=false case.
 func clipRailShape(ctx context.Context, db maasDB, mode string, a, b transitStopPoint) ([]*pb.Location, bool) {
 	if db == nil {
 		return nil, false
@@ -403,12 +343,6 @@ func clipRailShape(ctx context.Context, db maasDB, mode string, a, b transitStop
 	return points, true
 }
 
-// buildTransitPath assembles one section's full transitPath by clipping a
-// rail_shapes line between every consecutive stop pair (departure →
-// intermediate stops → arrival) and stitching the per-pair clips together. A
-// pair whose line does not resolve falls back to its two raw stop points, so
-// one unmatched pair degrades to a straight segment rather than emptying the
-// whole section's path.
 func buildTransitPath(ctx context.Context, db maasDB, mode string, sec tdxSection) []*pb.Location {
 	stops := sectionStopPoints(sec)
 	if len(stops) < 2 {
@@ -426,12 +360,6 @@ func buildTransitPath(ctx context.Context, db maasDB, mode string, sec tdxSectio
 	return path
 }
 
-// enrichTransitPaths is a pure enhancement, mirroring enrichWalkSections: any
-// SQL error, unmatched pair, or over-threshold snap leaves a section's
-// transitPath empty (or partially straight-line) rather than failing the
-// plan. Only rail/metro sections are enriched — buses are out of scope
-// (railShapeMode returns "" for them). Concurrency is bounded per section the
-// same way enrichWalkSections bounds per-section OSRM lookups.
 func enrichTransitPaths(ctx context.Context, db maasDB, refs []maasSectionRef) {
 	if db == nil {
 		return

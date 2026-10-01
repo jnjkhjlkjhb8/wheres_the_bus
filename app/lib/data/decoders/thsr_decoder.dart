@@ -77,23 +77,6 @@ class ThsrDecoder {
         .toList();
   }
 
-  /// Seat availability for one rider's journey on one train.
-  ///
-  /// THSR publishes a status per boarding station, not per journey: it says
-  /// whether seats remain *from* that station onward. A journey is therefore
-  /// only buyable when every station from the boarding stop up to — but not
-  /// including — the alighting stop still has seats. The operator's own
-  /// example: 南港 shows O and 板橋 shows O, yet 南港→板橋 has no standard seat,
-  /// because 台北 in between is X and those seats went to riders boarding
-  /// there. The alighting station's own status is irrelevant; the rider is
-  /// getting off.
-  ///
-  /// The seat segments arrive as consecutive legs (each leg's destination is
-  /// the next leg's origin), so the journey is the run of legs between the two
-  /// stations. A station the train does not call at, a reversed pair, or any
-  /// leg whose
-  /// letter is not O/L/X yields [ThsrSeatStatus.unknown] — never a claim that a
-  /// seat exists.
   ThsrSeatStatus decodeSeatStatus(
     thsr_available_seats seats, {
     required String fromStationId,

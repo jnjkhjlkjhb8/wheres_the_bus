@@ -12,8 +12,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// TestQueryThsrFaresReadsFare covers the read path (ADR-0005): the query reads
-// the loaded env schema and returns the fare it finds, never fetching from TDX.
 func TestQueryThsrFaresReadsFare(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {
@@ -37,11 +35,6 @@ func TestQueryThsrFaresReadsFare(t *testing.T) {
 	}
 }
 
-// TestQueryThsrFaresKeepsEveryClass pins which axes the query leaves open. Only
-// ticket_type is pinned (1 單程); fare class (全票/半票) and cabin class
-// (對號/商務/自由座) must both survive, because the app resolves the rider's
-// 票種 preference and seat against them. Re-pinning either axis to 1 silently
-// quotes 全票標準 to every rider, including a 敬老 one.
 func TestQueryThsrFaresKeepsEveryClass(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {
@@ -79,9 +72,6 @@ func TestQueryThsrFaresKeepsEveryClass(t *testing.T) {
 	}
 }
 
-// TestQueryThsrFaresEmptyOnEmptyDB covers the read path (ADR-0005): the query
-// returns no rows on an empty DB instead of fetching from TDX, so thsrFare can
-// map it to NotFound.
 func TestQueryThsrFaresEmptyOnEmptyDB(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {
@@ -105,12 +95,6 @@ func TestQueryThsrFaresEmptyOnEmptyDB(t *testing.T) {
 	}
 }
 
-// TestThsrTimetablePayloadUsesOriginDeparture pins the origin leg to the stop's
-// departure time, not its arrival. THSR O/D queries start from a terminus
-// (南港/台北) where the originating train has no arrival time (stored 00:00), so
-// using arrivaltime showed every train departing at 00:00 with an absurd
-// duration. Numeric ids skip station-name resolution, so only the O/D query is
-// expected.
 func TestThsrTimetablePayloadUsesOriginDeparture(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {
@@ -275,8 +259,6 @@ func TestThsrTimetablePayloadPropagatesOriginResolverErrorImmediately(t *testing
 	}
 }
 
-// TestThsrStoptimesPayload verifies the read path marshals stop times and
-// reports the row count so the handler can NotFound an empty result (ADR-0005).
 func TestThsrStoptimesPayload(t *testing.T) {
 	db, err := pgxmock.NewPool()
 	if err != nil {

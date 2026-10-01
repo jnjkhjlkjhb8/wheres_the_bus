@@ -7,17 +7,9 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/raw"
 )
 
-// TestDatasetRegistryConsistency is the guard that replaces the three
-// hand-synchronized lists: it proves the fetch list, the reverse target map, the
-// whitelist, and the loader registry all agree because they derive from one
-// Registry.
 func TestDatasetRegistryConsistency(t *testing.T) {
 	reg := dataset.Registry()
 
-	// Every fetched table is consumed: it has a standalone loader, is folded into
-	// another dataset's multi-table loader, or is an ExportOnly table the GTFS
-	// feed builder reads straight out of raw_tdx. A fetched table in none of
-	// those categories would silently waste a nightly request.
 	for _, d := range reg {
 		if d.Fetched() && d.LoadKey == "" && d.FoldedInto == "" && !d.ExportOnly {
 			t.Errorf("fetched dataset %q has neither a loader, FoldedInto, nor ExportOnly", d.RawTable)
@@ -34,13 +26,7 @@ func TestDatasetRegistryConsistency(t *testing.T) {
 		}
 	}
 
-	// Every standalone loader reads a fetched table (loaders never load unlanded
-	// data), and its load Partitions are a subset of what is landed. The
-	// invariant is "someone lands it", not "the TDX ingestor lands it": a
-	// partition written by another landing path is listed here rather than
-	// weakening the check for every dataset.
 	externallyLanded := map[string]bool{
-		// Data.taipei 特殊班表, landed by landDataTaipeiDailyTimetable (FDPL-66).
 		"bus_dailytimetable/Taipei": true,
 	}
 	for _, d := range reg {

@@ -19,10 +19,6 @@ class MrtDecoder {
     );
   }
 
-  /// Per-car congestion levels in car order, skipping cars the feed left empty.
-  /// The wire strings are "1"/"2"/"3" (empty = car absent); anything that does
-  /// not parse is treated as absent so a malformed frame can never crash the
-  /// countdown.
   static List<int> _congestion(Mrt_live live) {
     if (!live.hasWeight()) return const [];
     final w = live.weight;

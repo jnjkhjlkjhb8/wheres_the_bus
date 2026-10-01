@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
 
 /// How far the row travels before the gesture commits. A deliberate pull, not
@@ -8,17 +9,6 @@ import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
 /// reminder every time a thumb drifted sideways mid-scroll.
 const double _kLatchFraction = 0.35;
 
-/// Wraps the vehicle row in the route stop list so swiping it right opens the
-/// 下車提醒 flow bound to that vehicle.
-///
-/// The row never leaves: [Dismissible] is used for its 1:1 tracking, its
-/// interruptible spring-back and its velocity-aware fling, and then refuses to
-/// dismiss. What the gesture produces is a *mode*, not a deletion, and a row
-/// that vanished would take the list position the rider is reading with it.
-///
-/// The haptic fires on the latch rather than on release: the rider's finger is
-/// still down at the moment the swipe commits, and that is the event the
-/// feedback belongs to.
 class AlightSwipeRow extends StatelessWidget {
   const AlightSwipeRow({
     required this.rowKey,
@@ -57,7 +47,7 @@ class AlightSwipeRow extends StatelessWidget {
       background: Container(
         color: cs.onSurface,
         alignment: AlignmentDirectional.centerStart,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space20),
         // The same glyph that will mark the chosen 下車站 once the flow is
         // open: the gesture and its result share one symbol, so the second
         // time a rider sees it they already know what it meant.

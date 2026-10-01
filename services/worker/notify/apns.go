@@ -19,15 +19,6 @@ import (
 	"time"
 )
 
-// This file is the APNs leg of the pushed card refresh (ADR-0018). FCM carries
-// no `apns-push-type: liveactivity`, so an iOS Live Activity update cannot ride
-// the same sender the vibration and banner pushes use — it needs a direct HTTP/2
-// POST to Apple, signed with a p8 provider key.
-//
-// Everything here is optional in the same shape as TDX, TRTC and Sentry: empty
-// credentials make NewAPNSSender return nil, and a nil sender is a no-op, so no
-// environment is forced to hold Apple credentials to run the tracker.
-
 const (
 	_apnsProduction = "https://api.push.apple.com"
 	_apnsSandbox    = "https://api.sandbox.push.apple.com"
@@ -63,14 +54,6 @@ type apnsSender struct {
 	tokenAge time.Time
 }
 
-// NewAPNSSender builds the sender from APNS_KEY_ID / APNS_TEAM_ID / APNS_P8 /
-// APNS_TOPIC, or returns nil when any of them is empty — the documented "iOS
-// push disabled" state. A malformed key is an error rather than a silent
-// disable: credentials that are present but unusable are a deployment mistake,
-// not a choice.
-//
-// APNS_SANDBOX=1 points at Apple's sandbox host, which is where a debug build's
-// tokens are registered.
 func NewAPNSSender() (APNSSender, error) {
 	keyID := os.Getenv("APNS_KEY_ID")
 	teamID := os.Getenv("APNS_TEAM_ID")

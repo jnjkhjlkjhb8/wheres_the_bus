@@ -161,11 +161,6 @@ func TestStreamLiveClosedChannelReturnsError(t *testing.T) {
 	}
 }
 
-// TestStreamLiveReturnsUnavailableWhenHubEvictsSlowSubscriber runs streamLive
-// against a real liveHub (which implements liveSource) to prove that a
-// subscriber evicted for falling behind surfaces a reconnectable Unavailable
-// error to its stream, rather than the generic errLiveSourceClosed used for
-// an upstream disconnect.
 func TestStreamLiveReturnsUnavailableWhenHubEvictsSlowSubscriber(t *testing.T) {
 	src := newHubSource()
 	hub := NewLiveHubWithQueueSize(src, 10, 4)
@@ -211,12 +206,6 @@ func TestStreamLiveReturnsUnavailableWhenHubEvictsSlowSubscriber(t *testing.T) {
 	}
 }
 
-// TestStreamLiveIncrementsStreamDisconnectOnEveryTermination proves
-// router_stream_disconnects_total advances once per completed stream,
-// covering both termination causes exercised elsewhere in this file
-// (upstream close and send failure), but not the initial subscribe error
-// path (subscribeErrSource below), which never establishes a stream to
-// disconnect from.
 func TestStreamLiveIncrementsStreamDisconnectOnEveryTermination(t *testing.T) {
 	before := parseCounterTotal(t, "router_stream_disconnects_total")
 
@@ -254,11 +243,6 @@ func (s *subscribeErrLiveSource) Subscribe(context.Context, string) (<-chan []by
 	return nil, nil, s.err
 }
 
-// TestRedisLiveSourceRecordsRedisErrorButNotNil proves get/scanKeys count a
-// genuine Redis failure (here: nothing listening on the configured address)
-// in router_redis_errors_total, while a plain missing key (redis.Nil) does
-// not -- see redisLiveSource.get's doc comment for why that distinction
-// matters (an absent key is expected traffic, not a Redis health signal).
 func TestRedisLiveSourceRecordsRedisErrorButNotNil(t *testing.T) {
 	unreachable := RedisLiveSource{rc: redis.NewClient(&redis.Options{
 		Addr:        "127.0.0.1:1", // nothing listens here; every call fails fast
@@ -305,12 +289,6 @@ func TestStreamLiveSendErrorStopsStream(t *testing.T) {
 	}
 }
 
-// TestStreamLiveClaimsDemandBeforeSubscribing proves the half of FDPL-90 the
-// router owns: a stream with a demand key must write it before it subscribes.
-// A city nobody is watching publishes nothing, so this first write is the only
-// thing that can raise its polling cadence — do it after subscribing (or only
-// on the first frame) and the stream waits on a frame that needs the write to
-// exist before it can be produced.
 func TestStreamLiveClaimsDemandBeforeSubscribing(t *testing.T) {
 	src := newFakeLiveSource()
 	ctx, cancel := context.WithCancel(context.Background())

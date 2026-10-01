@@ -49,10 +49,6 @@ class BusStopScreen extends StatefulWidget {
   final String? stopId;
   final String? city;
 
-  /// Caller-supplied coordinates of the stop, when known (search results carry
-  /// them). They let the map open on the stop instead of the GPS fallback,
-  /// with no network round-trip; the station-group fetch refines the position
-  /// and markers when it lands.
   final double? lat;
   final double? lon;
 
@@ -173,14 +169,6 @@ class _BusStopScreenState extends State<BusStopScreen> {
     unawaited(_moveToCurrentLocation());
   }
 
-  /// Filters the arrivals to the pole the rider is standing at, once, when the
-  /// member stops land.
-  ///
-  /// Poles of one stop sit on opposite sides of a road, so the radius is tight
-  /// enough that only standing at one counts. That also puts it below a typical
-  /// fix's own error, which is why the accuracy gate is looser than the radius
-  /// here instead of matching it: gating at 10 m would reject every real fix
-  /// and the filter would never apply.
   Future<void> _autoSelectMemberAtRider(List<BusStationMember> members) async {
     if (_bloc.state.selectedStationUid != null) return;
     final fix = await LocationService.instance.lastKnownPosition();
@@ -221,11 +209,6 @@ class _BusStopScreenState extends State<BusStopScreen> {
               child: BlocConsumer<BusStopBloc, BusStopState>(
                 listenWhen: (prev, next) =>
                     prev.members.isEmpty && next.members.isNotEmpty,
-                // The station-group fetch can land after the map is already up
-                // (its initial camera target was only the hint or the GPS
-                // fallback); once the member stops arrive, pan to them
-                // explicitly since `initialCameraPosition` never re-applies
-                // post-creation.
                 listener: (context, state) {
                   final first = state.members.first;
                   unawaited(

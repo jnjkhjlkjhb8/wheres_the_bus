@@ -16,7 +16,10 @@ class _SearchBar extends StatelessWidget {
           color: cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(AppTheme.radiusCard),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space14,
+          vertical: AppTheme.space10,
+        ),
         alignment: Alignment.center,
         child: Row(
           children: [
@@ -25,7 +28,7 @@ class _SearchBar extends StatelessWidget {
               size: 18,
               color: cs.onSurfaceVariant,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             Expanded(
               child: Text(
                 AppI18n.of(context).homeSearchHint,
@@ -78,7 +81,10 @@ class _SeeMoreButton extends StatelessWidget {
       semanticLabel: AppI18n.of(context).homeSeeAllFavorites,
       child: Container(
         constraints: const BoxConstraints(minHeight: 48),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space14,
+        ),
         decoration: BoxDecoration(
           border: Border(
             top: BorderSide(
@@ -97,7 +103,7 @@ class _SeeMoreButton extends StatelessWidget {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(width: 2),
+            const SizedBox(width: AppTheme.space2),
             Icon(
               Icons.chevron_right_rounded,
               size: 18,
@@ -127,12 +133,6 @@ class _FavoritesEmpty extends StatelessWidget {
   }
 }
 
-/// Shared shape for every empty state inside this sheet: icon, heading,
-/// body, and an optional hug-width CTA. Anchored to the upper third rather
-/// than centred — on the full detent, a centred empty state reads as
-/// content that failed to load. Kept private to this file (and its sibling
-/// part files, which share the library) rather than promoted to a public
-/// widget, since only the two sheet tabs need it.
 class _EmptyState extends StatelessWidget {
   const _EmptyState({
     required this.icon,
@@ -154,12 +154,12 @@ class _EmptyState extends StatelessWidget {
     return Align(
       alignment: const Alignment(0, -0.35),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 36, color: cs.onSurfaceVariant),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppTheme.space12),
             Text(
               heading,
               style: AppTextStyles.bodyLarge.copyWith(
@@ -167,7 +167,7 @@ class _EmptyState extends StatelessWidget {
                 color: cs.onSurface,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppTheme.space6),
             Text(
               body,
               textAlign: TextAlign.center,
@@ -177,14 +177,14 @@ class _EmptyState extends StatelessWidget {
               ),
             ),
             if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: AppTheme.space16),
               Pressable(
                 onTap: onAction,
                 semanticLabel: actionLabel,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 10,
+                    horizontal: AppTheme.space20,
+                    vertical: AppTheme.space10,
                   ),
                   decoration: BoxDecoration(
                     color: cs.surfaceContainerHighest,

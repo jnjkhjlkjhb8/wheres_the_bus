@@ -1,8 +1,3 @@
-/// What the line map labels every station with, relative to the selected one.
-///
-/// Public and in the model layer because it travels in the `/metro` location:
-/// the label set is the map's whole reading, so a shared link that drops it
-/// arrives showing something else.
 enum MetroMapMode {
   time,
   fare;
@@ -17,12 +12,6 @@ enum MetroMapMode {
   }
 }
 
-/// The line map's station id for a display [name], or null when no station
-/// carries it.
-///
-/// Search results and the line map use different code schemes, so an entry
-/// point that only knows the rider-facing name resolves it here rather than
-/// putting a name in a location that is specified to hold a TDX id.
 String? metroStationIdForName(String name) {
   for (final station in metroMapStations) {
     if (station.name == name) return station.id;
@@ -43,11 +32,6 @@ class MetroMapStation {
   final double y;
 }
 
-// Station identifiers are official Taipei Metro (TDX) codes; interchange
-// stations combine both line codes (e.g. 'BL15_BR10'). The id feeds ETA
-// lookups and favorite refIds, so it must stay a valid TDX code. Coordinates
-// are the SVG artwork circle centres (viewBox 0 0 1080 1920) and must not be
-// edited independently of assets/mrt/TRTC_map_*.svg.
 const metroMapStations = <MetroMapStation>[
   MetroMapStation(id: 'BL01', name: '頂埔', x: 111, y: 1630.42),
   MetroMapStation(id: 'BL02', name: '永寧', x: 167, y: 1574),
@@ -170,14 +154,6 @@ const metroMapStations = <MetroMapStation>[
   MetroMapStation(id: 'Y20', name: '新北產業園區', x: 202, y: 982),
 ];
 
-/// Station name for a single TDX station code (e.g. `R02` → 象山), or null for
-/// a code outside the TRTC network.
-///
-/// TDX reports first/last-train destinations as bare codes; the map station
-/// list is already the app's offline copy of the TRTC network, so the names it
-/// carries are what turn those codes back into something readable without a
-/// round trip. Interchange entries hold a combined id (`BL12_R10`), so each
-/// component code is indexed to the same name.
 String? metroStationName(String code) => _stationNamesByCode[code];
 
 final Map<String, String> _stationNamesByCode = {

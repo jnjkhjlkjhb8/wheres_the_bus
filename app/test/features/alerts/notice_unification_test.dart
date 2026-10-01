@@ -54,16 +54,6 @@ void main() {
         expect(announcement.kind, NoticeKind.announcement);
       },
     );
-
-    test('a maintenance window is caution, and the rider may not clear it', () {
-      final maintenance = _notice('系統維護', kind: AlertSourceKind.appMaintenance);
-      expect(maintenance.tone, NoticeTone.caution);
-      expect(maintenance.dismissible, isFalse);
-      expect(
-        _notice('新功能上線', kind: AlertSourceKind.appNotice).dismissible,
-        isTrue,
-      );
-    });
   });
 
   group('inbox grouping', () {
@@ -93,36 +83,13 @@ void main() {
     });
   });
 
-  group('announcement rail', () {
-    test('a general announcement leaves the rail once read; maintenance '
-        'stays', () {
-      final notices = [
-        _notice('系統維護', kind: AlertSourceKind.appMaintenance),
-        _notice('新功能上線', kind: AlertSourceKind.appNotice),
-      ];
-      final unread = AlertState(alertsBySource: {_disruption: notices});
-      expect(unread.railAnnouncements.map((n) => n.message), [
-        '系統維護',
-        '新功能上線',
-      ]);
-
-      final read = AlertState(
-        alertsBySource: {_disruption: notices},
-        readMessages: const {'系統維護', '新功能上線'},
-      );
-      expect(read.railAnnouncements.map((n) => n.message), ['系統維護']);
-      // Reading only clears the rail — the inbox keeps both.
-      expect(read.messageNotices.length, 2);
-    });
-  });
-
   test('announcements arrive through the bloc like any other source', () async {
     final bloc = AlertBloc(
       repository: _repo(),
       alertSourcesConfig: Stream<String>.empty,
       scopeSource: Stream<Set<String>>.empty,
       announcements: () => Stream.value([
-        _notice('系統維護', kind: AlertSourceKind.appMaintenance),
+        _notice('新功能上線', kind: AlertSourceKind.appNotice),
       ]),
     );
     addTearDown(bloc.close);
@@ -131,9 +98,9 @@ void main() {
       bloc.stream,
       emitsThrough(
         isA<AlertState>().having(
-          (s) => s.railAnnouncements.map((n) => n.message),
-          'railAnnouncements',
-          contains('系統維護'),
+          (s) => s.messageNotices.map((n) => n.message),
+          'messageNotices',
+          contains('新功能上線'),
         ),
       ),
     );

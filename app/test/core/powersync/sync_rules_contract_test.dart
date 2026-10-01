@@ -2,19 +2,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// Contract test: every PowerSync table the app declares in
-/// `powersync_service.dart` must have a matching bucket data query in
-/// `powersync/sync-rules.yaml` — PowerSync names the local SQLite table
-/// after the query's `FROM` table, so the names must match exactly — and
-/// that query must project every column the app schema declares, under a
-/// matching alias, plus a stable `id`.
-///
-/// This parses the real files on disk (not copies), so it catches drift the
-/// moment either side changes. It previously caught: the app declaring six
-/// tables (bus_stops, mrt_stations, tra_stations, thsr_stations,
-/// mrt_journey_matrix, mrt_schedule) while sync-rules.yaml only populated
-/// two (mrt_journey_matrix, mrt_schedule), and search_vector being declared
-/// on neither side despite SearchRepository needing it for offline search.
 void main() {
   late Map<String, List<String>> appTables;
   late Map<String, _SyncRuleQuery> syncRules;
@@ -112,10 +99,6 @@ class _SyncRuleQuery {
 /// PowerSync will create for it).
 Map<String, _SyncRuleQuery> _parseSyncRules(String source) {
   final queries = <String, _SyncRuleQuery>{};
-  // Each query starts at "- SELECT" and runs (non-greedily) up to the next
-  // "- SELECT" or end of file. None of our queries use parenthesised
-  // function calls, so a top-level comma split is enough to separate the
-  // select list.
   final queryRe = RegExp(
     r'-\s*SELECT\s+(.*?)\s+FROM\s+(\w+)',
     dotAll: true,

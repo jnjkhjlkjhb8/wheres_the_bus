@@ -40,10 +40,6 @@ class SearchRecentRepository {
     await HiveStore.settings.put(_key, next);
   }
 
-  /// Puts a removed entry back where it was.
-  ///
-  /// Undo can't go through [add]: that promotes the entry to the head of the
-  /// list, so "復原" would silently reorder history instead of restoring it.
   Future<void> restore(SearchResult result, int index) async {
     if (!HiveStore.settingsReady) return;
     final current = all()

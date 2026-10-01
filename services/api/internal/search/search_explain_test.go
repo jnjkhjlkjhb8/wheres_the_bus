@@ -9,12 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// searchExplainPool connects to the DATABASE_URL cluster and skips when it
-// is unset or search_vector isn't provisioned, mirroring the DATABASE_URL
-// gating convention used by services/worker' *_db_test.go files. It never
-// issues DDL/DML/ANALYZE — EXPLAIN without ANALYZE only plans the query, it
-// does not execute it, so this stays safe against a shared, non-ephemeral
-// database.
 func searchExplainPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
@@ -40,21 +34,13 @@ func searchExplainPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// TestTextSearchQueryPlanHasIndexableExactBranch runs EXPLAIN (no ANALYZE,
-// so the query is planned but never executed) against _textSearchSQL and
-// requires the exact-uid branch (WHERE uid = $1) to reach the plan through
-// an index rather than a sequential scan, and every other branch to stay
-// bounded (a Limit node) rather than degrading into one unbounded
-// all-fields scan. This is read-only evidence for the "capped, indexable
-// branches" requirement; it is gated on DATABASE_URL and skips cleanly
-// when no database is reachable, per this repo's existing convention.
 func TestTextSearchQueryPlanHasIndexableExactBranch(t *testing.T) {
 	pool := searchExplainPool(t)
 
 	var planJSON []byte
 	err := pool.QueryRow(context.Background(),
 		"EXPLAIN (FORMAT JSON) "+_textSearchSQL,
-		"placeholder-query", textSearchBranchLimit(20),
+		"placeholder-query", textSearchBranchLimit(20), "",
 	).Scan(&planJSON)
 	if err != nil {
 		t.Fatalf("EXPLAIN textSearchSQL: %v", err)
@@ -81,12 +67,6 @@ func TestTextSearchQueryPlanHasIndexableExactBranch(t *testing.T) {
 			hasSeqScan = true
 		}
 	}
-	// Record the plan shape rather than asserting index usage strictly:
-	// planner choice depends on fixture data volume/statistics, which this
-	// harness does not control (no ANALYZE is run against a shared,
-	// non-ephemeral database). What must hold is that a Seq Scan, if
-	// present, is bounded by a Limit somewhere in the branch subtree rather
-	// than scanning the table for one unbounded all-fields OR predicate.
 	if hasSeqScan && !hasIndexAccess {
 		t.Logf("plan uses only Seq Scan nodes (expected on unindexed/empty fixture data): %s", planJSON)
 	}

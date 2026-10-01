@@ -8,18 +8,12 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 )
 
-// convergenceViolation is one canonical UID that failed the ADR-0006 merge
-// invariant: issue is "too_many_directions" or "name_mismatch".
 type convergenceViolation struct {
 	canonical string
 	issue     string
 	detail    string
 }
 
-// findConvergenceViolations remains a focused diagnostic helper for ADR-0006.
-// The atomic snapshot reader now rejects divergent variants before any target
-// write; this helper is retained for the explicit invariant tests and audit
-// tooling that summarize an already assembled map.
 func findConvergenceViolations(subRoutemap map[string]*models.BusSubroute, nameObs map[string]map[string]struct{}) []convergenceViolation {
 	var out []convergenceViolation
 	for uid, sub := range subRoutemap {

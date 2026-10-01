@@ -1,7 +1,3 @@
-// Package maas answers journey-planning requests. MOTIS is the planner
-// (ADR-0022) with TDX MaaS kept behind a manual kill switch; this package owns
-// the request shaping, the itinerary conversion, the shared-work cache, and the
-// health monitor that reports which backend is live.
 package maas
 
 import (
@@ -27,11 +23,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// MaasServer answers multimodal route-planning requests by proxying the TDX
-// MaaS routing API. Responses are cached in Redis keyed by request parameters,
-// and sfGroup collapses concurrent identical requests into a single upstream
-// call. Bus sections are enriched with in-app notification identities looked up
-// in db.
 type MaasServer struct {
 	pb.UnimplementedMaasServiceServer
 
@@ -80,10 +71,6 @@ type MaasCache interface {
 
 type RedisMaasCache struct{ client *redis.Client }
 
-// NewRedisMaasCache gives the MaaS plan cache its own connection pool, built
-// from the shared client's settings, so a slow plan lookup cannot occupy a
-// connection the live streams need. NewClient fills defaults into the Options
-// it is handed, so it gets a copy rather than the live client's own struct.
 func NewRedisMaasCache(opts *redis.Options) *RedisMaasCache {
 	cloned := *opts
 	return &RedisMaasCache{client: redis.NewClient(&cloned)}
@@ -123,15 +110,7 @@ type maasSharedWorkConfig struct {
 	MaxConcurrent int
 	Timeout       time.Duration
 	// Motis is the planner when set, and nil selects the TDX proxy.
-	Motis *motisClient
-	// Health decides, per request, whether MOTIS is answering. Nil means the
-	// operator's selection stands unconditionally.
-	//
-	// ADR-0022 originally chose no automatic fallback at all. `/api/v1/health`
-	// narrowed that: it reports whether MOTIS has actually consumed the feeds
-	// the router serves it, which is a real failure a plain 200 check cannot
-	// see. The switch therefore fires on an explicit unhealthy verdict and
-	// nothing else, and it is loud -- see planner_health.go.
+	Motis  *motisClient
 	Health *PlannerHealthMonitor
 }
 
@@ -156,10 +135,6 @@ func shouldRetryMaas(resp *resty.Response, err error) bool {
 }
 
 func NewMaasServerWithCache(cache MaasCache, db maasDB, tdx *shared.TDXClient, workConfig maasSharedWorkConfig) *MaasServer {
-	// The MaaS API family has a different base URL and retry policy than the
-	// basic conditional-GET client, so it gets its own resty client — but the
-	// bearer-token auth flows through the shared TDX client (NewAuthedClient) so
-	// the token exchange lives in exactly one place.
 	c := tdx.NewAuthedClient("https://tdx.transportdata.tw/api/maas").
 		SetHeader("Content-Type", "application/json").
 		SetRetryCount(3).
@@ -181,10 +156,6 @@ func NewMaasServerWithCache(cache MaasCache, db maasDB, tdx *shared.TDXClient, w
 	}
 }
 
-// beginSharedFlight atomically checks closing and registers a new singleflight
-// closure with sharedWork in the same critical section Close uses to flip
-// closing, so a closure can never start after Close has begun (or will begin)
-// waiting — the standard fix for the WaitGroup Add/Wait race.
 func (s *MaasServer) beginSharedFlight() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,13 +170,6 @@ func (s *MaasServer) endSharedFlight() {
 	s.sharedWork.Done()
 }
 
-// Close marks the server closing so no new singleflight closure can start,
-// cancels the shared lifecycle context so any closure still in flight
-// unblocks from cache/upstream I/O promptly, and waits for every registered
-// flight to finish. Callers must invoke Close before tearing down the cache,
-// DB, or legacy Redis clients shared work depends on — otherwise a flight
-// still in progress can use one of those clients after it closes. Close is
-// idempotent.
 func (s *MaasServer) Close() {
 	s.mu.Lock()
 	if s.closing {
@@ -323,18 +287,6 @@ func maasPlanError(err error) error {
 	return status.Errorf(codes.Unavailable, "route planning unavailable: %v", err)
 }
 
-// PlanStream answers the same query as Plan, but hands the routes over as soon
-// as they exist instead of holding them until the map geometry is drawn: one
-// message with the itineraries (times, transfers, fares — everything the
-// results list shows), then a second with walkPath/transitPath filled in. A
-// cache hit is a single complete message.
-//
-// Unlike Plan this does not share a flight: two identical trips planned in the
-// same minute can both reach TDX, bounded by the response cache and the
-// work-slot cap. Delivering one leader's partial to every waiter needs a
-// per-key broadcast, which is a lot of machinery for a collision that requires
-// the same coordinates, options and minute — add it if the upstream call count
-// ever says otherwise.
 func (s *MaasServer) PlanStream(req *pb.MaasPlanRequest, stream pb.MaasService_PlanStreamServer) error {
 	if !s.beginSharedFlight() {
 		return errMaasServerClosing
@@ -371,11 +323,6 @@ func (s *MaasServer) PlanStream(req *pb.MaasPlanRequest, stream pb.MaasService_P
 	if err != nil {
 		return maasPlanError(err)
 	}
-	// refs alias response's sections, so enrich below fills in the very message
-	// that was just sent — the second Send carries the same routes with their
-	// paths resolved. Ranking happens before the first Send: it reorders and
-	// trims the list the rider reads, so doing it later would reshuffle the
-	// cards under them.
 	response, refs := convertRoutes(workCtx, s.db, plan.api)
 	response.PreviousPageCursor = plan.previous
 	response.NextPageCursor = plan.next
@@ -443,14 +390,6 @@ func (s *MaasServer) runSharedPlan(cacheKey string, req *pb.MaasPlanRequest) (*p
 	return response, nil
 }
 
-// maasTimeParam builds the TDX routing time query params. Despite the docs
-// saying depart and arrival are mutually exclusive, TDX's validator requires
-// BOTH to be present — omitting either returns code 40001 — so both are sent
-// with the same value. TDX also rejects a depart at/before now with code
-// 20001, so a depart search bumps the time one minute ahead when it is not in
-// the future. The app sends HH:mm, so the seconds are padded (40001
-// otherwise). Times are Taipei (server local per TDX); an unparseable value
-// falls through as-is.
 func maasTimeParam(date, timeStr string, arriveBy bool, now time.Time) (depart, arrival string) {
 	if len(timeStr) == len("HH:mm") {
 		timeStr += ":00"
@@ -479,10 +418,6 @@ func (s *MaasServer) get(ctx context.Context, req *pb.MaasPlanRequest) (*pb.Maas
 	return out, nil
 }
 
-// useMotis reports whether this request goes to MOTIS. Read once per request by
-// [MaasServer.plan] and threaded through, rather than re-read at each stage: a
-// health flip between the plan call and the geometry step would otherwise leave
-// one request half-converted.
 func (s *MaasServer) useMotis() bool {
 	if s.motisClient == nil {
 		return false
@@ -510,12 +445,6 @@ func (s *MaasServer) planUpstream(ctx context.Context, req *pb.MaasPlanRequest, 
 	return &motisPlanResult{api: api}, nil
 }
 
-// enrich draws the map geometry. Walk paths come from the plan itself under
-// MOTIS and from OSRM under TDX; rail line shapes come from the database either
-// way. A walk-geometry slice that does not line up with the sections is
-// discarded rather than applied by guesswork, and the OSRM path is not used as
-// a substitute -- OSRM is gone under MOTIS, so the honest result is a straight
-// line, which is what the app already falls back to.
 func (s *MaasServer) enrich(ctx context.Context, refs []maasSectionRef, walks []*motisWalkGeometry, useMotis bool) {
 	if useMotis {
 		if !applyMotisWalkGeometry(refs, walks) {
@@ -615,14 +544,6 @@ func convert(ctx context.Context, db maasDB, osrmClient *resty.Client, api *tdxA
 	return out
 }
 
-// convertRoutes is the first half of convert: the routes themselves, with the
-// fares and notification identities the cards read. Everything a rider needs to
-// choose between itineraries is set here; only the map geometry is still
-// missing, and a section with no path renders as a straight line. PlanStream
-// sends this out before paying for [enrichGeometry].
-//
-// The returned refs alias the response's sections, so enriching them later
-// mutates the same message.
 func convertRoutes(ctx context.Context, db maasDB, api *tdxAPIResponse) (*pb.MaasPlanResponse, []maasSectionRef) {
 	out := &pb.MaasPlanResponse{}
 	refs := make([]maasSectionRef, 0)
@@ -648,10 +569,6 @@ func convertRoutes(ctx context.Context, db maasDB, api *tdxAPIResponse) (*pb.Maa
 		}
 		out.Routes = append(out.Routes, pbRoute)
 	}
-	// Alternatives are kept out of `refs` because the MOTIS walk geometry is
-	// paired to it positionally; they join only the identity lookup, and only
-	// after their indices continue past the real sections so the one batch
-	// query can still map every row back to its section.
 	for i := range altRefs {
 		altRefs[i].index = int32(len(refs) + i)
 	}
@@ -665,11 +582,6 @@ func convertRoutes(ctx context.Context, db maasDB, api *tdxAPIResponse) (*pb.Maa
 	return out, refs
 }
 
-// convertAlternative maps a replacement service onto the wire. Deliberately
-// four fields and not [convertSection]'s full set: an alternative answers "what
-// else runs this leg?", which needs the service's name and its two times and
-// nothing more. The empty identity is what the batch lookup fills in, and what
-// decides whether the app can offer a tap through to the route.
 func convertAlternative(sec tdxSection) *pb.Section {
 	return &pb.Section{
 		Type: sec.Type,
@@ -696,10 +608,6 @@ func convertAlternative(sec tdxSection) *pb.Section {
 	}
 }
 
-// enrichGeometry is the second half of convert: the OSRM foot paths and the
-// clipped rail line shapes that draw the route on the map. It is the expensive
-// half — one OSRM round trip per walk section — and nothing in the results list
-// depends on it.
 func enrichGeometry(ctx context.Context, db maasDB, osrmClient *resty.Client, refs []maasSectionRef) {
 	enrichWalkSections(ctx, osrmClient, refs)
 	enrichTransitPaths(ctx, db, refs)
@@ -860,16 +768,6 @@ func batchBusNotificationIdentities(ctx context.Context, db maasDB, refs []maasS
 	}
 }
 
-// batchSectionFares fills in per-section fares for metro, TRA, and THSR legs in
-// one round trip, leaving the fare unset when no row matches.
-//
-// Each branch must yield the full adult fare so TotalFare stays comparable
-// across modes, which means pinning every fare axis TDX splits a pair across.
-// THSR selects by ticket and fare class. TRA packs 票種 and 車種 into one
-// ticket_type, so a pair carries four adult prices (自強/莒光/復興/普快) and the
-// branch pins 成復 — the 區間車 tier a planner leg runs on, and the only class
-// present for every pair. Taking the max instead quoted the 自強 fare on every
-// leg (桃園→臺北: 99 rather than 63).
 func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
 	if db == nil {
 		return

@@ -26,10 +26,6 @@ func structuredError(err error) (oops.OopsError, bool) {
 	return structured, true
 }
 
-// oopsFields renders an error's structured context as zap fields. Without it
-// the attributes callers attach with .With() travel through the call stack only
-// to be flattened back into a single message string at the log site, which is
-// the problem the structured errors exist to solve.
 func oopsFields(err error) []zapcore.Field {
 	structured, ok := structuredError(err)
 	if !ok {
@@ -80,10 +76,6 @@ func expandOopsFields(fields []zapcore.Field) []zapcore.Field {
 	return append(out, extra...)
 }
 
-// applyOopsScope copies an error's structured context onto a Sentry scope:
-// domain and tags become searchable tags, the remaining attributes become an
-// "error context" block, and the stack trace oops captured at the raise site is
-// attached as an extra. Nothing happens for a plain error.
 func applyOopsScope(scope *sentry.Scope, err error) {
 	structured, ok := structuredError(err)
 	if !ok {

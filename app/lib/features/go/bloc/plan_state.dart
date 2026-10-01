@@ -16,6 +16,8 @@ class PlanState extends Equatable {
     this.activeStopIndex,
     this.activeWalkStepIndex = 0,
     this.savedRoutes = const [],
+    this.savedRoutesReady = false,
+    this.savedRoutesLoadError = false,
     this.geometryPending = false,
     this.failure,
   });
@@ -43,6 +45,8 @@ class PlanState extends Equatable {
 
   /// Locally saved route snapshots, newest first.
   final List<PlanRoute> savedRoutes;
+  final bool savedRoutesReady;
+  final bool savedRoutesLoadError;
 
   /// True between the router's two plan messages: the routes are final and the
   /// list is fully usable, but walk/rail geometry is still resolving, so map
@@ -69,6 +73,8 @@ class PlanState extends Equatable {
     int? activeStopIndex,
     int? activeWalkStepIndex,
     List<PlanRoute>? savedRoutes,
+    bool? savedRoutesReady,
+    bool? savedRoutesLoadError,
     bool? geometryPending,
     PlanFailureKind? failure,
   }) {
@@ -89,6 +95,9 @@ class PlanState extends Equatable {
           ? 0
           : activeWalkStepIndex ?? this.activeWalkStepIndex,
       savedRoutes: savedRoutes ?? this.savedRoutes,
+      savedRoutesReady: savedRoutesReady ?? this.savedRoutesReady,
+      savedRoutesLoadError:
+          savedRoutesLoadError ?? this.savedRoutesLoadError,
       geometryPending: geometryPending ?? this.geometryPending,
       failure: clearError ? null : failure ?? this.failure,
     );
@@ -106,6 +115,8 @@ class PlanState extends Equatable {
     activeStopIndex,
     activeWalkStepIndex,
     savedRoutes,
+    savedRoutesReady,
+    savedRoutesLoadError,
     geometryPending,
     failure,
   ];

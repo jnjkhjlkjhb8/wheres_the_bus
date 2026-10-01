@@ -276,10 +276,6 @@ void main() {
     testWidgets('the loading table lands on the loaded table geometry', (
       tester,
     ) async {
-      // The skeleton exists to hold the table's shape open. If it draws a
-      // different header position or a different row height, the section
-      // reflows the instant the times arrive — which is the bug this
-      // measurement exists to catch.
       await pump(
         tester,
         const MetroScheduleSection(schedule: [], loading: true),

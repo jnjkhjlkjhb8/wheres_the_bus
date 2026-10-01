@@ -313,10 +313,6 @@ func TestNormalizeAlertsRejectsUnparseablePayload(t *testing.T) {
 	}
 }
 
-// TestNormalizeAlertsPerTypeScoping covers each transit type's own scope
-// shape: TRA names train numbers and metro names lines, both of which the app
-// subscribes by. THSR scopes only to sections of its single line, so it falls
-// through to a system-wide alert with no keys rather than being dropped.
 func TestNormalizeAlertsPerTypeScoping(t *testing.T) {
 	tra, _ := normalizeAlerts("v3/Rail/TRA/Alert", []byte(`{"AuthorityCode":"TRA","Alerts":[
 		{"AlertID":"A1","Description":"停駛","Scope":{"Trains":[{"TrainNo":"123"},{"TrainNo":"456"}]}}
@@ -348,10 +344,6 @@ func TestNormalizeAlertsPerTypeScoping(t *testing.T) {
 	}
 }
 
-// TestNormalizeAlertsParseBusAlertTopic runs a TDX v2 Bus/Alert payload through
-// the parser: Alert carries AlertID/Description where News carries
-// NewsID/NewsContent, so the field-name list must cover both or the newly
-// subscribed alert topics parse to nothing.
 func TestNormalizeAlertsParseBusAlertTopic(t *testing.T) {
 	got, _ := normalizeAlerts("v2/Bus/Alert/City/Taipei", []byte(`[
 		{"AlertID":"A1","Title":"改道","Description":"因道路施工改道","Status":1,"UpdateTime":"2026-07-26T09:30:00+08:00"}

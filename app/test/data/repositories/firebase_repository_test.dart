@@ -17,11 +17,6 @@ void main() {
     }
   });
 
-  // FirebaseGate.enabled is false in the test environment (APP_ENV
-  // defaults to 'dev'), so createArrivalReminder takes the disabled path
-  // and returns a receipt whose id is the local id string. That id is
-  // the reliable seam for asserting the plate reaches the request
-  // without standing up a fake gRPC client.
   group('createArrivalReminder plate pinning', () {
     test('local id includes the plate when one is passed', () async {
       final repo = FirebaseRepository();

@@ -35,12 +35,6 @@ class BigPredictiveBackPageTransitionsBuilder extends PageTransitionsBuilder {
             startBackEvent,
             currentBackEvent,
           ) {
-            // Only do a predictive back transition when the user is
-            // performing a
-            // pop gesture. Otherwise, for things like button presses or other
-            // programmatic navigation, fall back to
-            // FadeForwardsPageTransitionsBuilder. The fade fallback is also
-            // used under reduce-motion: no scale/shift preview.
             if (route.popGestureInProgress &&
                 !MediaQuery.disableAnimationsOf(context)) {
               return _PredictiveBackSharedElementPageTransition(

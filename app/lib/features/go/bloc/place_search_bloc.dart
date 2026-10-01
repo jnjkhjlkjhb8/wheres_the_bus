@@ -24,11 +24,6 @@ class PlaceSearchBloc extends Bloc<PlaceSearchEvent, PlaceSearchState> {
        _debounce = debounce,
        super(const PlaceSearchState()) {
     on<PlaceSearchStarted>(_onStarted);
-    // A keystroke supersedes the one before it outright: restartable cancels
-    // the in-flight handler at its next await, so a superseded query stops at
-    // the debounce instead of running its round trip to be discarded on
-    // arrival. Only this handler is serialised that way — the rest are
-    // one-shot list edits with no await to cancel at.
     on<PlaceQueryChanged>(_onQueryChanged, transformer: restartable());
     on<PlaceResolveRequested>(_onResolveRequested);
     on<LocationResolving>(_onLocationResolving);
@@ -72,10 +67,6 @@ class PlaceSearchBloc extends Bloc<PlaceSearchEvent, PlaceSearchState> {
     }
     emit(state.copyWith(query: query, loading: true));
 
-    // The debounce is the wait itself — no timer to cancel, because the
-    // restartable transformer cancels this handler here the moment a later
-    // keystroke arrives. The query comparison stays as the guard for a
-    // handler that has already passed its last await when it is superseded.
     await Future<void>.delayed(_debounce);
     if (emit.isDone || state.query != query) return;
 

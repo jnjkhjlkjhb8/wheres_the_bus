@@ -12,28 +12,6 @@ import 'package:wheres_the_bus/shared/map/bus_heading.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 import 'package:wheres_the_bus/shared/map/wkt.dart';
 
-/// The bus route screen's map layer, as one module.
-///
-/// This is a projection: route + direction + live ETAs + vehicle positions,
-/// plus the rider's own selection state, become a set of markers and
-/// polylines. It used to be a 203-line method on the screen's `State`, which
-/// meant none of it could be reached from a test without mounting a
-/// `GoogleMap`.
-///
-/// Two calls make up the interface. [resolve] is the expensive one: it runs on
-/// every live frame, rasterises what changed, and returns null when there is
-/// nothing new to show. [paint] is the cheap one: it runs on every animation
-/// tick and is a pure function of what [resolve] last stored.
-///
-/// The module owns three caches so callers never have to reason about them: a
-/// per-marker bitmap cache keyed on rendered inputs, the parsed route geometry,
-/// and the in-flight glides. It also owns the supersede rule — a [resolve] that
-/// is overtaken while awaiting bitmaps yields to the newer one instead of
-/// committing a stale frame over it.
-///
-/// Markers stay bitmaps on purpose. Flutter widgets positioned over a
-/// `GoogleMap` shake while the map pans, so everything pinned to a coordinate
-/// here is rasterised through [MapMarkers].
 class BusRouteOverlay {
   BusRouteOverlay({required this.onStopTap, required this.onVehicleTap});
 
@@ -60,6 +38,11 @@ class BusRouteOverlay {
   /// The stop coordinates of the frame on screen, for the camera fit.
   List<LatLng> get stopPoints => _stopPoints;
 
+  /// Where [plate] was last reported, so the screen can aim the camera at a
+  /// bus picked from the sheet. The glide's destination, not its interpolated
+  /// position: the camera should land where the bus is going to be sitting.
+  LatLng? vehiclePosition(String plate) => _glides[plate]?.to;
+
   /// The in-flight glides, exposed so a test can assert continuity across
   /// frames; [paint] is the only production reader.
   @visibleForTesting
@@ -74,26 +57,11 @@ class BusRouteOverlay {
       ..addAll(glides);
   }
 
-  /// Drops every cached bitmap and forces the next [resolve] to rebuild.
-  ///
-  /// The screen calls this on a light/dark flip or a Dynamic Type change: those
-  /// alter every rendered marker without changing any of the data the frame
-  /// signature is built from, so without it the map would keep showing plates
-  /// rasterised for the previous theme.
   void invalidate() {
     _markerCache.clear();
     _frameSig = '';
   }
 
-  /// Resolves one frame, or null when there is nothing to commit.
-  ///
-  /// Null means one of: the route has no stops yet, the inputs are unchanged
-  /// since the last frame, or a newer resolve overtook this one. All three are
-  /// "leave the map alone", which is why they share a return value.
-  ///
-  /// [glideProgress] is where the current glide sits (0..1). Every new glide
-  /// starts from where its mark is *right now*, mid-glide included, so a frame
-  /// landing during a turn retargets smoothly instead of snapping back.
   Future<BusOverlayFrame?> resolve({
     required BusRouteState state,
     required AppI18n i18n,
@@ -126,10 +94,6 @@ class BusRouteOverlay {
       vehicles: vehicles,
       i18n: i18n,
       showsBubble: showsBubble,
-      // Both glyph inputs, or arming a 追蹤 would leave the bubble showing ＋.
-      // The selected stop belongs here too: it is the only input a tap changes,
-      // so leaving it out held the capsule back until the next live ETA frame
-      // moved the signature on its own — up to ~30 s after the tap.
       glyphSalt: '$pinnedPlate|$trackedPlate|$pickingStop|$selectedStopUid',
     );
     if (sig == _frameSig) return null;
@@ -157,11 +121,6 @@ class BusRouteOverlay {
     final isDark = colors.brightness == Brightness.dark;
     final isLight = !isDark;
 
-    // colors.onSurface already flips between near-black and near-white, and
-    // reads at high contrast on both basemap styles (see
-    // map_color_scheme.dart), so the route line needs no token of its own —
-    // only a rebuild when the theme changes, which is what invalidate() is
-    // for.
     final polylines = <Polyline>{
       for (var i = 0; i < _geometryLines.length; i++)
         Polyline(
@@ -176,9 +135,18 @@ class BusRouteOverlay {
     };
 
     final bounds = stopPoints.isEmpty ? null : boundsOf(stopPoints);
+    // Same retirement the sheet's timeline applies: read literally the feed
+    // republishes 進站中 on every stop the bus has already driven past, and the
+    // map would paint a trail of green plates behind it.
+    final resolvedEtas = retireStaleArriving([
+      for (final st in stops) etaFor(state, st),
+    ]);
+    final etaByUid = {
+      for (final (i, st) in stops.indexed) st.stopUid: resolvedEtas[i],
+    };
     final stopMarkers = await _buildStopMarkers(
       stops: stops,
-      etaFor: (st) => etaFor(state, st),
+      etaFor: (st) => etaByUid[st.stopUid],
       cs: colors,
       i18n: i18n,
       selectedUid: selectedStopUid,
@@ -229,10 +197,6 @@ class BusRouteOverlay {
     );
   }
 
-  /// Composes the layer for one animation tick: stop plates and route lines
-  /// unchanged, vehicles interpolated to [glideProgress].
-  ///
-  /// Pure with respect to what [resolve] stored, so a test drives it directly.
   BusMapLayer paint({required double glideProgress, String? pinnedPlate}) {
     final vehicleMarkers = <Marker>{};
     _glides.forEach((plate, g) {
@@ -271,31 +235,12 @@ class BusRouteOverlay {
         );
       }
     });
-    // Rebuilds the whole marker set per tick. The stop plates are the same
-    // instances every time so the plugin's diff sees them unchanged, but the
-    // union is still re-allocated and re-crossed ~48 times per glide; on a
-    // 60-stop route that is the first thing to measure if a position update
-    // ever hitches. Splitting the vehicle layer onto its own channel is the
-    // upgrade path.
     return (
       markers: {..._stopMarkers, ...vehicleMarkers},
       polylines: _polylines,
     );
   }
 
-  /// Repaints every on-screen bubble against a fresh clock, reporting whether
-  /// any of them actually changed.
-  ///
-  /// Live frames land every ~30 s but the bubble carries a GPS-freshness
-  /// line, which is the one number on this map whose whole job is to say how
-  /// old the rest of it is. `busGpsAge` only spells out seconds between 15
-  /// and 59, so outside that window the text is unchanged, [MapMarkers]
-  /// hands back the very bitmap already on screen, and the identity check
-  /// below skips the repaint — which is what makes a once-a-second wake-up
-  /// cost a cache lookup per bubble.
-  ///
-  /// The values are snapshotted first because [resolve] may clear and refill
-  /// the glides across the awaits here.
   Future<bool> tickBubbles(DateTime now) async {
     var changed = false;
     for (final glide in _glides.values.toList()) {
@@ -364,7 +309,7 @@ class BusRouteOverlay {
         ring: markRing,
         showHeading: heading != null,
         // The dark basemap gives a drop shadow nothing to land on; there the
-        // near-black halo is what separates the mark (see docs/design.md).
+        // near-black halo is what separates the mark (see DESIGN.md).
         shadow: isLight,
       );
 
@@ -377,10 +322,6 @@ class BusRouteOverlay {
         statusLabel: status.label,
         statusColor: statusColor,
         gpsText: busGpsAge(i18n, v.gpsTimeUnix, at).text,
-        // Three states, not two: ＋ while this bus is the one whose alight
-        // stop is being chosen, ✓ once a 追蹤 is actually running for it, and
-        // nothing when it is merely selected. Selecting a bus is a glance, so
-        // it must not claim a reminder has been set.
         trackGlyph: switch (v.plate) {
           _ when pickingStop && pinnedPlate == v.plate => '＋',
           _ when trackedPlate == v.plate => '✓',
@@ -388,10 +329,6 @@ class BusRouteOverlay {
         },
       );
 
-      // Progressive detail: the plate and GPS freshness belong to the bus the
-      // rider asked about, not to all five running the route — five always-on
-      // bubbles overlap each other and the stop plates under them. A warning is
-      // the exception: a broken-down bus shouldn't need a tap to say so.
       final rebuildBubble = showsBubble(v) ? buildBubble : null;
 
       next[v.plate] = BusGlide(
@@ -434,12 +371,6 @@ class BusOverlayFrame {
 /// One layer handed to the `GoogleMap`.
 typedef BusMapLayer = ({Set<Marker> markers, Set<Polyline> polylines});
 
-/// A vehicle mark between two live frames.
-///
-/// Live frames land every ~30 s and Google Maps markers have no position
-/// tween, so without this they teleport. Each glide holds the interpolation
-/// endpoints — position and heading both — plus the bitmaps, reused
-/// unchanged across every tick of one glide.
 class BusGlide {
   BusGlide({
     required this.from,
@@ -463,18 +394,8 @@ class BusGlide {
   /// mark is then painted without its chevron and the rotation means nothing.
   final double? toHeading;
 
-  /// Only the pinned bus and any vehicle in a warning state carries one.
-  ///
-  /// Mutable, unlike everything else here: the bubble's GPS-freshness line is a
-  /// clock, so the ticker swaps this in place between live frames rather than
-  /// rebuilding the glide (and the 60 stop plates a full resync would drag
-  /// along) once a second.
   BitmapDescriptor? bubbleIcon;
 
-  /// Repaints [bubbleIcon] against a fresh clock. Held instead of only the
-  /// finished bitmap because everything else the bubble says — status, plate,
-  /// pin glyph, theme colours — is fixed until the next live frame, so the
-  /// ticker has nothing to recompute but the time.
   final Future<BitmapDescriptor> Function(DateTime now)? rebuildBubble;
 
   /// Heading to paint at glide progress [t]. Read live for the same reason
@@ -490,13 +411,6 @@ LatLng lerpLatLng(LatLng a, LatLng b, double t) => LatLng(
   a.longitude + (b.longitude - a.longitude) * t,
 );
 
-/// Which way a vehicle mark points.
-///
-/// TDX sends azimuth 0 for "no heading" as readily as for "due north", so
-/// the reported value only counts when it is non-zero. Failing that, the
-/// bearing of the move between the last two reported points is the honest
-/// answer, and a bus that hasn't moved keeps whatever it last had. None of
-/// the three and the mark drops its chevron rather than claiming north.
 double? headingFor({
   required int azimuth,
   required LatLng? previousTo,
@@ -542,12 +456,6 @@ LatLngBounds boundsOf(List<LatLng> pts) {
   );
 }
 
-/// Everything one frame renders from, as a string.
-///
-/// Only a vehicle actually showing a bubble contributes its GPS clock:
-/// `gpsTimeUnix` advances every live frame and nothing but the bubble reads it,
-/// so including it unconditionally would invalidate every marker on the map
-/// twice a minute to refresh a label that is not on screen.
 @visibleForTesting
 String frameSignature({
   required BusRouteState state,
@@ -620,17 +528,6 @@ typedef MarkerStyle = ({
   int zIndex,
 });
 
-/// The stop marker's whole state ladder, quietest to loudest: nothing more
-/// today, a scheduled departure, no reading, a countdown, 即將進站, 進站中.
-///
-/// The escalation runs on fill before colour — at arm's length in sunlight the
-/// eye reads a light/dark mass long before it reads a hue — so the plate goes
-/// hollow, then washed, then solid. Shape moves only once, on the one state
-/// whose content is a word rather than a number.
-///
-/// 即將進站 comes from [timelineStopState], the same derivation the sheet's
-/// timeline uses, so the map and the timeline cannot disagree about which stop
-/// the bus is nearly at.
 @visibleForTesting
 MarkerStyle markerStyle(
   AppI18n i18n,
@@ -641,10 +538,6 @@ MarkerStyle markerStyle(
   // Dark mode's plate can't stay white against the dark basemap, so it borrows
   // the elevated-surface pairing the app's other floating map chrome uses.
   final plate = isDark ? cs.surfaceContainerHigh : AppTheme.surfaceCardLight;
-  // Recessive form shared by the three states that carry no live time. It used
-  // to be a full-ink ring, which put the loudest marker on the least useful
-  // fact — a stop whose last bus has gone shouted as loudly as one a minute
-  // away.
   MarkerStyle quiet({String? text, IconData? glyph}) => (
     fill: plate,
     content: cs.onSurfaceVariant,
@@ -665,7 +558,7 @@ MarkerStyle markerStyle(
   return switch (timelineStopState(eta)) {
     TimelineStopState.arriving => (
       // Green, not red: an arriving bus is the moment to act, not an alarm
-      // (docs/design.md). The light shade is the darker text-weight green,
+      // (DESIGN.md). The light shade is the darker text-weight green,
       // because white sits on this fill and the badge green fails there.
       fill: isDark ? AppTheme.statusArriving : AppTheme.statusArrivingText,
       content: isDark ? AppTheme.inkLight : AppTheme.surfaceCardLight,
@@ -723,10 +616,6 @@ Future<Set<Marker>> _buildStopMarkers({
   required void Function(String stopUid) onTap,
 }) async {
   final markers = <Marker>{};
-  // Thunks rather than futures so every plate starts at the Future.wait below
-  // and the asynchronous toImage tails overlap. Slicing them across frames was
-  // tried and measured worse on a cold frame (~215 ms against ~140 ms), because
-  // it serialises exactly what the overlap was buying.
   final misses = <Future<Marker> Function()>[];
   for (final st in stops) {
     if (st.lat == 0 && st.lon == 0) continue;
@@ -740,10 +629,6 @@ Future<Set<Marker>> _buildStopMarkers({
       markers.add(cached.marker);
       continue;
     }
-    // Rasterising is independent per stop, so the misses are started together
-    // and awaited once. Serialising them meant a frame where the countdown
-    // ticked over on many stops paid one full canvas round-trip after another,
-    // all landing in the instant the live position update arrived.
     misses.add(
       () => _rasteriseStopMarker(
         stop: st,

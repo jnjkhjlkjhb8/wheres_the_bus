@@ -33,10 +33,6 @@ func TestComputeSegmentTimesSkipsWithoutDB(t *testing.T) {
 	}
 }
 
-// An unreachable history host is the same situation: the hops are nowhere, so
-// the rebuild must skip rather than write a table full of nothing over yesterday's
-// figures. This is also what makes clearing ARCHIVE_MYSQL_DSN a safe way to stop
-// collecting — the nightly rebuild freezes the table instead of flattening it.
 func TestSegmentRebuildsSkipWithoutHistory(t *testing.T) {
 	if err := ComputeSegmentTimesFromEstimates(context.Background(), nil, nil); err != nil {
 		t.Errorf("ComputeSegmentTimesFromEstimates: want a silent skip, got %v", err)

@@ -8,16 +8,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// TestConnectRedis_WithPassword dials a real Redis started with --requirepass
-// and proves the Go client authenticates successfully with a password, the
-// same Options shape ConnectRedis builds from REDIS_ADDR/REDIS_PASSWORD.
-// REDIS_AUTH_TEST_ADDR names a Redis reachable with REDIS_AUTH_TEST_PASSWORD;
-// unset means "no requirepass Redis promised" and the test skips (mirrors the
-// REDIS_TEST_ADDR skip pattern used elsewhere in this repo for optional
-// live-Redis integration tests). Start one locally with:
-//
-//	docker run --rm -p 16380:6379 redis:7-alpine redis-server --requirepass s3cret
-//	REDIS_AUTH_TEST_ADDR=127.0.0.1:16380 REDIS_AUTH_TEST_PASSWORD=s3cret go test ./services/shared/... -run TestConnectRedis_WithPassword
 func TestConnectRedis_WithPassword(t *testing.T) {
 	addr := envOrSkip(t, "REDIS_AUTH_TEST_ADDR")
 	password := envOrSkip(t, "REDIS_AUTH_TEST_PASSWORD")

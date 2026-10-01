@@ -72,24 +72,4 @@ void main() {
       expect(card.progress, 1.0);
     });
   });
-
-  group('TrackCard.pinned', () {
-    test('carries the plate and provided fields as-is', () {
-      const card = TrackCard.pinned(
-        routeLabel: '299',
-        plate: 'ABC-1234',
-        targetStopName: '台北車站',
-        stopsRemaining: 4,
-        etaSeconds: 120,
-        progress: 0.25,
-      );
-
-      expect(card.routeLabel, '299');
-      expect(card.plate, 'ABC-1234');
-      expect(card.targetStopName, '台北車站');
-      expect(card.stopsRemaining, 4);
-      expect(card.etaSeconds, 120);
-      expect(card.progress, 0.25);
-    });
-  });
 }

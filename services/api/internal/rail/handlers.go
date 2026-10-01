@@ -20,12 +20,6 @@ func (s *TraTimetableServer) Delay(_ *pb.AskRoute, stream pb.TRATimetableService
 	return s.traDelay(stream)
 }
 
-// Fare returns the adult TRA fares between two stations, one item per train
-// class (see traAdultTicketTypes) priciest first, because a TRA fare depends on
-// the class of train taken — the caller matches the item to its train rather
-// than quoting a single price for the pair. This RPC reuses AskStaiton to carry
-// the pair: StationId is the origin and Date is the destination station ID. It
-// returns InvalidArgument when either is empty and NotFound when no fare exists.
 func (s *TraTimetableServer) Fare(ctx context.Context, in *pb.AskStaiton) (*pb.TraFareItems, error) {
 	if in.StationId == "" || in.Date == "" {
 		return nil, status.Error(codes.InvalidArgument, "origin and destination are required")
@@ -66,10 +60,6 @@ func (s *TraTimetableServer) Timetable(ctx context.Context, in *pb.AskRoute) (*p
 	return items, nil
 }
 
-// traDelay streams the system-wide TRA delay board. It subscribes to the delay
-// channel first, seeds a new client from the cached value, then forwards
-// published updates until the client disconnects. An empty cached value is
-// skipped rather than sent as a seed frame.
 func (s *TraTimetableServer) traDelay(stream pb.TRATimetableService_DelayServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "tra_delay", "event", "call")
 	return livestream.StreamLive(stream.Context(), s.live, livestream.LiveStreamSpec{
@@ -104,10 +94,6 @@ func (s *TraDetainServer) Stops(ctx context.Context, in *pb.AskDetain) (*pb.TraS
 	return items, nil
 }
 
-// traDdelay streams delay updates for the single train identified by in.Trainno.
-// It subscribes to the train's Redis channel first, seeds a new client from the
-// cached value, then forwards published updates until the client disconnects. An
-// empty cached value is skipped rather than sent as a seed frame.
 func (s *TraDetainServer) traDdelay(in *pb.AskDetain, stream pb.TRA_DetainService_DelayServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "tra_train_delay", "event", "call", "trainno", in.Trainno)
 	// The realtime TRA job sets and publishes this key per train (traEta), so a
@@ -126,11 +112,6 @@ func (s *TraDetainServer) traDdelay(in *pb.AskDetain, stream pb.TRA_DetainServic
 	})
 }
 
-// Fare returns every THSR fare between two stations, one item per fare class
-// (全票/半票) × cabin class (標準/商務/自由座), decoding the cached payload from
-// thsrFare. The app picks the row matching the rider's 票種 preference and seat,
-// so quoting a single row here would erase both axes. It returns NotFound when
-// no fare exists.
 func (s *ThsrServer) Fare(ctx context.Context, in *pb.Ask_Thsr) (*pb.ThsaFares, error) {
 	req := &pb.AskRoute{
 		OriginStationId:      in.OriginStationId,
@@ -150,15 +131,6 @@ func (s *ThsrServer) Fare(ctx context.Context, in *pb.Ask_Thsr) (*pb.ThsaFares, 
 	return items, nil
 }
 
-// AvailableSeats streams THSR available-seat status for a date via the shared
-// streamLive seam: it subscribes first, then seeds the client by SCANning the
-// per-train thsr_seats:<date>:<train> keys, and forwards live updates until the
-// client disconnects. The functions THSR-seats live job owns the refresh from
-// TDX (ADR-0005 amendment), so the router only reads. The channel is the
-// per-date thsr_seats:<date>:* string used as an opaque literal — both the
-// functions writer and this reader derive it from shared.ThsrSeatsPattern, so a
-// plain SUBSCRIBE/PUBLISH match with no pattern semantics. in.Date is parsed and
-// reduced to a date so the seed and subscribe target the keys the job writes.
 func (s *ThsrServer) AvailableSeats(in *pb.Ask_Thsr, stream grpc.ServerStreamingServer[pb.RespThsrSeats]) error {
 	zap.S().Infow("log", "component", "grpc", "action", "thsr_available_seats", "date", in.Date)
 	date := parseRailDate(in.Date).Format(time.DateOnly)

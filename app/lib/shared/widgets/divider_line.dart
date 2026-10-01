@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
 class DividerLine extends StatelessWidget {
   const DividerLine({super.key});
@@ -25,7 +26,7 @@ class AppLabeledDivider extends StatelessWidget {
       children: [
         const Expanded(child: DividerLine()),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space8),
           child: Text(
             label,
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),

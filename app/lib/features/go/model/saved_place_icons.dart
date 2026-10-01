@@ -1,10 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// The curated icon set a user can attach to a saved place. Keys are stable
-/// strings persisted with the place — never the raw [IconData] codepoint, which
-/// would break if the icon font ever changes. Order here is the order shown in
-/// the save dialog; [fallback] renders any key that is missing (e.g. an entry
-/// saved under an icon later removed from the set).
 abstract final class SavedPlaceIcons {
   static const fallback = 'place';
 

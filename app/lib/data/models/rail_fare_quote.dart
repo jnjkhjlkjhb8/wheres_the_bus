@@ -3,14 +3,6 @@ import 'package:wheres_the_bus/data/models/fare_type.dart';
 import 'package:wheres_the_bus/data/models/thsr_models.dart';
 import 'package:wheres_the_bus/data/models/tra_models.dart';
 
-/// Every fare an O/D pair prices, kept unresolved.
-///
-/// TRA and THSR both return a set rather than a number — TRA one row per
-/// 票種 × 車種, THSR one per fare class × cabin class — and which row prices a
-/// given rider depends on their ticket type, which they can change at any time.
-/// Blocs therefore carry the whole set and the view calls [resolve] at render
-/// time; a bloc that resolved on fetch would freeze the quote to whatever the
-/// preference happened to be when the request ran.
 class RailFareQuote extends Equatable {
   const RailFareQuote.tra({
     required List<TraFare> fares,

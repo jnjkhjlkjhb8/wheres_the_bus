@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/app/theme/notice_tone.dart';
 import 'package:wheres_the_bus/data/models/alert_models.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
@@ -19,13 +20,6 @@ import 'package:wheres_the_bus/shared/motion/pressable.dart';
 /// Height matches the 44px floating controls the capsule sits between.
 const double _kCapsuleHeight = 44;
 
-/// Home's own interrupt layer for arriving service disruptions.
-///
-/// Home claims the interrupt instead of taking the shared toast: the capsule
-/// is map-native — it lands in the gap between the two floating control
-/// clusters and leaves the map full-bleed, where a toast would cover it.
-/// `NotificationToastHost` stands down while home is on top, so one notice
-/// never announces itself twice.
 class HomeAlertCapsule extends StatelessWidget {
   const HomeAlertCapsule({super.key});
 
@@ -175,8 +169,15 @@ class _AlertCapsuleState extends State<_AlertCapsule>
                     minHeight: _kCapsuleHeight,
                   ),
                   padding: _expanded
-                      ? const EdgeInsets.fromLTRB(16, 12, 16, 12)
-                      : const EdgeInsets.symmetric(horizontal: 14),
+                      ? const EdgeInsets.fromLTRB(
+                          AppTheme.space16,
+                          AppTheme.space12,
+                          AppTheme.space16,
+                          AppTheme.space12,
+                        )
+                      : const EdgeInsets.symmetric(
+                          horizontal: AppTheme.space14,
+                        ),
                   decoration: BoxDecoration(
                     color: colors.background,
                     borderRadius: BorderRadius.circular(_kCapsuleHeight / 2),
@@ -188,10 +189,6 @@ class _AlertCapsuleState extends State<_AlertCapsule>
                   ),
                   child: FadeTransition(
                     opacity: _contentFade,
-                    // Expanded and collapsed text crossfade behind a light
-                    // blur, so the multi-line message is never hard-clipped
-                    // mid-glyph while the height animates; the size settles
-                    // once the crossfade removes the taller child.
                     child: AnimatedSwitcher(
                       duration: AppMotion.reduced(context)
                           ? AppMotion.instant
@@ -226,7 +223,7 @@ class _AlertCapsuleState extends State<_AlertCapsule>
                         crossAxisAlignment: _expanded
                             ? CrossAxisAlignment.start
                             : CrossAxisAlignment.center,
-                        spacing: 6,
+                        spacing: AppTheme.space6,
                         children: [
                           Padding(
                             padding: EdgeInsets.only(top: _expanded ? 1 : 0),

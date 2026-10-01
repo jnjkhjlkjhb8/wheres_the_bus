@@ -8,10 +8,6 @@ import (
 	"sync/atomic"
 )
 
-// methodCounter tracks request and error counts for one label (a gRPC full
-// method or an HTTP path). Aggregating by label rather than by caller or
-// request keeps the cardinality bounded to the API's own surface area, which
-// is fixed at compile time and small (tens, not thousands).
 type methodCounter struct {
 	requests atomic.Int64
 	errors   atomic.Int64
@@ -73,10 +69,6 @@ var (
 	_dbErrorsTotal          atomic.Int64
 )
 
-// RecordGRPCRequest tallies one completed gRPC call under fullMethod (e.g.
-// "/pb.Bus_Route_Service/Static"), counting it as an error when err is
-// non-nil. Call once per RPC from the interceptor layer so every method the
-// server exposes is covered without touching individual handlers.
 func RecordGRPCRequest(fullMethod string, err error) {
 	_grpcCounters.record(fullMethod, err != nil)
 }
@@ -88,11 +80,6 @@ func RecordHTTPRequest(path string, status int) {
 	_httpCounters.record(path, status >= 500)
 }
 
-// IncStreamDisconnect counts one gRPC live-stream termination, regardless of
-// cause (client disconnect, upstream close, send failure). It is a single
-// unlabeled counter -- per-stream-channel labels would reintroduce the
-// unbounded cardinality the method-keyed counters above avoid, since stream
-// channels are keyed by user-supplied route/station/station-group IDs.
 func IncStreamDisconnect() {
 	_streamDisconnectsTotal.Add(1)
 }
@@ -111,11 +98,6 @@ func IncDBError() {
 	_dbErrorsTotal.Add(1)
 }
 
-// MetricsText renders every counter registered through this file as
-// Prometheus-compatible plain text (one "name{label=\"...\"} value" line per
-// series), matching the hand-rolled exposition format router/http.go already
-// uses for its liveHub gauges rather than pulling in a metrics client
-// library.
 func MetricsText() string {
 	var b strings.Builder
 	writeLabeled(&b, "router_grpc_requests_total", "router_grpc_errors_total", "method", _grpcCounters.snapshot())

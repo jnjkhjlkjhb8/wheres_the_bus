@@ -1,27 +1,4 @@
 #!/usr/bin/env bash
-# check-compose-isolation.sh
-#
-# Expands the staging and prod Compose configs (using their tracked example
-# env files) and asserts the two deployments cannot collide when run on the
-# same host: distinct Compose project names, distinct published host ports,
-# distinct named-volume identities, loopback ingress by default, and
-# agreement between server-side GRPC_TLS and the matching app flavor JSON.
-#
-# `docker compose config` output is written to files under a private temp
-# directory and never printed in full — only the specific asserted keys are
-# grepped out — because ENV_FILE-driven expansion can pull in whatever
-# secrets the env file holds. The tracked *.env.example files used here only
-# ever contain placeholders, but the script is written so it stays safe if
-# ever pointed at a real env file.
-#
-# ENV_FILE (not a made-up BUS_ENV_FILE) is the variable name docker-compose.yaml
-# actually reads (`env_file: ${ENV_FILE:-./.env}`) for each service's
-# env_file: directive. It must be exported into this process's environment
-# (not just passed via --env-file) because --env-file only seeds variable
-# interpolation from a *file*, and that file — env/test.env.example etc. —
-# does not itself define an ENV_FILE= key. Leaving it unexported let the
-# ${ENV_FILE:-./.env} default silently pull in a developer's own ./.env,
-# defeating the point of expanding against the tracked example file.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,12 +16,6 @@ bad() {
 }
 
 expand() {
-  # expand <env-name> <compose-override-file> <env-example-file> <project-name>
-  #        [profile...]
-  # The profiles must mirror the Makefile's COMPOSE_PROFILES for that target:
-  # expanding prod without the motis profile would silently drop the services
-  # this file is asserting about, and expanding staging *with* it would defeat
-  # the point of the profile.
   local env_name="$1" override="$2" env_file="$3" project="$4"
   shift 4
   local profile_args=()
@@ -134,10 +105,6 @@ fi
 
 note ""
 note "== Network segmentation (O7 / review_results.md P2-03) =="
-# service_networks <file> <service> -> sorted network names the service is
-# attached to, read from its `networks:` map (docker compose config renders
-# it as `<name>: null` per attached network, indented one level deeper than
-# the service's own top-level keys).
 service_networks() {
   local file="$1" service="$2"
   awk -v svc="$service:" '
@@ -158,11 +125,6 @@ assert_networks() {
     bad "$env_name/$service: networks = {$actual}, want {$expected}"
   fi
 }
-# router is the only service allowed to span all three networks (it is the
-# shared dependency: powersync's jwks_uri, redis, and MOTIS all sit behind
-# it). Every other service gets exactly the network(s) its actual traffic
-# needs -- see the top-level `networks:` comment in docker/docker-
-# compose.yaml for the full rationale per service.
 assert_networks staging "$staging_cfg" router "backend frontend routing"
 assert_networks staging "$staging_cfg" functions "backend"
 assert_networks staging "$staging_cfg" ingestor "backend"
@@ -170,9 +132,6 @@ assert_networks staging "$staging_cfg" loader "backend"
 assert_networks staging "$staging_cfg" powersync "frontend"
 assert_networks staging "$staging_cfg" cloudflared "frontend"
 assert_networks staging "$staging_cfg" redis "backend"
-# staging deliberately has no MOTIS service (ADR-0022): its router reaches
-# prod's over the host gateway, so there is nothing to assert here. That
-# absence is checked below rather than as a network membership.
 assert_networks prod "$prod_cfg" router "backend frontend routing"
 assert_networks prod "$prod_cfg" functions "backend"
 assert_networks prod "$prod_cfg" ingestor "backend"
@@ -181,12 +140,6 @@ assert_networks prod "$prod_cfg" powersync "frontend"
 assert_networks prod "$prod_cfg" cloudflared "frontend"
 assert_networks prod "$prod_cfg" redis "backend"
 assert_networks prod "$prod_cfg" motis "routing"
-# staging must not create a MOTIS of its own. Two imported data sets (street
-# graph plus timetable, twice) do not fit on the host, and the guard is the
-# Compose profile both MOTIS services carry: only the prod and test targets
-# set COMPOSE_PROFILES=motis. A profile accidentally dropped from the services,
-# or added to the staging target, shows up here as a service that exists in an
-# expansion run without any profile enabled.
 staging_motis=$(grep -cE '^  (motis|motis-import):' "$staging_cfg" || true)
 if [ "$staging_motis" -eq 0 ]; then
   ok "staging creates no MOTIS service (profile-gated, shares prod's)"
@@ -194,11 +147,6 @@ else
   bad "staging expands $staging_motis MOTIS service(s); it must share prod's instead (ADR-0022)"
 fi
 
-# powersync must never be able to reach Redis: the concrete blast-radius
-# claim behind the frontend/backend split (a compromised powersync, which is
-# the one service in this compose file reachable from an edge proxy per its
-# own comment in docker-compose.yaml, cannot pivot to the ETA cache/Pub-Sub
-# bus or the ingestion pipeline).
 powersync_nets=$(service_networks "$prod_cfg" powersync)
 redis_nets=$(service_networks "$prod_cfg" redis)
 shared=$(comm -12 <(echo "$powersync_nets") <(echo "$redis_nets") || true)

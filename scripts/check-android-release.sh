@@ -1,24 +1,4 @@
 #!/usr/bin/env bash
-# check-android-release.sh
-#
-# Asserts the Android release-build fail-closed guarantees added for
-# findings P0-09/F05 (release must never silently sign with the debug
-# keystore), F06 (the Google Maps key must come from the Flutter
-# dart-defines bridge, not a hardcoded/blank value), and F49 (product
-# identity: app_name = 我公車呢, manifest label references it).
-#
-# Every Gradle invocation here runs against `:app:assembleRelease` (or a
-# resValue-generation task) purely at Gradle's configuration/task-graph
-# phase — via `gradle.taskGraph.whenReady` in app/build.gradle, which fires
-# before any task action executes. That lets this script exercise the
-# fail-closed logic without a real signing keystore for the negative cases,
-# and without needing app/android/app/google-services.json at all (that
-# file is only read during task *execution*, which these checks never
-# reach — a pre-existing, unrelated environment gap in sandboxes that don't
-# carry Firebase credentials).
-#
-# Uses the system `gradle` binary; this worktree has no committed `gradlew`
-# wrapper (see docs/agents note in prior task reports).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -61,14 +61,6 @@ class FirebaseBootstrap {
   static StreamSubscription<String>? _tokenRefreshSub;
   static Future<void>? _coreInitFuture;
 
-  /// Runs [init] (or [initializer] in tests) as the app's single best-effort
-  /// Firebase step, bounded by [timeout].
-  ///
-  /// this used to catch and log every failure and return normally,
-  /// so `AppBootstrapController` — which relies on this throwing to know
-  /// the step failed — always saw success and never degraded the app even
-  /// when Firebase never came up. It now rethrows after logging, so a real
-  /// failure reaches the controller and lands the app in `degraded`.
   static Future<void> initFailSoft({
     Future<void> Function({Future<void>? hiveReady}) initializer = init,
     Duration timeout = const Duration(seconds: 10),
@@ -96,17 +88,6 @@ class FirebaseBootstrap {
     }
   }
 
-  /// Single-flight guard: concurrent callers share one in-flight
-  /// [Firebase.initializeApp] instead of each racing their own call (P1-09
-  /// — `main.dart` fires this off the same background tick as
-  /// `AppBootstrapController.start`, which also reaches Firebase init via
-  /// [initFailSoft]/[init]). A failure is not permanently cached, matching
-  /// `HiveStore.init`'s convention: the next call retries from scratch.
-  ///
-  /// Exposed with an injectable [initializer] so the memoization behavior
-  /// itself is unit-testable — [FirebaseGate.enabled] is compile-time
-  /// `false` under `flutter test`, which would otherwise make every call
-  /// through [ensureCoreInitialized] a no-op regardless of concurrency.
   @visibleForTesting
   static Future<void> singleFlightCoreInit(
     Future<void> Function() initializer,
@@ -141,12 +122,6 @@ class FirebaseBootstrap {
   static Future<void> init({Future<void>? hiveReady}) async {
     if (!FirebaseGate.enabled) return;
     await ensureCoreInitialized();
-    // Everything below this point (App Check, analytics/crashlytics
-    // collection toggles, remote config, push preference) either reads a
-    // HiveStore preference directly or transitively depends on one, so it
-    // all waits for Hive's boxes to be open (P1-09: reading an unopened box
-    // throws) rather than each step re-deriving its own guard. `main.dart`
-    // injects the exact `HiveStore.init()` future it started Hive with.
     await hiveReady;
     const isProd = FirebaseGate.appEnv == 'production';
     const debugToken = FirebaseGate.appCheckDebugToken;
@@ -193,22 +168,12 @@ class FirebaseBootstrap {
         // This init runs after runApp (fire-and-forget), so the UI already
         // built with defaults — bump to re-read the just-fetched values.
         AppConfig.version.value++;
-        // Realtime updates: apply an ops push to foreground apps within
-        // seconds, bypassing minimumFetchInterval. iOS/Android only.
-        // Own the subscription (F59): cancel any prior one first so a
-        // repeated init (hot restart, retried bootstrap) never stacks a
-        // second listener applying the same update twice.
         await _remoteConfigSub?.cancel();
         _remoteConfigSub = remoteConfig.onConfigUpdated.listen((_) async {
           await remoteConfig.activate();
           AppConfig.version.value++;
         });
       },
-      // `HiveStore.pushEnabled` defaults to false until a user has actually
-      // gone through the permission flow (settings toggle or a prior grant),
-      // so this only re-requests the OS permission (and re-syncs the FCM
-      // token) for users who already have push on. It never surfaces the OS
-      // dialog on a fresh install, because `requested` is false there.
       () async => updatePushPreference(requested: HiveStore.pushEnabled),
       () async {
         await _tokenRefreshSub?.cancel();
@@ -217,10 +182,6 @@ class FirebaseBootstrap {
     ]);
   }
 
-  /// Cancels the owned Remote Config / token-refresh subscriptions. Exposed
-  /// for tests; production code has no teardown path today since Firebase
-  /// lives for the app's lifetime, but this keeps `init()` idempotent under
-  /// re-entry (retry, hot restart) without leaking listeners (F59).
   @visibleForTesting
   static Future<void> disposeForTesting() async {
     await _remoteConfigSub?.cancel();

@@ -8,11 +8,6 @@ import (
 	"github.com/samber/oops"
 )
 
-// errMentions reports whether every whitespace-separated token of want appears
-// in err's message or among the oops attributes carried along its error chain.
-// Structured errors keep messages low-cardinality and put variable data in
-// attributes, so an assertion about "which field was rejected" has to look in
-// both places. oops merges the whole chain's context, so one errors.As is enough.
 func errMentions(err error, want string) bool {
 	if err == nil {
 		return false

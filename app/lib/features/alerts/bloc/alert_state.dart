@@ -11,10 +11,6 @@ class AlertState extends Equatable {
     this.sourceHealth = const {},
   });
 
-  /// What each subscribed source currently reports, unfiltered and keyed by
-  /// source so a new snapshot replaces exactly its own rows. Filtering happens
-  /// in the getters rather than on arrival, so changing 收藏 re-derives what is
-  /// shown from data already in hand, with no resubscribe.
   final Map<AlertSourceId, List<AlertViewModel>> alertsBySource;
 
   /// Every reported alert across all sources, unfiltered.
@@ -30,25 +26,11 @@ class AlertState extends Equatable {
   final Set<String> dismissedMessages;
   final Set<String> readMessages;
 
-  /// Per-source subscription failures. A source with no entry is healthy;
-  /// only currently-failed sources appear here. Keyed by `null` for a
-  /// failure whose caller didn't attribute a source (F32) — the UI can read
-  /// this map directly to show which systems are down, or use [error] for
-  /// the existing "is anything down" signal.
   final Map<AlertSourceId?, AppError> sourceHealth;
 
-  /// Some recorded failure, or null when every tracked source is healthy.
-  /// Existing single-error consumers (OfflineBanner, the notification strip)
-  /// only need to know "is at least one source down", not which — recovering
-  /// one of several failed sources must not clear this until all recover
-  /// (F32).
   AppError? get error =>
       sourceHealth.values.isEmpty ? null : sourceHealth.values.first;
 
-  /// The notices allowed to interrupt: in-scope, undismissed service
-  /// disruptions at critical tone. Reads tone rather than level so an
-  /// announcement can never reach the interrupt layer by carrying a red
-  /// level.
   List<AlertViewModel> get redAlerts =>
       visibleAlerts.where((a) => a.tone == NoticeTone.critical).toList();
 
@@ -62,18 +44,6 @@ class AlertState extends Equatable {
   List<AlertViewModel> get messageNotices =>
       visibleAlerts.where((a) => !a.ongoing).toList();
 
-  /// Announcements the resident rail should carry: an ops maintenance window
-  /// for as long as it is enabled, and a general announcement until the rider
-  /// has read it. Read state doubles as the rail's dismissal — closing the
-  /// strip means "I've seen it", and the notice stays in the inbox.
-  List<AlertViewModel> get railAnnouncements => activeAlerts
-      .where(
-        (a) =>
-            a.kind == NoticeKind.announcement &&
-            (!a.dismissible || !readMessages.contains(a.message)),
-      )
-      .toList();
-
   /// Alerts worth showing: in the rider's 訂閱範圍, not resolved, not
   /// dismissed.
   List<AlertViewModel> get visibleAlerts => activeAlerts
@@ -85,11 +55,6 @@ class AlertState extends Equatable {
       )
       .toList();
 
-  /// Candidates for a page's own inline notice: everything unresolved and
-  /// undismissed, deliberately *not* filtered by 訂閱範圍. Standing on a
-  /// route's page is stronger evidence of interest than having saved it, so a
-  /// disruption on the route being read must not be hidden because the rider
-  /// never favorited it. Callers narrow this by route identity themselves.
   List<AlertViewModel> get contextualNotices => activeAlerts
       .where(
         (a) =>
