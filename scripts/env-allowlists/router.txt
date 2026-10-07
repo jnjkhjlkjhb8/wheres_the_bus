@@ -1,7 +1,7 @@
 # router allowlist — one VAR name per line, blank lines and #-comments ignored.
 # Source of truth: grep os.Getenv/shared.EnvInt32 in services/router/*.go and
 # services/shared/bootstrap.go (services/router imports shared). See
-# scripts/check-env-allowlist.sh and docs/config.md for the enforcement
+# docs/config.md for the enforcement
 # mechanism and rationale.
 DATABASE_URL
 PG_SCHEMA

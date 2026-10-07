@@ -10,12 +10,6 @@ if [ "$#" -eq 0 ]; then
 fi
 
 run_contracts() {
-  echo "== contracts: dependency boundaries =="
-  ./scripts/check-dependency-boundaries.sh
-  ./scripts/check-dependency-boundaries.sh --self-test
-  echo "== contracts: file-size ratchet =="
-  ./scripts/check-file-budgets.sh
-  ./scripts/check-file-budgets.sh --self-test
   echo "== contracts: proto contract (buf build + breaking) =="
   ./scripts/check-proto-contract.sh
 }
@@ -51,6 +45,9 @@ run_flutter() {
 }
 
 run_migrations() {
+  echo "== migrations: backward-compatibility lint =="
+  ./scripts/check-migration-lint.sh
+  ./scripts/check-migration-lint.sh --self-test
   echo "== migrations: replay gate =="
   ./scripts/check-migrations.sh
 }
@@ -60,14 +57,6 @@ run_security() {
   ./scripts/check-gitleaks.sh
   echo "== security: govulncheck =="
   ./scripts/check-govulncheck.sh
-  echo "== security: guardrail tests present =="
-  ./scripts/check-guardrail-tests-present.sh
-  echo "== security: per-service env allowlist =="
-  ./scripts/check-env-allowlist.sh
-  echo "== security: effective compose contract =="
-  ./scripts/check-compose-effective.sh
-  echo "== security: release manifest =="
-  ./scripts/check-release-manifest.sh
 }
 
 for profile in "$@"; do

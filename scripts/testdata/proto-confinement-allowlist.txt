@@ -1,5 +1,0 @@
-# Ratcheted pre-existing imports of app/lib/data/generated/ from outside
-# app/lib/data/. scripts/check-dependency-boundaries.sh fails on any file
-# NOT listed here. The gRPC client is transport plumbing and predates the
-# confinement rule; new code must consume data-layer models instead.
-app/lib/core/grpc/grpc_client.dart

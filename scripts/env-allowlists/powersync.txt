@@ -2,7 +2,6 @@
 # powersync/config.yaml's `!env` references (PS_SOURCE_DATABASE_URL,
 # PS_DATABASE_URL) — this service is not one of our Go binaries. It never
 # needs DATABASE_URL (the app's connection string), Redis, TDX, MQTT,
-# Sentry, or Firebase credentials. See scripts/check-env-allowlist.sh and
-# docs/config.md.
+# Sentry, or Firebase credentials. See docs/config.md.
 PS_DATABASE_URL
 PS_SOURCE_DATABASE_URL

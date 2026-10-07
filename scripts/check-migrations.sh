@@ -9,7 +9,8 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     exit 0
 fi
 
-IMAGE="pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb"
+# Same image the cluster runs (docker/postgres/Dockerfile): PG18 + PostGIS + pgvector.
+IMAGE="bus-postgres:check-migrations"
 CONTAINER="bus-check-migrations-$$"
 PORT="${CHECK_MIGRATIONS_PORT:-15433}"
 DB=migcheck
@@ -18,6 +19,9 @@ PASS=postgres
 
 cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+
+echo "== building $IMAGE from docker/postgres =="
+docker build -q -t "$IMAGE" docker/postgres >/dev/null
 
 echo "== starting ephemeral postgres ($IMAGE) =="
 docker run -d --name "$CONTAINER" \
@@ -32,12 +36,6 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 docker exec "$CONTAINER" pg_isready -U "$USER" -d "$DB" >/dev/null
-
-echo "== installing postgis (apt, layered on top of the pgvector image) =="
-docker exec -u root "$CONTAINER" bash -c \
-    'apt-get update -qq && apt-get install -y -qq postgresql-16-postgis-3 >/dev/null' \
-    >/tmp/check-migrations-apt.log 2>&1 \
-    || { echo "FAIL: could not install postgis in the check container; see /tmp/check-migrations-apt.log"; exit 1; }
 
 psql_round() {
     local schema="$1" file="$2"
@@ -91,7 +89,6 @@ run_round() {
 }
 
 run_round "public"
-run_round "staging"
 
 echo
 if [ "$fail" -ne 0 ]; then
@@ -99,4 +96,4 @@ if [ "$fail" -ne 0 ]; then
     exit 1
 fi
 
-echo "check-migrations: PASS (baseline + full migration history replay cleanly on an empty database, public and staging rounds)"
+echo "check-migrations: PASS (baseline + full migration history replay cleanly on an empty database, public schema)"

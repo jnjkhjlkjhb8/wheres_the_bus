@@ -2,8 +2,7 @@
 # allowlist. Source of truth: grep os.Getenv in services/functions/
 # loader_cron.go, services/functions/loader.go, services/shared/bootstrap.go.
 # No TDX_CLIENT_ID/TDX_CLIENT_SECRET here — the loader never calls TDX, only
-# reads already-landed raw_tdx rows. See scripts/check-env-allowlist.sh and
-# docs/config.md.
+# reads already-landed raw_tdx rows. See docs/config.md.
 DATABASE_URL
 PG_SCHEMA
 LOAD_DB_MAX_CONNS

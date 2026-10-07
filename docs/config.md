@@ -17,13 +17,8 @@ allowlisted env 檔：
   `${ENV_FILE_<SERVICE>:-${ENV_FILE:-./.env}}`；`make up-test` /
   `up-staging` / `up-prod` 會先跑 `render-env-%` 把
   `env/.rendered/<env>/*.env` 產生出來並指到對應變數。未設定
-  `ENV_FILE_<SERVICE>` 時退回單一 `ENV_FILE`（`check-compose-isolation.sh`
-  / `check-container-hardening.sh` 兩支腳本只設 `ENV_FILE`，行為不變）。
-- `scripts/check-env-allowlist.sh`（接進 `scripts/ci.sh security` /
-  `make verify`）render 三個環境的範本檔，驗證每個 service 的渲染結果都是
-  該 service allowlist 的子集，並跑幾個具體的跨服務洩漏斷言（例如 router
-  不可有 `MQTT_PASSWORD`）。`--self-test` 附加一段負面測試，證明「渲染結果
-  含 allowlist 未列的變數」真的會被判定失敗。
+  `ENV_FILE_<SERVICE>` 時退回單一 `ENV_FILE`（`check-container-hardening.sh`
+  只設 `ENV_FILE`，行為不變）。
 
 **為何選 render-env.sh 而非把 `env/<env>.env` 直接拆成五份**：兩者達到的
 安全性質相同（每個容器永遠只看得到自己 allowlist 內的變數），但
@@ -188,9 +183,7 @@ functions 的 legacy prod 路徑（`registerLiveCrons` 即時 ETA cron）也直�
 | `routing` | router, motis, motis-import, osrm-fetch | router 呼叫 `motis:8080`（路線規劃、附近站牌步行時間、geocode），MOTIS 反向讀 router 的 GTFS-RT 與 GBFS feed；其餘服務沒有理由碰到 MOTIS。 |
 
 router 是唯一橫跨三個 network 的服務（它是 powersync、Redis、MOTIS 共同的
-依賴）。`scripts/check-compose-isolation.sh` 斷言每個 service 的 network
-成員與上表一致，並且 powersync 與 redis 不共用任何 network（具體驗證一個
-被入侵的 powersync 無法直連 Redis / ETA cache / ingestion pipeline）。
+依賴）。
 
 ## PostgreSQL per-service roles
 

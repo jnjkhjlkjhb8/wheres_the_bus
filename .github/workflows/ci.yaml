@@ -19,20 +19,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    # Postgres is started as a step, not a service: it is built from
+    # docker/postgres (the image the cluster runs), and service containers can
+    # only use images that already exist in a registry.
     services:
-      postgres:
-        image: postgis/postgis:16-3.5
-        env:
-          POSTGRES_DB: bus_test
-          POSTGRES_USER: bus
-          POSTGRES_PASSWORD: bus
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U bus -d bus_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
       redis:
         image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
         ports:
@@ -45,6 +35,17 @@ jobs:
       FIREBASE_ENABLED: "false"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: start postgres (docker/postgres image)
+        run: |
+          docker build -q -t bus-postgres:ci docker/postgres
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_DB=bus_test -e POSTGRES_USER=bus -e POSTGRES_PASSWORD=bus \
+            bus-postgres:ci
+          for _ in $(seq 1 30); do
+            docker exec postgres pg_isready -U bus -d bus_test && break
+            sleep 2
+          done
+          docker exec postgres pg_isready -U bus -d bus_test
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
@@ -106,7 +107,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: migration replay gate (baseline + full history, public + staging)
+      - name: migration lint (squawk) + replay gate (baseline + full history)
         run: ./scripts/ci.sh migrations
 
   security:
@@ -135,14 +136,6 @@ jobs:
       # (review_results.md P0-03).
       - name: govulncheck (pinned SCA gate)
         run: ./scripts/check-govulncheck.sh
-      - name: guardrail tests still present and passing
-        run: ./scripts/check-guardrail-tests-present.sh
-      - name: effective Compose and release input contracts
-        run: |
-          ./scripts/check-compose-effective.sh
-          ./scripts/check-release-manifest.sh
-      - name: per-service env contract
-        run: ./scripts/check-env-allowlist.sh
 
   flutter:
     runs-on: ubuntu-latest

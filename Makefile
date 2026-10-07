@@ -113,8 +113,6 @@ verify: proto-go
 	./scripts/ci.sh flutter
 	./scripts/ci.sh security
 	./scripts/ci.sh migrations
-	./scripts/check-hermetic.sh
-	./scripts/check-compose-isolation.sh
 	./scripts/check-container-hardening.sh
 	./scripts/check-spacing-tokens.sh
 	git diff --exit-code

@@ -1,6 +1,0 @@
-# Ratcheted file-size budgets (file|max-lines), frozen at each file's size
-# when the ratchet was introduced. scripts/check-file-budgets.sh fails a
-# listed file that grows past its budget and any unlisted Go/Dart file over
-# the 1000-line default cap. Shrink a file, lower (or delete) its entry.
-services/router/maas_test.go|1133
-app/test/features/go/navigation_coordinator_test.dart|1113

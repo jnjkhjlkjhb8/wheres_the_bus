@@ -1,7 +1,7 @@
 # motis allowlist — one VAR name per line, blank lines and #-comments ignored.
 # Consumed by motis-import in docker/docker-compose.yaml, not by a Go binary:
 # the import job substitutes these into the rendered config.yml before running
-# `motis import`. See scripts/check-env-allowlist.sh and docs/config.md.
+# `motis import`. See docs/config.md.
 #
 # MOTIS itself reads no environment. `motis server` takes everything from the
 # config.yml inside the data directory the import produced, which is why the
