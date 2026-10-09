@@ -55,7 +55,7 @@ dependencies:
   go_router: ^17.2.3
   google_maps_flutter: ^2.18.0
   google_maps_flutter_android: ^2.19.12
-  google_maps_flutter_ios_sdk10: ^2.18.5
+  google_maps_flutter_ios_sdk10: ^2.19.0
   google_maps_flutter_platform_interface: ^2.15.0
   grpc: ^5.1.0
   hive_ce: ^2.2.0
