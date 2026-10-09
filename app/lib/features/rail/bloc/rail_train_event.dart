@@ -12,12 +12,11 @@ class RailTrainStarted extends RailTrainEvent {
   const RailTrainStarted();
 }
 
-/// Toggles the arrival reminder for the stop named [stopName].
-class RailTrainReminderToggled extends RailTrainEvent {
-  const RailTrainReminderToggled(this.stopName);
-
-  final String stopName;
+/// Internal: a fresh live TRA 誤點 value (minutes) for this train.
+class RailTrainDelayUpdated extends RailTrainEvent {
+  const RailTrainDelayUpdated(this.minutes);
+  final int minutes;
 
   @override
-  List<Object?> get props => [stopName];
+  List<Object?> get props => [minutes];
 }

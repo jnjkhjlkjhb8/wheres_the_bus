@@ -2,17 +2,14 @@ part of '../home_screen.dart';
 
 const _kLargeDotZoomThreshold = 13.0;
 const _kIconZoomThreshold = 15.5;
+// largeDot renders at the mid zoom band (bigger, easier to tap); smallDot at
+// the most zoomed-out band, where dense clusters need to shrink to stay
+// legible.
 const _kSmallDotSize = 7.0;
 const _kLargeDotSize = 10.0;
-const _kIconMarkerSize = 32.0;
+const _kIconMarkerSize = 24.0;
 const _kHighlightIconMarkerSize = 44.0;
 const _kMapMarkerLimit = 60;
-
-/// Radius used when the map controller isn't ready yet and we can't measure the
-/// visible viewport. Remote-tunable so ops can widen/narrow the cold-start
-/// nearby query without a release.
-int get _fallbackRadiusMeters =>
-    AppConfig.getInt('nearby_fallback_radius_m');
 
 enum _MarkerStyle { icon, largeDot, smallDot }
 
@@ -59,14 +56,14 @@ Future<BitmapDescriptor> _markerIcon(
   final dotSize = _dotMarkerSize(style);
   switch (s.type) {
     case NearStationType.bus:
-      return MapMarkers.dot(const Color(0xFFC03634), size: dotSize);
+      return MapMarkers.dot(AppTheme.markerBus, size: dotSize);
     case NearStationType.bike:
-      return MapMarkers.dot(const Color(0xFFDFE24D), size: dotSize);
+      return MapMarkers.dot(AppTheme.markerBike, size: dotSize);
     case NearStationType.mrt:
       return MapMarkers.dot(_mrtColor(s.stationId), size: dotSize);
     case NearStationType.tra:
     case NearStationType.thsr:
-      return MapMarkers.dot(const Color(0xFF285FF4), size: dotSize);
+      return MapMarkers.dot(AppTheme.markerRail, size: dotSize);
   }
 }
 
@@ -88,7 +85,8 @@ String _iconAsset(NearStationViewModel s) {
 String _mrtIconAsset(String stationId) {
   final code = stationId.split(RegExp(r'[_\d]')).first.toUpperCase();
   switch (code) {
-    // system; they get the TRTC icon until stationId encodes the system.
+    // Taipei metro line codes carry no system prefix, so they default to the
+    // TRTC icon until stationId encodes the system.
     case 'BL':
     case 'BR':
     case 'G':

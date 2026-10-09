@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/core/storage/hive_store.dart';
-import 'package:wheres_the_car/features/bus/view/bus_route_screen.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
+import 'package:wheres_the_bus/features/bus/view/bus_route_screen.dart';
 
 Widget _host() => MaterialApp(
   theme: AppTheme.light,

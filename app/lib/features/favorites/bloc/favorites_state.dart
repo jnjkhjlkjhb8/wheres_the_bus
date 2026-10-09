@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import 'package:wheres_the_car/data/models/favorite.dart';
+import 'package:wheres_the_bus/data/models/favorite.dart';
 
 class FavoritesState extends Equatable {
   const FavoritesState({this.items = const []});

@@ -1,8 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:wheres_the_car/app/theme/app_shadows.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+
+/// Geometry every app bar shares. Screens compose different rows, but the tap
+/// target, glyph size, slot gap and edge insets are identical so the back
+/// button lands under the same thumb position on every screen.
+abstract final class AppBarMetrics {
+  static const double tapTarget = 44;
+  static const double control = 40;
+  static const double icon = 20;
+  static const double gap = 12;
+  static const double barHeight = 56;
+
+  static const double floatingTop = AppTheme.space16;
+
+  static const EdgeInsets floatingInsets = EdgeInsets.fromLTRB(
+    AppTheme.space16,
+    floatingTop,
+    AppTheme.space16,
+    AppTheme.space8,
+  );
+}
 
 class AppBarCircleButton extends StatelessWidget {
   const AppBarCircleButton({
@@ -22,19 +44,13 @@ class AppBarCircleButton extends StatelessWidget {
       onTap: onTap,
       semanticLabel: semanticLabel,
       child: SizedBox(
-        width: 44,
-        height: 44,
+        width: AppBarMetrics.tapTarget,
+        height: AppBarMetrics.tapTarget,
         child: Center(
           child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: cs.brightness == Brightness.light
-                  ? Colors.white
-                  : cs.surfaceContainerHigh,
-              shape: BoxShape.circle,
-              boxShadow: AppShadows.floating,
-            ),
+            width: AppBarMetrics.control,
+            height: AppBarMetrics.control,
+            decoration: AppTheme.floatingControl(cs, shape: BoxShape.circle),
             child: Center(child: child),
           ),
         ),
@@ -43,28 +59,137 @@ class AppBarCircleButton extends StatelessWidget {
   }
 }
 
-class MapCloseButton extends StatelessWidget {
-  const MapCloseButton({this.onPressed, super.key});
-  final VoidCallback? onPressed;
+/// The single back affordance. `floating` puts it on the circular chrome used
+/// over maps; without it the glyph sits bare on an opaque bar. Same icon, size
+/// and tap target either way — only the backing plate differs.
+class AppBarBackButton extends StatelessWidget {
+  const AppBarBackButton({this.onTap, this.floating = false, super.key});
+  final VoidCallback? onTap;
+  final bool floating;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return AppBarCircleButton(
-      onTap: onPressed ?? () => context.pop(),
-      semanticLabel: '關閉',
-      child: Icon(Icons.close_rounded, size: 20, color: cs.onSurface),
+    final icon = Icon(
+      Icons.arrow_back_ios_new_rounded,
+      size: AppBarMetrics.icon,
+      color: cs.onSurface,
+    );
+    final label = AppI18n.of(context).commonBack;
+    final tap = onTap ?? () => context.pop();
+
+    if (floating) {
+      return AppBarCircleButton(
+        onTap: tap,
+        semanticLabel: label,
+        child: icon,
+      );
+    }
+    return Pressable(
+      onTap: tap,
+      semanticLabel: label,
+      child: SizedBox(
+        width: AppBarMetrics.tapTarget,
+        height: AppBarMetrics.tapTarget,
+        child: Center(child: icon),
+      ),
     );
   }
 }
 
-class DetailAppBar extends StatelessWidget implements PreferredSizeWidget {
+class FloatingAppBar extends StatelessWidget {
+  const FloatingAppBar({
+    this.leading,
+    this.middle,
+    this.trailing,
+    this.automaticallyImplyLeading = true,
+    this.crossAxisAlignment = CrossAxisAlignment.center,
+    super.key,
+  });
+
+  /// Defaults to the shared back button — see [automaticallyImplyLeading].
+  final Widget? leading;
+  final Widget? middle;
+  final Widget? trailing;
+
+  final bool automaticallyImplyLeading;
+
+  final CrossAxisAlignment crossAxisAlignment;
+
+  @override
+  Widget build(BuildContext context) {
+    final start =
+        leading ??
+        (automaticallyImplyLeading
+            ? const AppBarBackButton(floating: true)
+            : null);
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: AppBarMetrics.floatingInsets,
+        child: middle == null
+            ? Row(
+                crossAxisAlignment: crossAxisAlignment,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [?start, ?trailing],
+              )
+            : Row(
+                crossAxisAlignment: crossAxisAlignment,
+                children: [
+                  if (start != null) ...[
+                    start,
+                    const SizedBox(width: AppBarMetrics.gap),
+                  ],
+                  Expanded(child: middle!),
+                  if (trailing != null) ...[
+                    const SizedBox(width: AppBarMetrics.gap),
+                    trailing!,
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// The [FloatingAppBar] title slot: the same type ramp as [DetailAppBar] on
+/// the floating plate, so a screen reads the same whether its header sits on
+/// an opaque bar or over a map.
+class AppBarTitlePill extends StatelessWidget {
+  const AppBarTitlePill({required this.title, this.subtitle, super.key});
+  final String title;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(minHeight: AppBarMetrics.tapTarget),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space14,
+        vertical: AppTheme.space6,
+      ),
+      decoration: AppTheme.floatingControl(
+        cs,
+        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+      ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: _Title(title, subtitle),
+      ),
+    );
+  }
+}
+
+/// Chrome for screens whose content is laid out below it. Opaque, so no hard
+/// divider: the separation appears only once content actually passes beneath
+/// the bar, as a soft edge that the content fades into.
+class DetailAppBar extends StatefulWidget implements PreferredSizeWidget {
   const DetailAppBar({
     this.title,
     this.subtitle,
     this.onBack,
     this.actions,
-    this.titleTrailing = false,
     this.centerTitle = false,
     super.key,
   });
@@ -72,83 +197,106 @@ class DetailAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String? subtitle;
   final VoidCallback? onBack;
   final List<Widget>? actions;
-  final bool titleTrailing;
   final bool centerTitle;
 
-  static const double _barHeight = 56;
+  @override
+  Size get preferredSize => const Size.fromHeight(AppBarMetrics.barHeight);
 
   @override
-  Size get preferredSize => const Size.fromHeight(_barHeight);
+  State<DetailAppBar> createState() => _DetailAppBarState();
+}
+
+class _DetailAppBarState extends State<DetailAppBar> {
+  ScrollNotificationObserverState? _observer;
+  bool _scrolledUnder = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _observer?.removeListener(_handleScrollNotification);
+    _observer = ScrollNotificationObserver.maybeOf(context);
+    _observer?.addListener(_handleScrollNotification);
+  }
+
+  @override
+  void dispose() {
+    _observer?.removeListener(_handleScrollNotification);
+    _observer = null;
+    super.dispose();
+  }
+
+  void _handleScrollNotification(ScrollNotification notification) {
+    if (notification is! ScrollUpdateNotification) return;
+    if (!defaultScrollNotificationPredicate(notification)) return;
+    final metrics = notification.metrics;
+    final bool under;
+    switch (metrics.axisDirection) {
+      case AxisDirection.down:
+        under = metrics.extentBefore > 0;
+      case AxisDirection.up:
+        under = metrics.extentAfter > 0;
+      case AxisDirection.left:
+      case AxisDirection.right:
+        // Horizontal scrollers under the bar say nothing about whether
+        // vertical content has passed beneath it.
+        return;
+    }
+    if (under != _scrolledUnder) setState(() => _scrolledUnder = under);
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return Container(
+    return AnimatedContainer(
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : AppMotion.short,
+      curve: AppMotion.easeOut,
       decoration: BoxDecoration(
         color: cs.surface,
-        border: Border(
-          bottom: BorderSide(
-            color: cs.outlineVariant.withValues(alpha: 0.3),
-            width: 0.5,
-          ),
-        ),
+        // A surface-coloured spread below the bar, not a line: content
+        // scrolling up dissolves into the bar instead of hitting a rule.
+        boxShadow: [
+          if (_scrolledUnder)
+            BoxShadow(
+              color: cs.surface,
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+        ],
       ),
       child: SafeArea(
         bottom: false,
         child: SizedBox(
-          height: _barHeight,
+          height: AppBarMetrics.barHeight,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space4,
+              AppTheme.space4,
+              AppTheme.space8,
+              AppTheme.space4,
+            ),
             child: NavigationToolbar(
-              leading: _BackButton(
-                onTap:
-                    onBack ??
-                    () => Navigator.of(context, rootNavigator: true).maybePop(),
-              ),
-              middle: title != null
+              leading: AppBarBackButton(onTap: widget.onBack),
+              middle: widget.title != null
                   ? _Title(
-                      title!,
-                      subtitle,
-                      textAlign: centerTitle
+                      widget.title!,
+                      widget.subtitle,
+                      textAlign: widget.centerTitle
                           ? TextAlign.center
                           : TextAlign.left,
                     )
                   : null,
-              trailing: actions != null && actions!.isNotEmpty
+              trailing: widget.actions != null && widget.actions!.isNotEmpty
                   ? Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: actions!,
+                      children: widget.actions!,
                     )
                   : null,
-              centerMiddle: centerTitle,
+              centerMiddle: widget.centerTitle,
               middleSpacing: 8,
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BackButton extends StatelessWidget {
-  const _BackButton({this.onTap});
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Pressable(
-      onTap: onTap,
-      semanticLabel: '返回',
-      child: SizedBox(
-        width: 44,
-        height: 44,
-        child: Center(
-          child: Icon(
-            Icons.arrow_back_ios_new_rounded,
-            size: 20,
-            color: cs.onSurface,
           ),
         ),
       ),
@@ -166,139 +314,38 @@ class _Title extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final align = textAlign ?? TextAlign.start;
-    if (subtitle != null) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: align == TextAlign.center
-            ? CrossAxisAlignment.center
-            : CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: AppTextStyles.bodyLarge.copyWith(
-              fontWeight: FontWeight.w600,
-              color: cs.onSurface,
-              height: 1.2,
-            ),
-            textAlign: align,
-            overflow: TextOverflow.ellipsis,
-          ),
-          Text(
-            subtitle!,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: cs.onSurfaceVariant,
-              height: 1.2,
-            ),
-            textAlign: align,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      );
-    }
-    return Text(
+    final titleText = Text(
       title,
       style: AppTextStyles.bodyLarge.copyWith(
         fontWeight: FontWeight.w600,
         color: cs.onSurface,
+        height: subtitle != null ? 1.2 : null,
       ),
       textAlign: align,
       overflow: TextOverflow.ellipsis,
     );
-  }
-}
+    if (subtitle == null) return titleText;
 
-class PlannerAppBar extends StatelessWidget {
-  const PlannerAppBar({
-    required this.destName,
-    this.isFavorite = false,
-    this.onBack,
-    this.onBookmark,
-    this.actions,
-    super.key,
-  });
-  final String destName;
-  final bool isFavorite;
-  final VoidCallback? onBack;
-  final VoidCallback? onBookmark;
-  final List<Widget>? actions;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      color: cs.surface,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: _BackButton(onTap: onBack ?? () => context.pop()),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: align == TextAlign.center
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
+      children: [
+        titleText,
+        Text(
+          subtitle!,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: cs.onSurfaceVariant,
+            height: 1.2,
+            // Subtitles here are dates and counts; without tabular figures
+            // they reflow by a pixel every time the value ticks.
+            fontFeatures: AppTextStyles.tabularFigures,
           ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.radio_button_checked_rounded,
-                size: 14,
-                color: cs.outline,
-              ),
-              Container(width: 1.5, height: 20, color: cs.outlineVariant),
-              Icon(Icons.location_on_rounded, size: 18, color: cs.primary),
-            ],
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '您的位置',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: cs.onSurfaceVariant,
-                  ),
-                ),
-                Divider(height: 8, color: cs.outlineVariant),
-                Text(
-                  destName,
-                  style: AppTextStyles.bodyRegular.copyWith(
-                    color: cs.onSurface,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 44,
-                height: 44,
-                child: Semantics(
-                  label: isFavorite ? '取消收藏' : '加入收藏',
-                  button: true,
-                  child: IconButton(
-                    icon: Icon(
-                      isFavorite
-                          ? Icons.bookmark_rounded
-                          : Icons.bookmark_border_rounded,
-                      size: 20,
-                      color: cs.onSurface,
-                    ),
-                    onPressed: onBookmark,
-                    padding: EdgeInsets.zero,
-                  ),
-                ),
-              ),
-              if (actions != null)
-                for (final action in actions!)
-                  SizedBox(width: 44, height: 44, child: action),
-            ],
-          ),
-        ],
-      ),
+          textAlign: align,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 }

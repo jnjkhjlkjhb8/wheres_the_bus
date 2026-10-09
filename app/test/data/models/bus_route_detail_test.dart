@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/models/bus_route_detail.dart';
+import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 
 void main() {
   test('tripsForDirection returns only that direction', () {
@@ -25,17 +25,5 @@ void main() {
     expect(detail.tripsForDirection(0).first.tripId, 'A');
     expect(detail.tripsForDirection(1), isEmpty);
     expect(detail.tripsForDirection(9), isEmpty); // missing direction
-  });
-
-  test('BusFareInfo carries pricing and payloads', () {
-    const fare = BusFareInfo(
-      pricingType: 2,
-      isFreeBus: false,
-      sectionFaresJson: [1, 2],
-      stageFaresJson: [],
-      odFaresJson: [],
-    );
-    expect(fare.pricingType, 2);
-    expect(fare.sectionFaresJson, [1, 2]);
   });
 }

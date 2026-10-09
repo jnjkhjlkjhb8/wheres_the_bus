@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/features/alerts/bloc/alert_bloc.dart';
+import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
 
 void main() {
   test('parses tagged metro/bus tokens', () {

@@ -1,7 +1,8 @@
 import 'package:equatable/equatable.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/models/bus_models.dart';
-import 'package:wheres_the_car/data/models/bus_route_detail.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/core/haptics/alight_haptics.dart';
+import 'package:wheres_the_bus/data/models/bus_models.dart';
+import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 
 sealed class BusRouteEvent extends Equatable {
   const BusRouteEvent();
@@ -35,11 +36,18 @@ class BusRouteDetailsUpdated extends BusRouteEvent {
   List<Object?> get props => [daily, fare];
 }
 
-class BusRouteReminderToggled extends BusRouteEvent {
-  const BusRouteReminderToggled(this.stopUid);
+class BusRoutePinnedReminderArmed extends BusRouteEvent {
+  const BusRoutePinnedReminderArmed({
+    required this.stopUid,
+    required this.plate,
+    required this.event,
+  });
   final String stopUid;
+  final String plate;
+
+  final AlightEvent event;
   @override
-  List<Object?> get props => [stopUid];
+  List<Object?> get props => [stopUid, plate, event];
 }
 
 class BusRouteStreamFailed extends BusRouteEvent {

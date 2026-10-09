@@ -2,39 +2,51 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/core/haptics/haptic_service.dart';
-import 'package:wheres_the_car/data/models/arrival_display.dart';
-import 'package:wheres_the_car/data/models/favorite.dart';
-import 'package:wheres_the_car/data/models/metro_map_models.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_bloc.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_event.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_state.dart';
-import 'package:wheres_the_car/features/metro/bloc/metro_eta_bloc.dart';
-import 'package:wheres_the_car/features/metro/bloc/metro_eta_event.dart';
-import 'package:wheres_the_car/features/metro/bloc/metro_eta_state.dart';
-import 'package:wheres_the_car/shared/motion/pressable.dart';
-import 'package:wheres_the_car/shared/motion/stagger.dart';
-import 'package:wheres_the_car/shared/widgets/bottom_sheet_shell.dart';
-import 'package:wheres_the_car/shared/widgets/eta_list_tile.dart';
-import 'package:wheres_the_car/shared/widgets/state_cards.dart';
-import 'package:wheres_the_car/shared/widgets/transport_icon.dart';
+import 'package:go_router/go_router.dart';
+import 'package:skeletonizer/skeletonizer.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/models/arrival_display.dart';
+import 'package:wheres_the_bus/data/models/favorite.dart';
+import 'package:wheres_the_bus/data/models/metro_map_models.dart';
+import 'package:wheres_the_bus/features/metro/bloc/metro_eta_bloc.dart';
+import 'package:wheres_the_bus/features/metro/bloc/metro_eta_event.dart';
+import 'package:wheres_the_bus/features/metro/bloc/metro_eta_state.dart';
+import 'package:wheres_the_bus/features/metro/bloc/mrt_track_bloc.dart';
+import 'package:wheres_the_bus/features/metro/bloc/mrt_track_event.dart';
+import 'package:wheres_the_bus/features/metro/bloc/mrt_track_state.dart';
+import 'package:wheres_the_bus/features/metro/data/metro_line_names.dart';
+import 'package:wheres_the_bus/features/metro/view/metro_screen.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/alight_track/alight_confirm_bar.dart';
+import 'package:wheres_the_bus/shared/widgets/alight_track/alight_track_bell.dart';
+import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
+import 'package:wheres_the_bus/shared/widgets/eta_list_tile.dart';
+import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
+import 'package:wheres_the_bus/shared/widgets/line_badge.dart';
+import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';
+import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
+part '../widgets/metro_schedule_widgets.dart';
 part '../widgets/metro_station_detail_widgets.dart';
-
-const _kLineNames = <String, String>{
-  'BL': '板南線',
-  'R': '淡水信義線',
-  'G': '松山新店線',
-  'BR': '文湖線',
-  'O': '中和新蘆線',
-};
+part '../widgets/metro_status_widgets.dart';
 
 final RegExp _digits = RegExp(r'\d+');
 
 String _lineCode(String id) => id.split('_').first.replaceAll(_digits, '');
 
-String _lineName(String id) => _kLineNames[_lineCode(id)] ?? _lineCode(id);
+String _lineName(AppI18n i18n, String id) =>
+    metroLineNames(i18n)[_lineCode(id)] ?? _lineCode(id);
+
+/// Line label for a (possibly interchange) id, e.g. `板南線  文湖線`.
+String _stationLineLabel(AppI18n i18n, String id) => id
+    .split('_')
+    .map((p) => p.replaceAll(_digits, ''))
+    .map((code) => metroLineNames(i18n)[code] ?? code)
+    .join('  ');
 
 TransportType _getTransportType(String line) {
   switch (line) {
@@ -52,6 +64,7 @@ TransportType _getTransportType(String line) {
       return TransportType.mrtBL;
   }
 }
+
 class MetroStationDetailView extends StatelessWidget {
   const MetroStationDetailView({
     required this.system,

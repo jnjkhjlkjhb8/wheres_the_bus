@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 
 service Firebase_Service {
   rpc upsertDevice(UpsertDeviceRequest) returns (DeviceState) {}
-  rpc setRouteSubscription(RouteSubscriptionRequest) returns (Ack) {}
+  rpc replaceRouteSubscriptions(RouteSubscriptionsRequest) returns (Ack) {}
   rpc createArrivalReminder(CreateArrivalReminderRequest) returns (ArrivalReminder) {}
   rpc cancelArrivalReminder(CancelArrivalReminderRequest) returns (Ack) {}
   rpc listDeviceState(DeviceRequest) returns (DeviceState) {}
@@ -22,11 +22,12 @@ message DeviceIdentity {
   string app_version = 4;
 }
 
+// Push is the only device preference the rider controls. Analytics, crash and
+// performance collection are always on, so they are not carried here.
 message DevicePrefs {
   bool push_enabled = 1;
-  bool analytics_enabled = 2;
-  bool crashlytics_enabled = 3;
-  bool performance_enabled = 4;
+  reserved 2, 3, 4;
+  reserved "analytics_enabled", "crashlytics_enabled", "performance_enabled";
 }
 
 message UpsertDeviceRequest {
@@ -43,11 +44,19 @@ message DeviceState {
   DevicePrefs prefs = 2;
 }
 
-message RouteSubscriptionRequest {
+// One route identity a device's 收藏 resolves to. route_key "*" is the
+// line-wide marker a rail-station 收藏 produces: it matches no real alert
+// scope, so it receives only system-wide disruptions.
+message RouteSubscription {
+  string route_type = 1;
+  string route_key = 2;
+}
+
+// The device's whole 訂閱範圍, replacing whatever was stored. Sending an empty
+// list unsubscribes the device from everything.
+message RouteSubscriptionsRequest {
   string install_id = 1;
-  string route_type = 2;
-  string route_key = 3;
-  bool enabled = 4;
+  repeated RouteSubscription subscriptions = 2;
 }
 
 message CreateArrivalReminderRequest {
@@ -58,6 +67,10 @@ message CreateArrivalReminderRequest {
   string direction = 5;
   int32 lead_minutes = 6;
   int64 expires_at_unix = 7;
+  // Non-empty pins the reminder to one vehicle: it fires only when this plate
+  // is the bus arriving at stop_key. Empty keeps the legacy next-bus behaviour.
+  string plate = 8;
+  string alight_event = 9;
 }
 
 message ArrivalReminder {
@@ -69,6 +82,7 @@ message ArrivalReminder {
   string direction = 6;
   int32 lead_minutes = 7;
   int64 expires_at_unix = 8;
+  string plate = 9;
 }
 
 message CancelArrivalReminderRequest {

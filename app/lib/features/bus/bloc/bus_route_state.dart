@@ -1,7 +1,7 @@
 import 'package:equatable/equatable.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/models/bus_models.dart';
-import 'package:wheres_the_car/data/models/bus_route_detail.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/models/bus_models.dart';
+import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 
 class BusRouteState extends Equatable {
   const BusRouteState({
@@ -14,6 +14,7 @@ class BusRouteState extends Equatable {
     this.reminders = const {},
     this.loading = true,
     this.error,
+    this.updatedAt,
   });
 
   final BusRouteViewModel? route;
@@ -23,16 +24,11 @@ class BusRouteState extends Equatable {
   final Set<int> bufferSequences;
   final int direction;
 
-  /// Active arrival reminders on this route: stopUid -> server reminderId.
-  ///
-  // Mirrored locally (RemindersRepository) so the bell survives navigation and
-  // restart.
-  // Reminders stay one-shot: the backend marks one fired after sending the
-  // push but never tells the app (no listReminders RPC), so a fired reminder
-  // can still read as active until its local TTL lapses.
   final Map<String, String> reminders;
   final bool loading;
   final AppError? error;
+
+  final DateTime? updatedAt;
 
   List<BusStopModel> get currentStops =>
       direction == 0 ? (route?.stopsGo ?? []) : (route?.stopsReturn ?? []);
@@ -52,6 +48,7 @@ class BusRouteState extends Equatable {
     bool? loading,
     AppError? error,
     bool clearError = false,
+    DateTime? updatedAt,
   }) => BusRouteState(
     route: route ?? this.route,
     etaMap: etaMap ?? this.etaMap,
@@ -62,6 +59,7 @@ class BusRouteState extends Equatable {
     reminders: reminders ?? this.reminders,
     loading: loading ?? this.loading,
     error: clearError ? null : (error ?? this.error),
+    updatedAt: updatedAt ?? this.updatedAt,
   );
 
   @override
@@ -72,6 +70,7 @@ class BusRouteState extends Equatable {
     fare,
     bufferSequences,
     direction,
+    updatedAt,
     reminders,
     loading,
     error,

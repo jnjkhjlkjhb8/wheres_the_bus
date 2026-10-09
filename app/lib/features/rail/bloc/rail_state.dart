@@ -1,9 +1,9 @@
 import 'package:equatable/equatable.dart';
-import 'package:flutter/material.dart' show TimeOfDay;
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/models/thsr_models.dart';
-import 'package:wheres_the_car/data/models/tra_models.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_event.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/models/rail_fare_quote.dart';
+import 'package:wheres_the_bus/data/models/thsr_models.dart';
+import 'package:wheres_the_bus/data/models/tra_models.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 
 sealed class RailState extends Equatable {
   const RailState();
@@ -13,89 +13,6 @@ sealed class RailState extends Equatable {
 
 final class RailInitial extends RailState {
   const RailInitial();
-}
-
-final class RailLiveBoardLoading extends RailState {
-  const RailLiveBoardLoading({
-    required this.system,
-    required this.stationId,
-    required this.stationName,
-  });
-  final RailSystem system;
-  final String stationId;
-  final String stationName;
-  @override
-  List<Object?> get props => [system, stationId, stationName];
-}
-
-final class RailLiveBoardLoaded extends RailState {
-  const RailLiveBoardLoaded({
-    required this.system,
-    required this.stationId,
-    required this.stationName,
-    required this.traItems,
-    required this.queryOriginId,
-    required this.queryOriginName,
-    required this.queryDestId,
-    required this.queryDestName,
-    required this.queryDate,
-    required this.queryTime,
-    required this.departureMode,
-  });
-
-  final RailSystem system;
-  final String stationId;
-  final String stationName;
-  final List<TraLiveBoardItem> traItems;
-
-  final String queryOriginId;
-  final String queryOriginName;
-  final String queryDestId;
-  final String queryDestName;
-  final DateTime queryDate;
-  final TimeOfDay queryTime;
-  final bool departureMode;
-
-  RailLiveBoardLoaded copyWith({
-    RailSystem? system,
-    String? stationId,
-    String? stationName,
-    List<TraLiveBoardItem>? traItems,
-    String? queryOriginId,
-    String? queryOriginName,
-    String? queryDestId,
-    String? queryDestName,
-    DateTime? queryDate,
-    TimeOfDay? queryTime,
-    bool? departureMode,
-  }) => RailLiveBoardLoaded(
-    system: system ?? this.system,
-    stationId: stationId ?? this.stationId,
-    stationName: stationName ?? this.stationName,
-    traItems: traItems ?? this.traItems,
-    queryOriginId: queryOriginId ?? this.queryOriginId,
-    queryOriginName: queryOriginName ?? this.queryOriginName,
-    queryDestId: queryDestId ?? this.queryDestId,
-    queryDestName: queryDestName ?? this.queryDestName,
-    queryDate: queryDate ?? this.queryDate,
-    queryTime: queryTime ?? this.queryTime,
-    departureMode: departureMode ?? this.departureMode,
-  );
-
-  @override
-  List<Object?> get props => [
-    system,
-    stationId,
-    stationName,
-    traItems,
-    queryOriginId,
-    queryOriginName,
-    queryDestId,
-    queryDestName,
-    queryDate,
-    queryTime,
-    departureMode,
-  ];
 }
 
 final class RailTimetableLoading extends RailState {
@@ -122,6 +39,7 @@ final class RailTimetableLoaded extends RailState {
     this.traItems = const [],
     this.thsrItems = const [],
     this.delays = const {},
+    this.fareQuote,
   });
   final RailSystem system;
   final String originName;
@@ -131,6 +49,8 @@ final class RailTimetableLoaded extends RailState {
   final List<ThsrTimetableItem> thsrItems;
   final Map<String, int> delays;
 
+  final RailFareQuote? fareQuote;
+
   RailTimetableLoaded copyWith({
     RailSystem? system,
     String? originName,
@@ -139,6 +59,7 @@ final class RailTimetableLoaded extends RailState {
     List<TraTimetableItem>? traItems,
     List<ThsrTimetableItem>? thsrItems,
     Map<String, int>? delays,
+    RailFareQuote? fareQuote,
   }) => RailTimetableLoaded(
     system: system ?? this.system,
     originName: originName ?? this.originName,
@@ -147,6 +68,7 @@ final class RailTimetableLoaded extends RailState {
     traItems: traItems ?? this.traItems,
     thsrItems: thsrItems ?? this.thsrItems,
     delays: delays ?? this.delays,
+    fareQuote: fareQuote ?? this.fareQuote,
   );
 
   @override
@@ -158,6 +80,7 @@ final class RailTimetableLoaded extends RailState {
     traItems,
     thsrItems,
     delays,
+    fareQuote,
   ];
 }
 

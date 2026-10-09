@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 
 class AppSwitch extends StatelessWidget {
   const AppSwitch({

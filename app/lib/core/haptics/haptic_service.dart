@@ -14,12 +14,17 @@ class HapticService {
   Future<void> heavyTap() => HapticFeedback.heavyImpact();
   Future<void> selectionClick() => HapticFeedback.selectionClick();
 
-  /// 6.7-second pulse for bus arrival reminder.
-  /// Repeats heavy impact every 200ms for the duration.
-  void startArrivalVibration() {
+  Future<void> shortAlightPulse() async {
+    await HapticFeedback.mediumImpact();
+    await Future<void>.delayed(const Duration(milliseconds: 90));
+    await HapticFeedback.mediumImpact();
+  }
+
+  void longAlightPulse() {
     _sustainedTimer?.cancel();
-    const pulseInterval = Duration(milliseconds: 200);
-    final endTime = DateTime.now().add(const Duration(milliseconds: 6700));
+    const pulseInterval = Duration(milliseconds: 130);
+    final endTime = DateTime.now().add(const Duration(milliseconds: 1600));
+    unawaited(HapticFeedback.heavyImpact());
     _sustainedTimer = Timer.periodic(pulseInterval, (timer) {
       if (DateTime.now().isAfter(endTime)) {
         timer.cancel();
@@ -30,7 +35,7 @@ class HapticService {
     });
   }
 
-  void stopArrivalVibration() {
+  void stopAlightPulse() {
     _sustainedTimer?.cancel();
     _sustainedTimer = null;
   }

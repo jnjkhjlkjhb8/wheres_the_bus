@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/data/models/rail_timetable_view.dart';
-import 'package:wheres_the_car/shared/widgets/train_type_chip.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/data/models/rail_timetable_view.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/train_type_chip.dart';
 
 /// Summary card for one TRA or THSR timetable result. Consumes a decoded
 /// [RailTimetableView]; the backend proto never reaches this widget.
@@ -34,28 +36,30 @@ class RailTimetableCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final delayed = delayMinutes > 0;
-    return Material(
-      color: theme.colorScheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-        side: BorderSide(color: theme.colorScheme.outlineVariant),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
+    return Pressable(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppTheme.space16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   TrainTypeChip(type: _trainType),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Text(_trainNo, style: theme.textTheme.titleSmall),
                   const Spacer(),
                   Text(
-                    delayed ? '誤點 $delayMinutes 分' : '準點',
+                    delayed
+                        ? AppI18n.of(context).railDelayMinutes(delayMinutes)
+                        : AppI18n.of(context).onTime,
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: delayed
                           ? AppTheme.trainDelay
@@ -64,11 +68,11 @@ class RailTimetableCard extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppTheme.space16),
               Row(
                 children: [
                   Text(_departureTime, style: theme.textTheme.titleLarge),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Expanded(
                     child: Column(
                       children: [
@@ -77,11 +81,11 @@ class RailTimetableCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppTheme.space8),
                   Text(_arrivalTime, style: theme.textTheme.titleLarge),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.space8),
               Text(
                 '$_origin → $_destination',
                 maxLines: 1,

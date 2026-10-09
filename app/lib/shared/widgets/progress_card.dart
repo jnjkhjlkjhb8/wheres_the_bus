@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
-/// In-between-stop progress card.
-/// Shows:  [prevStation → nextStation] header
-///         horizontal track with black notch at [progress 0..1]
-///         vehicle ID below notch
 class ProgressCard extends StatelessWidget {
   const ProgressCard({
     required this.fromStation,
@@ -23,8 +19,14 @@ class ProgressCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space8,
+        vertical: AppTheme.space4,
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space12,
+        vertical: AppTheme.space8,
+      ),
       decoration: BoxDecoration(
         color: cs.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
@@ -50,7 +52,7 @@ class ProgressCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           _ProgressTrack(progress: progress, vehicleId: vehicleId),
         ],
       ),
@@ -66,6 +68,7 @@ class _ProgressTrack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
         final trackWidth = constraints.maxWidth;
@@ -82,7 +85,7 @@ class _ProgressTrack extends StatelessWidget {
                 top: 8,
                 left: 0,
                 right: 0,
-                child: Container(height: 2, color: Colors.black26),
+                child: Container(height: 2, color: cs.outlineVariant),
               ),
               Positioned(
                 top: 4,
@@ -93,16 +96,16 @@ class _ProgressTrack extends StatelessWidget {
                       width: 4,
                       height: 10,
                       decoration: BoxDecoration(
-                        color: Colors.black87,
+                        color: cs.primary,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: AppTheme.space2),
                     Text(
                       vehicleId,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 9,
-                        color: Colors.black54,
+                        color: cs.onSurfaceVariant,
                       ),
                     ),
                   ],

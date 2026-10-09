@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
 /// Supported transport icon types.
 enum TransportType {

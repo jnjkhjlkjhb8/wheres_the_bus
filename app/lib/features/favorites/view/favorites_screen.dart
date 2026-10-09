@@ -3,17 +3,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/core/haptics/haptic_service.dart';
-import 'package:wheres_the_car/data/models/favorite.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_bloc.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_event.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_state.dart';
-import 'package:wheres_the_car/features/favorites/favorite_actions.dart';
-import 'package:wheres_the_car/shared/motion/pressable.dart';
-import 'package:wheres_the_car/shared/widgets/app_bars.dart';
-import 'package:wheres_the_car/shared/widgets/app_snackbar.dart';
-import 'package:wheres_the_car/shared/widgets/transport_icon.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
+import 'package:wheres_the_bus/data/models/favorite.dart';
+import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
+import 'package:wheres_the_bus/features/favorites/bloc/favorites_event.dart';
+import 'package:wheres_the_bus/features/favorites/bloc/favorites_state.dart';
+import 'package:wheres_the_bus/features/favorites/favorite_actions.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
+import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
+import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 class FavoritesScreen extends StatelessWidget {
   const FavoritesScreen({super.key});
@@ -28,15 +31,27 @@ class FavoritesScreen extends StatelessWidget {
           return Column(
             children: [
               DetailAppBar(
-                title: '我的收藏',
+                title: AppI18n.of(context).favoritesTitle,
                 subtitle: items.isEmpty
                     ? null
-                    : '${items.length} 個收藏 · $pinnedCount 已釘選',
+                    : AppI18n.of(
+                        context,
+                      ).favoritesSummary(items.length, pinnedCount),
               ),
               Expanded(
-                child: items.isEmpty
-                    ? const _FavoritesEmpty()
-                    : _FavoritesList(items: items),
+                child: AnimatedSwitcher(
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : AppMotion.short,
+                  switchInCurve: AppMotion.easeOut,
+                  switchOutCurve: AppMotion.easeOut,
+                  child: items.isEmpty
+                      ? const _FavoritesEmpty()
+                      : KeyedSubtree(
+                          key: const ValueKey('favorites-list'),
+                          child: _FavoritesList(items: items),
+                        ),
+                ),
               ),
             ],
           );
@@ -54,7 +69,7 @@ class _FavoritesList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ReorderableListView.builder(
-      padding: const EdgeInsets.only(bottom: 32),
+      padding: const EdgeInsets.only(bottom: AppTheme.space32),
       itemCount: items.length,
       onReorderStart: (_) => unawaited(HapticService.instance.lightTap()),
       onReorderItem: (oldIndex, newIndex) {
@@ -100,15 +115,15 @@ class _FavoriteListRow extends StatelessWidget {
           ..add(FavoriteRemoved(fav.id));
         AppSnackbar.show(
           context,
-          '已移除收藏',
-          action: '復原',
+          AppI18n.of(context).favoritesRemoved,
+          action: AppI18n.of(context).commonUndo,
           onAction: () => bloc.add(FavoriteToggled(fav)),
         );
       },
       background: Container(
         color: cs.errorContainer,
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
         child: Icon(
           Symbols.delete_rounded,
           color: cs.onErrorContainer,
@@ -127,18 +142,22 @@ class _FavoriteListRow extends StatelessWidget {
         ),
         child: Pressable(
           onTap: () {
-            unawaited(HapticService.instance.lightTap());
             openFavorite(context, fav);
           },
           semanticLabel: fav.title,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 64),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space16,
+                AppTheme.space10,
+                AppTheme.space4,
+                AppTheme.space10,
+              ),
               child: Row(
                 children: [
                   TransportIcon(type: transportTypeForFavorite(fav)),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppTheme.space12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -168,7 +187,9 @@ class _FavoriteListRow extends StatelessWidget {
                   ReorderableDragStartListener(
                     index: index,
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppTheme.space8,
+                      ),
                       child: Icon(
                         Symbols.drag_handle_rounded,
                         size: 22,
@@ -196,7 +217,9 @@ class _PinButton extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
-      label: fav.pinned ? '取消釘選' : '釘選至首頁',
+      label: fav.pinned
+          ? AppI18n.of(context).favoritesUnpin
+          : AppI18n.of(context).favoritesPin,
       child: IconButton(
         visualDensity: VisualDensity.compact,
         icon: Icon(
@@ -224,22 +247,31 @@ class _FavoritesEmpty extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(32, 0, 32, 48),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space32,
+          0,
+          AppTheme.space32,
+          AppTheme.space48,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Symbols.bookmark_rounded, size: 44, color: cs.outline),
-            const SizedBox(height: 16),
+            Icon(
+              Symbols.bookmark_rounded,
+              size: 44,
+              color: AppTheme.inkTertiary(cs.brightness),
+            ),
+            const SizedBox(height: AppTheme.space16),
             Text(
-              '尚無收藏',
+              AppI18n.of(context).favoritesEmpty,
               style: AppTextStyles.bodyLarge.copyWith(
                 fontWeight: FontWeight.w600,
                 color: cs.onSurface,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppTheme.space6),
             Text(
-              '在站牌或路線頁點收藏即可加入，釘選後會顯示在首頁',
+              AppI18n.of(context).favoritesEmptyHint,
               textAlign: TextAlign.center,
               style: AppTextStyles.bodySmall.copyWith(
                 color: cs.onSurfaceVariant,

@@ -1,100 +1,231 @@
 part of '../view/go_screen.dart';
 
-class _PlannerHeader extends StatelessWidget {
-  const _PlannerHeader({
+enum OriginStatus { resolving, resolved, unavailable }
+
+class _ODFields extends StatelessWidget {
+  const _ODFields({
     required this.origin,
-    required this.dest,
-    required this.onBack,
     required this.onEditOrigin,
-    required this.onEditDest,
     required this.onSwap,
+    required this.destination,
+    this.originStatus = OriginStatus.resolved,
+    this.floating = false,
+    this.onEnableLocation,
   });
 
   final PlannedPlace? origin;
-  final PlannedPlace? dest;
-  final VoidCallback onBack;
+  final OriginStatus originStatus;
   final VoidCallback onEditOrigin;
-  final VoidCallback onEditDest;
   final VoidCallback onSwap;
+
+  /// The destination row's content: a tappable summary on the map, the live
+  /// search field on the entry surface.
+  final Widget destination;
+
+  final bool floating;
+
+  /// Offered next to the origin hint when location is off, so the fix is one
+  /// tap from the thing it broke.
+  final VoidCallback? onEnableLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final card = cs.brightness == Brightness.light
+        ? Colors.white
+        : cs.surfaceContainerHigh;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: floating ? card : cs.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+        boxShadow: floating ? AppShadows.floating : null,
+        border: floating ? null : Border.all(color: cs.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space14,
+          AppTheme.space4,
+          AppTheme.space12,
+          AppTheme.space4,
+        ),
+        child: Row(
+          children: [
+            const _ODRail(),
+            const SizedBox(width: AppTheme.space10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _OriginRow(
+                    place: origin,
+                    status: originStatus,
+                    onTap: onEditOrigin,
+                    onEnableLocation: onEnableLocation,
+                  ),
+                  const DividerLine(),
+                  SizedBox(height: _kODRowHeight, child: destination),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppTheme.space4),
+            Pressable(
+              onTap: onSwap,
+              semanticLabel: AppI18n.of(context).goSwapEndpoints,
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: Icon(
+                  Icons.swap_vert_rounded,
+                  size: 20,
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+const double _kODRowHeight = 48;
+
+/// The line between the two ends — the same "living line" the rest of the app
+/// draws a route with, at field scale. Each glyph centres on its own row.
+class _ODRail extends StatelessWidget {
+  const _ODRail();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 14,
+      height: _kODRowHeight * 2,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(width: 1.5, height: 24, color: cs.outlineVariant),
+          Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(
+                top: _kODRowHeight / AppTheme.space2 - AppTheme.space6,
+              ),
+              child: Icon(
+                Icons.radio_button_checked_rounded,
+                size: 13,
+                color: cs.outline,
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(
+                bottom: _kODRowHeight / AppTheme.space2 - AppTheme.space8,
+              ),
+              child: Icon(
+                Icons.location_on_rounded,
+                size: 16,
+                color: cs.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OriginRow extends StatelessWidget {
+  const _OriginRow({
+    required this.place,
+    required this.status,
+    required this.onTap,
+    this.onEnableLocation,
+  });
+
+  final PlannedPlace? place;
+  final OriginStatus status;
+  final VoidCallback onTap;
+  final VoidCallback? onEnableLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final filled = place != null;
+    final label = switch ((filled, status)) {
+      (true, _) => place!.name,
+      (false, OriginStatus.resolving) => AppI18n.of(context).goLocating,
+      _ => AppI18n.of(context).goChooseOrigin,
+    };
+    final denied = !filled && status == OriginStatus.unavailable;
+    return Pressable(
+      onTap: onTap,
+      semanticLabel: label,
+      child: SizedBox(
+        height: _kODRowHeight,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.bodyLarge.copyWith(
+                      color: filled ? cs.onSurface : cs.onSurfaceVariant,
+                      fontWeight: filled ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                  if (denied && onEnableLocation != null)
+                    _LocationOffHint(onTap: onEnableLocation!),
+                ],
+              ),
+            ),
+            if (filled && place!.isCurrentLocation)
+              Icon(
+                Icons.my_location_rounded,
+                size: 16,
+                color: cs.onSurfaceVariant,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocationOffHint extends StatelessWidget {
+  const _LocationOffHint({required this.onTap});
+
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        AppBarCircleButton(
-          onTap: onBack,
-          semanticLabel: '返回',
-          child: Icon(
-            Icons.arrow_back_ios_new_rounded,
-            size: 18,
-            color: cs.onSurface,
+        Text(
+          AppI18n.of(context).goNoLocation,
+          style: AppTextStyles.bodyVerySmall.copyWith(
+            color: cs.onSurfaceVariant,
           ),
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color: cs.brightness == Brightness.light
-                  ? Colors.white
-                  : cs.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-              boxShadow: AppShadows.floating,
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            child: Row(
-              children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.radio_button_checked_rounded,
-                      size: 13,
-                      color: cs.outline,
-                    ),
-                    Container(width: 1.5, height: 18, color: cs.outlineVariant),
-                    Icon(
-                      Icons.location_on_rounded,
-                      size: 16,
-                      color: cs.primary,
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _FieldRow(
-                        place: origin,
-                        hint: '選擇出發地',
-                        onTap: onEditOrigin,
-                      ),
-                      Divider(height: 1, color: cs.outlineVariant),
-                      _FieldRow(
-                        place: dest,
-                        hint: '選擇目的地',
-                        onTap: onEditDest,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Pressable(
-                  onTap: onSwap,
-                  semanticLabel: '對調起訖點',
-                  child: SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: Icon(
-                      Icons.swap_vert_rounded,
-                      size: 20,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
+        Pressable(
+          onTap: onTap,
+          semanticLabel: AppI18n.of(context).goEnableLocation,
+          child: Text(
+            AppI18n.of(context).goEnableLocation,
+            style: AppTextStyles.bodyVerySmall.copyWith(
+              color: cs.onSurface,
+              fontWeight: FontWeight.w600,
+              decoration: TextDecoration.underline,
+              decorationColor: cs.onSurface,
             ),
           ),
         ),
@@ -103,44 +234,45 @@ class _PlannerHeader extends StatelessWidget {
   }
 }
 
-class _FieldRow extends StatelessWidget {
-  const _FieldRow({
-    required this.place,
-    required this.hint,
-    required this.onTap,
+class _PlannerHeader extends StatelessWidget {
+  const _PlannerHeader({
+    required this.origin,
+    required this.dest,
+    required this.onEditOrigin,
+    required this.onEditDest,
+    required this.onSwap,
   });
 
-  final PlannedPlace? place;
-  final String hint;
-  final VoidCallback onTap;
+  final PlannedPlace? origin;
+  final PlannedPlace? dest;
+  final VoidCallback onEditOrigin;
+  final VoidCallback onEditDest;
+  final VoidCallback onSwap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final filled = place != null;
-    return Pressable(
-      onTap: onTap,
-      semanticLabel: filled ? place!.name : hint,
-      child: SizedBox(
-        height: 44,
+    final filled = dest != null;
+    return _ODFields(
+      origin: origin,
+      onEditOrigin: onEditOrigin,
+      onSwap: onSwap,
+      floating: true,
+      destination: Pressable(
+        onTap: onEditDest,
+        semanticLabel: filled
+            ? dest!.name
+            : AppI18n.of(context).goChooseDestination,
         child: Align(
           alignment: Alignment.centerLeft,
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  filled ? place!.name : hint,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyles.bodyLarge.copyWith(
-                    color: filled ? cs.onSurface : cs.onSurfaceVariant,
-                    fontWeight: filled ? FontWeight.w600 : FontWeight.w400,
-                  ),
-                ),
-              ),
-              if (filled && place!.isCurrentLocation)
-                Icon(Icons.my_location_rounded, size: 16, color: cs.primary),
-            ],
+          child: Text(
+            filled ? dest!.name : AppI18n.of(context).goChooseDestination,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.bodyLarge.copyWith(
+              color: filled ? cs.onSurface : cs.onSurfaceVariant,
+              fontWeight: filled ? FontWeight.w600 : FontWeight.w400,
+            ),
           ),
         ),
       ),
@@ -151,73 +283,93 @@ class _FieldRow extends StatelessWidget {
 class _PlannerSheet extends StatelessWidget {
   const _PlannerSheet({
     required this.controller,
+    required this.initialOffset,
     required this.state,
     required this.hasDestination,
+    required this.timeMode,
+    required this.timeAt,
+    required this.routeCount,
+    required this.lastRoute,
+    required this.straightLineMeters,
     required this.onSelect,
     required this.onRetry,
-    required this.onPickDestination,
+    required this.onCancel,
     required this.onAdjustOptions,
+    required this.onAdjustTime,
+    required this.onToggleSave,
+    required this.onPage,
+    super.key,
   });
 
   final SheetController controller;
+  final SheetOffset initialOffset;
   final PlanState state;
   final bool hasDestination;
+  final _TimeMode timeMode;
+  final DateTime timeAt;
+  final int routeCount;
+  final PlanRoute? lastRoute;
+  final double? straightLineMeters;
   final void Function(PlanRoute) onSelect;
   final VoidCallback onRetry;
-  final VoidCallback onPickDestination;
+  final VoidCallback onCancel;
   final VoidCallback onAdjustOptions;
+  final VoidCallback onAdjustTime;
+  final void Function(PlanRoute) onToggleSave;
+
+  /// Asks the planner for earlier or later departures, carrying the opaque
+  /// cursor the last response returned for that direction.
+  final void Function(String cursor) onPage;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return SheetViewport(
-      child: SheetExitGestureDetector(
-        onExit: () => context.pop(),
-        child: Sheet(
-          controller: controller,
-          initialOffset: const SheetOffset.proportionalToViewport(0.5),
-          snapGrid: const SheetSnapGrid(
-            snaps: [
-              SheetOffset.proportionalToViewport(0.28),
-              SheetOffset.proportionalToViewport(0.5),
-              SheetOffset.proportionalToViewport(1),
-            ],
-          ),
-          scrollConfiguration: const SheetScrollConfiguration(),
-          decoration: MaterialSheetDecoration(
-            size: SheetSize.stretch,
-            color: cs.surface,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(AppTheme.radiusBottomSheet),
+    return AppSheet(
+      controller: controller,
+      initialOffset: initialOffset,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SheetDragHandle(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space20,
+              AppTheme.space4,
+              AppTheme.space20,
+              AppTheme.space10,
             ),
-            clipBehavior: Clip.antiAlias,
+            child: Row(
+              children: [
+                Expanded(child: _SheetTitle(state: state)),
+                // The depart/arrive time chip only makes sense once a
+                // destination has been queried; the saved-routes box has no
+                // time context.
+                if (hasDestination) ...[
+                  _TimeChip(
+                    mode: timeMode,
+                    at: timeAt,
+                    onTap: onAdjustTime,
+                  ),
+                  const SizedBox(width: AppTheme.space8),
+                ],
+                _OptionsButton(onTap: onAdjustOptions),
+              ],
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SheetDragHandle(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
-                child: Row(
-                  children: [
-                    Expanded(child: _SheetTitle(state: state)),
-                    _OptionsButton(onTap: onAdjustOptions),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: cs.outlineVariant),
-              Expanded(
-                child: _PlannerBody(
-                  state: state,
-                  hasDestination: hasDestination,
-                  onSelect: onSelect,
-                  onRetry: onRetry,
-                  onPickDestination: onPickDestination,
-                ),
-              ),
-            ],
+          const DividerLine(),
+          Expanded(
+            child: _PlannerBody(
+              state: state,
+              routeCount: routeCount,
+              lastRoute: lastRoute,
+              straightLineMeters: straightLineMeters,
+              onSelect: onSelect,
+              onRetry: onRetry,
+              onCancel: onCancel,
+              onToggleSave: onToggleSave,
+              onPage: onPage,
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -232,16 +384,16 @@ class _SheetTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final count = state.result?.routes.length ?? 0;
-    final now = TimeOfDay.now();
-    String two(int v) => v.toString().padLeft(2, '0');
+    // The departure time now lives in the header time chip, so the subtitle
+    // just reports the result count.
     final sub = state.status == PlanStatus.success && count > 0
-        ? '$count 個建議 · 出發 ${two(now.hour)}:${two(now.minute)}'
-        : '出發：現在';
+        ? AppI18n.of(context).suggestionCount(count)
+        : AppI18n.of(context).goPlanning;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '建議路線',
+          AppI18n.of(context).goSuggestedRoutes,
           style: AppTextStyles.heading2.copyWith(color: cs.onSurface),
         ),
         const SizedBox(height: 3),
@@ -254,114 +406,15 @@ class _SheetTitle extends StatelessWidget {
   }
 }
 
-class _PlannerBody extends StatelessWidget {
-  const _PlannerBody({
-    required this.state,
-    required this.hasDestination,
-    required this.onSelect,
-    required this.onRetry,
-    required this.onPickDestination,
+class _PageAction extends StatelessWidget {
+  const _PageAction({
+    required this.label,
+    required this.icon,
+    required this.onTap,
   });
 
-  final PlanState state;
-  final bool hasDestination;
-  final void Function(PlanRoute) onSelect;
-  final VoidCallback onRetry;
-  final VoidCallback onPickDestination;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!hasDestination && state.status == PlanStatus.initial) {
-      return _GoMessage(
-        icon: Icons.flag_outlined,
-        title: '選擇目的地開始規劃',
-        hint: '搜尋地點或站名，為你找出最快路線',
-        actionLabel: '選擇目的地',
-        onAction: onPickDestination,
-      );
-    }
-    switch (state.status) {
-      case PlanStatus.initial:
-      case PlanStatus.loading:
-        return const _RouteSkeleton();
-      case PlanStatus.failure:
-        return _GoMessage(
-          icon: Icons.cloud_off_rounded,
-          title: '無法取得路線',
-          hint: '請確認網路後再試一次',
-          actionLabel: '重試',
-          onAction: onRetry,
-        );
-      case PlanStatus.success:
-        final routes = state.result?.routes ?? const <PlanRoute>[];
-        if (routes.isEmpty) {
-          return const _GoMessage(
-            icon: Icons.alt_route_rounded,
-            title: '找不到合適路線',
-            hint: '試試調整出發地或目的地',
-          );
-        }
-        return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: routes.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 10),
-          itemBuilder: (context, i) => RouteOptionCard(
-            route: routes[i],
-            highlighted: i == 0,
-            badge: i == 0 ? '最快' : null,
-            onTap: () => onSelect(routes[i]),
-          ),
-        );
-    }
-  }
-}
-
-class _RouteSkeleton extends StatelessWidget {
-  const _RouteSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    Widget bar(double w, double h) => Container(
-      width: w,
-      height: h,
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-      ),
-    );
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        for (var i = 0; i < 3; i++)
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: cs.surface,
-              border: Border.all(color: cs.outlineVariant),
-              borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                bar(72, 22),
-                const SizedBox(height: 12),
-                bar(200, 16),
-                const SizedBox(height: 10),
-                bar(120, 12),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-/// Trailing control in the sheet header. Opens the routing-options sheet.
-class _OptionsButton extends StatelessWidget {
-  const _OptionsButton({required this.onTap});
-
+  final String label;
+  final IconData icon;
   final VoidCallback onTap;
 
   @override
@@ -369,21 +422,23 @@ class _OptionsButton extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Pressable(
       onTap: onTap,
-      semanticLabel: '路線選項',
+      semanticLabel: label,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        height: 44,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: cs.surfaceContainerHighest,
+          color: cs.surface,
+          border: Border.all(color: cs.outlineVariant),
           borderRadius: BorderRadius.circular(AppTheme.radiusButton),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.tune_rounded, size: 18, color: cs.onSurface),
-            const SizedBox(width: 6),
+            Icon(icon, size: 18, color: cs.onSurface),
+            const SizedBox(width: AppTheme.space6),
             Text(
-              '選項',
-              style: AppTextStyles.bodySmall.copyWith(
+              label,
+              style: AppTextStyles.bodyRegular.copyWith(
                 color: cs.onSurface,
                 fontWeight: FontWeight.w600,
               ),
@@ -395,335 +450,122 @@ class _OptionsButton extends StatelessWidget {
   }
 }
 
-// TDX transit-mode ids the planner exposes (excludes 20:航空).
-const _kTransitModes = <int, String>{
-  3: '高鐵',
-  4: '台鐵',
-  5: '公車',
-  6: '捷運',
-  7: '輕軌',
-  8: '渡輪',
-  9: '纜車',
-};
-// TDX first/last-mile mode ids.
-const _kMileModes = <int, String>{0: '走路', 1: '腳踏車', 2: '開車', 3: '共享單車'};
-
-/// Options sheet for all TDX MaaS routing parameters. Returns the edited
-/// [PlanOptions] on 套用, or null on dismiss.
-Future<PlanOptions?> showOptionsSheet(
-  BuildContext context, {
-  required PlanOptions current,
-}) {
-  return showModalBottomSheet<PlanOptions>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => _OptionsSheet(initial: current),
-  );
-}
-
-class _OptionsSheet extends StatefulWidget {
-  const _OptionsSheet({required this.initial});
-
-  final PlanOptions initial;
-
-  @override
-  State<_OptionsSheet> createState() => _OptionsSheetState();
-}
-
-class _OptionsSheetState extends State<_OptionsSheet> {
-  late PlanOptions _o = widget.initial;
-
-  void _toggleMode(int id) {
-    final modes = _o.transitModes.toList();
-    if (modes.contains(id)) {
-      if (modes.length == 1) return; // keep at least one mode selected
-      modes.remove(id);
-    } else {
-      modes.add(id);
-    }
-    modes.sort();
-    setState(() => _o = _o.copyWith(transitModes: modes));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final maxHeight = MediaQuery.of(context).size.height * 0.85;
-    return Container(
-      constraints: BoxConstraints(maxHeight: maxHeight),
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(AppTheme.radiusBottomSheet),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SheetDragHandle(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '路線選項',
-                  style: AppTextStyles.heading2.copyWith(color: cs.onSurface),
-                ),
-              ),
-            ),
-            Flexible(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                children: [
-                  _sectionRow(
-                    '時間 / 價格偏好',
-                    'gc ${_o.gc.toStringAsFixed(1)}',
-                    cs,
-                  ),
-                  AppSlider(
-                    value: _o.gc,
-                    divisions: 10,
-                    onChanged: (v) => setState(() => _o = _o.copyWith(gc: v)),
-                  ),
-                  _endLabels('省錢', '省時', cs),
-                  const SizedBox(height: 12),
-                  _rowControl(
-                    '路線數量',
-                    AppQuantitySelector(
-                      value: _o.top,
-                      min: 1,
-                      max: 10,
-                      onChanged: (v) =>
-                          setState(() => _o = _o.copyWith(top: v)),
-                    ),
-                    cs,
-                  ),
-                  const SizedBox(height: 12),
-                  _sectionRow('搭乘運具', '', cs),
-                  const SizedBox(height: 8),
-                  FilterChipGroup<int>(
-                    options: _kTransitModes,
-                    selected: _o.transitModes.toSet(),
-                    onToggle: _toggleMode,
-                  ),
-                  const SizedBox(height: 16),
-                  _sectionRow(
-                    '轉乘時間',
-                    '${_o.transferMin} - ${_o.transferMax} 分',
-                    cs,
-                  ),
-                  AppRangeSlider(
-                    values: RangeValues(
-                      _o.transferMin.toDouble(),
-                      _o.transferMax.toDouble(),
-                    ),
-                    max: 60,
-                    divisions: 12,
-                    onChanged: (v) => setState(
-                      () => _o = _o.copyWith(
-                        transferMin: v.start.round(),
-                        transferMax: v.end.round(),
-                      ),
-                    ),
-                  ),
-                  _endLabels('0 分', '60 分', cs),
-                  const SizedBox(height: 12),
-                  _mileSection(
-                    '第一哩路（分鐘）',
-                    _o.firstMileMode,
-                    _o.firstMileTime,
-                    (m) => setState(() => _o = _o.copyWith(firstMileMode: m)),
-                    (t) => setState(() => _o = _o.copyWith(firstMileTime: t)),
-                    cs,
-                  ),
-                  const SizedBox(height: 12),
-                  _mileSection(
-                    '最後一哩路（分鐘）',
-                    _o.lastMileMode,
-                    _o.lastMileTime,
-                    (m) => setState(() => _o = _o.copyWith(lastMileMode: m)),
-                    (t) => setState(() => _o = _o.copyWith(lastMileTime: t)),
-                    cs,
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-              child: SizedBox(
-                width: double.infinity,
-                child: AppButton(
-                  label: '套用',
-                  onPressed: () => Navigator.of(context).pop(_o),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _sectionRow(String title, String value, ColorScheme cs) => Row(
-    children: [
-      Expanded(
-        child: Text(
-          title,
-          style: AppTextStyles.bodyLarge.copyWith(
-            color: cs.onSurface,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-      if (value.isNotEmpty)
-        Text(
-          value,
-          style: AppTextStyles.bodySmall.copyWith(
-            color: cs.onSurfaceVariant,
-            fontFeatures: AppTextStyles.tabularFigures,
-          ),
-        ),
-    ],
-  );
-
-  Widget _rowControl(String title, Widget control, ColorScheme cs) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: AppTextStyles.bodyLarge.copyWith(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        control,
-      ],
-    ),
-  );
-
-  Widget _endLabels(String left, String right, ColorScheme cs) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 4),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          left,
-          style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
-        ),
-        Text(
-          right,
-          style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
-        ),
-      ],
-    ),
-  );
-
-  Widget _mileSection(
-    String title,
-    int mode,
-    int time,
-    ValueChanged<int> onMode,
-    ValueChanged<int> onTime,
-    ColorScheme cs,
-  ) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      _rowControl(
-        title,
-        AppQuantitySelector(
-          value: time,
-          min: 1,
-          max: 60,
-          onChanged: onTime,
-        ),
-        cs,
-      ),
-      const SizedBox(height: 8),
-      FilterChipGroup<int>(
-        options: _kMileModes,
-        selected: {mode},
-        onToggle: onMode,
-      ),
-    ],
-  );
-}
-
-class _GoMessage extends StatelessWidget {
-  const _GoMessage({
-    required this.icon,
-    required this.title,
-    required this.hint,
-    this.actionLabel,
-    this.onAction,
+class _PlannerBody extends StatelessWidget {
+  const _PlannerBody({
+    required this.state,
+    required this.routeCount,
+    required this.lastRoute,
+    required this.straightLineMeters,
+    required this.onSelect,
+    required this.onRetry,
+    required this.onCancel,
+    required this.onToggleSave,
+    required this.onPage,
   });
 
-  final IconData icon;
-  final String title;
-  final String hint;
-  final String? actionLabel;
-  final VoidCallback? onAction;
+  final PlanState state;
+
+  /// How many routes were asked for, so the skeleton is the shape of the answer
+  /// and the real cards land without a reflow.
+  final int routeCount;
+
+  /// A saved route between the same two points, shown while waiting. Null when
+  /// this trip is not one the rider has kept.
+  final PlanRoute? lastRoute;
+
+  /// Straight-line distance between the two ends, stated while waiting.
+  final double? straightLineMeters;
+
+  final void Function(PlanRoute) onSelect;
+  final VoidCallback onRetry;
+  final VoidCallback onCancel;
+  final void Function(PlanRoute) onToggleSave;
+  final void Function(String cursor) onPage;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Align(
-      alignment: Alignment.topCenter,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    // The empty/saved-routes state now lives on the plan-entry page; this body
+    // is only built once a destination exists, so it starts at the query state.
+    switch (state.status) {
+      case PlanStatus.initial:
+      case PlanStatus.loading:
+        return PlanWaitingPanel(
+          routeCount: routeCount,
+          lastRoute: lastRoute,
+          straightLineMeters: straightLineMeters,
+          onCancel: onCancel,
+          onOpenLast: lastRoute == null ? null : () => onSelect(lastRoute!),
+        );
+      case PlanStatus.failure:
+        final (title, hint) = switch (state.failure) {
+          PlanFailureKind.timeout => (
+            AppI18n.of(context).goPlannerSlowTitle,
+            AppI18n.of(context).goPlannerSlowBody,
+          ),
+          PlanFailureKind.noRoute => (
+            AppI18n.of(context).goNoRouteTitle,
+            AppI18n.of(context).goNoRouteBody,
+          ),
+          PlanFailureKind.unavailable => (
+            AppI18n.of(context).goUnavailableTitle,
+            AppI18n.of(context).goUnavailableBody,
+          ),
+          _ => (
+            AppI18n.of(context).goPlanFailedTitle,
+            AppI18n.of(context).goPlanFailedBody,
+          ),
+        };
+        return _GoMessage(
+          icon: state.failure == PlanFailureKind.noRoute
+              ? Icons.alt_route_rounded
+              : Icons.cloud_off_rounded,
+          title: title,
+          hint: hint,
+          actionLabel: AppI18n.of(context).commonRetryShort,
+          onAction: onRetry,
+        );
+      case PlanStatus.success:
+        final routes = state.result?.routes ?? const <PlanRoute>[];
+        if (routes.isEmpty) {
+          return _GoMessage(
+            icon: Icons.alt_route_rounded,
+            title: AppI18n.of(context).goNoRouteTitle,
+            hint: AppI18n.of(context).goNoRouteHint,
+          );
+        }
+        final earlier = state.result?.previousPageCursor ?? '';
+        final later = state.result?.nextPageCursor ?? '';
+        return ListView(
+          padding: const EdgeInsets.all(AppTheme.space16),
           children: [
-            Icon(icon, size: 40, color: cs.outline),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: AppTextStyles.bodyLarge.copyWith(
-                fontWeight: FontWeight.w600,
-                color: cs.onSurface,
+            if (earlier.isNotEmpty) ...[
+              _PageAction(
+                label: AppI18n.of(context).goEarlierDepartures,
+                icon: Icons.keyboard_arrow_up_rounded,
+                onTap: () => onPage(earlier),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              hint,
-              textAlign: TextAlign.center,
-              style: AppTextStyles.bodySmall.copyWith(
-                color: cs.onSurfaceVariant,
+              const SizedBox(height: AppTheme.space10),
+            ],
+            for (final (i, route) in routes.indexed) ...[
+              if (i > 0) const SizedBox(height: AppTheme.space10),
+              RouteOptionCard(
+                route: route,
+                highlighted: i == 0,
+                isSaved: state.savedKeys.contains(route.savedKey),
+                onTap: () => onSelect(route),
+                onToggleSave: () => onToggleSave(route),
               ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 20),
-              Pressable(
-                onTap: onAction,
-                semanticLabel: actionLabel,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: cs.primaryContainer,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-                  ),
-                  child: Text(
-                    actionLabel!,
-                    style: AppTextStyles.bodyRegular.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurface,
-                    ),
-                  ),
-                ),
+            ],
+            if (later.isNotEmpty) ...[
+              const SizedBox(height: AppTheme.space10),
+              _PageAction(
+                label: AppI18n.of(context).goLaterDepartures,
+                icon: Icons.keyboard_arrow_down_rounded,
+                onTap: () => onPage(later),
               ),
             ],
           ],
-        ),
-      ),
-    );
+        );
+    }
   }
 }

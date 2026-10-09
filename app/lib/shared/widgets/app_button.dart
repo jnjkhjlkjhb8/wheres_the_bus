@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 
 enum _Variant { filled, outlined, text, destructive }
 
@@ -49,6 +49,13 @@ class _AppButtonState extends State<AppButton> {
     setState(() => _pressed = v);
   }
 
+  // AppButton's own AnimatedScale (see build below) is the single feedback
+  // system; the Material overlay tint is zeroed out here so it doesn't
+  // double up with the scale.
+  static const WidgetStateProperty<Color> _noOverlay = WidgetStatePropertyAll(
+    Colors.transparent,
+  );
+
   Widget _buildButton(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     switch (widget._variant) {
@@ -56,10 +63,12 @@ class _AppButtonState extends State<AppButton> {
         return widget.icon == null
             ? FilledButton(
                 onPressed: widget.onPressed,
+                style: const ButtonStyle(overlayColor: _noOverlay),
                 child: Text(widget.label),
               )
             : FilledButton.icon(
                 onPressed: widget.onPressed,
+                style: const ButtonStyle(overlayColor: _noOverlay),
                 icon: Icon(widget.icon),
                 label: Text(widget.label),
               );
@@ -67,18 +76,25 @@ class _AppButtonState extends State<AppButton> {
         return widget.icon == null
             ? OutlinedButton(
                 onPressed: widget.onPressed,
+                style: const ButtonStyle(overlayColor: _noOverlay),
                 child: Text(widget.label),
               )
             : OutlinedButton.icon(
                 onPressed: widget.onPressed,
+                style: const ButtonStyle(overlayColor: _noOverlay),
                 icon: Icon(widget.icon),
                 label: Text(widget.label),
               );
       case _Variant.text:
         return widget.icon == null
-            ? TextButton(onPressed: widget.onPressed, child: Text(widget.label))
+            ? TextButton(
+                onPressed: widget.onPressed,
+                style: const ButtonStyle(overlayColor: _noOverlay),
+                child: Text(widget.label),
+              )
             : TextButton.icon(
                 onPressed: widget.onPressed,
+                style: const ButtonStyle(overlayColor: _noOverlay),
                 icon: Icon(widget.icon),
                 label: Text(widget.label),
               );
@@ -89,6 +105,7 @@ class _AppButtonState extends State<AppButton> {
                 style: FilledButton.styleFrom(
                   backgroundColor: cs.error,
                   foregroundColor: cs.onError,
+                  overlayColor: Colors.transparent,
                 ),
                 child: Text(widget.label),
               )
@@ -97,6 +114,7 @@ class _AppButtonState extends State<AppButton> {
                 style: FilledButton.styleFrom(
                   backgroundColor: cs.error,
                   foregroundColor: cs.onError,
+                  overlayColor: Colors.transparent,
                 ),
                 icon: Icon(widget.icon),
                 label: Text(widget.label),

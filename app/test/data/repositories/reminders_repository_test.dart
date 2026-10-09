@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/repositories/reminders_repository.dart';
+import 'package:wheres_the_bus/data/repositories/reminders_repository.dart';
 
 import '../../support/helpers/in_memory_reminders_store.dart';
 

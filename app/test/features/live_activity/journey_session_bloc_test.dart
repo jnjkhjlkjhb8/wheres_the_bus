@@ -2,11 +2,12 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:wheres_the_car/data/models/plan_models.dart';
-import 'package:wheres_the_car/features/live_activity/bloc/journey_session_bloc.dart';
-import 'package:wheres_the_car/features/live_activity/bloc/journey_session_event.dart';
-import 'package:wheres_the_car/features/live_activity/bloc/journey_session_state.dart';
-import 'package:wheres_the_car/features/live_activity/model/journey_models.dart';
+import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
+import 'package:wheres_the_bus/data/models/plan_models.dart';
+import 'package:wheres_the_bus/data/tracking/journey_models.dart';
+import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
+import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
+import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 
 /// Mutable gate so the disabled branch isn't statically dead in the test.
 class _Gate {
@@ -34,8 +35,10 @@ void main() {
   late StreamController<Duration?> etaCtrl;
   // channel and positions default to null: platform channel and location
   // tracking are skipped in tests.
-  JourneySessionBloc bloc() =>
-      JourneySessionBloc(etaStream: (_) => etaCtrl.stream);
+  JourneySessionBloc bloc() => JourneySessionBloc(
+    etaStream: (_) => etaCtrl.stream,
+    liveActivityEnabled: () => true,
+  );
 
   setUp(() => etaCtrl = StreamController<Duration?>.broadcast());
   tearDown(() => etaCtrl.close());
@@ -54,8 +57,11 @@ void main() {
     await expectLater(
       b.stream,
       emits(
-        isA<JourneySessionState>()
-            .having((s) => s.eta, 'eta', const Duration(minutes: 3)),
+        isA<JourneySessionState>().having(
+          (s) => s.eta,
+          'eta',
+          const Duration(minutes: 3),
+        ),
       ),
     );
     await b.close();
@@ -72,8 +78,7 @@ void main() {
   });
 
   test('alight on non-final leg advances to waiting on next leg', () async {
-    final b = bloc()
-      ..add(JourneyStarted(legs: [_leg('307'), _leg('自強123')]));
+    final b = bloc()..add(JourneyStarted(legs: [_leg('307'), _leg('自強123')]));
     await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
     b.add(const BoardConfirmed());
     await b.stream.firstWhere((s) => s.phase == JourneyPhase.riding);
@@ -106,6 +111,7 @@ void main() {
   test('eta stream error falls back to scheduled countdown', () async {
     final b = JourneySessionBloc(
       etaStream: (_) => Stream<Duration?>.error(Exception('grpc drop')),
+      liveActivityEnabled: () => true,
     )..add(JourneyStarted(legs: [_leg('307')]));
     // scheduledDeparture is in the past → fallback emits Duration.zero
     final s = await b.stream.firstWhere((s) => s.eta != null);
@@ -120,49 +126,108 @@ void main() {
     await b.close();
   });
 
-  test('default (no positions) reaches riding without touching geolocator',
-      () async {
-    // positions omitted → _subscribePositions returns early, so no geolocator
-    // platform call is made (that would throw MissingPluginException in tests).
-    final b = bloc()..add(JourneyStarted(legs: [_leg('307')]));
-    await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
-    b.add(const BoardConfirmed());
-    final s = await b.stream.firstWhere((s) => s.phase == JourneyPhase.riding);
-    expect(s.phase, JourneyPhase.riding);
-    await b.close();
-  });
+  test(
+    'default (no positions) reaches riding without touching geolocator',
+    () async {
+      // positions omitted → _subscribePositions returns early, so no
+      // geolocator platform call is made (that would throw
+      // MissingPluginException in tests).
+      final b = bloc()..add(JourneyStarted(legs: [_leg('307')]));
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+      b.add(const BoardConfirmed());
+      final s = await b.stream.firstWhere(
+        (s) => s.phase == JourneyPhase.riding,
+      );
+      expect(s.phase, JourneyPhase.riding);
+      await b.close();
+    },
+  );
 
-  test('positions factory gated off is never subscribed (setting disabled)',
-      () async {
-    // Mirrors app.dart's runtime gate: when the toggle is off the closure
-    // returns an empty stream and the erroring branch must never be reached.
-    // enabled is read from a field so the analyzer can't prove the branch
-    // dead; it stays false for the whole test (toggle simulated off).
-    final gate = _Gate();
-    var subscribed = false;
-    Stream<Position> positions() {
-      if (!gate.enabled) return const Stream<Position>.empty();
-      subscribed = true;
-      return Stream<Position>.error(Exception('should not subscribe'));
-    }
+  test(
+    'positions factory gated off is never subscribed (setting disabled)',
+    () async {
+      final gate = _Gate();
+      var subscribed = false;
+      Stream<Position> positions() {
+        if (!gate.enabled) return const Stream<Position>.empty();
+        subscribed = true;
+        return Stream<Position>.error(Exception('should not subscribe'));
+      }
 
-    final b = JourneySessionBloc(
+      final b = JourneySessionBloc(
+        etaStream: (_) => etaCtrl.stream,
+        positions: positions,
+        liveActivityEnabled: () => true,
+      )..add(JourneyStarted(legs: [_leg('307')]));
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+      b.add(const BoardConfirmed());
+      final s = await b.stream.firstWhere(
+        (s) => s.phase == JourneyPhase.riding,
+      );
+      expect(s.phase, JourneyPhase.riding);
+      await Future<void>.delayed(Duration.zero);
+      expect(subscribed, isFalse);
+      await b.close();
+    },
+  );
+
+  test(
+    'a delayed ETA event from a cancelled/previous journey does not mix '
+    'into the new journey (F36 generation tagging)',
+    () async {
+      final b = bloc()..add(JourneyStarted(legs: [_leg('307')]));
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+
+      // Journey B supersedes journey A before A's in-flight ETA event has a
+      // chance to be delivered.
+      b.add(JourneyStarted(legs: [_leg('自強123')]));
+      final started = await b.stream.firstWhere(
+        (s) => s.currentLeg?.routeLabel == '自強123',
+      );
+      expect(started.eta, isNull);
+
+      b.add(const EtaTicked(Duration(minutes: 3), generation: 1));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(b.state.eta, isNull);
+      expect(b.state.currentLeg?.routeLabel, '自強123');
+      await b.close();
+    },
+  );
+
+  test('every card names its session, and a new ride mints a new id', () async {
+    final channel = _FakeChannel();
+    JourneySessionBloc start() => JourneySessionBloc(
       etaStream: (_) => etaCtrl.stream,
-      positions: positions,
+      channel: channel,
+      liveActivityEnabled: () => true,
     )..add(JourneyStarted(legs: [_leg('307')]));
+
+    final a = start();
+    await a.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+    await a.close();
+    final b = start();
     await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
-    b.add(const BoardConfirmed());
-    final s = await b.stream.firstWhere((s) => s.phase == JourneyPhase.riding);
-    expect(s.phase, JourneyPhase.riding);
-    await Future<void>.delayed(Duration.zero);
-    expect(subscribed, isFalse);
     await b.close();
+
+    expect(channel.started, hasLength(2));
+    for (final content in channel.started) {
+      // Named — the platform's tombstone and 取消追蹤 both key off this — and
+      // marked device-local, so the cancel receiver knows not to call a server
+      // that has never heard of this ride.
+      expect(
+        content.trackId,
+        startsWith(AlightTrackContent.localTrackIdPrefix),
+      );
+    }
+    expect(channel.started[0].trackId, isNot(channel.started[1].trackId));
   });
 
   test('position stream error does not break riding', () async {
     final b = JourneySessionBloc(
       etaStream: (_) => etaCtrl.stream,
       positions: () => Stream<Position>.error(Exception('permission revoked')),
+      liveActivityEnabled: () => true,
     )..add(JourneyStarted(legs: [_leg('307')]));
     await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
     b.add(const BoardConfirmed());
@@ -173,4 +238,21 @@ void main() {
     expect(b.state.phase, JourneyPhase.riding);
     await b.close();
   });
+}
+
+class _FakeChannel extends AlightTrackChannel {
+  final started = <AlightTrackContent>[];
+  int _lease = 0;
+
+  @override
+  Future<int> start(AlightTrackContent content) async {
+    started.add(content);
+    return ++_lease;
+  }
+
+  @override
+  Future<void> update(int lease, AlightTrackContent content) async {}
+
+  @override
+  Future<void> stop(int lease) async {}
 }

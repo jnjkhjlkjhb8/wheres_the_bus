@@ -2,10 +2,12 @@ replication:
   connections:
     - type: postgresql
       uri: !env PS_SOURCE_DATABASE_URL
+      max_pool_size: 2
 
 storage:
   type: postgresql
   uri: !env PS_DATABASE_URL
+  max_pool_size: 2
 
 client_auth:
   jwks_uri: http://router:8080/api/.well-known/jwks.json

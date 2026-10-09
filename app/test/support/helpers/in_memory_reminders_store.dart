@@ -1,4 +1,4 @@
-import 'package:wheres_the_car/data/repositories/reminders_repository.dart';
+import 'package:wheres_the_bus/data/repositories/reminders_repository.dart';
 
 /// In-memory [RemindersStore] mirroring the real box semantics: reminders are
 /// scoped per route, and expired entries are filtered on read.

@@ -1,0 +1,18 @@
+{
+  "emulators": {
+    "pubsub": {
+      "port": 8085
+    },
+    "eventarc": {
+      "port": 9299
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true
+  },
+  "remoteconfig": {
+    "template": "remoteconfig.template.json"
+  },
+  "extensions": {}
+}

@@ -1,6 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
-import 'package:wheres_the_car/core/firebase/firebase_gate.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
 
 class CrashReporter {
   CrashReporter._();

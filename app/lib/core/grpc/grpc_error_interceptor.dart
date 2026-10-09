@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:grpc/grpc.dart';
-import 'package:wheres_the_car/core/firebase/crash_reporter.dart';
+import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 
 class GrpcErrorInterceptor extends ClientInterceptor {
   GrpcErrorInterceptor();

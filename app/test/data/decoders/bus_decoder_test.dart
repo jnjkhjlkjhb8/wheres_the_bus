@@ -1,9 +1,11 @@
 import 'package:fixnum/fixnum.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/decoders/bus_decoder.dart';
-import 'package:wheres_the_car/data/generated/bus.pb.dart';
-import 'package:wheres_the_car/data/models/bus_models.dart';
-import 'package:wheres_the_car/data/models/eta_format.dart';
+import 'package:wheres_the_bus/data/decoders/bus_decoder.dart';
+import 'package:wheres_the_bus/data/generated/bus.pb.dart';
+import 'package:wheres_the_bus/data/models/bus_models.dart';
+import 'package:wheres_the_bus/data/models/eta_format.dart';
+
+import '../../support/helpers/i18n.dart';
 
 const BusDecoder _decoder = BusDecoder.instance;
 
@@ -113,13 +115,69 @@ void main() {
     test('empty stops yields empty list', () {
       expect(_decoder.decodeRouteEta(Bus_RouteArrival(), now: _now), isEmpty);
     });
+    test(
+      'route ETA decoder carries the estimate plate onto the view model',
+      () {
+        final arrival = Bus_RouteArrival(
+          subRouteUid: 'sub-1',
+          stops: [
+            Bus_RouteEstimate(
+              stopUid: 'stop-7',
+              direction: 0,
+              stopSequence: 7,
+              estimate: 240,
+              stopStatus: 0,
+              plateNumb: 'KKA-1288',
+            ),
+          ],
+        );
+
+        final decoded = BusDecoder.instance.decodeRouteEta(
+          arrival,
+          now: DateTime(2026, 7, 20),
+        );
+
+        expect(decoded.single.plate, 'KKA-1288');
+      },
+    );
+
+    test('estimate plate defaults to empty when the server omits it', () {
+      final arrival = Bus_RouteArrival(
+        subRouteUid: 'sub-1',
+        stops: [
+          Bus_RouteEstimate(stopUid: 'stop-7', direction: 0, stopSequence: 7),
+        ],
+      );
+
+      final decoded = BusDecoder.instance.decodeRouteEta(
+        arrival,
+        now: DateTime(2026, 7, 20),
+      );
+
+      expect(decoded.single.plate, '');
+    });
   });
 
   group('decodeStationEta', () {
     Resp_Bus_station_eta respWith(List<Bus_StopEstimate> routes) =>
         Resp_Bus_station_eta(data: Bus_StationArrival(routes: routes));
 
-    test('derives minutes via ceil and 去程/返程 label', () {
+    test('uses the server terminal name when present', () {
+      final resp = respWith([
+        Bus_StopEstimate(
+          stopUid: 'S1',
+          routeName: '5014',
+          direction: 0,
+          destination: '桃園後站',
+          stopStatus: 0,
+          estimate: 300,
+        ),
+      ]);
+      final out = _decoder.decodeStationEta(resp, now: _now);
+      expect(out.single.destination, '桃園後站');
+    });
+
+    test('derives minutes via ceil and falls back to 去程/返程 label', () {
       final resp = respWith([
         Bus_StopEstimate(
           stopUid: 'S1',
@@ -153,7 +211,7 @@ void main() {
       expect(out.single.minutes, isNull);
       expect(out.single.isArriving, isFalse);
       expect(out.single.displayStatus, BusStopDisplayStatus.notDeparted);
-      expect(out.single.displayLabel, '尚未發車');
+      expect(out.single.displayLabelOf(zhStrings), '尚未發車');
     });
 
     test('stopStatus 1 with a predicted NextBusTime is a valid countdown, '
@@ -170,7 +228,7 @@ void main() {
       expect(out.single.minutes, 12);
       expect(out.single.isArriving, isFalse);
       expect(out.single.displayStatus, BusStopDisplayStatus.minutes);
-      expect(out.single.displayLabel, '12分');
+      expect(out.single.displayLabelOf(zhStrings), '12分');
     });
 
     test('stopStatus 0 with a passed instant reads 進站中', () {
@@ -186,11 +244,31 @@ void main() {
       expect(out.single.minutes, isNull);
       expect(out.single.isArriving, isTrue);
       expect(out.single.displayStatus, BusStopDisplayStatus.arriving);
-      expect(out.single.displayLabel, '進站中');
+      expect(out.single.displayLabelOf(zhStrings), '進站中');
     });
 
     test('empty routes yields empty list', () {
       expect(_decoder.decodeStationEta(respWith(const []), now: _now), isEmpty);
+    });
+
+    test('carries IsLastBus and keeps it, with crowding, through decay', () {
+      final resp = respWith([
+        Bus_StopEstimate(
+          stopUid: 'S1',
+          routeName: '9999',
+          direction: 0,
+          stopStatus: 0,
+          arrivalUnix: Int64(_nowUnix + 300),
+          crowdLevel: BusCrowdLevel.BUS_CROWD_CROWDED,
+          isLastBus: true,
+        ),
+      ]);
+      final arrival = _decoder.decodeStationEta(resp, now: _now).single;
+      expect(arrival.isLastBus, isTrue);
+      final later = arrival.decayed(_now.add(const Duration(minutes: 1)));
+      expect(later.estimateSeconds, 240);
+      expect(later.isLastBus, isTrue);
+      expect(later.crowdLevel, CrowdLevel.crowded);
     });
   });
 
@@ -340,7 +418,7 @@ void main() {
       final later = arrival.decayed(_now.add(const Duration(seconds: 120)));
       expect(later.minutes, isNull);
       expect(later.displayStatus, BusStopDisplayStatus.arriving);
-      expect(later.displayLabel, '進站中');
+      expect(later.displayLabelOf(zhStrings), '進站中');
     });
 
     test('leaves arrival unchanged when no absolute instant', () {

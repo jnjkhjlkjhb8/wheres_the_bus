@@ -1,35 +1,32 @@
-import 'dart:convert';
-import 'package:wheres_the_car/data/models/alert_models.dart';
+import 'package:wheres_the_bus/data/generated/alert.pb.dart';
+import 'package:wheres_the_bus/data/models/alert_models.dart';
 
+/// Proto → domain for alerts. The MQTT subscriber normalizes TDX's three
+/// payload shapes at ingest, so nothing here parses or guesses a field name:
+/// this is only the seam that keeps generated types out of `features/`.
 class AlertDecoder {
   const AlertDecoder._();
   static const AlertDecoder instance = AlertDecoder._();
 
-  /// TDX MQTT alert JSON → AlertViewModel.
-  AlertViewModel? decode(List<int> data) {
-    try {
-      final json = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
-      final msg =
-          (json['data'] as String?) ??
-          (json['Message'] as String?) ??
-          json.toString();
-      return AlertViewModel(
-        message: msg,
-        level: _level(json),
-        rawJson: json,
-      );
-    } on Object catch (_) {
-      return null;
-    }
-  }
+  List<AlertViewModel> decode(Alert_Msg msg, {AlertSource? source}) =>
+      msg.items.map((item) => _item(item, source)).toList();
 
-  AlertSeverity _level(Map<String, dynamic> json) {
-    final status = (json['Status'] ?? json['status'] ?? '')
-        .toString()
-        .toLowerCase();
-    if (status == 'red' || status == '3' || status.contains('中斷')) {
-      return AlertSeverity.red;
-    }
-    return AlertSeverity.yellow;
-  }
+  AlertViewModel _item(Alert_Item item, AlertSource? source) => AlertViewModel(
+    message: item.body,
+    level: _level(item.level),
+    routeType: item.routeType,
+    routeKeys: List.unmodifiable(item.routeKeys),
+    title: item.title.isEmpty ? null : item.title,
+    time: item.timeUnix == 0
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(item.timeUnix.toInt() * 1000),
+    source: source,
+    department: item.department.isEmpty ? null : item.department,
+  );
+
+  AlertSeverity _level(String level) => switch (level) {
+    'red' => AlertSeverity.red,
+    'green' => AlertSeverity.green,
+    _ => AlertSeverity.yellow,
+  };
 }

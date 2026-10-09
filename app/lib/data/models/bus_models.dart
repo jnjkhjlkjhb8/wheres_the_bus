@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
-import 'package:wheres_the_car/data/models/bus_route_detail.dart';
-import 'package:wheres_the_car/data/models/eta_format.dart';
+import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
+import 'package:wheres_the_bus/data/models/eta_format.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 enum BusArrivalStatus { arriving, approaching, minutes, unknown }
 
@@ -10,6 +11,9 @@ class BusVehiclePosition extends Equatable {
     required this.lat,
     required this.lon,
     required this.azimuth,
+    this.dutyStatus = 0,
+    this.busStatus = 0,
+    this.gpsTimeUnix = 0,
   });
 
   final String plate;
@@ -17,8 +21,26 @@ class BusVehiclePosition extends Equatable {
   final double lon;
   final int azimuth;
 
+  /// TDX 勤務狀態: `0` 正常, `1` 開始, `2` 結束.
+  final int dutyStatus;
+
+  /// TDX 行車狀況: `0` 正常, `1` 車禍, `2` 故障, `3` 塞車, `4` 緊急, `5` 加油,
+  /// `98` 偏移, `99` 非營運, `100` 客滿, `101` 包車; 其餘 不明.
+  final int busStatus;
+
+  /// GPS fix time in epoch seconds; 0 when the feed reported none.
+  final int gpsTimeUnix;
+
   @override
-  List<Object?> get props => [plate, lat, lon, azimuth];
+  List<Object?> get props => [
+    plate,
+    lat,
+    lon,
+    azimuth,
+    dutyStatus,
+    busStatus,
+    gpsTimeUnix,
+  ];
 }
 
 class BusStopEtaViewModel extends Equatable {
@@ -32,6 +54,8 @@ class BusStopEtaViewModel extends Equatable {
     required this.vehiclePlates,
     this.arrivalUnix = 0,
     this.vehicles = const [],
+    this.plate = '',
+    this.isLastBus = false,
   });
 
   final String stopUid;
@@ -44,12 +68,17 @@ class BusStopEtaViewModel extends Equatable {
   final int arrivalUnix;
   final List<BusVehiclePosition> vehicles;
 
+  /// The vehicle this estimate describes, uppercase-trimmed by the server.
+  /// Empty when TDX sent no plate. Distinct from [vehiclePlates], which is
+  /// the whole route's live fleet and is identical on every stop.
+  final String plate;
+
+  /// TDX IsLastBus: the feed confirmed the route's last bus is running. False
+  /// also means "never computed", so it may not be read as 末班車已過 on its own.
+  final bool isLastBus;
+
   int get estimateMinutes => etaCeilMinutes(estimateSeconds);
 
-  /// Re-derives [estimateSeconds] from [arrivalUnix] against [now] so the
-  /// displayed countdown decays between server frames. When [arrivalUnix] is 0
-  /// the server-sent [estimateSeconds] is kept unchanged. Negatives clamp to 0
-  /// so a just-passed arrival instant with stopStatus 0 still reads 進站中.
   BusStopEtaViewModel decayed(DateTime now) {
     if (arrivalUnix <= 0) return this;
     return copyWith(
@@ -61,19 +90,23 @@ class BusStopEtaViewModel extends Equatable {
     );
   }
 
-  BusStopEtaViewModel copyWith({int? estimateSeconds}) => BusStopEtaViewModel(
-    stopUid: stopUid,
-    direction: direction,
-    sequence: sequence,
-    estimateSeconds: estimateSeconds ?? this.estimateSeconds,
-    nextBusTime: nextBusTime,
-    stopStatus: stopStatus,
-    vehiclePlates: vehiclePlates,
-    arrivalUnix: arrivalUnix,
-    vehicles: vehicles,
-  );
+  BusStopEtaViewModel copyWith({int? estimateSeconds, int? stopStatus}) =>
+      BusStopEtaViewModel(
+        stopUid: stopUid,
+        direction: direction,
+        sequence: sequence,
+        estimateSeconds: estimateSeconds ?? this.estimateSeconds,
+        nextBusTime: nextBusTime,
+        stopStatus: stopStatus ?? this.stopStatus,
+        vehiclePlates: vehiclePlates,
+        arrivalUnix: arrivalUnix,
+        vehicles: vehicles,
+        plate: plate,
+        isLastBus: isLastBus,
+      );
 
-  String? get displayLabel => busStopDisplayLabel(
+  String? displayLabelOf(AppI18n i18n) => busStopDisplayLabel(
+    i18n: i18n,
     estimateSeconds: estimateSeconds,
     stopStatus: stopStatus,
     nextBusTime: nextBusTime,
@@ -101,6 +134,8 @@ class BusStopEtaViewModel extends Equatable {
     vehiclePlates,
     arrivalUnix,
     vehicles,
+    plate,
+    isLastBus,
   ];
 }
 
@@ -122,10 +157,8 @@ class BusStationMember {
   final double lon;
 }
 
-/// One route's arrival at a member stop of a station group. The countdown and
-/// every display label derive from [estimateSeconds] + [stopStatus] through the
-/// one shared mapping in eta_format.dart; [decayed] re-derives the estimate
-/// from [arrivalUnix] locally so the countdown stays accurate between frames.
+enum CrowdLevel { unknown, comfortable, normal, crowded }
+
 class BusStopArrival extends Equatable {
   const BusStopArrival({
     required this.stationId,
@@ -136,6 +169,8 @@ class BusStopArrival extends Equatable {
     this.nextBusTime = '',
     this.stopStatus = 0,
     this.arrivalUnix = 0,
+    this.crowdLevel = CrowdLevel.unknown,
+    this.isLastBus = false,
   });
 
   final String stationId;
@@ -152,6 +187,14 @@ class BusStopArrival extends Equatable {
   /// Absolute arrival instant (Unix seconds), or 0 when the server sent none.
   final int arrivalUnix;
 
+  /// How full the arriving vehicle is. [CrowdLevel.unknown] whenever the server
+  /// could not pair a reading to this estimate's plate, which is every city but
+  /// Taipei.
+  final CrowdLevel crowdLevel;
+
+  /// TDX IsLastBus; see [BusStopEtaViewModel.isLastBus].
+  final bool isLastBus;
+
   /// Remaining whole minutes (ceil), or null when no positive estimate exists.
   int? get minutes {
     final m = etaCeilMinutes(estimateSeconds);
@@ -165,7 +208,8 @@ class BusStopArrival extends Equatable {
 
   /// User-facing label ('2分', '進站中', a clock time, or a service state), or
   /// null when nothing is known.
-  String? get displayLabel => busStopDisplayLabel(
+  String? displayLabelOf(AppI18n i18n) => busStopDisplayLabel(
+    i18n: i18n,
     estimateSeconds: estimateSeconds,
     stopStatus: stopStatus,
     nextBusTime: nextBusTime,
@@ -191,6 +235,8 @@ class BusStopArrival extends Equatable {
       nextBusTime: nextBusTime,
       stopStatus: stopStatus,
       arrivalUnix: arrivalUnix,
+      crowdLevel: crowdLevel,
+      isLastBus: isLastBus,
     );
   }
 
@@ -204,6 +250,8 @@ class BusStopArrival extends Equatable {
     nextBusTime,
     stopStatus,
     arrivalUnix,
+    crowdLevel,
+    isLastBus,
   ];
 }
 
@@ -234,11 +282,13 @@ class BusRouteViewModel extends Equatable {
     required this.city,
     required this.headsignGo,
     required this.headsignReturn,
-    required this.operatorName,
+    this.operators = const [],
     this.stopsGo = const [],
     this.stopsReturn = const [],
     this.geometryGo = '',
     this.geometryReturn = '',
+    this.schedulesGo = const [],
+    this.schedulesReturn = const [],
     this.fare,
   });
 
@@ -250,12 +300,24 @@ class BusRouteViewModel extends Equatable {
   final String city;
   final String headsignGo;
   final String headsignReturn;
-  final String operatorName;
+  final List<BusOperatorInfo> operators;
   final List<BusStopModel> stopsGo;
   final List<BusStopModel> stopsReturn;
   final String geometryGo;
   final String geometryReturn;
+
+  /// Weekly service pattern per direction; empty when TDX publishes no
+  /// Bus/Schedule for the sub-route, in which case only today's timetable is
+  /// knowable.
+  final List<BusServiceEntry> schedulesGo;
+  final List<BusServiceEntry> schedulesReturn;
   final BusFareInfo? fare;
+
+  int? get soleDirection {
+    if (stopsGo.isEmpty && stopsReturn.isNotEmpty) return 1;
+    if (stopsReturn.isEmpty && stopsGo.isNotEmpty) return 0;
+    return null;
+  }
 
   @override
   List<Object?> get props => [
@@ -267,6 +329,7 @@ class BusRouteViewModel extends Equatable {
     city,
     headsignGo,
     headsignReturn,
+    operators,
     fare,
   ];
 }

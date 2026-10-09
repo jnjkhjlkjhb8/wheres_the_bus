@@ -1,320 +1,476 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
-import 'package:firebase_analytics/firebase_analytics.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
-import 'package:material_symbols_icons/symbols.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/core/firebase/crash_reporter.dart';
-import 'package:wheres_the_car/core/firebase/firebase_bootstrap.dart';
-import 'package:wheres_the_car/core/firebase/firebase_gate.dart';
-import 'package:wheres_the_car/core/haptics/haptic_service.dart';
-import 'package:wheres_the_car/data/repositories/settings_repository.dart';
-import 'package:wheres_the_car/shared/motion/pressable.dart';
-import 'package:wheres_the_car/shared/widgets/app_bars.dart';
-import 'package:wheres_the_car/shared/widgets/app_snackbar.dart';
+import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
+import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
+import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
+import 'package:wheres_the_bus/core/update/update_status.dart';
+import 'package:wheres_the_bus/data/models/fare_type.dart';
+import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
+import 'package:wheres_the_bus/features/settings/bloc/settings_bloc.dart';
+import 'package:wheres_the_bus/features/settings/bloc/settings_event.dart';
+import 'package:wheres_the_bus/features/settings/bloc/settings_state.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_switch.dart';
 
-enum _Appearance {
-  system('跟隨系統'),
-  light('淺色模式'),
-  dark('深色模式');
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({
+    super.key,
+    this.updatePushPreference,
+    this.settings,
+    this.packageInfoLoader,
+    this.lastSyncedAtOf,
+    this.refreshConfig,
+    this.latestVersionOf,
+  });
 
-  const _Appearance(this.label);
-  final String label;
-}
-
-enum _Language {
-  system('跟隨系統'),
-  zh('繁體中文'),
-  en('English');
-
-  const _Language(this.label);
-  final String label;
-}
-
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, this.updatePushPreference, this.settings});
-
-  final Future<bool> Function({required bool requested})? updatePushPreference;
+  final PushUpdater? updatePushPreference;
 
   /// Injectable for tests; defaults to the shared repository instance.
   final SettingsRepository? settings;
 
+  /// Injectable for tests; forwarded to [SettingsBloc].
+  final Future<PackageInfo> Function()? packageInfoLoader;
+
+  /// Injectable for tests; forwarded to [SettingsBloc].
+  final DateTime? Function()? lastSyncedAtOf;
+
+  /// Injectable for tests; forwarded to [SettingsBloc].
+  final Future<bool> Function()? refreshConfig;
+
+  /// Injectable for tests; forwarded to [SettingsBloc].
+  final String Function()? latestVersionOf;
+
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (_) => SettingsBloc(
+        settings: settings,
+        updatePushPreference: updatePushPreference,
+        packageInfoLoader: packageInfoLoader,
+        lastSyncedAtOf: lastSyncedAtOf,
+        refreshConfig: refreshConfig,
+        latestVersionOf: latestVersionOf,
+      ),
+      child: const _SettingsView(),
+    );
+  }
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
-  SettingsRepository get _settings =>
-      widget.settings ?? SettingsRepository.instance;
+String formatSyncFreshness(AppI18n i18n, DateTime? dt) {
+  if (dt == null) return i18n.settingsSyncNever;
+  final local = dt.toLocal();
+  final now = DateTime.now();
+  final isToday =
+      local.year == now.year &&
+      local.month == now.month &&
+      local.day == now.day;
+  final time = DateFormat('HH:mm').format(local);
+  return isToday
+      ? i18n.settingsSyncToday(time)
+      : '${DateFormat('MM/dd').format(local)} $time';
+}
 
-  _Appearance _appearance = _Appearance.system;
-  _Language _language = _Language.system;
-  int _versionTaps = 0;
-  bool _devMode = false;
-  bool _pushUpdating = false;
-  late bool _pushEnabled;
-  late bool _analyticsEnabled;
-  late bool _crashlyticsEnabled;
-  late bool _largeText;
-  late bool _liveActivityEnabled;
-  late bool _navigationLocationEnabled;
+class _SettingsView extends StatelessWidget {
+  const _SettingsView();
 
-  @override
-  void initState() {
-    super.initState();
-    _devMode = _settings.devModeEnabled;
-    _pushEnabled = _settings.pushEnabled;
-    _analyticsEnabled = _settings.analyticsEnabled;
-    _crashlyticsEnabled = _settings.crashlyticsEnabled;
-    _largeText = _settings.largeText;
-    _liveActivityEnabled = _settings.liveActivityEnabled;
-    _navigationLocationEnabled = _settings.navigationLocationEnabled;
-  }
-
-  Future<void> _setPush(bool value) async {
-    if (_pushUpdating) return;
-    _settings.pushEnabled = value;
-    setState(() {
-      _pushEnabled = value;
-      _pushUpdating = true;
-    });
-    var enabled = false;
-    try {
-      enabled =
-          await (widget.updatePushPreference ??
-              FirebaseBootstrap.updatePushPreference)(requested: value);
-    } on Object catch (_) {
-      enabled = false;
-    } finally {
-      _settings.pushEnabled = enabled;
-      if (mounted) {
-        setState(() {
-          _pushEnabled = enabled;
-          _pushUpdating = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _setCollection({
-    required bool value,
-    required void Function({required bool value}) persist,
-    required void Function({required bool value}) update,
-    required Future<void> Function({required bool value}) setCollectionEnabled,
-  }) async {
-    persist(value: value);
-    setState(() => update(value: value));
-    if (!FirebaseGate.enabled) return;
-    try {
-      await setCollectionEnabled(value: value);
-    } on Object catch (e, s) {
-      CrashReporter.record(e, s);
-    }
-  }
-
-  void _onVersionTap() {
-    _versionTaps++;
-    if (_versionTaps >= 5 && !_devMode) {
-      _settings.devModeEnabled = true;
-      setState(() => _devMode = true);
-      _versionTaps = 0;
-      AppSnackbar.show(context, '開發者模式已啟用');
-    }
-  }
-
-  Future<void> _pickLanguage() async {
+  /// Runs the shared single-choice picker screen over [values], which the
+  /// picker identifies by label rather than by enum — so every label is
+  /// resolved once, here, against the locale in force when the sheet opens.
+  Future<T?> _pick<T>(
+    BuildContext context,
+    String route,
+    List<T> values,
+    T current,
+    String Function(T) labelOf,
+  ) async {
     final result = await context.push<String>(
-      '/settings/language',
+      route,
       extra: {
-        'options': _Language.values.map((e) => e.label).toList(),
-        'selected': _language.label,
+        'options': [for (final v in values) labelOf(v)],
+        'selected': labelOf(current),
       },
     );
-    if (result != null && mounted) {
-      setState(() {
-        _language = _Language.values.firstWhere(
-          (e) => e.label == result,
-          orElse: () => _language,
-        );
-      });
+    if (result == null || !context.mounted) return null;
+    return values.firstWhere(
+      (v) => labelOf(v) == result,
+      orElse: () => current,
+    );
+  }
+
+  Future<void> _pickAppearance(
+    BuildContext context,
+    AppI18n i18n,
+    Appearance current,
+  ) async {
+    final picked = await _pick(
+      context,
+      AppRoutes.settingsAppearance,
+      Appearance.values,
+      current,
+      (e) => e.labelOf(i18n),
+    );
+    if (picked != null && context.mounted) {
+      context.read<SettingsBloc>().add(AppearanceSelected(picked));
+    }
+  }
+
+  /// Picks the app's language. The choice writes through to the settings box,
+  /// which the root app listens on, so the whole UI re-renders in the new
+  /// locale without a restart.
+  Future<void> _pickLanguage(
+    BuildContext context,
+    AppI18n i18n,
+    Language current,
+  ) async {
+    final picked = await _pick(
+      context,
+      AppRoutes.settingsLanguage,
+      Language.values,
+      current,
+      (e) => e.labelOf(i18n),
+    );
+    if (picked != null && context.mounted) {
+      context.read<SettingsBloc>().add(LanguageSelected(picked));
+    }
+  }
+
+  /// Picks the rider's usual walking pace, applied to every plan.
+  Future<void> _pickWalkPace(
+    BuildContext context,
+    AppI18n i18n,
+    WalkPace current,
+  ) async {
+    final picked = await _pick(
+      context,
+      AppRoutes.settingsWalkPace,
+      WalkPace.values,
+      current,
+      (e) => e.labelOf(i18n),
+    );
+    if (picked != null && context.mounted) {
+      context.read<SettingsBloc>().add(WalkPaceSelected(picked));
+    }
+  }
+
+  /// Picks the rider's ticket type, on the shared single-choice picker screen.
+  Future<void> _pickFareType(
+    BuildContext context,
+    AppI18n i18n,
+    FareType current,
+  ) async {
+    final picked = await _pick(
+      context,
+      AppRoutes.settingsFareType,
+      FareType.values,
+      current,
+      (e) => e.labelOf(i18n),
+    );
+    if (picked != null && context.mounted) {
+      context.read<SettingsBloc>().add(FareTypeSelected(picked));
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    return BlocBuilder<SettingsBloc, SettingsState>(builder: _buildBody);
+  }
+
+  Widget _buildBody(BuildContext context, SettingsState state) {
+    final bloc = context.read<SettingsBloc>();
+    final i18n = AppI18n.of(context);
+    final topPadding = MediaQuery.paddingOf(context).top;
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+
     return Scaffold(
-      appBar: const DetailAppBar(title: '設定', centerTitle: true),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
-        children: [
-          _SettingsSection(
-            title: '外觀與語言',
-            children: [
-              _SettingsSwitchRow(
-                icon: Icons.dark_mode_outlined,
-                label: '深色模式',
-                value: _appearance == _Appearance.dark,
-                onChanged: (v) {
-                  setState(() {
-                    _appearance = v ? _Appearance.dark : _Appearance.light;
-                  });
-                },
-              ),
-              _SettingsRow(
-                icon: Icons.language_rounded,
-                label: '語言',
-                value: _language.label,
-                hasChevron: 1,
-                onTap: _pickLanguage,
-              ),
-              _SettingsSwitchRow(
-                icon: Icons.text_fields_rounded,
-                label: '大字體模式',
-                value: _largeText,
-                onChanged: (v) {
-                  _settings.largeText = v;
-                  setState(() => _largeText = v);
-                },
-              ),
-            ],
+      body: CustomScrollView(
+        slivers: [
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _LargeTitleHeader(
+              title: i18n.settingsTitle,
+              topPadding: topPadding,
+              reduceMotion: reduceMotion,
+            ),
           ),
-          const SizedBox(height: 16),
-          _SettingsSection(
-            title: '導航',
-            children: [
-              _SettingsSwitchRow(
-                icon: Icons.dashboard_customize_outlined,
-                label: '即時動態',
-                subtitle: '鎖定畫面與動態島顯示導航資訊',
-                value: _liveActivityEnabled,
-                onChanged: (v) {
-                  _settings.liveActivityEnabled = v;
-                  setState(() => _liveActivityEnabled = v);
-                },
-              ),
-              _SettingsSwitchRow(
-                icon: Icons.my_location_outlined,
-                label: '導航自動定位',
-                subtitle: '用於自動上車提醒與車上進度；關閉後仍可手動操作',
-                value: _navigationLocationEnabled,
-                onChanged: (v) {
-                  _settings.navigationLocationEnabled = v;
-                  setState(() => _navigationLocationEnabled = v);
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _SettingsSection(
-            title: '隱私與資料',
-            children: [
-              _SettingsSwitchRow(
-                icon: Icons.notifications_none_rounded,
-                label: '推播通知',
-                value: _pushEnabled,
-                onChanged: _pushUpdating ? null : _setPush,
-              ),
-              _SettingsSwitchRow(
-                icon: Icons.analytics_outlined,
-                label: 'Analytics 使用資料',
-                value: _analyticsEnabled,
-                onChanged: (value) => _setCollection(
-                  value: value,
-                  persist: ({required value}) =>
-                      _settings.analyticsEnabled = value,
-                  update: ({required value}) => _analyticsEnabled = value,
-                  setCollectionEnabled: ({required value}) => FirebaseAnalytics
-                      .instance
-                      .setAnalyticsCollectionEnabled(value),
-                ),
-              ),
-              _SettingsSwitchRow(
-                icon: Icons.bug_report_outlined,
-                label: 'Crashlytics 錯誤回報',
-                value: _crashlyticsEnabled,
-                onChanged: (value) => _setCollection(
-                  value: value,
-                  persist: ({required value}) =>
-                      _settings.crashlyticsEnabled = value,
-                  update: ({required value}) => _crashlyticsEnabled = value,
-                  setCollectionEnabled: ({required value}) =>
-                      FirebaseCrashlytics.instance
-                          .setCrashlyticsCollectionEnabled(value),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _SettingsSection(
-            title: '關於',
-            children: [
-              _SettingsRow(
-                icon: Icons.help_outline_rounded,
-                label: '常見問題 FAQ',
-                hasChevron: 1,
-                onTap: () {},
-              ),
-              _SettingsRow(
-                icon: Icons.bug_report_outlined,
-                label: '回報問題',
-                hasChevron: 1,
-                onTap: () {},
-              ),
-              _SettingsRow(
-                icon: Icons.lock_outline_rounded,
-                label: '隱私權政策',
-                hasChevron: 1,
-                onTap: () {},
-              ),
-              _SettingsRow(
-                icon: Icons.info_outline_rounded,
-                label: '目前版本',
-                value: '1.0.0',
-                onTap: _onVersionTap,
-              ),
-              if (FirebaseGate.appEnv != 'prod' &&
-                  FirebaseGate.appEnv != 'production')
-                const _SettingsRow(
-                  icon: Icons.developer_mode_rounded,
-                  label: '環境',
-                  value: FirebaseGate.appEnv,
-                ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          const _SettingsSection(
-            title: '資料庫狀態',
-            children: [
-              _SettingsRow(
-                icon: Symbols.database_rounded,
-                label: 'TDX 靜態資料',
-                value: '今日 06:00',
-                valueColor: AppTheme.statusArriving,
-                statusIcon: Icons.check_circle_rounded,
-              ),
-            ],
-          ),
-          if (_devMode) ...[
-            const SizedBox(height: 16),
-            _SettingsSection(
-              title: '開發者',
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              AppTheme.space16,
+              AppTheme.space8,
+              AppTheme.space16,
+              bottomInset + AppTheme.space32,
+            ),
+            sliver: SliverList.list(
               children: [
-                _SettingsRow(
-                  icon: Icons.palette_outlined,
-                  label: 'UI Kit',
-                  hasChevron: 1,
-                  onTap: () {
-                    unawaited(HapticService.instance.lightTap());
-                    unawaited(context.push('/ui-kit'));
-                  },
+                _SettingsSection(
+                  title: i18n.settingsSectionAppearance,
+                  children: [
+                    _SettingsRow(
+                      icon: Icons.dark_mode_outlined,
+                      label: i18n.settingsAppearance,
+                      value: state.appearance.labelOf(i18n),
+                      chevron: true,
+                      onTap: () =>
+                          _pickAppearance(context, i18n, state.appearance),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.language_rounded,
+                      label: i18n.settingsLanguage,
+                      value: state.language.labelOf(i18n),
+                      chevron: true,
+                      onTap: () => _pickLanguage(context, i18n, state.language),
+                    ),
+                    _SettingsSwitchRow(
+                      icon: Icons.notifications_none_rounded,
+                      label: i18n.settingsPush,
+                      value: state.pushEnabled,
+                      onChanged: state.pushUpdating
+                          ? null
+                          : (v) => bloc.add(PushToggled(value: v)),
+                    ),
+                    const _NotificationAccessRow(),
+                    _SettingsSwitchRow(
+                      icon: Icons.dashboard_customize_outlined,
+                      label: i18n.settingsLiveActivity,
+                      value: state.liveActivityEnabled,
+                      onChanged: (v) => bloc.add(LiveActivityToggled(value: v)),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: AppTheme.space24),
+                _SettingsSection(
+                  title: i18n.settingsSectionPlanner,
+                  footer: i18n.settingsPlannerFooter,
+                  children: [
+                    _SettingsSwitchRow(
+                      icon: Icons.accessible_rounded,
+                      label: i18n.settingsStepFree,
+                      value: state.stepFreeRouting,
+                      onChanged: (v) =>
+                          bloc.add(StepFreeRoutingToggled(value: v)),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.directions_walk_rounded,
+                      label: i18n.settingsWalkPace,
+                      value: state.walkPace.labelOf(i18n),
+                      chevron: true,
+                      onTap: () => _pickWalkPace(context, i18n, state.walkPace),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppTheme.space24),
+                _SettingsSection(
+                  title: i18n.settingsSectionFare,
+                  // The setting is worth explaining once here rather than
+                  // repeating a picker on every fare on every screen: it is
+                  // set once and read everywhere.
+                  footer: i18n.settingsFareFooter,
+                  children: [
+                    _SettingsRow(
+                      icon: Icons.confirmation_number_outlined,
+                      label: i18n.settingsFareType,
+                      value: state.fareType.labelOf(i18n),
+                      chevron: true,
+                      onTap: () => _pickFareType(context, i18n, state.fareType),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppTheme.space24),
+                _SettingsSection(
+                  title: i18n.settingsSectionAbout,
+                  children: [
+                    _SettingsRow(
+                      icon: Icons.help_outline_rounded,
+                      label: i18n.settingsFaq,
+                      comingSoon: true,
+                    ),
+                    _SettingsSwitchRow(
+                      icon: Icons.vibration_rounded,
+                      label: i18n.settingsShakeToReport,
+                      value: state.shakeToReport,
+                      onChanged: (v) =>
+                          bloc.add(ShakeToReportToggled(value: v)),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.lock_outline_rounded,
+                      label: i18n.settingsPrivacyPolicy,
+                      comingSoon: true,
+                    ),
+                    _SettingsRow(
+                      icon: Icons.info_outline_rounded,
+                      label: i18n.settingsAppVersion,
+                      value: state.appVersion.isEmpty ? '—' : state.appVersion,
+                      monoValue: true,
+                    ),
+                    _UpdateCheckRow(state: state, bloc: bloc),
+                    if (FirebaseGate.appEnv != 'prod' &&
+                        FirebaseGate.appEnv != 'production')
+                      _SettingsRow(
+                        icon: Icons.developer_mode_rounded,
+                        label: i18n.settingsEnvironment,
+                        value: FirebaseGate.appEnv,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppTheme.space24),
+                const _TdxAttribution(),
+                _AppIdentityFooter(version: state.appVersion),
               ],
             ),
-          ],
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
+  const _LargeTitleHeader({
+    required this.title,
+    required this.topPadding,
+    required this.reduceMotion,
+  });
+
+  final String title;
+  final double topPadding;
+  final bool reduceMotion;
+
+  static const double _bar = 44;
+  static const double _largeBlock = 52;
+
+  static const int _blurSteps = 6;
+
+  @override
+  double get minExtent => topPadding + _bar;
+
+  @override
+  double get maxExtent => topPadding + _bar + _largeBlock;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlaps) {
+    final cs = Theme.of(context).colorScheme;
+    final t = (shrinkOffset / _largeBlock).clamp(0.0, 1.0);
+
+    // Each layer fades on its own eased curve so the crossfade reads as one
+    // material collapsing, not two opacities racing.
+    final chrome = AppMotion.easeOut.transform(t);
+    final blurChrome = (chrome * _blurSteps).round() / _blurSteps;
+    final compact = AppMotion.easeInOut.transform(
+      ((t - 0.35) / 0.65).clamp(0.0, 1.0),
+    );
+    final large =
+        1.0 - AppMotion.easeInOut.transform((t / 0.7).clamp(0.0, 1.0));
+
+    return SizedBox.expand(
+      child: Stack(
+        children: [
+          // Translucent bar: invisible at rest, blurs the content scrolling
+          // beneath and drops a hairline once collapse begins.
+          if (chrome > 0.001)
+            Positioned.fill(
+              child: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(
+                    sigmaX: 18 * blurChrome,
+                    sigmaY: 18 * blurChrome,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: cs.surface.withValues(alpha: 0.72 * chrome),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: cs.outlineVariant.withValues(alpha: chrome),
+                          width: 0.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          // Back affordance — pinned top-left across the whole collapse.
+          Positioned(
+            top: topPadding,
+            left: 4,
+            child: const _BackButton(),
+          ),
+          // Collapsed centred title.
+          Positioned(
+            top: topPadding,
+            left: 44,
+            right: 44,
+            height: _bar,
+            child: Center(
+              child: Opacity(
+                opacity: compact,
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.headlineLarge,
+                ),
+              ),
+            ),
+          ),
+          // Resting large title, anchored to the header's bottom edge.
+          Positioned(
+            left: 20,
+            right: 20,
+            bottom: 10,
+            child: Opacity(
+              opacity: large,
+              child: Transform.translate(
+                offset: Offset(0, reduceMotion ? 0 : t * -6),
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.displayLarge,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(_LargeTitleHeader old) =>
+      old.title != title ||
+      old.topPadding != topPadding ||
+      old.reduceMotion != reduceMotion;
+}
+
+class _BackButton extends StatelessWidget {
+  const _BackButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Pressable(
+      onTap: () => context.pop(),
+      semanticLabel: AppI18n.of(context).commonBack,
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: Icon(
+          Icons.arrow_back_ios_new_rounded,
+          size: 20,
+          color: cs.onSurface,
+        ),
       ),
     );
   }
@@ -326,67 +482,37 @@ class _SettingsSwitchRow extends StatelessWidget {
     required this.value,
     required this.onChanged,
     this.icon,
-    this.subtitle,
   });
 
   final String label;
   final bool value;
   final ValueChanged<bool>? onChanged;
   final IconData? icon;
-  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final sw = Switch(
-      value: value,
-      onChanged: onChanged,
-      thumbIcon: WidgetStateProperty.resolveWith(
-        (states) => Icon(
-          states.contains(WidgetState.selected)
-              ? Icons.check_rounded
-              : Icons.close_rounded,
-          size: 16,
-        ),
-      ),
-    );
+    final sw = AppSwitch(value: value, onChanged: onChanged);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onChanged != null ? () => onChanged!(!value) : null,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 48),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 20, color: cs.onSurfaceVariant),
-                const SizedBox(width: 8),
+    // MergeSemantics prevents duplicate accessibility announcements.
+    return MergeSemantics(
+      child: Pressable(
+        onTap: onChanged != null ? () => onChanged!(!value) : null,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppTheme.space4),
+            child: Row(
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 20, color: cs.onSurfaceVariant),
+                  const SizedBox(width: AppTheme.space12),
+                ],
+                Expanded(child: Text(label, style: AppTextStyles.bodyLarge)),
+                const SizedBox(width: AppTheme.space12),
+                sw,
               ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(label, style: AppTextStyles.bodyLarge),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle!,
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: cs.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              // Subtitle-less rows keep the base layout (switch flush to the
-              // label column); only the taller subtitle rows get the gap.
-              if (subtitle != null) const SizedBox(width: 12),
-              sw,
-            ],
+            ),
           ),
         ),
       ),
@@ -394,11 +520,72 @@ class _SettingsSwitchRow extends StatelessWidget {
   }
 }
 
+class _NotificationAccessRow extends StatefulWidget {
+  const _NotificationAccessRow();
+
+  @override
+  State<_NotificationAccessRow> createState() => _NotificationAccessRowState();
+}
+
+class _NotificationAccessRowState extends State<_NotificationAccessRow>
+    with WidgetsBindingObserver {
+  bool _blocked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_check());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_check());
+  }
+
+  Future<void> _check() async {
+    final enabled = await AlightTrackChannel.notificationsEnabled();
+    if (!mounted || enabled == !_blocked) return;
+    setState(() => _blocked = !enabled);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_blocked) return const SizedBox.shrink();
+    final i18n = AppI18n.of(context);
+    return _SettingsRow(
+      icon: Icons.notifications_off_outlined,
+      label: i18n.settingsNotificationsBlocked,
+      value: i18n.settingsOpenSystemSettings,
+      chevron: true,
+      onTap: () => unawaited(AlightTrackChannel.openNotificationSettings()),
+    );
+  }
+}
+
 class _SettingsSection extends StatelessWidget {
-  const _SettingsSection({required this.title, required this.children});
+  const _SettingsSection({
+    required this.title,
+    required this.children,
+    this.footer,
+  });
 
   final String title;
   final List<Widget> children;
+
+  /// Optional HIG-style footnote rendered under the group. Carries the "why"
+  /// for a group of toggles so individual rows stay one scannable line.
+  final String? footer;
+
+  // Separators start at the label column (past the 20px icon + 12px gap),
+  // the iOS inset-grouped signature; a full-bleed divider reads as a table.
+  static const double _dividerIndent = 48;
 
   @override
   Widget build(BuildContext context) {
@@ -407,7 +594,12 @@ class _SettingsSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space4,
+            0,
+            AppTheme.space4,
+            7,
+          ),
           child: Text(
             title,
             style: AppTextStyles.bodySmall.copyWith(
@@ -418,7 +610,9 @@ class _SettingsSection extends StatelessWidget {
         ),
         DecoratedBox(
           decoration: BoxDecoration(
-            color: cs.surface,
+            // surfaceContainerLow (card), not surface: an elevated group must
+            // never paint the scaffold colour or it vanishes in dark mode.
+            color: cs.surfaceContainerLow,
             borderRadius: BorderRadius.circular(AppTheme.radiusCard),
             border: Border.all(color: cs.outlineVariant),
           ),
@@ -430,18 +624,122 @@ class _SettingsSection extends StatelessWidget {
                   Divider(
                     height: 0.5,
                     thickness: 0.5,
-                    indent: 16,
+                    indent: _dividerIndent,
                     color: cs.outlineVariant,
                   ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.space16,
+                  ),
                   child: children[i],
                 ),
               ],
             ],
           ),
         ),
+        if (footer != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space6,
+              7,
+              AppTheme.space6,
+              0,
+            ),
+            child: Text(
+              footer!,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+class _TdxAttribution extends StatelessWidget {
+  const _TdxAttribution();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space6,
+        AppTheme.space12,
+        AppTheme.space6,
+        0,
+      ),
+      child: Text(
+        i18n.settingsSource,
+        style: AppTextStyles.bodySmall.copyWith(
+          color: cs.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
+class _UpdateCheckRow extends StatelessWidget {
+  const _UpdateCheckRow({required this.state, required this.bloc});
+
+  final SettingsState state;
+  final SettingsBloc bloc;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    final found = state.updateCheck == UpdateCheck.available;
+    // A found release is only actionable with a store link that passes the
+    // allowlist; without one the row states the version and stops being
+    // tappable, rather than offering a chevron that goes nowhere (F45).
+    final url = found ? storeUrl() : null;
+    // The label follows what a tap actually does, not merely what was found:
+    // 「前往更新」 on a row that cannot navigate anywhere would be the same
+    // dead affordance one level up from the chevron.
+    final label = switch ((found, url)) {
+      (true, != null) => i18n.settingsUpdateGo,
+      (true, _) => i18n.settingsUpdateAvailable,
+      _ => i18n.settingsUpdateCheck,
+    };
+
+    final value = switch (state.updateCheck) {
+      UpdateCheck.idle => null,
+      UpdateCheck.checking => i18n.settingsUpdateChecking,
+      UpdateCheck.upToDate => i18n.settingsUpdateUpToDate,
+      UpdateCheck.failed => i18n.settingsUpdateFailed,
+      UpdateCheck.available => state.latestVersion,
+    };
+
+    return _SettingsRow(
+      icon: Icons.system_update_rounded,
+      label: label,
+      value: value,
+      // Versions are figures, so they get mono like every other one; the
+      // status strings are prose and stay in the body face.
+      monoValue: found,
+      // Ink, not a status colour: the design system reserves hue for transit
+      // line identity, so a found release is emphasised by contrast alone.
+      valueColor: found ? cs.onSurface : null,
+      chevron: url != null,
+      onTap: switch (state.updateCheck) {
+        UpdateCheck.checking => null,
+        UpdateCheck.available =>
+          url == null
+              ? null
+              : () {
+                  unawaited(HapticService.instance.lightTap());
+                  unawaited(
+                    launchUrl(url, mode: LaunchMode.externalApplication),
+                  );
+                },
+        _ => () {
+          unawaited(HapticService.instance.lightTap());
+          bloc.add(const UpdateCheckRequested());
+        },
+      },
     );
   }
 }
@@ -452,57 +750,107 @@ class _SettingsRow extends StatelessWidget {
     required this.label,
     this.value,
     this.valueColor,
-    this.statusIcon,
-    this.hasChevron = 0,
+    this.chevron = false,
+    this.monoValue = false,
     this.onTap,
+    this.comingSoon = false,
   });
   final IconData icon;
   final String label;
   final String? value;
   final Color? valueColor;
-  final IconData? statusIcon;
-  final int hasChevron;
+  final bool chevron;
+
+  /// Renders the trailing value in IBM Plex Mono (tabular): versions and sync
+  /// timestamps, where digits should not shift width between states.
+  final bool monoValue;
   final VoidCallback? onTap;
+
+  final bool comingSoon;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return SizedBox(
-      height: 44,
+    final i18n = AppI18n.of(context);
+    // Trailing detail is secondary, at label size — the label leads, the
+    // value supports (HIG). Mono values keep tabular figures.
+    final baseValue = monoValue ? AppTextStyles.memo : AppTextStyles.bodyLarge;
+    final valueStyle = baseValue.copyWith(
+      color: valueColor ?? cs.onSurfaceVariant,
+    );
+
+    // Min-height, not fixed: a wrapped label under a large text scale grows
+    // the row instead of being clipped (F53).
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
       child: Pressable(
-        onTap: onTap,
-        semanticLabel: label,
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: cs.onSurfaceVariant),
-            const SizedBox(width: 4),
-            Text(label, style: AppTextStyles.bodyLarge),
-            const Spacer(),
-            if (statusIcon != null) ...[
-              Icon(statusIcon, size: 18, color: valueColor),
-              const SizedBox(width: 4),
+        onTap: comingSoon ? null : onTap,
+        semanticLabel: comingSoon
+            ? i18n.commonComingSoonSemantics(label)
+            : label,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppTheme.space10),
+          child: Row(
+            children: [
+              Icon(icon, size: 20, color: cs.onSurfaceVariant),
+              const SizedBox(width: AppTheme.space12),
+              Expanded(child: Text(label, style: AppTextStyles.bodyLarge)),
+              if (comingSoon)
+                Text(
+                  i18n.commonComingSoon,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+                )
+              else ...[
+                if (value != null)
+                  Text(value!, textAlign: TextAlign.right, style: valueStyle),
+                if (chevron) ...[
+                  const SizedBox(width: AppTheme.space4),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 20,
+                    color: cs.outline,
+                  ),
+                ],
+              ],
             ],
-            if (value != null)
-              Text(
-                value!,
-                textAlign: TextAlign.right,
-                style: AppTextStyles.heading2.copyWith(
-                  color: valueColor ?? cs.onSurface,
-                ),
-              ),
-            if (hasChevron == 1)
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 20,
-                color: cs.onSurfaceVariant,
-              )
-            else if (hasChevron == 2)
-              Icon(
-                Symbols.arrow_insert_rounded,
-                size: 20,
-                color: cs.onSurfaceVariant,
-              ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+/// Closes the list with the app's own name and version, so the About group
+/// isn't the only place the app identifies itself.
+class _AppIdentityFooter extends StatelessWidget {
+  const _AppIdentityFooter({required this.version});
+
+  final String version;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 28, bottom: AppTheme.space8),
+      child: Column(
+        children: [
+          Text(
+            AppI18n.of(context).appName,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (version.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              version,
+              style: AppTextStyles.memo.copyWith(color: cs.outline),
+            ),
+          ],
+        ],
       ),
     );
   }

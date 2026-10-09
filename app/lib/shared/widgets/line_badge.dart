@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
 Color mrtLineColor(String lineCode, ColorScheme cs) {
   final code = lineCode.toUpperCase();
@@ -15,21 +15,6 @@ Color mrtLineColor(String lineCode, ColorScheme cs) {
   if (code.startsWith('KO')) return AppTheme.mrtKO;
   if (code.startsWith('KR')) return AppTheme.mrtKR;
   return cs.onSurfaceVariant;
-}
-
-String mrtLineLabel(String lineCode) {
-  final code = lineCode.toUpperCase();
-  if (code.startsWith('BR')) return '文湖';
-  if (code.startsWith('BL')) return '板南';
-  if (code.startsWith('R')) return '淡水';
-  if (code.startsWith('G')) return '松山';
-  if (code.startsWith('O')) return '中和';
-  if (code.startsWith('Y')) return '環狀';
-  if (code.startsWith('A')) return '機捷';
-  if (code.startsWith('C')) return '輕軌';
-  if (code.startsWith('KO')) return '高捷';
-  if (code.startsWith('KR')) return '高捷';
-  return lineCode;
 }
 
 class LineBadge extends StatelessWidget {

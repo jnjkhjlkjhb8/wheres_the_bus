@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/models/eta_format.dart';
+import 'package:wheres_the_bus/data/models/eta_format.dart';
+
+import '../../support/helpers/i18n.dart';
 
 void main() {
   group('etaRemainingSeconds', () {
@@ -85,6 +87,39 @@ void main() {
         BusStopDisplayStatus.minutes,
       );
     });
+    // A not-yet-departed stop (status 1) with a predicted NextBusTime carries
+    // a positive estimate the backend derived for exactly this countdown
+    // (bus_eta.go gap fill); only a zero estimate falls back to 尚未發車.
+    test('status 1 with a positive predicted estimate is a countdown', () {
+      expect(
+        busStopDisplayStatus(estimateSeconds: 300, stopStatus: 1),
+        BusStopDisplayStatus.minutes,
+      );
+      expect(
+        busStopDisplayStatus(estimateSeconds: 30, stopStatus: 1),
+        BusStopDisplayStatus.departingSoon,
+      );
+      expect(
+        busStopDisplayStatus(estimateSeconds: 0, stopStatus: 1),
+        BusStopDisplayStatus.notDeparted,
+      );
+    });
+    test('status 1 beyond the countdown cap falls back to notDeparted', () {
+      expect(
+        busStopDisplayStatus(
+          estimateSeconds: busStopScheduledCountdownCap + 1,
+          stopStatus: 1,
+        ),
+        BusStopDisplayStatus.notDeparted,
+      );
+      expect(
+        busStopDisplayStatus(
+          estimateSeconds: busStopScheduledCountdownCap,
+          stopStatus: 1,
+        ),
+        BusStopDisplayStatus.minutes,
+      );
+    });
     test('status codes map exhaustively', () {
       expect(
         busStopDisplayStatus(estimateSeconds: -1, stopStatus: 1),
@@ -140,6 +175,7 @@ void main() {
     test('minutes label uses ceil', () {
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: 61,
           stopStatus: 0,
           nextBusTime: '',
@@ -149,13 +185,19 @@ void main() {
     });
     test('arriving label', () {
       expect(
-        busStopDisplayLabel(estimateSeconds: 0, stopStatus: 0, nextBusTime: ''),
+        busStopDisplayLabel(
+          i18n: zhStrings,
+          estimateSeconds: 0,
+          stopStatus: 0,
+          nextBusTime: '',
+        ),
         '進站中',
       );
     });
     test('clock label parsed from nextBusTime', () {
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: -1,
           stopStatus: 1,
           nextBusTime: '2026-06-18T08:15:00+08:00',
@@ -164,6 +206,7 @@ void main() {
       );
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: -1,
           stopStatus: 1,
           nextBusTime: '8:05:00',
@@ -172,9 +215,32 @@ void main() {
       );
     });
 
+    test('status 1 (scheduled) shows the NextBusTime clock, not the '
+        'derived countdown', () {
+      expect(
+        busStopDisplayLabel(
+          i18n: zhStrings,
+          estimateSeconds: 300,
+          stopStatus: 1,
+          nextBusTime: '08:15',
+        ),
+        '08:15',
+      );
+      expect(
+        busStopDisplayLabel(
+          i18n: zhStrings,
+          estimateSeconds: 0,
+          stopStatus: 1,
+          nextBusTime: '08:15',
+        ),
+        '08:15',
+      );
+    });
+
     test('clock label passes through an already-padded HH:MM', () {
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: 0,
           stopStatus: 1,
           nextBusTime: '23:30',
@@ -186,6 +252,7 @@ void main() {
     test('clock label left-pads a single-digit hour', () {
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: 0,
           stopStatus: 1,
           nextBusTime: '7:05',
@@ -194,21 +261,13 @@ void main() {
       );
     });
 
-    // `_clockLabel` (eta_format.dart:81-96) runs the `H:MM` regex BEFORE
-    // DateTime.tryParse, so on an RFC3339 string it extracts the literal
-    // hour:minute substring as written -- it does NOT parse the timezone
-    // offset and convert to local time. The backend (bus_eta.go) formats
-    // NextBusTime already in Taipei time and users are in Taipei, so the
-    // literal hour happens to be correct today. This is a real coupling: if
-    // the backend ever emits a non-Taipei offset, this label would silently
-    // show the wrong (source-timezone) clock time instead of local time.
-    // Pinning current behavior here, not fixing it -- see findings.
     test(
       'clock label on an RFC3339 string extracts the literal hour, '
       'not the timezone-converted local hour',
       () {
         expect(
           busStopDisplayLabel(
+            i18n: zhStrings,
             estimateSeconds: 0,
             stopStatus: 1,
             nextBusTime: '2026-07-07T23:30:00+08:00',
@@ -221,6 +280,7 @@ void main() {
     test('empty nextBusTime with no clock falls back to status label', () {
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: 0,
           stopStatus: 1,
           nextBusTime: '',
@@ -232,6 +292,7 @@ void main() {
     test('unparseable nextBusTime falls back to status label', () {
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: 0,
           stopStatus: 1,
           nextBusTime: 'garbage',
@@ -243,6 +304,7 @@ void main() {
     test('status label when no estimate and no clock', () {
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: -1,
           stopStatus: 3,
           nextBusTime: '',
@@ -251,6 +313,7 @@ void main() {
       );
       expect(
         busStopDisplayLabel(
+          i18n: zhStrings,
           estimateSeconds: -1,
           stopStatus: 9,
           nextBusTime: '',

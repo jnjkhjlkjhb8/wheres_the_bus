@@ -1,5 +1,5 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
-import 'package:wheres_the_car/core/firebase/firebase_gate.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
 
 typedef FirebaseEventLogger =
     Future<void> Function(

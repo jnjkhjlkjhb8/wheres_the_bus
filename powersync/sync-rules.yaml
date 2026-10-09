@@ -2,50 +2,12 @@ bucket_definitions:
   global:
     data:
       - SELECT
-            sub_route_uid AS id,
-            sub_route_name,
-            route_name,
-            route_uid,
-            city,
-            depart,
-            destin
-          FROM bus_static
-      - SELECT
-            group_uid AS id,
-            group_uid AS stop_uid,
-            group_name AS stop_name,
-            ST_Y(position) AS lat,
-            ST_X(position) AS lon,
-            city
-          FROM bus_station_groups
-      - SELECT
-            station_id AS id,
-            station_id,
-            name AS station_name,
-            system AS lines,
-            ST_Y(stationposition) AS lat,
-            ST_X(stationposition) AS lon
-          FROM mrt_station
-      - SELECT
-            station_id AS id,
-            station_id,
-            name AS station_name,
-            ST_Y(geom) AS lat,
-            ST_X(geom) AS lon
-          FROM tra_stations
-      - SELECT
-            station_id AS id,
-            station_id,
-            name AS station_name,
-            ST_Y(geom) AS lat,
-            ST_X(geom) AS lon
-          FROM thsr_stations
-      - SELECT
             id,
             from_station_id,
             to_station_id,
             system,
             fare_nt,
+            half_fare_nt,
             travel_time_min
           FROM mrt_journey_matrix
       - SELECT

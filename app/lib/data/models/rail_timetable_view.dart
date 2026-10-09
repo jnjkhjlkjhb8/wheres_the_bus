@@ -1,12 +1,5 @@
 import 'package:equatable/equatable.dart';
 
-/// One TRA or THSR timetable result, reshaped to exactly the fields the
-/// summary card renders. A validated domain type: the backend proto stops at
-/// the decoder and never reaches shared widgets.
-///
-/// [travelTime] is kept as the source's display string (e.g. "1:30") rather
-/// than parsed minutes because the card shows it verbatim; the parsed-minutes
-/// domain models (TraTimetableItem/ThsrTimetableItem) serve list rendering.
 class RailTimetableView extends Equatable {
   const RailTimetableView({
     required this.trainNo,

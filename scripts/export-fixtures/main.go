@@ -1,22 +1,3 @@
-// Command export-fixtures dumps one raw_tdx dataset/partition to a JSON file for
-// deterministic loader replay tests
-// raw_tdx fixtures — deterministic, no network"). It is read-only: it never
-// writes to the database, only to the -out file.
-//
-// Usage:
-//
-//	DATABASE_URL=... go run ./scripts/export-fixtures \
-//	  -table thsr_station -out services/functions/testdata/raw_tdx/thsr_station.json
-//	DATABASE_URL=... go run ./scripts/export-fixtures \
-//	  -table tra_dailytimetable -partcol traindate -part 2026-07-05 -out ...
-//
-// The reconstruction query is byte-for-byte the same shape as
-// rawTDXSource.datasetJSON in services/functions/loader.go: to_jsonb of each row
-// minus the fetched_at (and partition) bookkeeping columns, with the
-// thsr_dailytimetable traindate re-derived as a YYYY-MM-DD string. A fixture
-// exported here therefore replays identically through the loader. The SQL is
-// duplicated rather than imported because that unexported helper lives in
-// another package main, which a separate command cannot import.
 package main
 
 import (
@@ -44,30 +25,42 @@ func main() {
 		fmt.Fprintln(os.Stderr, "DATABASE_URL not set")
 		os.Exit(2)
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	if err != nil {
+	if err := export(dsn, *table, *partCol, *part, *out); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+func export(dsn, table, partCol, part, out string) error {
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		return err
 	}
 	defer pool.Close()
 
-	body, err := datasetJSON(context.Background(), pool, *table, *partCol, *part)
+	body, err := datasetJSON(context.Background(), pool, table, partCol, part)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
-	if err := os.WriteFile(*out, body, 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if err := os.WriteFile(out, body, 0o644); err != nil {
+		return err
 	}
-	fmt.Printf("wrote %d bytes to %s\n", len(body), *out)
+	fmt.Printf("wrote %d bytes to %s\n", len(body), out)
+	return nil
 }
 
-// datasetJSON reconstructs the lowercased-JSON array for one raw_tdx partition,
-// mirroring rawTDXSource.datasetJSON. partCol is interpolated into the query, so
-// callers must pass only trusted column names (this command is a developer tool
-// run against known raw_tdx tables).
 func datasetJSON(ctx context.Context, pool *pgxpool.Pool, table, partCol, partVal string) ([]byte, error) {
+	q, args := buildDatasetQuery(table, partCol, partVal)
+	var body []byte
+	if err := pool.QueryRow(ctx, q, args...).Scan(&body); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// buildDatasetQuery builds the reconstruction SQL and its args. partCol is
+// interpolated into the query, so callers must pass only trusted column names.
+func buildDatasetQuery(table, partCol, partVal string) (string, []any) {
 	strip := "ARRAY['fetched_at']::text[]"
 	if partCol != "" {
 		strip = fmt.Sprintf("ARRAY['fetched_at','%s']::text[]", partCol)
@@ -87,9 +80,5 @@ func datasetJSON(ctx context.Context, pool *pgxpool.Pool, table, partCol, partVa
 	q := fmt.Sprintf(
 		`SELECT COALESCE(jsonb_agg(%s), '[]'::jsonb) FROM raw_tdx.%s t %s`,
 		elem, table, where)
-	var body []byte
-	if err := pool.QueryRow(ctx, q, args...).Scan(&body); err != nil {
-		return nil, err
-	}
-	return body, nil
+	return q, args
 }

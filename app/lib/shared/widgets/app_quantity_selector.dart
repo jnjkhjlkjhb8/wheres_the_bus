@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 
 class AppQuantitySelector extends StatefulWidget {
   const AppQuantitySelector({
@@ -85,6 +85,8 @@ class _AnimatedValue extends StatefulWidget {
 
 class _AnimatedValueState extends State<_AnimatedValue>
     with SingleTickerProviderStateMixin {
+  static const _duration = Duration(milliseconds: 100);
+
   late AnimationController _controller;
   int _displayValue = 0;
   int _pendingDirection = 0;
@@ -93,29 +95,38 @@ class _AnimatedValueState extends State<_AnimatedValue>
   void initState() {
     super.initState();
     _displayValue = widget.value;
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    );
+    _controller = AnimationController(vsync: this, duration: _duration);
   }
 
   @override
   void didUpdateWidget(_AnimatedValue old) {
     super.didUpdateWidget(old);
-    if (old.value != widget.value) {
-      _pendingDirection = widget.direction;
-      unawaited(
-        _controller.forward(from: 0).then((_) {
-          if (mounted) {
-            setState(() {
-              _displayValue = widget.value;
-              _pendingDirection = 0;
-            });
-            unawaited(_controller.reverse());
-          }
-        }),
-      );
+    if (old.value == widget.value) {
+      return;
     }
+    _pendingDirection = widget.direction;
+    if (AppMotion.reduced(context)) {
+      _displayValue = widget.value;
+      _pendingDirection = 0;
+      return;
+    }
+    if (_controller.status == AnimationStatus.forward) {
+      // Already mid-transition to a newer value: let it settle and pick up
+      // the latest value on completion instead of restarting the timeline
+      // from zero, which would hard-reset the roll on every rapid tap.
+      return;
+    }
+    unawaited(
+      _controller.forward(from: 0).then((_) {
+        if (mounted) {
+          setState(() {
+            _displayValue = widget.value;
+            _pendingDirection = 0;
+          });
+          unawaited(_controller.reverse());
+        }
+      }),
+    );
   }
 
   @override
@@ -187,6 +198,7 @@ class _QuantityButtonState extends State<_QuantityButton> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final reduceMotion = AppMotion.reduced(context);
     return GestureDetector(
       onTapDown: _onTapDown,
       onTapUp: _onTapUp,
@@ -194,13 +206,17 @@ class _QuantityButtonState extends State<_QuantityButton> {
       onTap: widget.enabled ? widget.onTap : null,
       child: AnimatedOpacity(
         opacity: widget.enabled ? 1.0 : 0.38,
-        duration: const Duration(milliseconds: 100),
+        duration: reduceMotion
+            ? Duration.zero
+            : const Duration(milliseconds: 100),
         curve: AppMotion.easeOut,
         child: AnimatedScale(
           scale: _pressed ? 0.90 : 1.0,
-          duration: _pressed
-              ? const Duration(milliseconds: 100)
-              : const Duration(milliseconds: 80),
+          duration: reduceMotion
+              ? Duration.zero
+              : (_pressed
+                    ? const Duration(milliseconds: 100)
+                    : const Duration(milliseconds: 80)),
           curve: AppMotion.easeOut,
           child: SizedBox(
             width: 36,

@@ -1,5 +1,5 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 
 service Bike_Service{
   rpc static(Bike_request) returns (Bike_static) {}

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/shared/map/wkt.dart';
+import 'package:wheres_the_bus/shared/map/wkt.dart';
 
 void main() {
   test('parses MULTILINESTRING into lon/lat-swapped LatLng segments', () {

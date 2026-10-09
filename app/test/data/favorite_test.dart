@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/models/favorite.dart';
-import 'package:wheres_the_car/features/favorites/favorite_actions.dart';
-import 'package:wheres_the_car/shared/widgets/transport_icon.dart';
+import 'package:wheres_the_bus/data/models/favorite.dart';
+import 'package:wheres_the_bus/features/favorites/favorite_actions.dart';
+import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 void main() {
   test('Favorite id is type-scoped and stable', () {

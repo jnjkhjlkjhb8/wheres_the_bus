@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/decoders/near_decoder.dart';
-import 'package:wheres_the_car/data/generated/near.pb.dart';
-import 'package:wheres_the_car/data/models/near_models.dart';
+import 'package:wheres_the_bus/data/decoders/near_decoder.dart';
+import 'package:wheres_the_bus/data/generated/near.pb.dart';
+import 'package:wheres_the_bus/data/models/near_models.dart';
 
 NearStation _station(String id, String name, {bool routed = true}) =>
     NearStation(

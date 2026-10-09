@@ -1,6 +1,6 @@
 import 'package:equatable/equatable.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/models/near_models.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/models/near_models.dart';
 
 class NearbyState extends Equatable {
   const NearbyState({

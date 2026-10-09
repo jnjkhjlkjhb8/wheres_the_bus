@@ -1,33 +1,22 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/data/models/tra_stations.dart';
-import 'package:wheres_the_car/shared/motion/app_motion.dart';
-import 'package:wheres_the_car/shared/widgets/clock_dial.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
+import 'package:wheres_the_bus/data/models/tra_stations.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_button.dart';
+import 'package:wheres_the_bus/shared/widgets/app_dialog.dart';
+import 'package:wheres_the_bus/shared/widgets/clock_dial.dart';
+import 'package:wheres_the_bus/shared/widgets/station_display_field.dart';
 
 Future<String?> showTRAStationPicker(BuildContext context) {
-  return showGeneralDialog<String>(
+  return showAppModal<String>(
     context: context,
-    barrierDismissible: true,
     barrierLabel: '選擇車站',
-    barrierColor: Colors.black54,
-    transitionDuration: AppMotion.sheet,
-    pageBuilder: (_, _, _) => const _TRAPickerDialog(),
-    transitionBuilder: (context, animation, _, child) {
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: AppMotion.easeOut,
-        reverseCurve: AppMotion.easeOut.flipped,
-      );
-      return FadeTransition(
-        opacity: curved,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.92, end: 1).animate(curved),
-          child: child,
-        ),
-      );
-    },
+    builder: (_) => const _TRAPickerDialog(),
   );
 }
 
@@ -39,11 +28,14 @@ class _TRAPickerDialog extends StatefulWidget {
 }
 
 class _TRAPickerDialogState extends State<_TRAPickerDialog> {
-  String _hemisphere = '北部';
+  // Reopens on the half last used. An unknown stored value (data reshaped
+  // since it was written) falls back rather than throwing on the lookup.
+  String _hemisphere = TraStations.data.containsKey(HiveStore.traHemisphere)
+      ? HiveStore.traHemisphere!
+      : '北部';
   int _regionIndex = 0;
   int _stationIndex = 0;
   bool _stationTile = false;
-  Timer? _advanceTimer;
 
   List<String> get _regions => TraStations.data[_hemisphere]!.keys.toList();
 
@@ -58,12 +50,6 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
 
   int get _activeIndex => _stationTile ? _stationIndex : _regionIndex;
 
-  @override
-  void dispose() {
-    _advanceTimer?.cancel();
-    super.dispose();
-  }
-
   void _onDialSelected(int idx) {
     setState(() {
       if (_stationTile) {
@@ -73,21 +59,23 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
         _stationIndex = 0;
       }
     });
+  }
+
+  // Region → station is a two-step flow: releasing the dial after picking a
+  // region advances to station select. Releasing in station mode does nothing
+  // (the station tap on the region tile is how you go back to fix the region).
+  void _onDialReleased() {
     if (!_stationTile) {
-      _advanceTimer?.cancel();
-      _advanceTimer = Timer(const Duration(milliseconds: 300), () {
-        if (mounted) setState(() => _stationTile = true);
-      });
+      setState(() => _stationTile = true);
     }
   }
 
   void _selectTile(bool station) {
-    _advanceTimer?.cancel();
     setState(() => _stationTile = station);
   }
 
   void _setHemisphere(String h) {
-    _advanceTimer?.cancel();
+    unawaited(HiveStore.setTraHemisphere(h));
     setState(() {
       _hemisphere = h;
       _regionIndex = 0;
@@ -99,13 +87,20 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final motion = !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
+    final motion = !AppMotion.reduced(context);
 
     return Dialog(
       backgroundColor: cs.surfaceContainerHigh,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusModal),
+      ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space16,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,40 +112,29 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AppTheme.space20),
             _header(cs, motion),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppTheme.space24),
             Center(
               child: ClockDial(
                 items: _activeItems,
                 selectedIndex: _activeIndex,
                 onSelected: _onDialSelected,
+                onReleased: _onDialReleased,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTheme.space16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                TextButton(
+                AppButton.text(
+                  label: '取消',
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text(
-                    '取消',
-                    style: TextStyle(
-                      color: cs.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                 ),
-                const SizedBox(width: 8),
-                TextButton(
+                const SizedBox(width: AppTheme.space8),
+                AppButton.text(
+                  label: '確定',
                   onPressed: () => Navigator.of(context).pop(_station),
-                  child: Text(
-                    '確定',
-                    style: TextStyle(
-                      color: cs.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                 ),
               ],
             ),
@@ -166,28 +150,24 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
       children: [
         Row(
           children: [
-            _tile(
-              cs,
-              _region,
-              motion,
+            StationDisplayField(
+              value: _region,
               active: !_stationTile,
               onTap: () => _selectTile(false),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
               child: Text(
                 ':',
                 style: TextStyle(
                   fontSize: 36,
                   fontWeight: FontWeight.w400,
-                  color: cs.onSurface,
+                  color: cs.onSurfaceVariant,
                 ),
               ),
             ),
-            _tile(
-              cs,
-              _station,
-              motion,
+            StationDisplayField(
+              value: _station,
               active: _stationTile,
               onTap: () => _selectTile(true),
             ),
@@ -195,44 +175,6 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
         ),
         _hemisphereToggle(cs, motion),
       ],
-    );
-  }
-
-  Widget _tile(
-    ColorScheme cs,
-    String text,
-    bool motion, {
-    required bool active,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: Duration(milliseconds: motion ? 150 : 0),
-        curve: Curves.easeOut,
-        width: 76,
-        height: 64,
-        decoration: BoxDecoration(
-          color: active ? cs.primaryContainer : cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        alignment: Alignment.center,
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: AnimatedDefaultTextStyle(
-              duration: Duration(milliseconds: motion ? 150 : 0),
-              style: TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.w400,
-                color: active ? cs.onPrimaryContainer : cs.onSurface,
-              ),
-              child: Text(text),
-            ),
-          ),
-        ),
-      ),
     );
   }
 
@@ -249,19 +191,22 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
           final h = e.value;
           final active = h == _hemisphere;
           return AnimatedContainer(
-            duration: Duration(milliseconds: motion ? 150 : 0),
-            curve: Curves.easeOut,
+            duration: motion ? AppMotion.micro : Duration.zero,
+            curve: AppMotion.easeOut,
             decoration: BoxDecoration(
               color: active ? cs.tertiaryContainer : null,
               border: e.key == 0
                   ? Border(bottom: BorderSide(color: cs.outline))
                   : null,
             ),
-            child: InkWell(
+            // Two cells stack to the field height (76) so the toggle's baseline
+            // lines up with the value fields, as M3's AM/PM does.
+            child: Pressable(
               onTap: () => _setHemisphere(h),
+              semanticLabel: h,
               child: SizedBox(
-                width: 48,
-                height: 32,
+                width: 52,
+                height: 38,
                 child: Center(
                   child: Text(
                     h,

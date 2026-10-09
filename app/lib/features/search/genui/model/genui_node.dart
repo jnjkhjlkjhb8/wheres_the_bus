@@ -14,7 +14,6 @@ sealed class GenUiNode {
           badges: ((json['badges'] as List?) ?? const [])
               .map((e) => e.toString())
               .toList(),
-          etaText: json['etaText'] as String? ?? '',
           refUid: _refUid(json),
         );
       case 'step':
@@ -61,15 +60,9 @@ class GenUiText extends GenUiNode {
 }
 
 class GenUiRoute extends GenUiNode {
-  const GenUiRoute({
-    required this.title,
-    required this.badges,
-    required this.etaText,
-    this.refUid,
-  });
+  const GenUiRoute({required this.title, required this.badges, this.refUid});
   final String title;
   final List<String> badges;
-  final String etaText;
   final String? refUid;
 }
 

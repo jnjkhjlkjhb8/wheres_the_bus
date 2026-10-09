@@ -1,10 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/models/alert_models.dart';
-import 'package:wheres_the_car/data/repositories/alert_repository.dart';
-import 'package:wheres_the_car/data/repositories/settings_repository.dart';
-import 'package:wheres_the_car/features/alerts/bloc/alert_bloc.dart';
-import 'package:wheres_the_car/features/alerts/bloc/alert_event.dart';
-import 'package:wheres_the_car/features/alerts/bloc/alert_state.dart';
+import 'package:wheres_the_bus/data/models/alert_models.dart';
+import 'package:wheres_the_bus/data/repositories/alert_repository.dart';
+import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
+import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
+import 'package:wheres_the_bus/features/alerts/bloc/alert_event.dart';
+import 'package:wheres_the_bus/features/alerts/bloc/alert_state.dart';
 
 import '../../support/helpers/in_memory_settings_store.dart';
 
@@ -45,15 +45,11 @@ void main() {
     expect(repository.readAlerts(), contains('中和線延誤'));
   });
 
-  test('AlertReceived still adds non-green alerts', () async {
+  test('AlertReceived stores the batch a source reported', () async {
     final bloc = AlertBloc(repository: _repo(const {}));
     addTearDown(bloc.close);
 
-    const alert = AlertViewModel(
-      message: '紅色警示',
-      level: AlertSeverity.red,
-      rawJson: {},
-    );
+    const alert = AlertViewModel(message: '紅色警示', level: AlertSeverity.red);
     final next = expectLater(
       bloc.stream,
       emits(
@@ -64,7 +60,7 @@ void main() {
         ),
       ),
     );
-    bloc.add(const AlertReceived(alert));
+    bloc.add(const AlertReceived(AlertSource(AlertSourceKind.tra), [alert]));
     await next;
   });
 }

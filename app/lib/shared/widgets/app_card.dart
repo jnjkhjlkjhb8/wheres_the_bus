@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_shadows.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/app/theme/app_shadows.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
 enum _CardVariant { elevated, filled, outlined }
 
@@ -24,23 +24,25 @@ class AppCard extends StatelessWidget {
     Border? border;
 
     switch (_variant) {
+      // Card surface, never the scaffold's own colour — otherwise the card only
+      // shows where its shadow lands, and in dark mode not at all.
       case _CardVariant.elevated:
-        bg = cs.surface;
-        shadows = AppShadows.card;
+        bg = cs.surfaceContainerLow;
+        shadows = AppShadows.cardFor(cs.brightness);
         border = null;
       case _CardVariant.filled:
-        bg = cs.surfaceContainerLow;
+        bg = cs.surfaceContainerHighest;
         shadows = [];
         border = null;
       case _CardVariant.outlined:
-        bg = cs.surface;
+        bg = cs.surfaceContainerLow;
         shadows = [];
         border = Border.all(color: cs.outlineVariant);
     }
 
     return Container(
       width: double.infinity,
-      padding: padding ?? const EdgeInsets.all(16),
+      padding: padding ?? const EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),

@@ -6,54 +6,34 @@ class _FloatingAppBar extends StatelessWidget {
     required this.routeName,
     required this.dirName,
     required this.direction,
-    required this.onBookmarkTapped,
   });
   final String subRouteUid;
   final String routeName;
   final String dirName;
   final int direction;
-  final VoidCallback onBookmarkTapped;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            AppBarCircleButton(
-              onTap: () {
-                unawaited(HapticService.instance.lightTap());
-                context.pop();
-              },
-              semanticLabel: '返回',
-              child: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                size: 18,
-                color: cs.onSurface,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _RoutePill(
-                routeName: routeName,
-                dirName: dirName,
-                direction: direction,
-              ),
-            ),
-            const SizedBox(width: 12),
-            AppBarCircleButton(
-              semanticLabel: '收藏',
-              onTap: onBookmarkTapped,
-              child: BookmarkButton(
-                routeType: 'bus',
-                routeKey: subRouteUid,
-                routeLabel: routeName,
-              ),
-            ),
-          ],
+    return FloatingAppBar(
+      // maybePop rather than the button's default pop: it asks the page's
+      // PopScope first, so tapping back collapses a raised sheet exactly like
+      // the system back gesture does.
+      leading: AppBarBackButton(
+        floating: true,
+        onTap: () => Navigator.maybePop(context),
+      ),
+      middle: _RoutePill(
+        routeName: routeName,
+        dirName: dirName,
+        direction: direction,
+      ),
+      trailing: AppBarCircleButton(
+        semanticLabel: AppI18n.of(context).commonFavorite,
+        child: BookmarkButton(
+          routeType: 'bus',
+          routeKey: subRouteUid,
+          routeLabel: routeName,
+          onPlate: true,
         ),
       ),
     );
@@ -74,7 +54,10 @@ class _RoutePill extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space16,
+        vertical: AppTheme.space10,
+      ),
       decoration: BoxDecoration(
         color: cs.brightness == Brightness.light
             ? Colors.white
@@ -83,7 +66,7 @@ class _RoutePill extends StatelessWidget {
         boxShadow: AppShadows.floating,
       ),
       child: Row(
-        spacing: 6,
+        spacing: AppTheme.space6,
         children: [
           Text(
             routeName,

@@ -1,161 +1,88 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart' show TimeOfDay;
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:intl/intl.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/live/arrival_feed.dart';
-import 'package:wheres_the_car/data/models/tra_models.dart';
-import 'package:wheres_the_car/data/repositories/thsr_repository.dart';
-import 'package:wheres_the_car/data/repositories/tra_repository.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_event.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_state.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
+import 'package:wheres_the_bus/data/live/arrival_feed.dart';
+import 'package:wheres_the_bus/data/models/rail_fare_quote.dart';
+import 'package:wheres_the_bus/data/repositories/thsr_repository.dart';
+import 'package:wheres_the_bus/data/repositories/tra_repository.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_state.dart';
 
 class RailBloc extends Bloc<RailEvent, RailState> {
-  RailBloc() : super(const RailInitial()) {
+  RailBloc({
+    TraRepository? traRepository,
+    ThsrRepository? thsrRepository,
+  }) : _traRepository = traRepository ?? TraRepository.instance,
+       _thsrRepository = thsrRepository ?? ThsrRepository.instance,
+       super(const RailInitial()) {
     on<RailSystemChanged>(_onSystemChanged);
-    on<RailStationSelected>(_onStationSelected);
-    on<RailLiveBoardStarted>(_onLiveBoardStarted);
-    on<RailLiveBoardStopped>(_onLiveBoardStopped);
-    on<RailQueryChanged>(_onQueryChanged);
     on<RailTimetableRequested>(_onTimetableRequested);
     on<RailTrainStopsRequested>(_onTrainStopsRequested);
     on<RailDelaysUpdated>(_onDelaysUpdated);
-    on<RailLiveBoardItemsUpdated>(_onLiveBoardItems);
-    on<RailLiveBoardFailed>(_onLiveBoardFailed);
   }
 
-  static final _dateFormat = DateFormat('yyyy-MM-dd');
+  final TraRepository _traRepository;
+  final ThsrRepository _thsrRepository;
 
-  // A station's live board and a segment's delay map are lone live values
-  // (a whole board / a whole map per frame), not accumulating arrival lists,
-  // so they ride the arrival feed's passthrough seam for resilient reconnect.
-  StreamSubscription<List<TraLiveBoardItem>>? _liveBoardSub;
+  // Both handlers run concurrently (no transformer); a slow earlier request
+  // can otherwise resolve after a newer one and clobber it.
+  var _timetableGeneration = 0;
+  var _trainStopsGeneration = 0;
+
+  /// Minutes past midnight for a backend time string (RFC3339 timestamp or a
+  /// bare `HH:mm:ss` clock), or null when unparseable.
+  static int? _minutesOfDay(String t) {
+    final s = t.contains('T') ? t.split('T').last : t;
+    final parts = s.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    return h * 60 + m;
+  }
+
+  List<T> _sortedFiltered<T>(
+    List<T> items,
+    String Function(T) departureOf,
+    String Function(T) arrivalOf,
+    int? cutoff,
+    bool isDeparture,
+  ) {
+    final keyOf = isDeparture ? departureOf : arrivalOf;
+    final sorted = [...items]
+      ..sort(
+        (a, b) => (_minutesOfDay(keyOf(a)) ?? -1).compareTo(
+          _minutesOfDay(keyOf(b)) ?? -1,
+        ),
+      );
+    if (cutoff == null) return sorted;
+    return sorted.where((item) {
+      final m = _minutesOfDay(keyOf(item));
+      if (m == null) return true;
+      return isDeparture ? m >= cutoff : m <= cutoff;
+    }).toList();
+  }
+
+  // A segment's delay map is a lone live value (a whole map per frame), not an
+  // arrival list, so it stays on the feed's passthrough seam.
   StreamSubscription<Map<String, int>>? _delaySub;
 
-  RailLiveBoardLoaded _defaultLoaded(RailSystem system) {
-    final now = DateTime.now();
-    return RailLiveBoardLoaded(
-      system: system,
-      stationId: '',
-      stationName: '桃園',
-      traItems: const [],
-      queryOriginId: '',
-      queryOriginName: '起點站',
-      queryDestId: '',
-      queryDestName: '終點站',
-      queryDate: now,
-      queryTime: TimeOfDay.fromDateTime(now),
-      departureMode: true,
-    );
-  }
-
   void _onSystemChanged(RailSystemChanged event, Emitter<RailState> emit) {
-    final current = state;
-    if (current is RailLiveBoardLoaded) {
-      emit(current.copyWith(system: event.system));
-    } else {
-      emit(_defaultLoaded(event.system));
-    }
-  }
-
-  void _onStationSelected(RailStationSelected event, Emitter<RailState> emit) {
-    final current = state;
-    if (current is RailLiveBoardLoaded) {
-      emit(
-        current.copyWith(
-          stationId: event.stationId,
-          stationName: event.stationName,
-        ),
-      );
-    } else {
-      emit(
-        _defaultLoaded(RailSystem.tra).copyWith(
-          stationId: event.stationId,
-          stationName: event.stationName,
-        ),
-      );
-    }
-    add(const RailLiveBoardStarted());
-  }
-
-  Future<void> _onLiveBoardStarted(
-    RailLiveBoardStarted event,
-    Emitter<RailState> emit,
-  ) async {
-    final current = state;
-    final system = current is RailLiveBoardLoaded
-        ? current.system
-        : RailSystem.tra;
-    final stationId = current is RailLiveBoardLoaded ? current.stationId : '';
-    if (stationId.isEmpty || system != RailSystem.tra) return;
-    if (current is! RailLiveBoardLoaded) {
-      emit(_defaultLoaded(system).copyWith(stationId: stationId));
-    }
-
-    final date = _dateFormat.format(DateTime.now());
-    await _liveBoardSub?.cancel();
-    _liveBoardSub = ArrivalFeed.passthrough(
-      source: () => TraRepository.instance.liveBoard(stationId, date),
-      onFailure: (e) => add(RailLiveBoardFailed(e)),
-    ).listen((items) => add(RailLiveBoardItemsUpdated(items)));
-  }
-
-  void _onLiveBoardItems(
-    RailLiveBoardItemsUpdated event,
-    Emitter<RailState> emit,
-  ) {
-    final current = state;
-    if (current is RailLiveBoardLoaded) {
-      emit(current.copyWith(traItems: event.items));
-    }
-  }
-
-  void _onLiveBoardFailed(
-    RailLiveBoardFailed event,
-    Emitter<RailState> emit,
-  ) {
-    emit(RailError(event.error));
-  }
-
-  Future<void> _onLiveBoardStopped(
-    RailLiveBoardStopped event,
-    Emitter<RailState> emit,
-  ) async {
-    await _liveBoardSub?.cancel();
-  }
-
-  void _onQueryChanged(RailQueryChanged event, Emitter<RailState> emit) {
-    final current = state;
-    if (current is RailLiveBoardLoaded) {
-      emit(
-        current.copyWith(
-          queryOriginId: event.originId,
-          queryOriginName: event.originName,
-          queryDestId: event.destId,
-          queryDestName: event.destName,
-          queryDate: event.date,
-          queryTime: event.time,
-          departureMode: event.departureMode,
-        ),
-      );
-    }
+    // Reset to the pre-query prompt; results only exist after an explicit
+    // timetable request for the newly selected system.
+    emit(const RailInitial());
   }
 
   Future<void> _onTimetableRequested(
     RailTimetableRequested event,
     Emitter<RailState> emit,
   ) async {
-    final current = state;
-    final system = current is RailLiveBoardLoaded
-        ? current.system
-        : RailSystem.tra;
-    final originName = current is RailLiveBoardLoaded
-        ? current.queryOriginName
-        : '';
-    final destName = current is RailLiveBoardLoaded
-        ? current.queryDestName
-        : '';
+    final gen = ++_timetableGeneration;
+    final system = event.system;
+    final originName = event.origin.name;
+    final destName = event.destination.name;
 
     emit(
       RailTimetableLoading(
@@ -166,54 +93,108 @@ class RailBloc extends Bloc<RailEvent, RailState> {
       ),
     );
 
+    unawaited(
+      HiveStore.addRecentOdQuery(
+        system: system.name,
+        originId: event.origin.id ?? '',
+        originName: originName,
+        destId: event.destination.id ?? '',
+        destName: destName,
+      ),
+    );
+
+    await _delaySub?.cancel();
+    _delaySub = null;
+
     try {
+      final originId = _stationId(event.origin);
+      final destId = _stationId(event.destination);
+      final fareFuture = system == RailSystem.thsr
+          ? _loadFares(event.date, originId, destId)
+          : Future<RailFareQuote?>.value();
       if (system == RailSystem.tra) {
-        final items = await TraRepository.instance.timetable(
+        final items = await _traRepository.timetable(
           event.date,
-          event.originId,
-          event.destId,
+          originId,
+          destId,
         );
+        if (gen != _timetableGeneration) return;
+        final fares = await fareFuture;
         emit(
           RailTimetableLoaded(
             system: system,
             originName: originName,
             destName: destName,
             date: event.date,
-            traItems: items,
+            fareQuote: fares,
+            traItems: _sortedFiltered(
+              items,
+              (item) => item.departureTime,
+              (item) => item.arrivalTime,
+              event.cutoffMinutes,
+              event.isDeparture,
+            ),
           ),
         );
-        await _delaySub?.cancel();
         _delaySub = ArrivalFeed.passthrough(
-          source: () => TraRepository.instance.delay(
+          source: () => _traRepository.delay(
             event.date,
-            event.originId,
-            event.destId,
+            originId,
+            destId,
           ),
         ).listen((delays) => add(RailDelaysUpdated(delays)));
       } else {
-        final items = await ThsrRepository.instance.timetable(
+        final items = await _thsrRepository.timetable(
           event.date,
-          event.originId,
-          event.destId,
+          originId,
+          destId,
         );
+        if (gen != _timetableGeneration) return;
+        final fares = await fareFuture;
         emit(
           RailTimetableLoaded(
             system: system,
             originName: originName,
             destName: destName,
             date: event.date,
-            thsrItems: items,
+            fareQuote: fares,
+            thsrItems: _sortedFiltered(
+              items,
+              (item) => item.departureTime,
+              (item) => item.arrivalTime,
+              event.cutoffMinutes,
+              event.isDeparture,
+            ),
           ),
         );
       }
     } on Object catch (e) {
+      if (gen != _timetableGeneration) return;
       emit(RailError(AppError.from(e)));
     }
   }
 
+  Future<RailFareQuote?> _loadFares(
+    String date,
+    String originId,
+    String destId,
+  ) async {
+    try {
+      return RailFareQuote.thsr(
+        fares: await _thsrRepository.fares(date, originId, destId),
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  String _stationId(RailStationSelection selection) {
+    final id = selection.id;
+    return (id != null && id.isNotEmpty) ? id : selection.name;
+  }
+
   @override
   Future<void> close() async {
-    await _liveBoardSub?.cancel();
     await _delaySub?.cancel();
     return super.close();
   }
@@ -221,6 +202,7 @@ class RailBloc extends Bloc<RailEvent, RailState> {
   void _onDelaysUpdated(RailDelaysUpdated event, Emitter<RailState> emit) {
     final current = state;
     if (current is! RailTimetableLoaded) return;
+    if (current.system != RailSystem.tra) return;
     emit(current.copyWith(delays: event.delays));
   }
 
@@ -228,16 +210,18 @@ class RailBloc extends Bloc<RailEvent, RailState> {
     RailTrainStopsRequested event,
     Emitter<RailState> emit,
   ) async {
+    final gen = ++_trainStopsGeneration;
     try {
       final current = state;
       final system = current is RailTimetableLoaded
           ? current.system
           : RailSystem.tra;
       if (system == RailSystem.tra) {
-        final stops = await TraRepository.instance.stops(
+        final stops = await _traRepository.stops(
           event.date,
           event.trainNo,
         );
+        if (gen != _trainStopsGeneration) return;
         emit(
           RailTrainStopsLoaded(
             system: system,
@@ -247,10 +231,11 @@ class RailBloc extends Bloc<RailEvent, RailState> {
           ),
         );
       } else {
-        final stops = await ThsrRepository.instance.stops(
+        final stops = await _thsrRepository.stops(
           event.date,
           event.trainNo,
         );
+        if (gen != _trainStopsGeneration) return;
         emit(
           RailTrainStopsLoaded(
             system: system,
@@ -261,6 +246,7 @@ class RailBloc extends Bloc<RailEvent, RailState> {
         );
       }
     } on Object catch (e) {
+      if (gen != _trainStopsGeneration) return;
       emit(RailError(AppError.from(e)));
     }
   }

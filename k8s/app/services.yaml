@@ -1,0 +1,374 @@
+# The four services (ADR-0026). CI applies this tree on every release; image
+# references are pinned to release digests by the deploy workflow.
+#
+# api and rider-api roll with zero unavailability: a new Pod must be ready
+# before an old one stops, and an old one first sleeps in preStop so the
+# Service stops routing to it before SIGTERM starts GracefulStop.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: bus
+spec:
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 8080
+    - name: grpc
+      port: 50051
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: bus
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      priorityClassName: bus-critical
+      automountServiceAccountToken: false
+      imagePullSecrets: [{name: ghcr-pull}]
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/jnjkhjlkjhb8/bus-api
+          envFrom:
+            - secretRef:
+                name: api-env
+          env:
+            - name: TZ
+              value: Asia/Taipei
+            - name: REDIS_ADDR
+              value: redis:6379
+            - name: MOTIS_BASE_URL
+              value: http://motis:8080
+            - name: GRPC_TLS
+              value: "true"
+            - name: GRPC_TLS_CERT_FILE
+              value: /tls/grpc/tls.crt
+            - name: GRPC_TLS_KEY_FILE
+              value: /tls/grpc/tls.key
+            - name: RIDER_API_ADDR
+              value: rider-api:50052
+            - name: RIDER_HTTP_URL
+              value: https://rider-api:8090
+            - name: RIDER_TLS_DIR
+              value: /tls/rider-client
+            - name: POWERSYNC_KEY_FILE
+              value: /keys/powersync_key.pem
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /secrets/firebase/firebase-sa.json
+            - name: GOMEMLIMIT
+              value: 460MiB
+          ports:
+            - containerPort: 8080
+            - containerPort: 50051
+          readinessProbe:
+            httpGet:
+              path: /api/.well-known/jwks.json
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 50051
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: rider-client
+              mountPath: /tls/rider-client
+              readOnly: true
+            - name: powersync-key
+              mountPath: /keys
+              readOnly: true
+            - name: firebase
+              mountPath: /secrets/firebase
+              readOnly: true
+            - name: grpc-tls
+              mountPath: /tls/grpc
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: rider-client
+          secret:
+            secretName: api-client-tls
+        - name: powersync-key
+          secret:
+            secretName: powersync-key
+        - name: firebase
+          secret:
+            secretName: firebase-sa
+        - name: grpc-tls
+          secret:
+            secretName: api-grpc-tls
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime
+  namespace: bus
+spec:
+  replicas: 1
+  # One poller at a time: two would double TDX calls and Redis writes.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: realtime
+  template:
+    metadata:
+      labels:
+        app: realtime
+    spec:
+      priorityClassName: bus-standard
+      automountServiceAccountToken: false
+      imagePullSecrets: [{name: ghcr-pull}]
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: realtime
+          image: ghcr.io/jnjkhjlkjhb8/bus-realtime
+          envFrom:
+            - secretRef:
+                name: realtime-env
+          env:
+            - name: TZ
+              value: Asia/Taipei
+            - name: REDIS_ADDR
+              value: redis:6379
+            - name: HEALTH_FILE
+              value: /tmp/healthy
+            - name: GOMEMLIMIT
+              value: 680MiB
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "find /tmp/healthy -mmin -2 | grep -q ."]
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 500m
+              memory: 384Mi
+            limits:
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rider-api
+  namespace: bus
+spec:
+  selector:
+    app: rider-api
+  ports:
+    - name: grpc
+      port: 50052
+    - name: http
+      port: 8090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rider-api
+  namespace: bus
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: rider-api
+  template:
+    metadata:
+      labels:
+        app: rider-api
+    spec:
+      priorityClassName: bus-critical
+      automountServiceAccountToken: false
+      imagePullSecrets: [{name: ghcr-pull}]
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rider-api
+          image: ghcr.io/jnjkhjlkjhb8/bus-rider
+          args: ["api"]
+          envFrom:
+            - secretRef:
+                name: rider-env
+          env:
+            - name: TZ
+              value: Asia/Taipei
+            - name: REDIS_ADDR
+              value: redis:6379
+            - name: RIDER_TLS_DIR
+              value: /tls/rider-api
+          ports:
+            - containerPort: 50052
+            - containerPort: 8090
+          readinessProbe:
+            tcpSocket:
+              port: 50052
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 50052
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tls
+              mountPath: /tls/rider-api
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: rider-api-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rider-worker
+  namespace: bus
+spec:
+  replicas: 1
+  # One dispatcher at a time keeps claim/reclaim simple; a short gap during
+  # a rollout delays pushes, it does not lose them.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rider-worker
+  template:
+    metadata:
+      labels:
+        app: rider-worker
+    spec:
+      priorityClassName: bus-standard
+      automountServiceAccountToken: false
+      imagePullSecrets: [{name: ghcr-pull}]
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rider-worker
+          image: ghcr.io/jnjkhjlkjhb8/bus-rider
+          args: ["worker"]
+          envFrom:
+            - secretRef:
+                name: rider-env
+          env:
+            - name: TZ
+              value: Asia/Taipei
+            - name: REDIS_ADDR
+              value: redis:6379
+            - name: HEALTH_FILE
+              value: /tmp/healthy
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /secrets/firebase/firebase-sa.json
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "find /tmp/healthy -mmin -2 | grep -q ."]
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: firebase
+              mountPath: /secrets/firebase
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: firebase
+          secret:
+            secretName: firebase-sa
+        - name: tmp
+          emptyDir:
+            sizeLimit: 32Mi

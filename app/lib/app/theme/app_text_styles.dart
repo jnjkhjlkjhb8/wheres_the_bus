@@ -12,6 +12,7 @@ class AppTextStyles {
     fontWeight: FontWeight.w700,
     fontSize: 24,
     height: 1.3,
+    letterSpacing: -0.48,
   );
 
   static const TextStyle heading2 = TextStyle(
@@ -40,13 +41,15 @@ class AppTextStyles {
     fontWeight: FontWeight.w400,
     fontSize: 12,
     height: 1.4,
+    letterSpacing: 0.1,
   );
 
   static const TextStyle bodyVerySmall = TextStyle(
     fontFamily: 'IBMPlexSans',
     fontWeight: FontWeight.w400,
-    fontSize: 8,
+    fontSize: 10,
     height: 1.4,
+    letterSpacing: 0.15,
   );
 
   static const TextStyle memo = TextStyle(
@@ -54,5 +57,22 @@ class AppTextStyles {
     fontWeight: FontWeight.w400,
     fontSize: 13,
     height: 1.4,
+  );
+
+  static TextStyle timeValue({
+    double? size,
+    FontWeight? weight,
+    Color? color,
+    TextDecoration? decoration,
+    double? height,
+    double? letterSpacing,
+  }) => memo.copyWith(
+    fontSize: size,
+    fontWeight: weight,
+    color: color,
+    decoration: decoration,
+    height: height,
+    letterSpacing: letterSpacing,
+    fontFeatures: tabularFigures,
   );
 }

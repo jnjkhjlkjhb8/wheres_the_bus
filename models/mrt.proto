@@ -1,7 +1,11 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 service Mrt_Service{
   rpc eta(Ask_mrt) returns (stream Resp_Mrt_eta) {}
+  rpc CreateTrack(CreateMrtTrackRequest) returns (MrtTrackState) {}
+  rpc WatchTrack(WatchMrtTrackRequest) returns (stream MrtTrackState) {}
+  rpc CancelTrack(CancelMrtTrackRequest) returns (MrtTrackAck) {}
+  rpc SetTrackPushToken(SetMrtTrackPushTokenRequest) returns (MrtTrackAck) {}
 }
 // Wire-compatible with the former `bytes data = 1`: field 1 still carries a
 // marshaled Mrt_live, now typed for the interface.
@@ -15,10 +19,75 @@ message Ask_mrt{
 message Mrt_live{
   string LineID = 1;
   string StationID = 2;
-  string system = 3;
-  string TripHeadSign = 4;
-  string DestinationStaionID = 5;
-  string DestinationStationName = 6;
-  int32 ServiceStatus = 7;
-  int32 EstimateTime = 8;
+  string StationName = 3;
+  string system = 4;
+  string TripHeadSign = 5;
+  string DestinationStaionID = 6;
+  string DestinationStationName = 7;
+  int32 ServiceStatus = 8;
+  int32 EstimateTime = 9;
+  string CountDown = 10;
+  string NowDateTime = 11;
+  string CN1 = 12;
+  string TrainNumber = 13;
+  CartWeight Weight = 14;
+}
+message CartWeight {
+  string Cart1L = 1;
+  string Cart2L = 2;
+  string Cart3L = 3;
+  string Cart4L = 4;
+  string Cart5L = 5;
+  string Cart6L = 6;
+}
+message CreateMrtTrackRequest {
+  string install_id = 1;
+  string car_id = 2;
+  string board_station_id = 3;
+  string dest_station_id = 4;
+  string target_station_id = 5;
+  int32 lead_stops = 6;
+  string system = 7;
+  string vehicle_label = 8;
+  string line_code = 9;
+  string line_color_hex = 10;
+}
+message WatchMrtTrackRequest {
+  string track_id = 1;
+}
+message CancelMrtTrackRequest {
+  string install_id = 1;
+  string track_id = 2;
+}
+message MrtTrackAck {
+  bool ok = 1;
+}
+message MrtTrackState {
+  string track_id = 1;
+  string trip_id = 2;
+  string car_id = 3;
+  repeated string path_station_ids = 4;
+  repeated string path_station_names = 5;
+  int32 target_index = 6;
+  int32 current_index = 7;
+  int32 remaining_stops = 8;
+  string next_station_id = 9;
+  string next_station_name = 10;
+  double progress = 11;
+  string status = 12;
+  int64 next_poll_at_unix = 13;
+  int32 lead_stops = 14;
+  string system = 15;
+  // Internal: when the position last advanced. The tracker ends a session as
+  // stale when no advance lands within the stale window. Harmless to expose.
+  int64 last_progress_at_unix = 16;
+  string vehicle_label = 17;
+  string line_code = 18;
+  string line_color_hex = 19;
+}
+
+message SetMrtTrackPushTokenRequest {
+  string install_id = 1;
+  string track_id = 2;
+  string push_token = 3;
 }

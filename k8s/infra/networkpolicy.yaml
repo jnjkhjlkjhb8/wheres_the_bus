@@ -1,0 +1,216 @@
+# Default deny, then one allow per real flow (ADR-0026). Standard
+# NetworkPolicy cannot filter by DNS name, so workloads that call public APIs
+# (TDX, FCM/APNs, MQTT, CWA, the Azure MySQL archive) get general internet
+# egress minus the cluster and LAN ranges; that is the limit of this control.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: bus
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: bus
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Public internet only: not the pod/service CIDRs, not the LAN.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internet-egress
+  namespace: bus
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [api, realtime, rider-api, rider-worker, pipeline, cloudflared]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+  namespace: bus
+spec:
+  podSelector:
+    matchLabels: { app: postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [api, realtime, rider-api, rider-worker, pipeline, powersync, migrate]
+      ports:
+        - port: 5432
+---
+# The backup repository lives on another LAN host; only PostgreSQL's
+# pgBackRest reaches it, and only over SSH/SFTP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-backup-egress
+  namespace: bus
+spec:
+  podSelector:
+    # postgres-restore: the drill instance in k8s/restore reads the same repository.
+    matchExpressions:
+      - { key: app, operator: In, values: [postgres, postgres-restore] }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.0/16
+      ports:
+        - port: 22
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+  namespace: bus
+spec:
+  podSelector:
+    matchLabels: { app: redis }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [api, realtime, rider-api, rider-worker, pipeline]
+      ports:
+        - port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: bus
+spec:
+  podSelector:
+    matchLabels: { app: api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [cloudflared, powersync, motis]
+      ports:
+        - port: 8080
+        - port: 50051
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rider-api-ingress
+  namespace: bus
+spec:
+  podSelector:
+    matchLabels: { app: rider-api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: api }
+      ports:
+        - port: 50052
+        - port: 8090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: powersync-ingress
+  namespace: bus
+spec:
+  podSelector:
+    matchLabels: { app: powersync }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: cloudflared }
+      ports:
+        - port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: motis-ingress
+  namespace: bus
+spec:
+  podSelector:
+    matchLabels: { app: motis }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [api, pipeline]
+      ports:
+        - port: 8080
+---
+# Egress inside the namespace mirrors the ingress rules above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: in-cluster-egress
+  namespace: bus
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: postgres }
+      ports: [{ port: 5432 }]
+    - to:
+        - podSelector:
+            matchLabels: { app: redis }
+      ports: [{ port: 6379 }]
+    - to:
+        - podSelector:
+            matchLabels: { app: rider-api }
+      ports: [{ port: 50052 }, { port: 8090 }]
+    - to:
+        - podSelector:
+            matchLabels: { app: api }
+      ports: [{ port: 8080 }, { port: 50051 }]
+    - to:
+        - podSelector:
+            matchLabels: { app: powersync }
+      ports: [{ port: 8080 }]
+    - to:
+        - podSelector:
+            matchLabels: { app: motis }
+      ports: [{ port: 8080 }]

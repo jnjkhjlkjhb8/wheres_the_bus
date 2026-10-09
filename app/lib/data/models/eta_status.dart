@@ -1,13 +1,9 @@
-/// The unified ETA display status every transit mode maps its live estimate
-/// into. The shared arrival tile (shared/widgets/eta_list_tile.dart) renders it
-/// through one `EtaValue`, so the mono-time and status-colour invariants have a
-/// single owner. The status *labels/colours* are the tile's; the *rules* that
-/// pick a status stay in eta_format.dart, applied by each mode's mapper.
 sealed class EtaStatus {
   const EtaStatus();
   factory EtaStatus.arriving() = EtaArriving;
   factory EtaStatus.approaching() = EtaApproaching;
   factory EtaStatus.minutes(int m) = EtaMinutes;
+  factory EtaStatus.minutesSeconds(int m, int s) = EtaMinutesSeconds;
   factory EtaStatus.label(String text) = EtaLabel;
   factory EtaStatus.unknown() = EtaUnknown;
 }
@@ -23,6 +19,14 @@ final class EtaApproaching extends EtaStatus {
 final class EtaMinutes extends EtaStatus {
   const EtaMinutes(this.value);
   final int value;
+}
+
+/// A minute + second countdown (捷運: 3分45秒). Metro carries second precision
+/// and decays locally between server frames, so it needs the finer display.
+final class EtaMinutesSeconds extends EtaStatus {
+  const EtaMinutesSeconds(this.minutes, this.seconds);
+  final int minutes;
+  final int seconds;
 }
 
 /// A service-state label (e.g. 尚未發車, 末班已過, or a scheduled clock time)

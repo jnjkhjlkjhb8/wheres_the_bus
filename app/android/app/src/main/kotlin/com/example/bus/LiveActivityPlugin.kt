@@ -1,49 +1,104 @@
 package com.example.bus
 
-import android.Manifest
-import android.app.Activity
-import android.app.NotificationChannel
-import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
-import android.os.Build
-import android.widget.RemoteViews
-import androidx.core.app.ActivityCompat
-import androidx.core.app.NotificationCompat
+import android.content.Intent
+import android.content.IntentFilter
+import android.provider.Settings
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 
-class LiveActivityPlugin(private val context: Context) {
+class LiveActivityPlugin(
+    private val context: Context,
+    private val notificationPermission: NotificationPermissionCoordinator,
+) {
 
     companion object {
+        private const val TAG = "LiveActivity"
         private const val CHANNEL_NAME = "com.wheres.bus/live_activity"
-        private const val NOTIF_ID = 1001
-        private const val NOTIF_CHANNEL_ID = "live_activity"
+
+        @Volatile
+        var dartIsListening: Boolean = false
+            private set
     }
 
+    private val card = TrackNotification(context)
+
+    private var channel: MethodChannel? = null
+
+    private var receiverRegistered = false
+
+    // The 取消追蹤 action reaches Dart only while the process is alive. A dead
+    // one is covered by TrackCancelReceiver, which is in the manifest and takes
+    // the card down without needing an isolate to talk to.
+    private val cancelReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            channel?.invokeMethod("onCancelTrack", null)
+        }
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal val cancelReceiverForTest: BroadcastReceiver
+        get() = cancelReceiver
+
     fun register(messenger: BinaryMessenger) {
-        MethodChannel(messenger, CHANNEL_NAME).setMethodCallHandler { call, result ->
+        channel = MethodChannel(messenger, CHANNEL_NAME)
+        NotificationManagerCompat.from(context).cancel(TrackNotification.NOTIF_ID)
+        ContextCompat.registerReceiver(
+            context,
+            cancelReceiver,
+            IntentFilter(TrackNotification.CANCEL_ACTION),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        receiverRegistered = true
+        dartIsListening = true
+        channel!!.setMethodCallHandler { call, result ->
             @Suppress("UNCHECKED_CAST")
             val data = call.arguments as? Map<String, Any?> ?: emptyMap()
             when (call.method) {
                 "start" -> {
-                    ensureChannel()
-                    ensurePermission()
-                    showNotification(data)
-                    result.success("$NOTIF_ID")
+                    card.beginSession()
+                    try {
+                        card.post(data)
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "could not post the tracking card", e)
+                        throw e
+                    }
+                    result.success("${TrackNotification.NOTIF_ID}")
+                }
+                "requestNotificationPermission" -> {
+                    notificationPermission.request { granted -> result.success(granted) }
+                }
+                // Whether anything this app posts can be seen at all. Asked
+                // rather than remembered: the rider can revoke it in system
+                // settings at any time, and the app is not told.
+                "notificationsEnabled" -> {
+                    result.success(NotificationManagerCompat.from(context).areNotificationsEnabled())
+                }
+                // Once the runtime prompt has been refused, the system stops
+                // showing it, and the only way back is the settings screen —
+                // so the app has to be able to point at it.
+                "openNotificationSettings" -> {
+                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    result.success(null)
                 }
                 "update" -> {
-                    showNotification(data)
+                    try {
+                        card.post(data)
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "could not refresh the tracking card", e)
+                        throw e
+                    }
                     result.success(null)
                 }
                 "stop" -> {
-                    NotificationManagerCompat.from(context).cancel(NOTIF_ID)
+                    card.cancel()
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -51,76 +106,16 @@ class LiveActivityPlugin(private val context: Context) {
         }
     }
 
-    private fun ensurePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                    context as Activity,
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    NOTIF_ID,
-                )
-            }
+    fun dispose() {
+        dartIsListening = false
+        // The session behind a bus or rail card is this engine's; it does not
+        // outlive it, so neither should the card.
+        card.dropUnpushedCard()
+        if (receiverRegistered) {
+            context.unregisterReceiver(cancelReceiver)
+            receiverRegistered = false
         }
-    }
-
-    private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                NOTIF_CHANNEL_ID,
-                "即時交通",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply { setShowBadge(false) }
-            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(channel)
-        }
-    }
-
-    private fun showNotification(data: Map<String, Any?>) {
-        val routeOrTrain = data["routeOrTrain"] as? String ?: ""
-        val nextStation = data["nextStation"] as? String ?: ""
-        val progress = ((data["progressPercent"] as? Double ?: 0.0) * 100).toInt()
-
-        val collapsed = RemoteViews(context.packageName, R.layout.notification_live_activity).apply {
-            setTextViewText(R.id.tv_next_station, "下一站 $nextStation")
-            setTextViewText(R.id.tv_route, routeOrTrain)
-        }
-
-        val expanded = RemoteViews(context.packageName, R.layout.notification_live_activity_expanded).apply {
-            setTextViewText(R.id.tv_next_station_exp, "下一站 $nextStation")
-            setTextViewText(R.id.tv_route_exp, routeOrTrain)
-            setImageViewBitmap(R.id.iv_seg_progress, makeSegBitmap(progress))
-        }
-
-        val notification = NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .setOngoing(true)
-            .setCustomContentView(collapsed)
-            .setCustomBigContentView(expanded)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-            .build()
-
-        NotificationManagerCompat.from(context).notify(NOTIF_ID, notification)
-    }
-
-    private fun makeSegBitmap(progressPct: Int): Bitmap {
-        val bw = 800
-        val bh = 24
-        val gap = 10
-        val r = bh / 2f
-        val filledW = ((progressPct.coerceIn(0, 100) / 100f) * (bw - gap)).toInt().coerceAtLeast(0)
-        val remainW = (bw - gap - filledW).coerceAtLeast(0)
-        val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
-        val cv = Canvas(bmp)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        if (filledW > 0) {
-            paint.color = 0xFF4CAF50.toInt()
-            cv.drawRoundRect(RectF(0f, 0f, filledW.toFloat(), bh.toFloat()), r, r, paint)
-        }
-        if (remainW > 0) {
-            paint.color = 0xFFD0D0D0.toInt()
-            cv.drawRoundRect(RectF((filledW + gap).toFloat(), 0f, bw.toFloat(), bh.toFloat()), r, r, paint)
-        }
-        return bmp
+        channel?.setMethodCallHandler(null)
+        channel = null
     }
 }

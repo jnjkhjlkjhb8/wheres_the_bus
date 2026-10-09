@@ -1,108 +1,177 @@
 part of '../home_screen.dart';
 
 extension _HomeScreenScaffold on _HomeScreenState {
+  Widget _buildMap(BuildContext context) {
+    return ValueListenableBuilder<Set<Marker>>(
+      valueListenable: _markers,
+      builder: (context, markers, _) => ValueListenableBuilder<Set<Marker>>(
+        valueListenable: _memberMarkers,
+        // Rebuilt per sheet frame purely to republish `padding`; only that
+        // option differs, so the platform view diffs down to one inset write.
+        builder: (context, memberMarkers, _) => AnimatedBuilder(
+          animation: _sheetController,
+          builder: (context, _) => GoogleMap(
+            initialCameraPosition: CameraPosition(target: _center, zoom: 15),
+            style: mapStyleOf(context),
+            onMapCreated: (controller) {
+              _mapController = controller;
+              _camCenter = _center;
+              // Closes the race where a location fix landed while the platform
+              // view was already being created with the older centre —
+              // `initialCameraPosition` is only read once.
+              unawaited(controller.moveCamera(CameraUpdate.newLatLng(_center)));
+              _scheduleNearbyForViewport();
+            },
+            markers: {...markers, ...memberMarkers},
+            // Map shares a Stack with the draggable sheet; without an eager
+            // recognizer the map loses the gesture arena, so pan/pinch leak to
+            // the sheet instead of moving the map.
+            gestureRecognizers: const {
+              Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
+            },
+            onCameraMove: (pos) {
+              _zoom = pos.zoom;
+              _camCenter = pos.target;
+            },
+            onCameraIdle: () => _onCameraIdle(context),
+            padding: EdgeInsets.only(bottom: _mapBottomPadding(context)),
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+            compassEnabled: false,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildScaffold(BuildContext context, ColorScheme cs) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final sheetNavigator = _sheetNavigatorKey.currentState;
+        final metrics = _sheetController.metrics;
+        switch (homeBackStep(
+          sheetPagePushed: sheetNavigator?.canPop() ?? false,
+          // minOffset rather than the peek fraction: peek is the lowest detent
+          // of the home grid, and reading it off the metrics keeps this honest
+          // if that grid ever changes.
+          sheetAbovePeek:
+              metrics != null && metrics.offset > metrics.minOffset + 1,
+          routeCanPop: context.canPop(),
+        )) {
+          case HomeBackStep.popSheetPage:
+            sheetNavigator!.pop();
+          case HomeBackStep.collapseSheet:
+            unawaited(
+              _sheetController.animateToDetent(
+                AppSheetSnap.peek,
+                reduced: AppMotion.reduced(context),
+              ),
+            );
+          case HomeBackStep.popRoute:
+            context.pop();
+          // The exit the platform would have run itself, now that nothing on
+          // this page has a use for the gesture.
+          case HomeBackStep.exitApp:
+            unawaited(SystemNavigator.pop());
+        }
+      },
+      child: _buildScaffoldBody(context, cs),
+    );
+  }
+
+  Widget _buildScaffoldBody(BuildContext context, ColorScheme cs) {
     return Scaffold(
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
+          Positioned.fill(child: _buildMap(context)),
+
+          // Sits directly on the map and under every control: the ring is
+          // about the map's contents, not about the chrome floating over it.
           Positioned.fill(
-            child: _mapReady
-                ? GoogleMap(
-                    initialCameraPosition: CameraPosition(
-                      target: _center,
-                      zoom: 15,
-                    ),
-                    onMapCreated: (controller) {
-                      _mapController = controller;
-                      _camCenter = _center;
-                      unawaited(
-                        controller.animateCamera(
-                          CameraUpdate.newLatLng(_center),
+            child: IgnorePointer(
+              child: ValueListenableBuilder<_ScanRing>(
+                valueListenable: _scanRing,
+                builder: (context, ring, _) => ring.radiusPx <= 0
+                    ? const SizedBox.shrink()
+                    : RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _ScanRingPainter(
+                            progress: _scanController,
+                            center: ring.center,
+                            radius: ring.radiusPx,
+                            color: cs.onSurface,
+                            still: ring.still,
+                          ),
                         ),
-                      );
-                      _scheduleNearbyForViewport(context);
-                    },
-                    markers: _markers,
-                    onCameraMove: (pos) {
-                      _zoom = pos.zoom;
-                      _camCenter = pos.target;
-                    },
-                    onCameraIdle: () => _onCameraIdle(context),
-                    padding: EdgeInsets.only(
-                      bottom: _mapBottomPadding(context),
-                    ),
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    mapToolbarEnabled: false,
-                    compassEnabled: false,
-                  )
-                : const _MapSkeleton(),
-          ),
-
-          Positioned.fill(
-            child: IgnorePointer(child: _LocatePing(ping: _ping)),
-          ),
-
-          Positioned(
-            top: 16,
-            left: 16,
-            child: SafeArea(
-              child: Pressable(
-                onTap: () {
-                  unawaited(HapticService.instance.lightTap());
-                  unawaited(context.push('/settings'));
-                },
-                semanticLabel: '設定',
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: cs.brightness == Brightness.light
-                        ? Colors.white
-                        : cs.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: AppShadows.floating,
-                  ),
-                  child: Icon(
-                    Icons.settings_rounded,
-                    size: 20,
-                    color: cs.onSurface,
-                  ),
-                ),
+                      ),
               ),
             ),
           ),
 
           Positioned(
-            top: 16,
-            right: 16,
-            child: SafeArea(
-              child: Column(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: FloatingAppBar(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              leading: Pressable(
+                onTap: () {
+                  unawaited(context.push(AppRoutes.settings));
+                },
+                semanticLabel: AppI18n.of(context).commonSettings,
+                child: ValueListenableBuilder<String?>(
+                  valueListenable: availableUpdate,
+                  builder: (context, version, child) => Badge(
+                    isLabelVisible: version != null,
+                    backgroundColor: cs.error,
+                    smallSize: AppTheme.space8,
+                    child: child,
+                  ),
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: AppTheme.floatingControl(
+                      cs,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.settings_rounded,
+                      size: 20,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                ),
+              ),
+              // No height cap: the arrival state is taller than the 44px
+              // resident capsule and grows downward over the map.
+              middle: const Center(child: HomeAlertCapsule()),
+              trailing: Column(
                 mainAxisSize: MainAxisSize.min,
-                spacing: 8,
+                spacing: AppTheme.space8,
                 children: [
                   BlocBuilder<AlertBloc, AlertState>(
                     buildWhen: (p, c) => p.unreadCount != c.unreadCount,
                     builder: (context, state) {
                       final unread = state.unreadCount;
                       return Pressable(
-                        onTap: () =>
-                            unawaited(showNotificationSheet(context)),
-                        semanticLabel: unread > 0 ? '通知，$unread 則未讀' : '通知',
+                        onTap: () => unawaited(showNotificationSheet(context)),
+                        semanticLabel: unread > 0
+                            ? AppI18n.of(context).unreadNotifications(unread)
+                            : AppI18n.of(context).commonNotifications,
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
                             Container(
                               width: 44,
                               height: 44,
-                              decoration: BoxDecoration(
-                                color: cs.brightness == Brightness.light
-                                    ? Colors.white
-                                    : cs.surfaceContainerHigh,
+                              decoration: AppTheme.floatingControl(
+                                cs,
                                 borderRadius: BorderRadius.circular(12),
-                                boxShadow: AppShadows.floating,
                               ),
                               child: Icon(
                                 unread > 0
@@ -125,19 +194,15 @@ extension _HomeScreenScaffold on _HomeScreenState {
                   ),
                   Pressable(
                     onTap: () {
-                      unawaited(HapticService.instance.lightTap());
-                      unawaited(context.push('/metro'));
+                      unawaited(context.push(AppRoutes.metro));
                     },
-                    semanticLabel: '捷運',
+                    semanticLabel: AppI18n.of(context).modeMetro,
                     child: Container(
                       width: 44,
                       height: 44,
-                      decoration: BoxDecoration(
-                        color: cs.brightness == Brightness.light
-                            ? Colors.white
-                            : cs.surfaceContainerHigh,
+                      decoration: AppTheme.floatingControl(
+                        cs,
                         borderRadius: BorderRadius.circular(12),
-                        boxShadow: AppShadows.floating,
                       ),
                       child: Icon(
                         Icons.directions_subway_rounded,
@@ -147,20 +212,95 @@ extension _HomeScreenScaffold on _HomeScreenState {
                     ),
                   ),
                   Pressable(
-                    onTap: () {
-                      unawaited(HapticService.instance.lightTap());
-                      unawaited(context.push('/go'));
-                    },
-                    semanticLabel: '路線規劃',
+                    onTap: _onRailQueryTap,
+                    semanticLabel: AppI18n.of(context).modeRailPair,
                     child: Container(
                       width: 44,
                       height: 44,
-                      decoration: BoxDecoration(
-                        color: cs.brightness == Brightness.light
-                            ? Colors.white
-                            : cs.surfaceContainerHigh,
+                      decoration: AppTheme.floatingControl(
+                        cs,
                         borderRadius: BorderRadius.circular(12),
-                        boxShadow: AppShadows.floating,
+                      ),
+                      child: Icon(
+                        Icons.train_rounded,
+                        size: 20,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Floating controls: recenter above, route planner below. They ride
+          // the sheet while it sits below the half detent, then park at half
+          // once it's taller — so they never climb into the sheet content.
+          Positioned(
+            right: 16,
+            bottom: 0,
+            child: AnimatedBuilder(
+              animation: _sheetController,
+              builder: (context, child) {
+                // metrics stays null until the sheet is laid out, whereas
+                // SheetController.value throws once attached-but-unmeasured
+                // (offset getter is `_offset!`); read both from one snapshot.
+                final metrics = _sheetController.metrics;
+                final viewport =
+                    metrics?.viewportSize.height ??
+                    MediaQuery.sizeOf(context).height;
+                final offset =
+                    metrics?.offset ?? viewport * AppSheetSnap.peekFrac;
+                final lift =
+                    math.min(offset, viewport * AppSheetSnap.halfFrac) + 16;
+                return Padding(
+                  padding: EdgeInsets.only(bottom: lift),
+                  child: child,
+                );
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                spacing: AppTheme.space8,
+                children: [
+                  Pressable(
+                    onTap: _recenter,
+                    semanticLabel: AppI18n.of(context).commonLocateMe,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: AppTheme.floatingControl(
+                        cs,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Center(
+                        child: AnimatedSwitcher(
+                          duration: AppMotion.short,
+                          child: _locating
+                              ? const AppSpinner(
+                                  key: ValueKey('locating'),
+                                  size: 20,
+                                )
+                              : Icon(
+                                  Icons.gps_fixed_rounded,
+                                  key: const ValueKey('idle'),
+                                  size: 20,
+                                  color: cs.onSurface,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Pressable(
+                    onTap: () {
+                      unawaited(context.push(AppRoutes.go));
+                    },
+                    semanticLabel: AppI18n.of(context).homePlanRoute,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: AppTheme.floatingControl(
+                        cs,
+                        borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
                         Icons.directions_rounded,
@@ -174,90 +314,19 @@ extension _HomeScreenScaffold on _HomeScreenState {
             ),
           ),
 
-          // Floating Recenter FAB tracking the bottom sheet's height
-          ValueListenableBuilder<double?>(
-            valueListenable: _sheetController,
-            builder: (context, offset, child) {
-              final currentOffset = offset ?? 0.0;
-              return Positioned(
-                right: 16,
-                bottom: currentOffset + 16,
-                child: child!,
-              );
-            },
-            child: Pressable(
-              onTap: _recenter,
-              semanticLabel: '定位目前位置',
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: cs.brightness == Brightness.light
-                      ? Colors.white
-                      : cs.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: AppShadows.floating,
+          AppSheet.paged(
+            controller: _sheetController,
+            navigator: Navigator(
+              key: _sheetNavigatorKey,
+              observers: [_sheetCarry],
+              onGenerateInitialRoutes: (navigator, initialRoute) => [
+                PagedSheetRoute(
+                  initialOffset: AppSheetSnap.peek,
+                  snapGrid: _sheetCarry,
+                  scrollConfiguration: const SheetScrollConfiguration(),
+                  builder: _buildSheetRoot,
                 ),
-                child: Center(
-                  child: AnimatedSwitcher(
-                    duration: AppMotion.short,
-                    child: _locating
-                        ? const AppSpinner(key: ValueKey('locating'), size: 20)
-                        : Icon(
-                            Icons.gps_fixed_rounded,
-                            key: const ValueKey('idle'),
-                            size: 20,
-                            color: cs.onSurface,
-                          ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          NotificationListener<SheetNotification>(
-            onNotification: (notification) {
-              if (notification is SheetDragEndNotification) {
-                unawaited(HapticService.instance.lightTap());
-              }
-              return false;
-            },
-            child: SheetViewport(
-              child: SheetExitGestureDetector(
-                onExit: () => _sheetController.animateTo(
-                  const SheetOffset.proportionalToViewport(0.30),
-                ),
-                child: PagedSheet(
-                  controller: _sheetController,
-                  decoration: MaterialSheetDecoration(
-                    size: SheetSize.stretch,
-                    color: cs.surfaceContainerLow,
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(AppTheme.radiusBottomSheet),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                  ),
-                  navigator: Navigator(
-                    key: _sheetNavigatorKey,
-                    onGenerateInitialRoutes: (navigator, initialRoute) => [
-                      PagedSheetRoute(
-                        initialOffset: const SheetOffset.proportionalToViewport(
-                          0.30,
-                        ),
-                        snapGrid: const SheetSnapGrid(
-                          snaps: [
-                            SheetOffset.proportionalToViewport(0.10),
-                            SheetOffset.proportionalToViewport(0.30),
-                            SheetOffset.proportionalToViewport(1),
-                          ],
-                        ),
-                        scrollConfiguration: const SheetScrollConfiguration(),
-                        builder: (context) => _buildSheetRoot(context, cs),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              ],
             ),
           ),
         ],
@@ -265,38 +334,44 @@ extension _HomeScreenScaffold on _HomeScreenState {
     );
   }
 
-  Widget _buildSheetRoot(BuildContext context, ColorScheme cs) {
+  Widget _buildSheetRoot(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const SheetDragHandle(),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
           child: Row(
             children: [
               Expanded(
                 child: _SearchBar(
                   onTap: () {
-                    unawaited(HapticService.instance.lightTap());
-                    unawaited(context.push('/search'));
+                    unawaited(context.push(AppRoutes.search));
                   },
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppTheme.space12),
         RouteTabBar(
           controller: _tabController,
-          tabs: const ['我的收藏', '附近車站'],
-          backgroundColor: cs.surfaceContainerLow,
+          tabs: [
+            AppI18n.of(context).homeTabFavorites,
+            AppI18n.of(context).homeTabNearby,
+          ],
+          raised: true,
         ),
         Expanded(
           child: TabBarView(
             controller: _tabController,
             children: [
               const _FavoritesTab(),
-              _NearbyStationsTab(onStationTap: _openStationDetail),
+              _NearbyStationsTab(
+                onStationTap: _onStationTap,
+                sheetController: _sheetController,
+                sheetTicks: _rootSheetTicks,
+              ),
             ],
           ),
         ),
@@ -305,102 +380,90 @@ extension _HomeScreenScaffold on _HomeScreenState {
   }
 }
 
-/// A single ping request: where on screen the ring should emanate from.
-class _Ping {
-  const _Ping(this.offset);
-  final Offset offset;
+/// Radius the ring emerges from — roughly the location dot itself. Growing
+/// from zero would read as appearing out of nowhere rather than spreading
+/// out from the user.
+const double _kScanSeedRadius = 12;
+const double _kScanStrokeWidth = 1.5;
+
+/// Peak stroke opacity of the expanding ring, and of the still one that never
+/// travels — the still version lingers, so it sits lower.
+const double _kScanPeakAlpha = 0.55;
+const double _kScanStillPeakAlpha = 0.35;
+
+/// Fill opacity as a fraction of the stroke's, keeping the disc a wash the
+/// map still reads through.
+const double _kScanFillAlpha = 0.07;
+
+/// Share of the sweep spent fading in. Reaching full opacity instantly makes
+/// the tap read as a camera flash.
+const double _kScanFadeInFraction = 0.1;
+
+(double, double) _scanRingFrame({
+  required double t,
+  required double radius,
+  required bool still,
+}) {
+  // The still variant keeps what the ring says — how far the search reached —
+  // and drops the travel: it holds at full size and breathes once.
+  if (still) {
+    return (radius, _kScanStillPeakAlpha * (1 - (t * 2 - 1).abs()));
+  }
+  final eased = AppMotion.easeOut.transform(t);
+  final alpha = eased < _kScanFadeInFraction
+      ? _kScanPeakAlpha * eased / _kScanFadeInFraction
+      : _kScanPeakAlpha *
+            (1 - (eased - _kScanFadeInFraction) / (1 - _kScanFadeInFraction));
+  return (_kScanSeedRadius + (radius - _kScanSeedRadius) * eased, alpha);
 }
 
-/// Draws one expanding, fading ring — the "scanning around you" cue — each time
-/// [ping] changes. Load-only and transient; skipped under reduce-motion (the
-/// producer never emits a ping in that case).
-class _LocatePing extends StatefulWidget {
-  const _LocatePing({required this.ping});
+class _ScanRingPainter extends CustomPainter {
+  _ScanRingPainter({
+    required this.progress,
+    required this.center,
+    required this.radius,
+    required this.color,
+    required this.still,
+  }) : super(repaint: progress);
 
-  final ValueListenable<_Ping?> ping;
-
-  @override
-  State<_LocatePing> createState() => _LocatePingState();
-}
-
-class _LocatePingState extends State<_LocatePing>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  Offset? _center;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 680),
-    );
-    widget.ping.addListener(_onPing);
-  }
-
-  void _onPing() {
-    final ping = widget.ping.value;
-    if (ping == null || !mounted) return;
-    setState(() => _center = ping.offset);
-    unawaited(_ctrl.forward(from: 0));
-  }
-
-  @override
-  void dispose() {
-    widget.ping.removeListener(_onPing);
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.primary;
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (context, _) {
-        final center = _center;
-        if (center == null || !_ctrl.isAnimating) {
-          return const SizedBox.expand();
-        }
-        final t = _ctrl.value;
-        final radius = 12 + AppMotion.easeOut.transform(t) * 60;
-        return Stack(
-          children: [
-            Positioned(
-              left: center.dx - radius,
-              top: center.dy - radius,
-              child: CustomPaint(
-                size: Size.square(radius * 2),
-                painter: _RingPainter(color: color, opacity: (1 - t) * 0.4),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _RingPainter extends CustomPainter {
-  _RingPainter({required this.color, required this.opacity});
-
+  final Animation<double> progress;
+  final Offset center;
+  final double radius;
   final Color color;
-  final double opacity;
+  final bool still;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final r = size.width / 2;
-    canvas.drawCircle(
-      Offset(r, r),
-      r - 1,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = color.withValues(alpha: opacity),
+    final t = progress.value;
+    if (t == 0 || t == 1) return;
+    final (ringRadius, alpha) = _scanRingFrame(
+      t: t,
+      radius: radius,
+      still: still,
     );
+
+    final bounds = Rect.fromCircle(center: center, radius: ringRadius);
+    final wash = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          color.withValues(alpha: alpha * _kScanFillAlpha),
+          color.withValues(alpha: 0),
+        ],
+        stops: const [0, 0.72],
+      ).createShader(bounds);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _kScanStrokeWidth
+      ..color = color.withValues(alpha: alpha);
+    canvas
+      ..drawCircle(center, ringRadius, wash)
+      ..drawCircle(center, ringRadius, stroke);
   }
 
   @override
-  bool shouldRepaint(_RingPainter old) =>
-      old.opacity != opacity || old.color != color;
+  bool shouldRepaint(_ScanRingPainter old) =>
+      old.center != center ||
+      old.radius != radius ||
+      old.color != color ||
+      old.still != still;
 }

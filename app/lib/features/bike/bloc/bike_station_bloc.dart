@@ -1,18 +1,31 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:wheres_the_car/data/live/arrival_feed.dart';
-import 'package:wheres_the_car/data/models/bike_models.dart';
-import 'package:wheres_the_car/data/repositories/bike_repository.dart';
-import 'package:wheres_the_car/features/bike/bloc/bike_station_event.dart';
-import 'package:wheres_the_car/features/bike/bloc/bike_station_state.dart';
+import 'package:wheres_the_bus/data/live/arrival_feed.dart';
+import 'package:wheres_the_bus/data/models/bike_models.dart';
+import 'package:wheres_the_bus/data/repositories/bike_repository.dart';
+import 'package:wheres_the_bus/features/bike/bloc/bike_station_event.dart';
+import 'package:wheres_the_bus/features/bike/bloc/bike_station_state.dart';
 
 class BikeStationBloc extends Bloc<BikeStationEvent, BikeStationState> {
-  BikeStationBloc({required this.stationUid, BikeRepository? repository})
-    : _repository = repository ?? BikeRepository.instance,
-      super(const BikeStationState()) {
+  BikeStationBloc({
+    required this.stationUid,
+    BikeRepository? repository,
+    String? name,
+    double? lat,
+    double? lon,
+  }) : _repository = repository ?? BikeRepository.instance,
+       super(
+         BikeStationState(
+           name: name ?? '',
+           lat: lat ?? 0,
+           lon: lon ?? 0,
+         ),
+       ) {
     on<BikeStationStarted>(_onStarted);
     on<BikeStationEtaUpdated>(_onEta);
+    on<BikeStationEtaFailed>(_onEtaFailed);
+    on<BikeStationEtaRecovered>(_onEtaRecovered);
     add(const BikeStationStarted());
   }
 
@@ -30,26 +43,35 @@ class BikeStationBloc extends Bloc<BikeStationEvent, BikeStationState> {
   ) async {
     try {
       final info = await _repository.stationStatic(stationUid);
-      emit(state.copyWith(
-        name: info.name,
-        capacity: info.capacity,
-        loading: false,
-      ));
-      _sub = ArrivalFeed.passthrough(
-        source: () => _repository.stationEta(stationUid),
-      ).listen(
-        (a) => add(
-          BikeStationEtaUpdated(
-            available: a.available,
-            returnDocks: a.returnDocks,
-            generalBikes: a.generalBikes,
-            electricBikes: a.electricBikes,
-          ),
+      emit(
+        state.copyWith(
+          name: info.name,
+          capacity: info.capacity,
+          lat: info.lat != 0 ? info.lat : null,
+          lon: info.lon != 0 ? info.lon : null,
+          loading: false,
+          clearError: true,
         ),
       );
     } on Object catch (e) {
       emit(state.copyWith(loading: false, error: e.toString()));
     }
+    if (_sub != null) await _sub!.cancel();
+    _sub =
+        ArrivalFeed.passthrough(
+          source: () => _repository.stationEta(stationUid),
+          onFailure: (e) => add(BikeStationEtaFailed(e)),
+          onRecovered: () => add(const BikeStationEtaRecovered()),
+        ).listen(
+          (a) => add(
+            BikeStationEtaUpdated(
+              available: a.available,
+              returnDocks: a.returnDocks,
+              generalBikes: a.generalBikes,
+              electricBikes: a.electricBikes,
+            ),
+          ),
+        );
   }
 
   void _onEta(BikeStationEtaUpdated e, Emitter<BikeStationState> emit) {
@@ -59,13 +81,27 @@ class BikeStationBloc extends Bloc<BikeStationEvent, BikeStationState> {
         returnDocks: e.returnDocks,
         generalBikes: e.generalBikes,
         electricBikes: e.electricBikes,
+        hasLiveData: true,
+        updatedAt: DateTime.now(),
+        clearLiveError: true,
       ),
     );
   }
 
+  void _onEtaFailed(BikeStationEtaFailed e, Emitter<BikeStationState> emit) {
+    emit(state.copyWith(liveError: e.error));
+  }
+
+  void _onEtaRecovered(
+    BikeStationEtaRecovered e,
+    Emitter<BikeStationState> emit,
+  ) {
+    emit(state.copyWith(clearLiveError: true));
+  }
+
   @override
-  Future<void> close() {
-    unawaited(_sub?.cancel());
+  Future<void> close() async {
+    await _sub?.cancel();
     return super.close();
   }
 }

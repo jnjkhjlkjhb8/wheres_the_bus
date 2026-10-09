@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grpc/grpc.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/live/arrival_feed.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/live/arrival_feed.dart';
 
 /// A minimal arrival with an estimate that decays toward zero, standing in for
 /// the real domain models so the feed's orchestration is tested in isolation.
@@ -33,7 +33,9 @@ void main() {
       final source = StreamController<List<_Arrival>>();
       final feed = ArrivalFeed<_Arrival>.replace();
       final emitted = <List<_Arrival>>[];
-      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+      final sub = feed
+          .watch(source: () => source.stream)
+          .listen((e) => emitted.add(e.arrivals));
       addTearDown(sub.cancel);
 
       source
@@ -51,7 +53,9 @@ void main() {
       final source = StreamController<List<_Arrival>>();
       final feed = ArrivalFeed<_Arrival>.replace();
       final emitted = <List<_Arrival>>[];
-      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+      final sub = feed
+          .watch(source: () => source.stream)
+          .listen((e) => emitted.add(e.arrivals));
       addTearDown(sub.cancel);
 
       source
@@ -64,6 +68,21 @@ void main() {
       ]);
     });
 
+    test('every frame emission carries the source kind', () async {
+      final source = StreamController<List<_Arrival>>();
+      final feed = ArrivalFeed<_Arrival>.replace();
+      final kinds = <ArrivalFeedEmissionKind>[];
+      final sub = feed
+          .watch(source: () => source.stream)
+          .listen((e) => kinds.add(e.kind));
+      addTearDown(sub.cancel);
+
+      source.add([const _Arrival('a', 300)]);
+      await _pump();
+
+      expect(kinds, [ArrivalFeedEmissionKind.source]);
+    });
+
     test('decay tick re-derives the current list between frames', () async {
       final source = StreamController<List<_Arrival>>();
       final feed = ArrivalFeed<_Arrival>.replace(
@@ -71,7 +90,9 @@ void main() {
         decayInterval: const Duration(milliseconds: 20),
       );
       final emitted = <List<_Arrival>>[];
-      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+      final sub = feed
+          .watch(source: () => source.stream)
+          .listen((e) => emitted.add(e.arrivals));
       addTearDown(sub.cancel);
 
       source.add([const _Arrival('a', 300)]);
@@ -84,6 +105,30 @@ void main() {
       expect(emitted.last.single.estimate, lessThan(300));
     });
 
+    test(
+      'a decay re-emission is tagged decay, not source — the local '
+      'countdown must not be mistaken for a fresh network frame (F29)',
+      () async {
+        final source = StreamController<List<_Arrival>>();
+        final feed = ArrivalFeed<_Arrival>.replace(
+          decay: (a, _) => a.decayed(60),
+          decayInterval: const Duration(milliseconds: 20),
+        );
+        final kinds = <ArrivalFeedEmissionKind>[];
+        final sub = feed
+            .watch(source: () => source.stream)
+            .listen((e) => kinds.add(e.kind));
+        addTearDown(sub.cancel);
+
+        source.add([const _Arrival('a', 300)]);
+        await _pump();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(kinds.first, ArrivalFeedEmissionKind.source);
+        expect(kinds.skip(1), everyElement(ArrivalFeedEmissionKind.decay));
+      },
+    );
+
     test('decay tick that changes no value is suppressed', () async {
       final source = StreamController<List<_Arrival>>();
       final feed = ArrivalFeed<_Arrival>.replace(
@@ -91,7 +136,9 @@ void main() {
         decayInterval: const Duration(milliseconds: 20),
       );
       final emitted = <List<_Arrival>>[];
-      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+      final sub = feed
+          .watch(source: () => source.stream)
+          .listen((e) => emitted.add(e.arrivals));
       addTearDown(sub.cancel);
 
       // Already at zero: every decay tick re-derives the same value, so only
@@ -113,7 +160,9 @@ void main() {
         compare: (a, b) => a.estimate.compareTo(b.estimate),
       );
       final emitted = <List<_Arrival>>[];
-      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+      final sub = feed
+          .watch(source: () => source.stream)
+          .listen((e) => emitted.add(e.arrivals));
       addTearDown(sub.cancel);
 
       source.add([const _Arrival('a', 300), const _Arrival('b', 120)]);
@@ -130,8 +179,9 @@ void main() {
     test('forwards each lone value verbatim', () async {
       final source = StreamController<int>();
       final got = <int>[];
-      final sub =
-          ArrivalFeed.passthrough(source: () => source.stream).listen(got.add);
+      final sub = ArrivalFeed.passthrough(
+        source: () => source.stream,
+      ).listen(got.add);
       addTearDown(sub.cancel);
 
       source
@@ -145,8 +195,9 @@ void main() {
     test('cancel stops delivery', () async {
       final source = StreamController<int>.broadcast();
       final got = <int>[];
-      final sub =
-          ArrivalFeed.passthrough(source: () => source.stream).listen(got.add);
+      final sub = ArrivalFeed.passthrough(
+        source: () => source.stream,
+      ).listen(got.add);
 
       source.add(1);
       await _pump();
@@ -207,7 +258,9 @@ void main() {
         compare: (a, b) => a.estimate.compareTo(b.estimate),
       );
       final emitted = <List<_Arrival>>[];
-      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+      final sub = feed
+          .watch(source: () => source.stream)
+          .listen((e) => emitted.add(e.arrivals));
       addTearDown(sub.cancel);
 
       source
@@ -241,7 +294,7 @@ void main() {
           },
           onRecovered: () => recovered++,
         )
-        .listen(emitted.add);
+        .listen((e) => emitted.add(e.arrivals));
     addTearDown(sub.cancel);
 
     // The wrapper's base retry delay is ~2s; allow a generous window.
@@ -282,7 +335,9 @@ void main() {
       decayInterval: const Duration(milliseconds: 10),
     );
     final emitted = <List<_Arrival>>[];
-    final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+    final sub = feed
+        .watch(source: () => source.stream)
+        .listen((e) => emitted.add(e.arrivals));
 
     source.add([const _Arrival('a', 300)]);
     await _pump();

@@ -1,351 +1,371 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
-import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:wheres_the_car/core/firebase/firebase_gate.dart';
-import 'package:wheres_the_car/features/bike/view/bike_station_screen.dart';
-import 'package:wheres_the_car/features/bus/view/bus_route_screen.dart';
-import 'package:wheres_the_car/features/bus/view/bus_stop_screen.dart';
-import 'package:wheres_the_car/features/favorites/view/favorites_screen.dart';
-import 'package:wheres_the_car/features/go/view/go_screen.dart';
-import 'package:wheres_the_car/features/home/home_screen.dart';
-import 'package:wheres_the_car/features/metro/view/metro_screen.dart';
-import 'package:wheres_the_car/features/rail/view/rail_screen.dart';
-import 'package:wheres_the_car/features/search/view/search_screen.dart';
-import 'package:wheres_the_car/features/settings/settings_option_screen.dart';
-import 'package:wheres_the_car/features/settings/settings_screen.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/accordion_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/alerts_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/availability_gauge_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/avatar_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/badge_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/bottom_sheet_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/breadcrumb_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/buttons_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/cards_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/chat_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/checkbox_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/color_picker_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/colors_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/date_picker_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/divider_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/drawer_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/dropdown_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/edit_bar_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/file_tree_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/filter_chip_group_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/icons_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/input_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/leg_ribbon_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/line_badge_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/menu_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/modal_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/motion_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/pagination_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/progress_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/quantity_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/radio_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/scrollbar_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/segment_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/shadows_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/slider_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/snackbar_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/spacing_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/spinner_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/stepper_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/switch_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/table_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/tabs_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/time_picker_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/tooltip_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/pages/typography_page.dart';
-import 'package:wheres_the_car/features/ui_kit/view/ui_kit_home_screen.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
+import 'package:wheres_the_bus/app/router/app_routes.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
+import 'package:wheres_the_bus/data/models/fare_type.dart';
+import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
+import 'package:wheres_the_bus/features/bike/view/bike_station_screen.dart';
+import 'package:wheres_the_bus/features/bus/view/bus_route_screen.dart';
+import 'package:wheres_the_bus/features/bus/view/bus_stop_screen.dart';
+import 'package:wheres_the_bus/features/favorites/view/favorites_screen.dart';
+import 'package:wheres_the_bus/features/feedback/view/feedback_screen.dart';
+import 'package:wheres_the_bus/features/go/model/planned_place.dart';
+import 'package:wheres_the_bus/features/go/view/go_screen.dart';
+import 'package:wheres_the_bus/features/home/home_screen.dart';
+import 'package:wheres_the_bus/features/metro/view/metro_screen.dart';
+import 'package:wheres_the_bus/features/rail/view/rail_screen.dart';
+import 'package:wheres_the_bus/features/rail/view/rail_train_screen.dart';
+import 'package:wheres_the_bus/features/search/view/search_screen.dart';
+import 'package:wheres_the_bus/features/settings/bloc/settings_state.dart';
+import 'package:wheres_the_bus/features/settings/settings_option_screen.dart';
+import 'package:wheres_the_bus/features/settings/settings_screen.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/rail_system_labels.dart';
+import 'package:wheres_the_bus/shared/widgets/main_scaffold.dart';
 
 Page<T> _page<T>(Widget child) => MaterialPage<T>(child: child);
 
-class AppRouter {
-  AppRouter._();
+// A stable page key preserves the map instance.
+const _homePageKey = ValueKey<String>('home');
 
-  static final rootNavigatorKey = GlobalKey<NavigatorState>();
+Page<void> _homePage(GoRouterState state) => NoTransitionPage(
+  key: _homePageKey,
+  child: HomeScreen(
+    station: NearStationRouteArgs.fromUri(state.uri),
+    showRailQuery: state.uri.path == AppRoutes.railQueryPattern,
+  ),
+);
 
-  static final router = GoRouter(
-    navigatorKey: rootNavigatorKey,
-    initialLocation: '/',
-    observers: FirebaseGate.enabled
-        ? [FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance)]
-        : const [],
-    routes: [
-      GoRoute(
-        path: '/',
-        pageBuilder: (_, _) => const NoTransitionPage(child: HomeScreen()),
-      ),
-      GoRoute(
-        path: '/settings',
-        pageBuilder: (_, _) => _page(const SettingsScreen()),
+/// Service date as the train screen wants it, defaulting to today: a location
+/// that names no date means "the train running now", not one frozen at the
+/// moment the link was made.
+String _railDate(DateTime? date) {
+  final d = date ?? DateTime.now();
+  return '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+}
+
+const _metroPageKey = ValueKey<String>('metro');
+
+/// Shared by `/metro` and `/metro/station/:id` — the same screen, differing
+/// only in whether the location names a station to open on.
+Page<void> _metroPage(GoRouterState state) {
+  final args = MetroRouteArgs.from(
+    state.pathParameters,
+    state.uri.queryParameters,
+  );
+  return MaterialPage(
+    key: _metroPageKey,
+    child: MetroScreen(stationId: args.stationId, mode: args.mode),
+  );
+}
+
+/// Reads an optional `{options: List<String>, selected: String}` cache from
+/// `state.extra`, falling back to [options]/[selected] when absent so the
+/// settings option routes survive cold deep links and state restoration.
+Page<T> _settingsOptionPage<T>(
+  Object? extra, {
+  required String title,
+  required List<String> options,
+  required String selected,
+}) {
+  var effectiveOptions = options;
+  var effectiveSelected = selected;
+  if (extra is Map) {
+    final cachedOptions = extra['options'];
+    final cachedSelected = extra['selected'];
+    if (cachedOptions is List) {
+      final parsed = cachedOptions.whereType<String>().toList();
+      if (parsed.isNotEmpty) effectiveOptions = parsed;
+    }
+    if (cachedSelected is String) effectiveSelected = cachedSelected;
+  }
+  return _page(
+    SettingsOptionScreen(
+      title: title,
+      options: effectiveOptions,
+      initialSelected: effectiveSelected,
+    ),
+  );
+}
+
+class _DeferredAnalyticsObserver extends NavigatorObserver {
+  FirebaseAnalyticsObserver? _delegate;
+
+  FirebaseAnalyticsObserver? get _observer {
+    if (Firebase.apps.isEmpty) return null;
+    return _delegate ??= FirebaseAnalyticsObserver(
+      analytics: FirebaseAnalytics.instance,
+    );
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _observer?.didPush(route, previousRoute);
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _observer?.didPop(route, previousRoute);
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      _observer?.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+}
+
+/// Builds the app's route graph: one [StatefulShellRoute] branch whose shell
+/// is [MainScaffold] (banners + floating NavMiniBar over the content).
+List<RouteBase> buildAppRoutes({
+  bool firebaseEnabled = FirebaseGate.enabled,
+}) => [
+  StatefulShellRoute.indexedStack(
+    builder: (context, state, navigationShell) =>
+        MainScaffold(shell: navigationShell),
+    branches: [
+      StatefulShellBranch(
+        observers: firebaseEnabled ? [_DeferredAnalyticsObserver()] : const [],
         routes: [
           GoRoute(
-            path: 'appearance',
+            path: AppRoutes.home,
+            pageBuilder: (_, state) => _homePage(state),
+          ),
+          GoRoute(
+            path: AppRoutes.nearStationPattern,
             pageBuilder: (_, state) {
-              final extra = state.extra! as Map<String, dynamic>;
+              // A station kind the app does not have is a broken link, not a
+              // request for the bare map: opening home anyway would answer it
+              // with something that looks like it worked.
+              if (NearStationRouteArgs.fromUri(state.uri) == null) {
+                return _page(RouteErrorScreen(uri: state.uri));
+              }
+              return _homePage(state);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.railQueryPattern,
+            pageBuilder: (_, state) => _homePage(state),
+          ),
+          GoRoute(
+            path: AppRoutes.settings,
+            pageBuilder: (_, _) => _page(const SettingsScreen()),
+            routes: [
+              // Each picker resolves its own labels rather than relying on the
+              // ones the settings screen passed through `extra`, so a cold
+              // deep link into the route lands on a fully labelled screen.
+              GoRoute(
+                path: 'appearance',
+                pageBuilder: (context, state) {
+                  final i18n = AppI18n.of(context);
+                  return _settingsOptionPage<String>(
+                    state.extra,
+                    title: i18n.settingsAppearance,
+                    options: [
+                      for (final e in Appearance.values) e.labelOf(i18n),
+                    ],
+                    selected: Appearance.fromKey(
+                      SettingsRepository.instance.appearanceMode,
+                    ).labelOf(i18n),
+                  );
+                },
+              ),
+              GoRoute(
+                path: 'fare-type',
+                pageBuilder: (context, state) {
+                  final i18n = AppI18n.of(context);
+                  return _settingsOptionPage<String>(
+                    state.extra,
+                    title: i18n.settingsFareType,
+                    options: [for (final e in FareType.values) e.labelOf(i18n)],
+                    selected: SettingsRepository.instance.fareType.labelOf(
+                      i18n,
+                    ),
+                  );
+                },
+              ),
+              GoRoute(
+                path: 'walk-pace',
+                pageBuilder: (context, state) {
+                  final i18n = AppI18n.of(context);
+                  return _settingsOptionPage<String>(
+                    state.extra,
+                    title: i18n.settingsWalkPace,
+                    options: [for (final e in WalkPace.values) e.labelOf(i18n)],
+                    selected: WalkPace.fromCmPerSec(
+                      SettingsRepository.instance.walkSpeedCmPerSec,
+                    ).labelOf(i18n),
+                  );
+                },
+              ),
+              GoRoute(
+                path: 'language',
+                pageBuilder: (context, state) {
+                  final i18n = AppI18n.of(context);
+                  return _settingsOptionPage<String>(
+                    state.extra,
+                    title: i18n.settingsLanguage,
+                    options: [for (final e in Language.values) e.labelOf(i18n)],
+                    selected: Language.fromKey(
+                      SettingsRepository.instance.languageCode,
+                    ).labelOf(i18n),
+                  );
+                },
+              ),
+            ],
+          ),
+          GoRoute(
+            path: AppRoutes.search,
+            pageBuilder: (_, state) => _page(
+              SearchScreen(initialQuery: state.uri.queryParameters['q']),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.favorites,
+            pageBuilder: (_, _) => _page(const FavoritesScreen()),
+          ),
+          GoRoute(
+            path: AppRoutes.busStop,
+            pageBuilder: (_, state) {
+              final args = BusStopRouteArgs.from(
+                state.uri.queryParameters,
+                state.extra,
+              );
+              if (args == null) return _page(RouteErrorScreen(uri: state.uri));
               return _page(
-                SettingsOptionScreen(
-                  title: '外觀',
-                  options: List<String>.from(extra['options'] as List),
-                  initialSelected: extra['selected'] as String,
+                BusStopScreen(
+                  stopName: args.stopName,
+                  stopId: args.stopId,
+                  city: args.city,
+                  lat: args.lat,
+                  lon: args.lon,
                 ),
               );
             },
           ),
           GoRoute(
-            path: 'language',
+            path: AppRoutes.bikeStation,
             pageBuilder: (_, state) {
-              final extra = state.extra! as Map<String, dynamic>;
+              final args = BikeStationRouteArgs.from(
+                state.uri.queryParameters,
+                state.extra,
+              );
+              if (args == null) return _page(RouteErrorScreen(uri: state.uri));
               return _page(
-                SettingsOptionScreen(
-                  title: '語言',
-                  options: List<String>.from(extra['options'] as List),
-                  initialSelected: extra['selected'] as String,
+                BikeStationScreen(
+                  stationUid: args.stationUid,
+                  name: args.name,
+                  lat: args.lat,
+                  lon: args.lon,
+                ),
+              );
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.busRoutePattern,
+            pageBuilder: (_, state) {
+              final uid = state.pathParameters['subRouteUid'] ?? '';
+              if (uid.isEmpty) return _page(RouteErrorScreen(uri: state.uri));
+              return _page(BusRouteScreen(subRouteUid: uid));
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.rail,
+            pageBuilder: (_, state) => _page(
+              RailScreen(args: RailRouteArgs.from(state.uri.queryParameters)),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.metro,
+            pageBuilder: (_, state) => _metroPage(state),
+          ),
+          // A sibling of `/metro` rather than a child: the station detail is a
+          // sheet inside the line map's own screen, so nesting would stack a
+          // second line map underneath it on a cold deep link.
+          GoRoute(
+            path: AppRoutes.metroStationPattern,
+            pageBuilder: (_, state) => _metroPage(state),
+          ),
+          GoRoute(
+            path: AppRoutes.feedback,
+            pageBuilder: (_, state) => _page(
+              FeedbackScreen(fromScreen: state.uri.queryParameters['from']),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.go,
+            pageBuilder: (_, state) {
+              final args = GoRouteArgs.from(state.uri.queryParameters);
+              return _page(
+                GoScreen(
+                  initialDestination: args == null
+                      ? null
+                      : PlannedPlace(
+                          name: args.name,
+                          latLng: LatLng(args.lat, args.lon),
+                        ),
                 ),
               );
             },
           ),
         ],
       ),
-      GoRoute(
-        path: '/search',
-        pageBuilder: (_, _) => _page(const SearchScreen()),
-      ),
-      GoRoute(
-        path: '/favorites',
-        pageBuilder: (_, _) => _page(const FavoritesScreen()),
-      ),
-      GoRoute(
-        path: '/bus/stop',
-        pageBuilder: (_, state) {
-          final extra = state.extra! as Map<String, dynamic>;
-          final name = extra['stopName'] as String;
-          return _page(
-            BusStopScreen(
-              stopName: name,
-              stopId: extra['stopId'] as String?,
-              city: extra['city'] as String?,
-            ),
-          );
-        },
-      ),
-      GoRoute(
-        path: '/bike/station',
-        pageBuilder: (_, state) {
-          final uid =
-              (state.extra! as Map<String, dynamic>)['stationUid'] as String;
-          return _page(BikeStationScreen(stationUid: uid));
-        },
-      ),
-      GoRoute(
-        path: '/bus/route/:subRouteUid',
-        pageBuilder: (_, state) => _page(
-          BusRouteScreen(subRouteUid: state.pathParameters['subRouteUid']!),
-        ),
-      ),
-      GoRoute(
-        path: '/rail',
-        pageBuilder: (_, _) => _page(const RailScreen()),
-      ),
-      GoRoute(
-        path: '/metro',
-        pageBuilder: (_, _) => _page(const MetroScreen()),
-      ),
-      GoRoute(
-        path: '/go',
-        pageBuilder: (_, _) => _page(const GoScreen()),
-      ),
-      if (kDebugMode)
-        GoRoute(
-          path: '/ui-kit',
-          pageBuilder: (_, _) => _page(const UiKitHomeScreen()),
-          routes: [
-            GoRoute(
-              path: 'typography',
-              pageBuilder: (_, _) => _page(const TypographyPage()),
-            ),
-            GoRoute(
-              path: 'colors',
-              pageBuilder: (_, _) => _page(const ColorsPage()),
-            ),
-            GoRoute(
-              path: 'icons',
-              pageBuilder: (_, _) => _page(const IconsPage()),
-            ),
-            GoRoute(
-              path: 'divider',
-              pageBuilder: (_, _) => _page(const DividerPage()),
-            ),
-            GoRoute(
-              path: 'spacing',
-              pageBuilder: (_, _) => _page(const SpacingPage()),
-            ),
-            GoRoute(
-              path: 'shadows',
-              pageBuilder: (_, _) => _page(const ShadowsPage()),
-            ),
-            GoRoute(
-              path: 'motion',
-              pageBuilder: (_, _) => _page(const MotionPage()),
-            ),
-            GoRoute(
-              path: 'input',
-              pageBuilder: (_, _) => _page(const InputPage()),
-            ),
-            GoRoute(
-              path: 'dropdown',
-              pageBuilder: (_, _) => _page(const DropdownPage()),
-            ),
-            GoRoute(
-              path: 'radio',
-              pageBuilder: (_, _) => _page(const RadioPage()),
-            ),
-            GoRoute(
-              path: 'checkbox',
-              pageBuilder: (_, _) => _page(const CheckboxPage()),
-            ),
-            GoRoute(
-              path: 'switch',
-              pageBuilder: (_, _) => _page(const SwitchPage()),
-            ),
-            GoRoute(
-              path: 'quantity',
-              pageBuilder: (_, _) => _page(const QuantityPage()),
-            ),
-            GoRoute(
-              path: 'slider',
-              pageBuilder: (_, _) => _page(const SliderPage()),
-            ),
-            GoRoute(
-              path: 'segment',
-              pageBuilder: (_, _) => _page(const SegmentPage()),
-            ),
-            GoRoute(
-              path: 'date-picker',
-              pageBuilder: (_, _) => _page(const DatePickerPage()),
-            ),
-            GoRoute(
-              path: 'color-picker',
-              pageBuilder: (_, _) => _page(const ColorPickerPage()),
-            ),
-            GoRoute(
-              path: 'buttons',
-              pageBuilder: (_, _) => _page(const ButtonsPage()),
-            ),
-            GoRoute(
-              path: 'menu',
-              pageBuilder: (_, _) => _page(const MenuPage()),
-            ),
-            GoRoute(
-              path: 'edit-bar',
-              pageBuilder: (_, _) => _page(const EditBarPage()),
-            ),
-            GoRoute(
-              path: 'alerts',
-              pageBuilder: (_, _) => _page(const AlertsPage()),
-            ),
-            GoRoute(
-              path: 'spinner',
-              pageBuilder: (_, _) => _page(const SpinnerPage()),
-            ),
-            GoRoute(
-              path: 'progress',
-              pageBuilder: (_, _) => _page(const ProgressPage()),
-            ),
-            GoRoute(
-              path: 'tooltip',
-              pageBuilder: (_, _) => _page(const TooltipPage()),
-            ),
-            GoRoute(
-              path: 'snackbar',
-              pageBuilder: (_, _) => _page(const SnackbarPage()),
-            ),
-            GoRoute(
-              path: 'badge',
-              pageBuilder: (_, _) => _page(const BadgePage()),
-            ),
-            GoRoute(
-              path: 'tabs',
-              pageBuilder: (_, _) => _page(const TabsPage()),
-            ),
-            GoRoute(
-              path: 'breadcrumb',
-              pageBuilder: (_, _) => _page(const BreadcrumbPage()),
-            ),
-            GoRoute(
-              path: 'pagination',
-              pageBuilder: (_, _) => _page(const PaginationPage()),
-            ),
-            GoRoute(
-              path: 'stepper',
-              pageBuilder: (_, _) => _page(const StepperPage()),
-            ),
-            GoRoute(
-              path: 'drawer',
-              pageBuilder: (_, _) => _page(const DrawerPage()),
-            ),
-            GoRoute(
-              path: 'modal',
-              pageBuilder: (_, _) => _page(const ModalPage()),
-            ),
-            GoRoute(
-              path: 'accordion',
-              pageBuilder: (_, _) => _page(const AccordionPage()),
-            ),
-            GoRoute(
-              path: 'bottom-sheet',
-              pageBuilder: (_, _) => _page(const BottomSheetPage()),
-            ),
-            GoRoute(
-              path: 'cards',
-              pageBuilder: (_, _) => _page(const CardsPage()),
-            ),
-            GoRoute(
-              path: 'avatar',
-              pageBuilder: (_, _) => _page(const AvatarPage()),
-            ),
-            GoRoute(
-              path: 'table',
-              pageBuilder: (_, _) => _page(const TablePage()),
-            ),
-            GoRoute(
-              path: 'file-tree',
-              pageBuilder: (_, _) => _page(const FileTreePage()),
-            ),
-            GoRoute(
-              path: 'chat',
-              pageBuilder: (_, _) => _page(const ChatPage()),
-            ),
-            GoRoute(
-              path: 'scrollbar',
-              pageBuilder: (_, _) => _page(const ScrollbarPage()),
-            ),
-            GoRoute(
-              path: 'availability-gauge',
-              pageBuilder: (_, _) => _page(const AvailabilityGaugePage()),
-            ),
-            GoRoute(
-              path: 'line-badge',
-              pageBuilder: (_, _) => _page(const LineBadgePage()),
-            ),
-            GoRoute(
-              path: 'filter-chip-group',
-              pageBuilder: (_, _) => _page(const FilterChipGroupPage()),
-            ),
-            GoRoute(
-              path: 'leg-ribbon',
-              pageBuilder: (_, _) => _page(const LegRibbonPage()),
-            ),
-            GoRoute(
-              path: 'time-picker',
-              pageBuilder: (_, _) => _page(const TimePickerPage()),
-            ),
-          ],
-        ),
     ],
-  );
+  ),
+  // Outside the shell, not merely on top of it: a full-screen page reached
+  // from the home sheet, the rail screen and search alike, so it must cover
+  // the banners and must not stack a rail screen underneath.
+  GoRoute(
+    path: AppRoutes.railTrainPattern,
+    pageBuilder: (_, state) {
+      final args = RailTrainRouteArgs.from(
+        state.pathParameters,
+        state.uri.queryParameters,
+      );
+      if (args == null) return _page(RouteErrorScreen(uri: state.uri));
+      final extra = state.extra;
+      final warm = extra is RailTrainExtra ? extra : const RailTrainExtra();
+      return _page(
+        RailTrainScreen(
+          type: warm.typeLabel ?? railSystemLabel(args.system),
+          trainNo: args.trainNo,
+          date: _railDate(args.date),
+          userOrigin: warm.userOrigin,
+          userDest: warm.userDest,
+          delayMinutes: warm.delayMinutes,
+          marks: warm.marks,
+          remark: warm.remark,
+        ),
+      );
+    },
+  ),
+];
+
+class AppRouter {
+  AppRouter._();
+
+  static final rootNavigatorKey = GlobalKey<NavigatorState>();
+
+  static final GoRouter router = createRouter(navigatorKey: rootNavigatorKey);
+
+  /// Production configuration behind an injectable entry point: tests create
+  /// throwaway routers pinned to a deep-link [initialLocation].
+  static GoRouter createRouter({
+    GlobalKey<NavigatorState>? navigatorKey,
+    String initialLocation = AppRoutes.home,
+  }) {
+    return GoRouter(
+      navigatorKey: navigatorKey,
+      initialLocation: initialLocation,
+      // Survives Android process death: without it the whole stack is lost and
+      // a rider who switched apps mid-journey comes back to the home screen.
+      restorationScopeId: 'app_router',
+      // Cold `wheresthebus:///…` links arrive as a full URL on iOS; strip the
+      // scheme so they match the same routes an in-app `go()` does.
+      redirect: (_, state) => normalizeDeepLink(state.uri),
+      errorPageBuilder: (_, state) => _page(RouteErrorScreen(uri: state.uri)),
+      routes: buildAppRoutes(),
+    );
+  }
 }

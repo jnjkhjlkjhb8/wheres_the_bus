@@ -1,0 +1,410 @@
+services:
+  redis:
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass "${REDIS_PASSWORD:-}"
+    networks:
+      - backend
+    user: "999:999"
+    mem_limit: 512m
+    pids_limit: 64
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  router:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    image: ${ROUTER_IMAGE:-router}
+    ports:
+      - "${GRPC_BIND_HOST:-127.0.0.1}:${GRPC_PORT:-50051}:50051"
+      - "${HTTP_BIND_HOST:-127.0.0.1}:${ROUTER_HTTP_PORT:-8080}:8080"
+    env_file: ${ENV_FILE_ROUTER:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      GOMEMLIMIT: ${ROUTER_GOMEMLIMIT:-230MiB}
+      REDIS_ADDR: redis:6379
+      MAAS_BACKEND: ${MAAS_BACKEND:-motis}
+      MOTIS_BASE_URL: ${MOTIS_BASE_URL:-http://motis:8080}
+    networks:
+      - frontend
+      - backend
+      - routing
+    volumes:
+      - router_keys:/data
+    mem_limit: ${ROUTER_MEM_LIMIT:-256m}
+    pids_limit: 128
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/.well-known/jwks.json || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  functions:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    image: ${FUNCTIONS_IMAGE:-functions}
+    env_file: ${ENV_FILE_FUNCTIONS:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      GOMEMLIMIT: ${FUNCTIONS_GOMEMLIMIT:-680MiB}
+      REDIS_ADDR: redis:6379
+    networks:
+      - backend
+    tmpfs:
+      - /tmp:size=256m
+    mem_limit: ${FUNCTIONS_MEM_LIMIT:-768m}
+    pids_limit: 128
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/healthy -mmin -2 2>/dev/null | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+  rider-api:
+    build:
+      context: .
+      dockerfile: services/rider/Dockerfile
+    image: ${RIDER_IMAGE:-rider}
+    env_file: ${ENV_FILE_RIDER:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      GOMEMLIMIT: ${RIDER_GOMEMLIMIT:-200MiB}
+      REDIS_ADDR: redis:6379
+    command: ["api"]
+    networks:
+      - backend
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: ${RIDER_MEM_LIMIT:-256m}
+    pids_limit: 128
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+  rider-worker:
+    build:
+      context: .
+      dockerfile: services/rider/Dockerfile
+    image: ${RIDER_IMAGE:-rider}
+    env_file: ${ENV_FILE_RIDER:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      GOMEMLIMIT: ${RIDER_GOMEMLIMIT:-200MiB}
+      REDIS_ADDR: redis:6379
+    command: ["worker"]
+    networks:
+      - backend
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: ${RIDER_MEM_LIMIT:-256m}
+    pids_limit: 128
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/healthy -mmin -2 2>/dev/null | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+  # One-shot batch runs (ADR-0026): `docker compose --profile pipeline run --rm
+  # pipeline run nightly` (or hourly / ingest / load / vector / gtfs). In k3s these
+  # are CronJobs; here nothing schedules them.
+  pipeline:
+    profiles: ["pipeline"]
+    build:
+      context: .
+      dockerfile: services/pipeline/Dockerfile
+    image: ${PIPELINE_IMAGE:-pipeline}
+    env_file: ${ENV_FILE_PIPELINE:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      GOMEMLIMIT: ${PIPELINE_GOMEMLIMIT:-345MiB}
+      REDIS_ADDR: redis:6379
+      PIPELINE_DB_MAX_CONNS: "2"
+      PG_STATEMENT_TIMEOUT: 1800s
+      TMPDIR: /spool
+    command: ["run", "nightly"]
+    networks:
+      - backend
+    volumes:
+      - ingestor_spool:/spool
+      - gtfs_feed:/data/gtfs
+    tmpfs:
+      - /tmp:size=256m
+    mem_limit: ${PIPELINE_MEM_LIMIT:-384m}
+    pids_limit: 128
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: "no"
+  powersync:
+    image: journeyapps/powersync-service:1.23.3@sha256:b6b22fa7d0d862f04bdff62846e656756d17bcf3dd6eca399a0633671051438b
+    ports:
+      - "${POWERSYNC_BIND_HOST:-127.0.0.1}:${POWERSYNC_PORT:-8081}:8080"
+    volumes:
+      - ./powersync/config.yaml:/config/config.yaml:ro
+      - ./powersync/sync-rules.yaml:/config/sync-rules.yaml:ro
+    env_file: ${ENV_FILE_POWERSYNC:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      POWERSYNC_CONFIG_PATH: /config/config.yaml
+      POWERSYNC_SYNC_RULES_PATH: /config/sync-rules.yaml
+    networks:
+      - frontend
+    tmpfs:
+      - /tmp:size=64m
+    mem_limit: 384m
+    pids_limit: 256
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      router:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/probes/readiness').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --metrics
+      - 127.0.0.1:2000
+      - --config
+      - /etc/cloudflared/config.yml
+      - --protocol
+      - http2
+      - run
+    environment:
+      TZ: Asia/Taipei
+    networks:
+      - frontend
+    mem_limit: 128m
+    pids_limit: 64
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      router:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:2000", "ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  osrm-fetch:
+    image: alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+    profiles:
+      - motis
+    volumes:
+      - ./osrm-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 32
+    cpus: 0.5
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        set -e; cd /data;
+        target="${OSRM_PBF_FILE:-taiwan.osm.pbf}";
+        url="${OSRM_PBF_URL:-https://download.geofabrik.de/asia/taiwan-latest.osm.pbf}";
+        expected_md5="${OSRM_PBF_MD5:-}";
+        if [ -z "$$expected_md5" ]; then
+          expected_md5="$$(wget -qO- "$$url.md5" | cut -d' ' -f1)";
+        fi;
+        if [ -f "$$target" ] && [ "$$(md5sum "$$target" | cut -d' ' -f1)" = "$$expected_md5" ]; then
+          echo "osrm-fetch: $$target already present and verified"; exit 0;
+        fi;
+        tmp="$$target.tmp-$$$$";
+        wget -O "$$tmp" "$$url";
+        actual_md5="$$(md5sum "$$tmp" | cut -d' ' -f1)";
+        if [ "$$actual_md5" != "$$expected_md5" ]; then
+          echo "osrm-fetch: checksum mismatch for $$url: expected $$expected_md5 got $$actual_md5" >&2;
+          rm -f "$$tmp"; exit 1;
+        fi;
+        mv "$$tmp" "$$target";
+        echo "osrm-fetch: downloaded and verified $$target (md5 $$actual_md5)"
+    restart: "no"
+    networks:
+      - routing
+  motis-import:
+    image: ghcr.io/motis-project/motis:2.11.2@sha256:6055f51eec43eeed28524037ca0161b96efe9cd05728eaa9ac04c20c2826d330
+    profiles:
+      - motis
+    depends_on:
+      osrm-fetch:
+        condition: service_completed_successfully
+    env_file: ${ENV_FILE_MOTIS:-${ENV_FILE:-./.env}}
+    environment:
+      # Kept beside the pinned image ref so cache identity cannot drift from
+      # the importer actually executed. The rendered env may override it only
+      # for an intentional image upgrade.
+      MOTIS_IMPORT_IMAGE_IDENTITY: ${MOTIS_IMPORT_IMAGE_IDENTITY:-ghcr.io/motis-project/motis:2.11.2@sha256:6055f51eec43eeed28524037ca0161b96efe9cd05728eaa9ac04c20c2826d330}
+    volumes:
+      - ./motis/config.yml:/conf/config.yml:ro
+      - gtfs_feed:/data/gtfs:ro
+      - ./osrm-data:/osm:ro
+      - motis_data:/data/motis
+    user: "0:0"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    cpus: 2.0
+    mem_limit: ${MOTIS_IMPORT_MEM_LIMIT:-3072m}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        set -eu; cd /data/motis;
+        gtfs_path=/data/gtfs/active/gtfs.zip;
+        gtfs_sha="$$(sha256sum "$$gtfs_path" | cut -d' ' -f1)";
+        pbf_sha="$$(sha256sum /osm/${OSRM_PBF_FILE:-taiwan.osm.pbf} | cut -d' ' -f1)";
+        config_sha="$$(sha256sum /conf/config.yml | cut -d' ' -f1)";
+        image_sha="$${MOTIS_IMPORT_IMAGE_IDENTITY:?MOTIS_IMPORT_IMAGE_IDENTITY is required}";
+        credential_sha="$$(printf '%s' "$${GTFS_RT_CREDENTIAL:-}" | sha256sum | cut -d' ' -f1)";
+        target="data-$$(printf '%s%s%s%s%s' "$$gtfs_sha" "$$pbf_sha" "$$config_sha" "$$image_sha" "$$credential_sha" | sha256sum | cut -c1-32)";
+        if [ -d "$$target" ] && [ -f "$$target/config.yml" ] && [ -f "$$target/.complete" ]; then
+          echo "motis-import: $$target already built";
+        else
+          rm -rf .build && mkdir -p .build &&
+          umask 077; sed -e "s|__GTFS_RT_CREDENTIAL__|$${GTFS_RT_CREDENTIAL:-}|" -e "s|__GTFS_PATH__|$$gtfs_path|" /conf/config.yml > .build/config.yml &&
+          /motis import -c .build/config.yml -d .build/data &&
+          touch .build/data/.complete &&
+          mv .build/data "$$target" &&
+          rm -rf .build || exit 1;
+        fi;
+        find "$$target" -type d -exec chmod 750 {} +;
+        find "$$target" -type f -exec chmod 640 {} +;
+        chown -R motis:motis "$$target";
+        rm -f .current.tmp;
+        ln -sfn "$$target" current;
+        # Keep the active dataset and one previous complete dataset for a
+        # fast operator rollback; never remove a dataset during import.
+        ls -dt data-* 2>/dev/null | tail -n +3 | while IFS= read -r old; do rm -rf "$$old"; done
+    restart: "no"
+    networks:
+      - routing
+  motis:
+    image: ghcr.io/motis-project/motis:2.11.2@sha256:6055f51eec43eeed28524037ca0161b96efe9cd05728eaa9ac04c20c2826d330
+    profiles:
+      - motis
+    depends_on:
+      motis-import:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${MOTIS_PORT:-8082}:8080"
+    volumes:
+      - motis_data:/data/motis:ro
+    user: "motis"
+    networks:
+      - routing
+    command: ["/motis", "server", "-d", "/data/motis/current"]
+    mem_limit: ${MOTIS_MEM_LIMIT:-2048m}
+    pids_limit: 128
+    cpus: 2.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+volumes:
+  redis_data:
+  router_keys:
+  ingestor_spool:
+  gtfs_feed:
+  motis_data:
+
+networks:
+  frontend:
+  backend:
+  routing:
+    name: ${ROUTING_NETWORK:-bus-routing}
+    external: true

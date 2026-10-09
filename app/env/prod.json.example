@@ -1,9 +1,15 @@
 {
-  "API_BASE_URL": "https://example.com",
-  "POWERSYNC_URL": "https://example.com/powersync",
-  "GRPC_HOST": "example.com",
-  "GRPC_PORT": 50051,
+  "API_BASE_URL": "https://api.example.com",
+  "POWERSYNC_URL": "https://sync.example.com",
+  "GRPC_HOST": "grpc.example.com",
+  "GRPC_PORT": 443,
   "GRPC_TLS": true,
   "FIREBASE_ENABLED": true,
+  "GOOGLE_MAPS_API_KEY": "",
+  "GOOGLE_MAPS_API_KEY_IOS": "",
+  "GOOGLE_MAPS_API_KEY_ANDROID": "",
+  "GOOGLE_PLACES_API_KEY": "",
+  "GOOGLE_PLACES_API_KEY_IOS": "",
+  "GOOGLE_PLACES_API_KEY_ANDROID": "",
   "APP_ENV": "production"
 }

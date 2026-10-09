@@ -1,5 +1,5 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 service Bus_Route_Service{
   rpc static(Bus_Ask_Route) returns (Resp_Bus_static) {}
   rpc daily(Bus_Ask_Route) returns (Resp_Bus_daily_timetable) {}
@@ -134,6 +134,11 @@ message Bus_RouteEstimate{
   repeated Bus_position Buses = 7;
   int32 StopSequence = 8;
   int64 arrival_unix = 9;
+  string plate_numb = 10;
+  // Crowding of the vehicle this estimate describes, resolved server-side from
+  // plate_numb so the client never has to join Buses itself.
+  BusCrowdLevel crowd_level = 11;
+  bool is_last_bus = 12;
 }
 message Bus_StopEstimate{
   string stop_uid = 1;
@@ -146,6 +151,15 @@ message Bus_StopEstimate{
   string src_update_time = 8;
   repeated Bus_position Buses = 9;
   int64 arrival_unix = 10;
+  string destination = 11;
+  BusCrowdLevel crowd_level = 12;
+  bool is_last_bus = 13;
+}
+enum BusCrowdLevel {
+  BUS_CROWD_UNKNOWN = 0;
+  BUS_CROWD_COMFORTABLE = 1;
+  BUS_CROWD_NORMAL = 2;
+  BUS_CROWD_CROWDED = 3;
 }
 message Bus_position{
   reserved 6, 7, 8;
@@ -155,6 +169,10 @@ message Bus_position{
   double position_lat = 3;
   int32 speed = 4;
   int32 azimuth = 5;
+  int32 duty_status = 9;
+  int32 bus_status = 10;
+  int64 gps_time_unix = 11;
+  BusCrowdLevel crowd_level = 12;
 }
 message Bus_Schedule {
   bool is_timetable = 1;

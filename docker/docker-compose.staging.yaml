@@ -1,0 +1,59 @@
+services:
+  router:
+    environment:
+      APP_ENV: staging
+      PG_SCHEMA: staging
+      ROUTER_DB_MAX_CONNS: 4
+      ROUTER_DB_MIN_CONNS: 1
+      # Staging shares prod's read-only MOTIS over the restricted external
+      # routing network, never through a host-published loopback port.
+      MOTIS_BASE_URL: http://prod-motis:8080
+    # Staging terminates gRPC TLS (GRPC_TLS=true, App Check disabled) so it
+    # needs exactly the cert/key pair -- not the whole ./secrets directory,
+    # and not firebase-sa.json, which staging never reads (FIREBASE_ENABLED
+    # is false here).
+    volumes:
+      - ./secrets/grpc.crt:/run/secrets/grpc.crt:ro
+      - ./secrets/grpc.key:/run/secrets/grpc.key:ro
+
+  functions:
+    environment:
+      APP_ENV: staging
+      PG_SCHEMA: staging
+      FUNCTIONS_DB_MAX_CONNS: 3
+      FUNCTIONS_DB_MIN_CONNS: 1
+
+  rider-worker:
+    environment:
+      APP_ENV: staging
+      PG_SCHEMA: staging
+
+  pipeline:
+    environment:
+      APP_ENV: staging
+      PG_SCHEMA: staging
+
+  powersync:
+    environment:
+      APP_ENV: staging
+      PG_SCHEMA: staging
+
+  # Its own tunnel, credentials, and hostnames, separate from prod's -- see
+  # cloudflared/config.prod.yml for why sharing one is a trap. Both paths are
+  # relative to the repo root, not this file: every compose invocation here
+  # passes --project-directory . (Makefile, both check scripts,
+  # deploy-transaction.sh), which is also why secrets/ and powersync/ sit at
+  # the root rather than beside the compose files.
+  cloudflared:
+    networks:
+      frontend:
+        ipv4_address: 172.30.10.2
+    volumes:
+      - ./cloudflared/config.staging.yml:/etc/cloudflared/config.yml:ro
+      - ./secrets/cloudflared.staging.json:/etc/cloudflared/creds.json:ro
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24

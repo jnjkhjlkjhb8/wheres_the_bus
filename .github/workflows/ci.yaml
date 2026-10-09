@@ -5,101 +5,290 @@ on:
   push:
     branches:
       - main
+      - dev
+
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   go:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    # Postgres is started as a step, not a service: it is built from
+    # docker/postgres (the image the cluster runs), and service containers can
+    # only use images that already exist in a registry.
     services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: bus_test
-          POSTGRES_USER: bus
-          POSTGRES_PASSWORD: bus
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U bus -d bus_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
         ports:
           - 6379:6379
     env:
       DATABASE_URL: postgres://bus:bus@localhost:5432/bus_test?sslmode=disable
       REDIS_ADDR: localhost:6379
+      REDIS_TEST_ADDR: localhost:6379
       PG_SCHEMA: public
       FIREBASE_ENABLED: "false"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # The quality gates diff against the push/PR base commit.
+          fetch-depth: 0
+      - name: start postgres (docker/postgres image)
+        run: |
+          docker build -q -t bus-postgres:ci docker/postgres
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_DB=bus_test -e POSTGRES_USER=bus -e POSTGRES_PASSWORD=bus \
+            bus-postgres:ci
+          for _ in $(seq 1 30); do
+            docker exec postgres pg_isready -U bus -d bus_test && break
+            sleep 2
+          done
+          docker exec postgres pg_isready -U bus -d bus_test
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - run: protoc --go_out=paths=source_relative:models --go-grpc_out=paths=source_relative:models -I models models/*.proto
-      - run: go vet ./...
-      - run: go install gotest.tools/gotestsum@latest
-      - run: gotestsum --junitfile junit.xml -- -race -coverprofile=coverage.out ./...
-      - uses: codecov/codecov-action@v5
-        if: ${{ !cancelled() }}
+      - name: provision required database fixtures
+        env:
+          REQUIRE_DB_TESTS: "1"
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          ./scripts/prepare-ci-db.sh
+      - name: generate pinned protobuf stubs
+        run: make proto-go
+      - run: go install gotest.tools/gotestsum@v1.12.3
+      - name: golangci-lint + go test
+        env:
+          GO_JUNIT_FILE: junit.xml
+          GO_TEST_ARGS: -coverprofile=coverage.out
+          REQUIRE_DB_TESTS: "1"
+          BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: ./scripts/ci.sh go
+      - name: quality gates (CRAP + mutation on changed Go code)
+        env:
+          QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          REQUIRE_DB_TESTS: "1"
+          BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: ./scripts/check-quality.sh go
+      - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.out
           flags: go
-      - uses: codecov/test-results-action@v1
-        if: ${{ !cancelled() }}
+      - uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1
+        if: ${{ !cancelled() && hashFiles('junit.xml') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: junit.xml
           flags: go
 
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # buf breaking diffs the proto contract against the PR base ref,
+          # which requires history beyond the merge commit.
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: contracts (dependency boundaries, file budgets, proto contract)
+        env:
+          # Enforce wire compatibility against the PR base; on branch pushes
+          # HEAD makes the diff a no-op and the gate reduces to `buf build`.
+          PROTO_BASELINE_REF: ${{ github.event.pull_request.base.sha || 'HEAD' }}
+        run: ./scripts/ci.sh contracts
+
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: migration lint (squawk) + replay gate (baseline + full history)
+        run: ./scripts/ci.sh migrations
+
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: render + kubeconform (k8s/infra, k8s/app, k8s/migrate, k8s/restore)
+        run: |
+          d="sha256:$(printf '0%.0s' $(seq 64))"
+          jq -n --arg d "$d" '{commit: "ci", images: ({} | .api = "ghcr.io/x/bus-api@\($d)"
+            | .realtime = "ghcr.io/x/bus-realtime@\($d)" | .rider = "ghcr.io/x/bus-rider@\($d)"
+            | .pipeline = "ghcr.io/x/bus-pipeline@\($d)")}' > release.json
+          ./scripts/k3s-deploy.sh render release.json app.yaml
+          kubectl kustomize --load-restrictor LoadRestrictionsNone k8s/infra > infra.yaml
+          # CRDs (cert-manager, k3s HelmChart) have no bundled schema.
+          kubeconform -strict -summary -ignore-missing-schemas infra.yaml app.yaml k8s/migrate/job.yaml k8s/restore/postgres-restore.yaml
+
+  # Old code on the new schema: the release running in the cluster (the last
+  # successful deploy) must keep working after this change's migrations, since
+  # migrations run before the rollout and are never rolled back.
+  schema-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    services:
+      redis:
+        image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgres://bus:bus@localhost:5432/bus_test?sslmode=disable
+      REDIS_ADDR: localhost:6379
+      REDIS_TEST_ADDR: localhost:6379
+      PG_SCHEMA: public
+      FIREBASE_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: find last-known-good commit
+        id: lkg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # deploy.yaml 404s until it reaches the default branch; that means no
+          # deploy has ever succeeded. Any other error must still fail the job.
+          if out=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yaml --branch main \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // empty' 2>&1); then
+            sha="$out"
+          elif grep -q 'HTTP 404' <<<"$out"; then
+            sha=""
+          else
+            echo "$out" >&2
+            exit 1
+          fi
+          if [ -z "$sha" ]; then
+            echo "::notice::no successful deploy yet; nothing is live to stay compatible with"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: start postgres (docker/postgres image)
+        if: steps.lkg.outputs.sha != ''
+        run: |
+          docker build -q -t bus-postgres:ci docker/postgres
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_DB=bus_test -e POSTGRES_USER=bus -e POSTGRES_PASSWORD=bus \
+            bus-postgres:ci
+          for _ in $(seq 1 30); do
+            docker exec postgres pg_isready -U bus -d bus_test && break
+            sleep 2
+          done
+          docker exec postgres pg_isready -U bus -d bus_test
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: steps.lkg.outputs.sha != ''
+        with:
+          go-version-file: go.mod
+      - name: apply this change's migrations
+        if: steps.lkg.outputs.sha != ''
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client protobuf-compiler
+          ./scripts/prepare-ci-db.sh
+      - name: run the last-known-good release's DB tests
+        if: steps.lkg.outputs.sha != ''
+        env:
+          LKG_SHA: ${{ steps.lkg.outputs.sha }}
+          REQUIRE_DB_TESTS: "1"
+          BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          git worktree add "$RUNNER_TEMP/lkg" "$LKG_SHA"
+          cd "$RUNNER_TEMP/lkg"
+          make proto-go
+          go test ./...
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # gitleaks scans commit history, not just the checkout tip.
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Repo-root .gitleaks.toml (default rules + reviewed non-secret
+          # allowlists) is auto-detected by gitleaks.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: generate pinned protobuf stubs
+        run: make proto-go
+      # Independent job (not a step after go test) specifically so a red
+      # `go` job can never cause these SCA/guardrail gates to be skipped
+      # (review_results.md P0-03).
+      - name: govulncheck (pinned SCA gate)
+        run: ./scripts/check-govulncheck.sh
+
   flutter:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          channel: stable
+          # The quality gates diff against the push/PR base commit.
+          fetch-depth: 0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          # Exact version (not `channel: stable`) so a channel promotion
+          # upstream cannot silently change the toolchain a green run was
+          # tested against. Track app/pubspec.yaml's Dart SDK constraint
+          # (environment.sdk) when bumping.
+          flutter-version: 3.44.1
           cache: true
-      - run: dart pub global activate protoc_plugin
-      - run: dart pub global activate junitreport
+      - run: dart pub global activate protoc_plugin 25.0.0
+      - run: dart pub global activate junitreport 2.0.2
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
-      - run: mkdir -p app/lib/data/generated
-      - run: protoc --dart_out=grpc:app/lib/data/generated -I models models/*.proto
-      - run: flutter pub get
-        working-directory: app
-      - name: stub gitignored assets
-        working-directory: app
-        run: |
-          mkdir -p assets/fonts assets/marker assets/sprites assets/rails \
-            assets/mrt/TRTC assets/mrt/KRTC assets/mrt/KLRT
-          touch assets/grpc.crt \
-            assets/fonts/IBMPlexSans.ttf assets/fonts/IBMPlexMono-Regular.ttf
-          for d in marker sprites rails mrt mrt/TRTC mrt/KRTC mrt/KLRT; do
-            touch "assets/$d/stub"
-          done
-      - run: flutter analyze --no-fatal-infos
-        working-directory: app
-      - run: flutter test --coverage --file-reporter=json:test-results.json
-        working-directory: app
+      # app/assets is tracked (Phase 1) — a clean checkout has everything
+      # flutter analyze/test need; this job is expected to be green, not a
+      # documented-failure gate.
+      - name: flutter analyze + test
+        env:
+          FLUTTER_TEST_ARGS: --coverage --file-reporter=json:test-results.json
+        run: ./scripts/ci.sh flutter
+      - name: quality gates (CRAP + mutation on changed Dart code)
+        env:
+          QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/check-quality.sh flutter
       - run: tojunit --input test-results.json --output junit.xml
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && hashFiles('app/test-results.json') != '' }}
         working-directory: app
-      - uses: codecov/codecov-action@v5
-        if: ${{ !cancelled() }}
+      - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        if: ${{ !cancelled() && hashFiles('app/coverage/lcov.info') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: app/coverage/lcov.info
           flags: flutter
-      - uses: codecov/test-results-action@v1
-        if: ${{ !cancelled() }}
+      - uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1
+        if: ${{ !cancelled() && hashFiles('app/junit.xml') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: app/junit.xml

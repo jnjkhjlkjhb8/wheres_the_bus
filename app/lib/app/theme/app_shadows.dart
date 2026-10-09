@@ -3,6 +3,12 @@ import 'package:flutter/material.dart';
 class AppShadows {
   AppShadows._();
 
+  /// Drop shadows only read against light surfaces. On dark ones they are
+  /// invisible, so elevation is carried by a lighter surface instead and the
+  /// blur pass is skipped rather than painted for nothing.
+  static List<BoxShadow> cardFor(Brightness brightness) =>
+      brightness == Brightness.dark ? const [] : card;
+
   static const List<BoxShadow> card = [
     BoxShadow(
       color: Color(0x14000000),

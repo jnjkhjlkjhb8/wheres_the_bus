@@ -1,5 +1,5 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 
 service Near_Station_Service{
   rpc near(stream Ask_Near) returns (stream resp_near) {}

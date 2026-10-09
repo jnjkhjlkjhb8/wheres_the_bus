@@ -1,7 +1,3 @@
-// Package shared holds process bootstrap helpers common to the router and
-// functions binaries: Redis and PostgreSQL pool construction and small env
-// parsing. Connection helpers panic on failure so a misconfigured process
-// fails fast at startup rather than serving traffic without its backends.
 package shared
 
 import (
@@ -11,45 +7,61 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jnjkhjlkjhb8/wheres_the_car/services/obs"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
-// ConnectRedis dials REDIS_ADDR with a fixed pool (no auth, DB 0) and verifies
-// the connection with PING. It panics if the ping fails, so callers get a
-// ready client or a crashed process — never a half-open one.
 func ConnectRedis() *redis.Client {
 	client := redis.NewClient(&redis.Options{
 		Addr:         os.Getenv("REDIS_ADDR"),
-		Password:     "",
+		Password:     os.Getenv("REDIS_PASSWORD"),
 		DB:           0,
 		PoolSize:     20,
 		MinIdleConns: 3,
 		PoolTimeout:  5 * time.Second,
+
+		// v9 retries three times when MaxRetries is zero, where v6 did not retry
+		// at all; -1 keeps the no-retry behavior the callers were written against.
+		MaxRetries: -1,
+		// Pin RESP2. v9 negotiates RESP3 by default, which changes reply shapes
+		// for some commands; the wire protocol is not what this migration is
+		// changing.
+		Protocol: 2,
+		// Without this, v9 applies only the socket timeouts and ignores context
+		// deadlines — the whole point of moving off v6.
+		ContextTimeoutEnabled: true,
+		// Skip the CLIENT SETINFO handshake v9 sends on every new connection.
+		DisableIdentity: true,
 	})
-	pong, err := client.Ping().Result()
-	if err != nil {
-		obs.Logf("[REDIS] action=connect event=failed error=%v", err)
-		panic(err)
+	ctx := context.Background()
+	var err error
+	for i := 0; ; i++ {
+		var pong string
+		pong, err = client.Ping(ctx).Result()
+		if err == nil {
+			zap.S().Infow("connect success", "component", "redis", "action", "connect", "event", "success", "pong", pong)
+			return client
+		}
+		if i >= 9 {
+			zap.S().Errorw("connect failed", "component", "redis", "action", "connect", "event", "failed", "err", err)
+			panic(err)
+		}
+		time.Sleep(time.Second)
 	}
-	obs.Logf("[REDIS] action=connect event=success pong=%s", pong)
-	return client
 }
 
-// ConnectDB builds a pgx pool from DATABASE_URL. maxConnsEnv names the env var
-// holding the pool's max size (default maxConnsDefault); the matching MIN var is
-// derived by replacing "_MAX_" with "_MIN_". PG_SCHEMA, when set, pins the
-// connection search_path for staging isolation. It pings before returning and
-// panics on any parse, connect, or ping failure.
 func ConnectDB(maxConnsEnv string, maxConnsDefault int32) *pgxpool.Pool {
 	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
 	if err != nil {
-		obs.Logf("[DB] action=parse_config event=failed error=%v", err)
+		zap.S().Errorw("parse config failed", "component", "db", "action", "parse_config", "event", "failed", "err", err)
 		panic(err)
 	}
 	if s := os.Getenv("PG_SCHEMA"); s != "" {
 		config.ConnConfig.RuntimeParams["search_path"] = s
+	}
+	if t := os.Getenv("PG_STATEMENT_TIMEOUT"); t != "" {
+		config.ConnConfig.RuntimeParams["statement_timeout"] = t
 	}
 	config.MaxConns = EnvInt32(maxConnsEnv, maxConnsDefault)
 	config.MinConns = EnvInt32(strings.Replace(maxConnsEnv, "_MAX_", "_MIN_", 1), 2)
@@ -57,14 +69,14 @@ func ConnectDB(maxConnsEnv string, maxConnsDefault int32) *pgxpool.Pool {
 	config.MaxConnIdleTime = 5 * time.Minute
 	conn, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
-		obs.Logf("[DB] action=connect event=failed error=%v", err)
+		zap.S().Errorw("connect failed", "component", "db", "action", "connect", "event", "failed", "err", err)
 		panic(err)
 	}
 	if err = conn.Ping(context.Background()); err != nil {
-		obs.Logf("[DB] action=ping event=failed error=%v", err)
+		zap.S().Errorw("ping failed", "component", "db", "action", "ping", "event", "failed", "err", err)
 		panic(err)
 	}
-	obs.Logf("[DB] action=connect event=success")
+	zap.S().Infow("connect success", "component", "db", "action", "connect", "event", "success")
 	return conn
 }
 
@@ -78,7 +90,7 @@ func EnvInt32(name string, fallback int32) int32 {
 	}
 	n, err := strconv.ParseInt(value, 10, 32)
 	if err != nil || n < 0 {
-		obs.Logf("[CONFIG] name=%s event=invalid value=%q fallback=%d", name, value, fallback)
+		zap.S().Warnw("invalid", "component", "config", "name", name, "event", "invalid", "value", value, "fallback", fallback)
 		return fallback
 	}
 	return int32(n)

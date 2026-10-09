@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grpc/grpc.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/l10n/app_i18n_zh.dart';
 
 void main() {
   test('grpc unavailable maps to OfflineError', () {
@@ -34,6 +35,10 @@ void main() {
   });
 
   test('every error has copy', () {
+    // The zh-TW template is the source of truth for copy; en falls back to it
+    // until Crowdin returns translations, so an empty string here would be a
+    // missing ARB key rather than a missing translation.
+    final i18n = AppI18nZh();
     for (final e in [
       const OfflineError(),
       const TimeoutError(),
@@ -41,8 +46,8 @@ void main() {
       const ServerError(13),
       const UnknownError(),
     ]) {
-      expect(e.title, isNotEmpty);
-      expect(e.hint, isNotEmpty);
+      expect(e.titleOf(i18n), isNotEmpty);
+      expect(e.hintOf(i18n), isNotEmpty);
     }
   });
 }

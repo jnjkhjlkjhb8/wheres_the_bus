@@ -1,8 +1,16 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 
 service MaasService {
   rpc plan(MaasPlanRequest) returns (MaasPlanResponse) {}
+  rpc planStream(MaasPlanRequest) returns (stream MaasPlanUpdate) {}
+}
+
+message MaasPlanUpdate {
+  MaasPlanResponse plan = 1;
+  // False on the routes-only message, true on the last message of the stream.
+  // A cache hit sends a single message with complete = true.
+  bool complete = 2;
 }
 
 message MaasPlanRequest {
@@ -22,10 +30,36 @@ message MaasPlanRequest {
   int32  firstMileTime    = 14;  // first-mile max minutes (default 10)
   int32  lastMileMode     = 15;  // 0 walk,1 bike,2 car,3 shared-bike
   int32  lastMileTime     = 16;  // last-mile max minutes (default 10)
+
+
+  // Step-free routing for every walking segment. Set in Settings rather than
+  // per trip: needing it is a fact about the rider, not about one journey.
+  bool   wheelchair        = 17;
+  // Walking pace in centimetres per second; 0 leaves MOTIS's default. Integer
+  // because the UI offers a few discrete paces, and a float on the wire would
+  // invite rounding differences between two clients that picked "slow".
+  int32  walkSpeedCmPerSec = 18;
+  optional int32 maxTransfers = 19;
+  // Exclude legs that require a seat reservation. TRA's 對號 services are what
+  // this is for: bookable, and useless to a rider who wants to board now.
+  bool   avoidReservation  = 20;
+  // Require every transit leg to accept a bicycle.
+  bool   carryBike         = 21;
+  // Opaque paging cursor for the 更早 / 更晚 departures action. Echo back what
+  // the previous response returned; anything else is rejected upstream.
+  string pageCursor        = 22;
+  // How many alternative departures to attach to each transit leg. 0 asks for
+  // none, which is the default: alternatives cost MOTIS real work and are only
+  // wanted once a rider taps a leg to ask "what else runs this?".
+  int32  legAlternatives   = 23;
 }
 
 message MaasPlanResponse {
   repeated Route routes = 1;
+  // Cursors for the 更早 / 更晚 departures action, empty when the planner does
+  // not page (TDX) or there is nothing further in that direction.
+  string previousPageCursor = 2;
+  string nextPageCursor     = 3;
 }
 
 message Route {
@@ -51,6 +85,24 @@ message Section {
   // Adult full fare for this section (NT$). Unset (0) when no fare could be
   // resolved; a missing fare never fails the plan.
   int32 fare = 9;
+  // OSRM foot-route geometry for a walk section (first mile, transfer, last
+  // mile). Empty when the section is not a walk or OSRM did not resolve a
+  // route; the app then falls back to a straight departure→arrival line.
+  repeated Location walkPath = 10;
+  // Turn-by-turn walk steps for a walk section. Empty under the same
+  // conditions as walkPath.
+  repeated WalkStep walkSteps = 11;
+  repeated Location transitPath = 12;
+  repeated Section alternatives = 13;
+}
+
+message WalkStep {
+  string instruction     = 1; // server-composed Traditional Chinese sentence
+  string maneuverType    = 2; // raw OSRM maneuver type: depart/turn/arrive/…
+  string modifier        = 3; // raw OSRM modifier: left/right/straight/…
+  double distanceMeters  = 4;
+  int64  durationSeconds = 5;
+  Location location      = 6; // maneuver point
 }
 
 message NotificationIdentity {

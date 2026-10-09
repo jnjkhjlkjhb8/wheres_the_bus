@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/models/plan_models.dart';
-import 'package:wheres_the_car/features/live_activity/model/journey_models.dart';
+import 'package:wheres_the_bus/data/models/plan_models.dart';
+import 'package:wheres_the_bus/data/tracking/journey_models.dart';
 
 PlanSection _section({
   required String type,

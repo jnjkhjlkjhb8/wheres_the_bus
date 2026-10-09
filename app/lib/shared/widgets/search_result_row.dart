@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/data/models/search_models.dart';
-import 'package:wheres_the_car/shared/motion/pressable.dart';
-import 'package:wheres_the_car/shared/widgets/transport_icon.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/data/models/search_models.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 @Preview(name: 'SearchResultRow — all types', group: 'Search')
 Widget searchResultRowPreview() {
@@ -99,11 +100,14 @@ class SearchResultRow extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 60),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space12,
+            vertical: AppTheme.space8,
+          ),
           child: Row(
             children: [
               TransportIcon(type: _transportType),
-              const SizedBox(width: 4),
+              const SizedBox(width: AppTheme.space4),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -128,7 +132,7 @@ class SearchResultRow extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppTheme.space8),
               Icon(
                 Symbols.arrow_insert_rounded,
                 size: 24,

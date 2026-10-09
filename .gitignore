@@ -14,7 +14,6 @@
 .codex
 .swiftpm/
 migrate_working_dir/
-/app/assets
 /app/env/staging.json
 /app/env/prod.json
 /app/env/test.json
@@ -36,12 +35,15 @@ openspec
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
+**/ios/Flutter/Dart-Defines.xcconfig
 .dart_tool/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
 /build/
 /coverage/
+/coverage.out
+app/coverage/
 
 # Symbolication related
 app.*.symbols
@@ -58,7 +60,6 @@ ios/Runner/AppDelegate.swift
 token.env
 .vscode/launch.json
 android/app/build.gradle.kts
-.gitignore
 android/app/src/main/AndroidManifest.xml
 services/router/server.go
 docs/requirements.md
@@ -66,12 +67,19 @@ docs/requirements.md
 /functions
 /router
 secrets/
+!k8s/infra/secrets/
+k8s/infra/secrets/*
+!k8s/infra/secrets/*.enc.yaml
+env/.rendered/
 osrm-data/
+motis-data/
 /model/
 app/lib/generated/
 app/lib/data/generated/
 models/*.pb.go
 models/*_grpc.pb.go
+app/lib/l10n/app_i18n*.dart
+app/i18n_missing.json
 .ds-sync/
 .claude/hooks/
 .claude/skills/
@@ -92,6 +100,7 @@ dump.rdb
 *.hive
 *.lock
 !pubspec.lock
+!Podfile.lock
 .firebaserc
 app/build/
 temp/
@@ -99,3 +108,7 @@ temp/
 **/GoogleService-Info.plist
 .github/hooks/
 .github/skills/
+.tmp-gocache/
+app/android/build/
+/.tools/
+k8s/.release/

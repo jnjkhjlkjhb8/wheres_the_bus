@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/features/metro/bloc/metro_eta_state.dart';
-import 'package:wheres_the_car/features/metro/view/metro_station_detail_view.dart';
-import 'package:wheres_the_car/shared/widgets/eta_list_tile.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/features/metro/bloc/metro_eta_state.dart';
+import 'package:wheres_the_bus/features/metro/view/metro_station_detail_view.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/widgets/eta_list_tile.dart';
 
 void main() {
   Future<void> pump(WidgetTester tester, Widget child) => tester.pumpWidget(
-    MaterialApp(theme: AppTheme.light, home: Scaffold(body: child)),
+    MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppI18n.localizationsDelegates,
+      supportedLocales: AppI18n.supportedLocales,
+
+      theme: AppTheme.light,
+      home: Scaffold(body: child),
+    ),
   );
 
   testWidgets('metro arrival renders through the shared EtaListTile', (
@@ -19,8 +27,7 @@ void main() {
         arrival: MetroArrival(
           line: 'R',
           destination: '淡水',
-          estimateMinutes: 4,
-          approaching: false,
+          estimateSeconds: 245,
         ),
       ),
     );
@@ -29,31 +36,34 @@ void main() {
     // hand-rolled Row.
     expect(find.byType(EtaListTile), findsOneWidget);
     expect(find.text('往 淡水'), findsOneWidget);
-    // The minute value renders through the shared mono time column.
+    // The 分/秒 countdown renders through the shared mono time column: 245s
+    // reads as 4分05秒 (seconds zero-padded).
+    expect(find.text('4'), findsOneWidget);
+    expect(find.text('分'), findsOneWidget);
+    expect(find.text('秒'), findsOneWidget);
     final minutes = tester.widget<Text>(find.text('4'));
     expect(minutes.style?.fontFamily, 'IBMPlexMono');
     expect(
       minutes.style?.fontFeatures,
       contains(const FontFeature.tabularFigures()),
     );
+    final seconds = tester.widget<Text>(find.text('05'));
+    expect(seconds.style?.fontFamily, 'IBMPlexMono');
   });
 
-  testWidgets('an approaching train shows the approaching label', (
-    tester,
-  ) async {
+  testWidgets('a train at zero collapses to 進站中', (tester) async {
     await pump(
       tester,
       const MetroArrivalTile(
         arrival: MetroArrival(
           line: 'BL',
           destination: '南港',
-          estimateMinutes: 0,
-          approaching: true,
+          estimateSeconds: 0,
         ),
       ),
     );
 
     expect(find.byType(EtaListTile), findsOneWidget);
-    expect(find.text('即將進站'), findsOneWidget);
+    expect(find.text('進站中'), findsOneWidget);
   });
 }

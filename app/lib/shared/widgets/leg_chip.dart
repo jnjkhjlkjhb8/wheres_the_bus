@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/data/models/plan_models.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/data/models/plan_models.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 class LegChip extends StatelessWidget {
   const LegChip({required this.section, required this.duration, super.key});
@@ -28,15 +29,15 @@ class LegChip extends StatelessWidget {
     return null;
   }
 
-  static String _durationLabel(Duration d) {
+  static String _durationLabel(AppI18n i18n, Duration d) {
     if (d.inHours > 0) return '${d.inHours}h${d.inMinutes.remainder(60)}m';
-    return '${d.inMinutes}分';
+    return i18n.minutesTight(d.inMinutes);
   }
 
   @override
   Widget build(BuildContext context) {
     final mode = _modeKey(section);
-    final label = _durationLabel(duration);
+    final label = _durationLabel(AppI18n.of(context), duration);
 
     Widget icon;
 
@@ -71,7 +72,7 @@ class LegChip extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         icon,
-        const SizedBox(height: 2),
+        const SizedBox(height: AppTheme.space2),
         Text(label, style: AppTextStyles.bodyVerySmall),
       ],
     );
@@ -93,7 +94,7 @@ class _BusIconWithBadge extends StatelessWidget {
           right: -6,
           bottom: -4,
           child: Container(
-            padding: const EdgeInsets.all(2),
+            padding: const EdgeInsets.all(AppTheme.space2),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(AppTheme.radiusChip),

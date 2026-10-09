@@ -1,0 +1,17 @@
+tunnel: 75282106-76dd-4898-a8e2-1f700c92066f
+credentials-file: /etc/cloudflared/creds.json
+
+ingress:
+  - hostname: api.rabbitsayhello.me
+    service: http://router:8080
+
+  - hostname: sync.rabbitsayhello.me
+    service: http://powersync:8080
+
+  - hostname: grpc.rabbitsayhello.me
+    service: https://router:50051
+    originRequest:
+      http2Origin: true
+      noTLSVerify: true
+
+  - service: http_status:404

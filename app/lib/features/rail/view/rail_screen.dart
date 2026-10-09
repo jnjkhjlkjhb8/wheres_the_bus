@@ -1,55 +1,61 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
-import 'package:wheres_the_car/app/theme/app_shadows.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/core/haptics/haptic_service.dart';
-import 'package:wheres_the_car/data/repositories/thsr_repository.dart';
-import 'package:wheres_the_car/data/repositories/tra_repository.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_bloc.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_event.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_state.dart';
-import 'package:wheres_the_car/features/rail/rail_navigation_request.dart';
-import 'package:wheres_the_car/features/rail/view/rail_train_screen.dart';
-import 'package:wheres_the_car/shared/motion/pressable.dart';
-import 'package:wheres_the_car/shared/widgets/app_bars.dart';
-import 'package:wheres_the_car/shared/widgets/app_card.dart';
-import 'package:wheres_the_car/shared/widgets/app_date_picker.dart';
-import 'package:wheres_the_car/shared/widgets/app_sliding_segment.dart';
-import 'package:wheres_the_car/shared/widgets/app_snackbar.dart';
-import 'package:wheres_the_car/shared/widgets/app_time_picker.dart';
-import 'package:wheres_the_car/shared/widgets/bottom_sheet_shell.dart';
-import 'package:wheres_the_car/shared/widgets/error_state_view.dart';
-import 'package:wheres_the_car/shared/widgets/thsr_station_picker.dart';
-import 'package:wheres_the_car/shared/widgets/tra_station_picker.dart';
-import 'package:wheres_the_car/shared/widgets/train_type_chip.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_bloc.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_state.dart';
+import 'package:wheres_the_bus/features/rail/view/rail_train_screen.dart';
+import 'package:wheres_the_bus/features/rail/widgets/rail_query_sheet.dart';
+import 'package:wheres_the_bus/features/rail/widgets/rail_service_marks.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
+import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
+import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
+import 'package:wheres_the_bus/shared/widgets/train_type_chip.dart';
 
-part '../widgets/rail_query_sheet_widgets.dart';
 part '../widgets/rail_shimmer_widgets.dart';
-part '../widgets/rail_train_card_widgets.dart';
-
-const List<FontFeature> _tnum = AppTextStyles.tabularFigures;
+part '../widgets/rail_timetable_row_widgets.dart';
 
 final _dateFormat = DateFormat('yyyy-MM-dd');
 
-String _formatDateDisplay(DateTime date) {
-  final weekdayMap = {
-    DateTime.monday: '一',
-    DateTime.tuesday: '二',
-    DateTime.wednesday: '三',
-    DateTime.thursday: '四',
-    DateTime.friday: '五',
-    DateTime.saturday: '六',
-    DateTime.sunday: '日',
-  };
-  return '${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')} (${weekdayMap[date.weekday]})';
+// One timetable row: the exact fields the row renders, times as "HH:mm".
+typedef _RailRow = ({
+  String type,
+  String number,
+  int delay,
+  String depart,
+  String arrive,
+  String duration,
+  List<RailServiceMark> marks,
+  String remark,
+  bool isSuspended,
+  bool isAddedService,
+});
+
+// Built per call rather than held in a const map: the names follow the
+// rider's language.
+Map<int, String> _weekdayMap(AppI18n i18n) => {
+  DateTime.monday: i18n.weekdayMon,
+  DateTime.tuesday: i18n.weekdayTue,
+  DateTime.wednesday: i18n.weekdayWed,
+  DateTime.thursday: i18n.weekdayThu,
+  DateTime.friday: i18n.weekdayFri,
+  DateTime.saturday: i18n.weekdaySat,
+  DateTime.sunday: i18n.weekdaySun,
+};
+
+String _formatDateDisplay(AppI18n i18n, DateTime date) {
+  return '${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')} (${_weekdayMap(i18n)[date.weekday]})';
 }
 
 /// Normalizes a backend time to `HH:mm`, accepting both an RFC3339 timestamp
@@ -59,7 +65,18 @@ String _railHhmm(String t) {
   return s.length >= 5 ? s.substring(0, 5) : s;
 }
 
-String _computeDuration(String depart, String arrive) {
+/// Minutes since midnight for an `HH:mm` clock string, or null when it does
+/// not parse — a malformed time must not silently sort as 00:00.
+int? _minutesOfDay(String hhmm) {
+  final parts = hhmm.split(':');
+  if (parts.length != 2) return null;
+  final h = int.tryParse(parts[0]);
+  final m = int.tryParse(parts[1]);
+  if (h == null || m == null) return null;
+  return h * 60 + m;
+}
+
+String _computeDuration(AppI18n i18n, String depart, String arrive) {
   final dParts = depart.split(':');
   final aParts = arrive.split(':');
   if (dParts.length != 2 || aParts.length != 2) return '';
@@ -71,21 +88,17 @@ String _computeDuration(String depart, String arrive) {
   final diff = aMin - dMin;
   final h = diff ~/ 60;
   final m = diff % 60;
-  if (h == 0) return '$m分';
-  if (m == 0) return '$h時';
-  return '$h時$m分';
+  if (h == 0) return i18n.durationMinutes(m);
+  if (m == 0) return i18n.hoursValue(h);
+  return i18n.hoursMinutesValue(h, m);
 }
 
-// Falls back to the name itself when the station is unknown, so the query
-// still carries a value the caller can display.
-Future<String> _resolveTraStationId(String name) async =>
-    await TraRepository.instance.stationId(name) ?? name;
-
-Future<String> _resolveThsrStationId(String name) async =>
-    await ThsrRepository.instance.stationId(name) ?? name;
-
 class RailScreen extends StatefulWidget {
-  const RailScreen({super.key});
+  const RailScreen({super.key, this.args});
+
+  /// The query carried by `/rail` — see [RailRouteArgs]. Null, or one with no
+  /// origin, opens the empty form exactly as the nav entry point does.
+  final RailRouteArgs? args;
 
   @override
   State<RailScreen> createState() => _RailScreenState();
@@ -94,150 +107,217 @@ class RailScreen extends StatefulWidget {
 class _RailScreenState extends State<RailScreen> {
   final _bloc = RailBloc();
   RailSystem _system = RailSystem.tra;
-  String _originName = '台北';
+  // Header + retry state, mirrored from the most recent O/D submission. The
+  // query form itself lives in [RailQuerySheetContent]; these fields only feed
+  // the top pill and the pull-to-refresh / error retry re-dispatch.
+  String _originName = '';
   String _originId = '';
-  String _destName = '花蓮';
+  String _destName = '';
   String _destId = '';
   late final SheetController _sheetController;
   DateTime _selectedDate = DateTime.now();
-  bool _initialized = false;
+  bool _isDeparture = true;
+  bool _hasSubmittedQuery = false;
+  RailQueryPreset? _preset;
+
+  // Drives the "N 分後" countdown on the next departure. The values are
+  // minute-granular, so a minute tick is as often as the display can change;
+  // it only rebuilds the visible rows of a lazily-built list.
+  Timer? _ticker;
 
   @override
   void initState() {
     super.initState();
     _sheetController = SheetController();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // One-shot: the hand-off request clears on read, so guard against the
-    // repeated didChangeDependencies calls Flutter makes on dependency changes.
-    if (_initialized) return;
-    _initialized = true;
-
-    final request = RailNavigationRequest.consume();
-    if (request != null) {
-      _system = request.system;
-      _originName = request.stationName;
-      // The near station id is already a valid tra/thsr station_id, so carry it
-      // directly rather than re-resolving by name.
-      _originId = request.stationId;
-      _destName = _defaultDest(request.system);
-      // If the preset station is itself the default destination, fall back to
-      // the default origin so the initial query is a real O/D pair.
-      if (_originName == _destName) _destName = _defaultOrigin(request.system);
-      _destId = '';
-    }
-    // No auto-query: the default O/D is just a placeholder for the picker, not
-    // a real request. A timetable is only fetched when the user taps 查詢.
-  }
-
-  String _defaultOrigin(RailSystem system) =>
-      system == RailSystem.thsr ? '南港' : '台北';
-
-  String _defaultDest(RailSystem system) =>
-      system == RailSystem.thsr ? '左營' : '花蓮';
-
-  Future<String> _resolveStationId(String name) => _system == RailSystem.thsr
-      ? _resolveThsrStationId(name)
-      : _resolveTraStationId(name);
-
-  Future<String?> _showStationPicker() => _system == RailSystem.thsr
-      ? showTHSRStationPicker(context)
-      : showTRAStationPicker(context);
-
-  /// Resolves any missing ids for the current origin/dest, then runs the query.
-  Future<void> _resolveAndSearch() async {
-    final originId = _originId.isNotEmpty
-        ? _originId
-        : await _resolveStationId(_originName);
-    final destId = await _resolveStationId(_destName);
-    if (!mounted) return;
-    setState(() {
-      _originId = originId;
-      _destId = destId;
+    _ticker = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
     });
-    _dispatchSearch();
+    _applyRouteArgs();
+  }
+
+  void _applyRouteArgs() {
+    final args = widget.args;
+    // No origin means a bare `/rail`: the empty form, with nothing to seed and
+    // nothing to submit.
+    if (args == null || args.originName.isEmpty) return;
+
+    _system = args.system;
+    _originName = args.originName;
+    // A near station's id is already a valid tra/thsr station_id, so carry it
+    // directly rather than re-resolving by name.
+    _originId = args.originId;
+    _destName = args.destName;
+    // A location can name the same station twice; clear the dest rather than
+    // carry a zero-length trip into the form.
+    if (_originName == _destName) _destName = '';
+    _destId = args.destId;
+    // Null means "now" — resolved here rather than in the location, so a
+    // restored or shared link is not stuck at the time it was made.
+    _selectedDate = args.date ?? DateTime.now();
+    _isDeparture = args.isDeparture;
+    // Seed the form with the full effective query (not just the origin) so the
+    // sheet and the auto-submitted results can't disagree.
+    _preset = RailQueryPreset(
+      system: _system,
+      originName: _originName,
+      originId: args.originId,
+      destName: _destName,
+      destId: args.destId,
+      date: _selectedDate,
+      isDeparture: _isDeparture,
+    );
+
+    // An origin-only location has nothing to submit: it opens the form with the
+    // origin filled and waits for a destination.
+    if (!args.submit || _destName.isEmpty) return;
+    // A full O/D location (from the home sheet): run it immediately and drop
+    // the query sheet out of the way so results are the first thing shown.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _hasSubmittedQuery = true);
+      _dispatchSearch();
+      unawaited(
+        _sheetController.animateToDetent(
+          AppSheetSnap.peek,
+          reduced: AppMotion.reduced(context),
+        ),
+      );
+    });
+  }
+
+  // Derived card rows, cached per loaded-state instance so local setState
+  // (date picks, station picks, sheet drags) doesn't re-parse every train's
+  // times; states are immutable, so identity is a sound cache key.
+  RailTimetableLoaded? _rowsSource;
+  late List<_RailRow> _rowsCache;
+
+  List<_RailRow> _rowsFor(RailTimetableLoaded state) {
+    if (!identical(state, _rowsSource)) {
+      _rowsSource = state;
+      _rowsCache = [
+        for (final item in state.traItems)
+          (
+            type: item.trainType,
+            number: item.trainNo,
+            delay: state.delays[item.trainNo] ?? 0,
+            depart: _railHhmm(item.departureTime),
+            arrive: _railHhmm(item.arrivalTime),
+            duration: _computeDuration(
+              AppI18n.of(context),
+              _railHhmm(item.departureTime),
+              _railHhmm(item.arrivalTime),
+            ),
+            marks: RailServiceMark.forTra(item),
+            remark: item.remark,
+            isSuspended: item.isSuspended,
+            isAddedService: item.isAddedService,
+          ),
+        for (final item in state.thsrItems)
+          (
+            type: '高鐵',
+            number: item.trainNo,
+            delay: state.delays[item.trainNo] ?? 0,
+            depart: _railHhmm(item.departureTime),
+            arrive: _railHhmm(item.arrivalTime),
+            duration: _computeDuration(
+              AppI18n.of(context),
+              _railHhmm(item.departureTime),
+              _railHhmm(item.arrivalTime),
+            ),
+            marks: RailServiceMark.forThsr(item),
+            remark: item.remark,
+            isSuspended: false,
+            isAddedService: false,
+          ),
+      ];
+    }
+    return _rowsCache;
+  }
+
+  (int?, int?) _nextDeparture(List<_RailRow> rows, String date) {
+    final now = DateTime.now();
+    if (date != _dateFormat.format(now)) return (null, null);
+    final nowMinutes = now.hour * 60 + now.minute;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].isSuspended) continue;
+      final depart = _minutesOfDay(rows[i].depart);
+      if (depart == null || depart < nowMinutes) continue;
+      return (i, depart - nowMinutes);
+    }
+    return (null, null);
   }
 
   @override
   void dispose() {
+    _ticker?.cancel();
     _sheetController.dispose();
     unawaited(_bloc.close());
     super.dispose();
   }
 
-  void _switchSystem(RailSystem system) {
-    if (system == _system) return;
-    unawaited(HapticService.instance.lightTap());
+  void _onSystemChanged(RailSystem system) {
     setState(() {
       _system = system;
-      _originName = _defaultOrigin(system);
-      _destName = _defaultDest(system);
-      _originId = '';
-      _destId = '';
+      _hasSubmittedQuery = false;
     });
     // Clear stale results back to the prompt (no query until user searches).
     _bloc.add(RailSystemChanged(system));
   }
 
-  void _swap() {
-    unawaited(HapticService.instance.lightTap());
-    setState(() {
-      final tmpName = _originName;
-      final tmpId = _originId;
-      _originName = _destName;
-      _originId = _destId;
-      _destName = tmpName;
-      _destId = tmpId;
-    });
-    _dispatchSearch();
+  void _onSubmit(RailQuerySubmission submission) {
+    switch (submission) {
+      case RailOdQuerySubmission():
+        setState(() {
+          _system = submission.system;
+          _originName = submission.originName;
+          _originId = submission.originId ?? '';
+          _destName = submission.destName;
+          _destId = submission.destId ?? '';
+          _selectedDate = submission.date;
+          _isDeparture = submission.isDeparture;
+          _hasSubmittedQuery = true;
+        });
+        _dispatchSearch();
+        // Collapse the inline sheet to reveal results. Never pop the navigator
+        // here — the sheet is part of this screen's Stack, so popping unwinds
+        // back to home.
+        unawaited(
+          _sheetController.animateToDetent(
+            AppSheetSnap.peek,
+            reduced: AppMotion.reduced(context),
+          ),
+        );
+      case RailTrainQuerySubmission():
+        unawaited(
+          context.push(
+            AppRoutes.railTrain(
+              submission.trainNo,
+              system: submission.system,
+              date: submission.date,
+            ),
+          ),
+        );
+    }
   }
 
   void _dispatchSearch() {
-    if (_originId.isEmpty || _destId.isEmpty) return;
-    // The bloc reads system + O/D names off a RailLiveBoardLoaded state, so
-    // re-establish it before every request; without this a repeat THSR query
-    // would silently fall back to TRA.
-    _bloc
-      ..add(RailSystemChanged(_system))
-      ..add(RailQueryChanged(originName: _originName, destName: _destName))
-      ..add(
-        RailTimetableRequested(
-          originId: _originId,
-          destId: _destId,
-          date: _dateFormat.format(_selectedDate),
+    _hasSubmittedQuery = true;
+    _bloc.add(
+      RailTimetableRequested(
+        system: _system,
+        origin: RailStationSelection(
+          name: _originName,
+          id: _originId.isEmpty ? null : _originId,
         ),
-      );
-  }
-
-  Future<void> _pickOrigin() async {
-    unawaited(HapticService.instance.lightTap());
-    final name = await _showStationPicker();
-    if (name != null && mounted) {
-      final id = await _resolveStationId(name);
-      if (mounted) {
-        setState(() {
-          _originName = name;
-          _originId = id;
-        });
-      }
-    }
-  }
-
-  Future<void> _pickDest() async {
-    unawaited(HapticService.instance.lightTap());
-    final name = await _showStationPicker();
-    if (name != null && mounted) {
-      final id = await _resolveStationId(name);
-      if (mounted) {
-        setState(() {
-          _destName = name;
-          _destId = id;
-        });
-      }
-    }
+        destination: RailStationSelection(
+          name: _destName,
+          id: _destId.isEmpty ? null : _destId,
+        ),
+        date: _dateFormat.format(_selectedDate),
+        cutoffMinutes: _selectedDate.hour * 60 + _selectedDate.minute,
+        isDeparture: _isDeparture,
+      ),
+    );
   }
 
   @override
@@ -257,7 +337,12 @@ class _RailScreenState extends State<RailScreen> {
                   builder: (context, state) {
                     if (state is RailError) {
                       return ListView(
-                        padding: EdgeInsets.fromLTRB(16, topPad + 68, 16, 16),
+                        padding: EdgeInsets.fromLTRB(
+                          AppTheme.space16,
+                          topPad + 68,
+                          AppTheme.space16,
+                          AppTheme.space16,
+                        ),
                         children: [
                           ErrorStateView(
                             error: state.error,
@@ -267,19 +352,27 @@ class _RailScreenState extends State<RailScreen> {
                       );
                     }
                     if (state is RailTimetableLoading) {
+                      // Full-bleed and offset exactly like the loaded list
+                      // below (topPad + 68 + 12), so the table doesn't shift
+                      // when the trains arrive.
                       return ListView(
-                        padding: EdgeInsets.fromLTRB(16, topPad + 68, 16, 16),
-                        children: const [
-                          SizedBox(height: 12),
-                          _ShimmerTrainList(),
-                        ],
+                        padding: EdgeInsets.only(
+                          top: topPad + 68 + AppTheme.space12,
+                          bottom: AppTheme.space16,
+                        ),
+                        children: const [_TimetableSkeleton()],
                       );
                     }
                     if (state is! RailTimetableLoaded) {
                       // No search run yet — prompt instead of auto-querying a
                       // placeholder O/D pair.
                       return Padding(
-                        padding: EdgeInsets.fromLTRB(24, topPad + 68, 24, 24),
+                        padding: EdgeInsets.fromLTRB(
+                          AppTheme.space24,
+                          topPad + 68,
+                          AppTheme.space24,
+                          AppTheme.space24,
+                        ),
                         child: Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -289,9 +382,9 @@ class _RailScreenState extends State<RailScreen> {
                                 size: 40,
                                 color: cs.outline,
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(height: AppTheme.space16),
                               Text(
-                                '選擇起訖站查詢班次',
+                                AppI18n.of(context).railPickStations,
                                 textAlign: TextAlign.center,
                                 style: AppTextStyles.bodyRegular.copyWith(
                                   color: cs.onSurfaceVariant,
@@ -302,72 +395,53 @@ class _RailScreenState extends State<RailScreen> {
                         ),
                       );
                     }
-                    final items = [
-                      for (final item in state.traItems)
-                        (
-                          type: item.trainType,
-                          number: item.trainNo,
-                          delay: state.delays[item.trainNo] ?? 0,
-                          depart: _railHhmm(item.departureTime),
-                          arrive: _railHhmm(item.arrivalTime),
-                        ),
-                      for (final item in state.thsrItems)
-                        (
-                          type: '高鐵',
-                          number: item.trainNo,
-                          delay: state.delays[item.trainNo] ?? 0,
-                          depart: _railHhmm(item.departureTime),
-                          arrive: _railHhmm(item.arrivalTime),
-                        ),
-                    ];
+                    final items = _rowsFor(state);
                     if (items.isEmpty) {
                       return ListView(
-                        padding: EdgeInsets.fromLTRB(16, topPad + 68, 16, 16),
-                        children: [
-                          ErrorStateView(
-                            error: const NotFoundError(),
-                            onRetry: _dispatchSearch,
-                          ),
-                        ],
+                        padding: EdgeInsets.fromLTRB(
+                          AppTheme.space24,
+                          topPad + 68,
+                          AppTheme.space24,
+                          AppTheme.space24,
+                        ),
+                        children: const [_NoTimetableEmpty()],
                       );
                     }
-                    // The sheet offset changes every frame while the query
-                    // sheet is dragged, but it only feeds the list's bottom
-                    // inset. Hand the train list to the builder as a stable
-                    // child so only the trailing spacer sliver rebuilds per
-                    // frame instead of every visible card.
+                    final (nextIndex, minutesUntil) = _nextDeparture(
+                      items,
+                      state.date,
+                    );
                     return ValueListenableBuilder<double?>(
                       valueListenable: _sheetController,
-                      child: SliverPadding(
-                        padding: EdgeInsets.fromLTRB(
-                          16,
-                          topPad + 68 + 12,
-                          16,
-                          0,
-                        ),
-                        sliver: SliverList.builder(
-                          itemCount: items.length,
-                          itemBuilder: (context, i) {
-                            final item = items[i];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: _TrainCard(
-                                type: item.type,
-                                number: item.number,
-                                delay: item.delay,
-                                depart: item.depart,
-                                arrive: item.arrive,
-                                duration: _computeDuration(
-                                  item.depart,
-                                  item.arrive,
-                                ),
-                                origin: state.originName,
-                                destination: state.destName,
-                                date: state.date,
+                      child: SliverMainAxisGroup(
+                        slivers: [
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                top: topPad + 68 + AppTheme.space12,
                               ),
-                            );
-                          },
-                        ),
+                              child: const _TimetableHeader(),
+                            ),
+                          ),
+                          SliverList.separated(
+                            itemCount: items.length,
+                            separatorBuilder: (context, i) => Divider(
+                              height: 1,
+                              thickness: 1,
+                              indent: 16,
+                              color: cs.outlineVariant.withValues(alpha: 0.4),
+                            ),
+                            itemBuilder: (context, i) => _TrainRow(
+                              row: items[i],
+                              system: _system,
+                              date: state.date,
+                              origin: state.originName,
+                              destination: state.destName,
+                              isNext: i == nextIndex,
+                              minutesUntil: minutesUntil,
+                            ),
+                          ),
+                        ],
                       ),
                       builder: (context, offset, listSliver) {
                         return RefreshIndicator(
@@ -391,128 +465,75 @@ class _RailScreenState extends State<RailScreen> {
 
             Positioned(
               top: 0,
-              left: 12,
-              right: 12,
-              child: SafeArea(
-                child: Row(
-                  children: [
-                    AppBarCircleButton(
-                      onTap: () {
-                        unawaited(HapticService.instance.lightTap());
-                        context.pop();
-                      },
-                      semanticLabel: '返回',
-                      child: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 18,
-                        color: cs.onSurface,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Container(
-                        height: 42,
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        decoration: BoxDecoration(
-                          color: cs.brightness == Brightness.light
-                              ? Colors.white
-                              : cs.surfaceContainerHigh,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: AppShadows.floating,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              '$_originName ➔ $_destName',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: cs.onSurface,
-                                height: 1.1,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatDateDisplay(_selectedDate),
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w400,
-                                color: cs.onSurfaceVariant,
-                                height: 1.1,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 52),
-                  ],
-                ),
-              ),
-            ),
-
-            NotificationListener<SheetNotification>(
-              onNotification: (notification) {
-                if (notification is SheetDragEndNotification) {
-                  unawaited(HapticService.instance.lightTap());
-                }
-                return false;
-              },
-              child: SheetViewport(
-                child: SheetExitGestureDetector(
-                  onExit: () => context.pop(),
-                  child: Sheet(
-                    controller: _sheetController,
-                    initialOffset: const SheetOffset.proportionalToViewport(
-                      0.35,
-                    ),
-                    snapGrid: const SheetSnapGrid(
-                      snaps: [
-                        SheetOffset.proportionalToViewport(0.15),
-                        SheetOffset.proportionalToViewport(0.35),
-                        SheetOffset.proportionalToViewport(1),
-                      ],
-                    ),
-                    scrollConfiguration: const SheetScrollConfiguration(),
-                    decoration: MaterialSheetDecoration(
-                      size: SheetSize.stretch,
-                      color: cs.surface,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(AppTheme.radiusBottomSheet),
-                      ),
-                    ),
-                    child: _QuerySheetContent(
-                      system: _system,
-                      origin: _originName,
-                      destination: _destName,
-                      selectedDate: _selectedDate,
-                      onSystemChanged: _switchSystem,
-                      onSwap: _swap,
-                      onDateChanged: (date) {
-                        setState(() => _selectedDate = date);
-                      },
-                      onOriginTap: _pickOrigin,
-                      onDestTap: _pickDest,
-                      onSearch: () {
-                        unawaited(_resolveAndSearch());
-                        // Collapse the inline sheet to reveal results. Never
-                        // pop the navigator here — the sheet is part of this
-                        // screen's Stack, so popping unwinds back to home.
-                        unawaited(
-                          _sheetController.animateTo(
-                            const SheetOffset.proportionalToViewport(0.15),
-                          ),
-                        );
-                      },
-                    ),
+              left: 0,
+              right: 0,
+              child: FloatingAppBar(
+                middle: AppBarTitlePill(
+                  title: _hasSubmittedQuery
+                      ? '$_originName → $_destName'
+                      : AppI18n.of(context).railTimetableTitle,
+                  subtitle: _formatDateDisplay(
+                    AppI18n.of(context),
+                    _selectedDate,
                   ),
                 ),
               ),
             ),
+
+            // RailQuerySheetContent starts its ListView flush with the sheet's
+            // top edge and can't take a SafeArea itself; AppSheet's own
+            // status-bar padding is what keeps its handle and title clear.
+            AppSheet(
+              controller: _sheetController,
+              color: cs.surface,
+              child: RailQuerySheetContent(
+                preset: _preset,
+                onSubmit: _onSubmit,
+                onSystemChanged: _onSystemChanged,
+              ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A successful timetable query with zero departures in the requested
+/// window — distinct from [ErrorStateView], which implies the request
+/// itself failed and a retry might help.
+class _NoTimetableEmpty extends StatelessWidget {
+  const _NoTimetableEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.event_busy_rounded,
+            size: 40,
+            color: AppTheme.inkTertiary(cs.brightness),
+          ),
+          const SizedBox(height: AppTheme.space16),
+          Text(
+            AppI18n.of(context).railNoTrains,
+            textAlign: TextAlign.center,
+            style: AppTextStyles.bodyRegular.copyWith(
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: AppTheme.space6),
+          Text(
+            AppI18n.of(context).railNoTrainsHint,
+            textAlign: TextAlign.center,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: cs.outline,
+            ),
+          ),
+        ],
       ),
     );
   }

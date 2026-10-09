@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:wheres_the_car/core/firebase/crash_reporter.dart';
-import 'package:wheres_the_car/data/repositories/favorites_repository.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_event.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_state.dart';
+import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
+import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
+import 'package:wheres_the_bus/features/favorites/bloc/favorites_event.dart';
+import 'package:wheres_the_bus/features/favorites/bloc/favorites_state.dart';
 
 class FavoritesBloc extends Bloc<FavoritesEvent, FavoritesState> {
   FavoritesBloc(this._repo, this._ready) : super(const FavoritesState()) {

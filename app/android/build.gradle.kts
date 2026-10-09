@@ -18,6 +18,13 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
+subprojects {
+    configurations.all {
+        resolutionStrategy {
+            force("com.google.android.libraries.places:places:4.4.1")
+        }
+    }
+}
 
 subprojects {
     tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {

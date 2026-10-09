@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Bus</string>
+	<string>我公車呢</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -17,7 +17,24 @@
 	<key>CFBundleName</key>
 	<string>bus</string>
 	<key>GOOGLE_MAPS_API_KEY</key>  
-	<string>$(GOOGLE_MAPS_API_KEY)</string> 
+	<string>$(GOOGLE_MAPS_API_KEY_IOS:default=$(GOOGLE_MAPS_API_KEY))</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.wheres.bus</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>wheresthebus</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Routes wheresthebus:// URLs through FlutterSceneDelegate to
+	     go_router. No deep-linking plugin is installed to conflict with it. -->
+	<key>FlutterDeepLinkingEnabled</key>
+	<true/>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -26,7 +43,19 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<!-- Rail booking install -->
+		<string>ptrapp</string>
+		<string>texpress</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>我公車呢使用你的位置來尋找附近的公車站、捷運站與 YouBike 站，並在地圖上顯示你目前的所在位置。</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
@@ -54,7 +83,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
-		<string>location</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

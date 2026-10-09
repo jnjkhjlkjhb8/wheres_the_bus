@@ -1,6 +1,7 @@
-import 'package:wheres_the_car/data/generated/tra.pb.dart';
-import 'package:wheres_the_car/data/models/rail_timetable_view.dart';
-import 'package:wheres_the_car/data/models/tra_models.dart';
+import 'package:wheres_the_bus/data/generated/tra.pb.dart';
+import 'package:wheres_the_bus/data/models/rail_station_board.dart';
+import 'package:wheres_the_bus/data/models/rail_timetable_view.dart';
+import 'package:wheres_the_bus/data/models/tra_models.dart';
 
 class TraDecoder {
   const TraDecoder._();
@@ -19,20 +20,28 @@ class TraDecoder {
     travelTime: t.travelTime,
   );
 
-  List<TraLiveBoardItem> decodeLiveBoard(tra_LiveBoards board) {
-    return board.items
-        .map(
-          (t) => TraLiveBoardItem(
-            trainNo: t.trainNo,
-            direction: t.direction ? '北上' : '南下',
-            trainType: t.trainTypeName,
-            destStation: t.endingStationName,
-            departureTime: t.scheduledDepartureTime,
-            delayMinutes: t.delay,
-          ),
-        )
-        .toList();
-  }
+  /// One station's next departures, already ordered and windowed by the
+  /// router. Each row keeps its own service date, because a board opened near
+  /// midnight carries the next day's early trains at the bottom.
+  List<RailStationDeparture> decodeStationBoard(tra_station_board board) =>
+      board.items
+          .map(
+            (d) => RailStationDeparture(
+              trainNo: d.trainNo,
+              trainType: d.trainTypeName,
+              destination: d.destinationStationName,
+              departureTime: d.departureTime,
+              serviceDate: d.trainDate,
+              isSuspended: _bit(d.mask, _maskSuspended),
+              remark: d.note,
+            ),
+          )
+          .toList();
+
+  /// One fare per 票種 × 車種 combination — see `traFareFor`.
+  List<TraFare> decodeFares(tra_fare_items fares) => fares.items
+      .map((f) => TraFare(ticketType: f.ticketType, price: f.price))
+      .toList();
 
   /// delay is a map of trainNo to delayMinutes
   Map<String, int> decodeDelayMap(tra_delays delays) => delays.delay;
@@ -60,15 +69,31 @@ class TraDecoder {
             arrivalTime: t.endingTime,
             travelMinutes: _parseTravelMinutes(t.travelTime),
             delayMinutes: 0,
-            hasBike: false,
-            hasDiningCar: false,
-            isDisabledFriendly: false,
-            hasBreastfeeding: false,
+            isDisabledFriendly: _bit(t.mask, _maskWheelchair),
+            hasDiningCar: _bit(t.mask, _maskDining),
+            hasBike: _bit(t.mask, _maskBike),
+            hasBreastfeeding: _bit(t.mask, _maskBreastfeeding),
+            runsDaily: _bit(t.mask, _maskDaily),
+            isAddedService: _bit(t.mask, _maskAddedService),
+            isSuspended: _bit(t.mask, _maskSuspended),
             remark: t.note,
           ),
         )
         .toList();
   }
+
+  // Bit positions in tra_timetable.mask, packed by railMask() in
+  // services/functions/rail.go. Bit 1 (行李服務) is decoded by neither side —
+  // there is no icon for it and nothing in the UI shows it.
+  static const _maskWheelchair = 0;
+  static const _maskDining = 2;
+  static const _maskBike = 3;
+  static const _maskBreastfeeding = 4;
+  static const _maskDaily = 5;
+  static const _maskAddedService = 6;
+  static const _maskSuspended = 7;
+
+  static bool _bit(int mask, int position) => mask & (1 << position) != 0;
 
   int _parseTravelMinutes(String travel) {
     if (travel.contains(':')) {

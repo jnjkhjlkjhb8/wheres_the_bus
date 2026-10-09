@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/decoders/tra_decoder.dart';
-import 'package:wheres_the_car/data/generated/tra.pb.dart';
+import 'package:wheres_the_bus/data/decoders/tra_decoder.dart';
+import 'package:wheres_the_bus/data/generated/tra.pb.dart';
+import 'package:wheres_the_bus/data/models/tra_models.dart';
 
 const TraDecoder _decoder = TraDecoder.instance;
 
@@ -19,10 +20,6 @@ int _travelMinutesFor(String travelTime) {
 void main() {
   group('_parseTravelMinutes via decodeTimetable', () {
     test("'1:30' is read as hours:minutes -> 90", () {
-      // travelTime.split(':') -> ['1', '30'], so this is h*60+m = 90, not a
-      // hours-only truncation. Pinning the correct behavior; the plan
-      // flagged this as a candidate bug, but the current code does take
-      // both parts.
       expect(_travelMinutesFor('1:30'), 90);
     });
 
@@ -30,15 +27,12 @@ void main() {
       expect(_travelMinutesFor('90分'), 90);
     });
 
-    // '1時30分' has no ':' so it falls to the '分'-stripping branch, which
-    // only strips '分' and leaves '1時30' -- int.tryParse fails on that and
-    // the fallback `?? 0` fires. This silently drops a valid travel time to
-    // 0 rather than parsing the hour. Pinning current (wrong-looking)
-    // behavior -- see findings, not fixed here.
-    test("'1時30分' (hour+minute suffix form) is not parsed and falls back to 0",
-        () {
-      expect(_travelMinutesFor('1時30分'), 0);
-    });
+    test(
+      "'1時30分' (hour+minute suffix form) is not parsed and falls back to 0",
+      () {
+        expect(_travelMinutesFor('1時30分'), 0);
+      },
+    );
 
     test('empty string does not throw and yields 0', () {
       expect(_travelMinutesFor(''), 0);
@@ -93,6 +87,54 @@ void main() {
 
     test('empty timetable yields an empty list without throwing', () {
       expect(_decoder.decodeTimetable(tra_timetables()), isEmpty);
+    });
+  });
+
+  group('mask bits via decodeTimetable', () {
+    TraTimetableItem decodeWithMask(int mask) => _decoder
+        .decodeTimetable(
+          tra_timetables(
+            items: [tra_timetable(trainNo: 'T1', mask: mask)],
+          ),
+        )
+        .single;
+
+    test('each bit lands on its own flag', () {
+      expect(decodeWithMask(1 << 0).isDisabledFriendly, isTrue);
+      expect(decodeWithMask(1 << 2).hasDiningCar, isTrue);
+      expect(decodeWithMask(1 << 3).hasBike, isTrue);
+      expect(decodeWithMask(1 << 4).hasBreastfeeding, isTrue);
+      expect(decodeWithMask(1 << 5).runsDaily, isTrue);
+      expect(decodeWithMask(1 << 6).isAddedService, isTrue);
+      expect(decodeWithMask(1 << 7).isSuspended, isTrue);
+    });
+
+    test('bit 1 (行李服務) sets nothing — it has no icon and no UI', () {
+      final item = decodeWithMask(1 << 1);
+      expect(item.isDisabledFriendly, isFalse);
+      expect(item.hasDiningCar, isFalse);
+      expect(item.hasBike, isFalse);
+      expect(item.hasBreastfeeding, isFalse);
+      expect(item.runsDaily, isFalse);
+      expect(item.isAddedService, isFalse);
+      expect(item.isSuspended, isFalse);
+    });
+
+    test('a suspended train with amenities keeps both readings', () {
+      // 133 = wheel | dining | suspended, the combination load_sink_test.go
+      // pins on the Go side.
+      final item = decodeWithMask(133);
+      expect(item.isDisabledFriendly, isTrue);
+      expect(item.hasDiningCar, isTrue);
+      expect(item.isSuspended, isTrue);
+      expect(item.hasBike, isFalse);
+    });
+
+    test('mask 0 leaves every flag clear', () {
+      final item = decodeWithMask(0);
+      expect(item.isDisabledFriendly, isFalse);
+      expect(item.isSuspended, isFalse);
+      expect(item.runsDaily, isFalse);
     });
   });
 

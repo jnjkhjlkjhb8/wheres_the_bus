@@ -6,21 +6,88 @@ plugins {
     id("com.google.firebase.firebase-perf")
 }
 
-def googleMapsApiKey = project.hasProperty('GOOGLE_MAPS_API_KEY') ? GOOGLE_MAPS_API_KEY : ''
+import java.util.Base64
+
+static def decodeDartDefines(String raw) {
+    def result = [:]
+    if (raw == null || raw.trim().isEmpty()) {
+        return result
+    }
+    raw.split(',').each { encoded ->
+        if (encoded == null || encoded.trim().isEmpty()) {
+            return
+        }
+        String decoded
+        try {
+            decoded = new String(Base64.decoder.decode(encoded.trim()), 'UTF-8')
+        } catch (IllegalArgumentException ignored) {
+            // Malformed entry: skip rather than fail the whole decode.
+            return
+        }
+        int idx = decoded.indexOf('=')
+        if (idx <= 0) {
+            return
+        }
+        String key = decoded.substring(0, idx)
+        if (key.toLowerCase(Locale.ROOT).startsWith('flutter')) {
+            return
+        }
+        result[key] = decoded.substring(idx + 1)
+    }
+    return result
+}
+
+def dartDefines = decodeDartDefines(project.findProperty('dart-defines')?.toString())
+
 def localPropertiesFile = rootProject.file('local.properties')
-if (!googleMapsApiKey && localPropertiesFile.exists()) {
-    localPropertiesFile.eachLine { line ->
-        if (line.startsWith('GOOGLE_MAPS_API_KEY=')) {
-            googleMapsApiKey = line.substring('GOOGLE_MAPS_API_KEY='.length()).trim()
+
+def resolveDefine = { String name ->
+    def value = dartDefines.get(name)
+    if (!value) {
+        value = project.hasProperty(name) ? project.property(name)?.toString() : null
+    }
+    if (!value && localPropertiesFile.exists()) {
+        localPropertiesFile.eachLine { line ->
+            if (line.startsWith("${name}=")) {
+                def candidate = line.substring(name.length() + 1).trim()
+                if (!candidate.isEmpty()) {
+                    value = candidate
+                }
+            }
         }
     }
+    return value ?: null
+}
+
+def googleMapsApiKey = resolveDefine('GOOGLE_MAPS_API_KEY_ANDROID') ?: resolveDefine('GOOGLE_MAPS_API_KEY')
+
+def appEnv = dartDefines.get('APP_ENV') ?: 'test'
+def isTestFlavor = appEnv == 'test'
+def TEST_ONLY_MAPS_KEY = 'TEST_ONLY_MAPS_KEY_NOT_FOR_PRODUCTION'
+
+def resolvedGoogleMapsApiKey = googleMapsApiKey
+if (!resolvedGoogleMapsApiKey && isTestFlavor) {
+    resolvedGoogleMapsApiKey = TEST_ONLY_MAPS_KEY
 }
 
 def dartEnvironmentVariables = [
-    GOOGLE_MAPS_API_KEY: googleMapsApiKey,
+    GOOGLE_MAPS_API_KEY: resolvedGoogleMapsApiKey ?: '',
 ]
 
+def keystorePropertiesFile = rootProject.file('key.properties')
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+def releaseStoreFile = keystoreProperties.getProperty('storeFile') ?: System.getenv('ANDROID_RELEASE_STORE_FILE')
+def releaseStorePassword = keystoreProperties.getProperty('storePassword') ?: System.getenv('ANDROID_RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = keystoreProperties.getProperty('keyAlias') ?: System.getenv('ANDROID_RELEASE_KEY_ALIAS')
+def releaseKeyPassword = keystoreProperties.getProperty('keyPassword') ?: System.getenv('ANDROID_RELEASE_KEY_PASSWORD')
+def hasReleaseSigningConfig = releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+
 android {
+    compileSdk = 37
+    ndkVersion = "28.2.13676358"
     namespace = "com.example.bus"
     compileSdk = flutter.compileSdkVersion
     compileOptions {
@@ -28,7 +95,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId "com.wheres.bus"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -37,21 +103,89 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         resValue("string", "google_maps_api_key", dartEnvironmentVariables.GOOGLE_MAPS_API_KEY)
+        resValue("string", "api_base_url", dartEnvironmentVariables.API_BASE_URL ?: "")
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
     kotlinOptions {
         jvmTarget = "17"
     }
+    signingConfigs {
+        if (hasReleaseSigningConfig) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Only signed when key.properties/env vars are present; the
+            // task-graph check below hard-fails a release build before
+            // this would otherwise produce an unsigned artifact.
+            if (hasReleaseSigningConfig) {
+                signingConfig = signingConfigs.release
+            }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation "androidx.core:core-ktx:1.17.0"
+    implementation "com.google.firebase:firebase-messaging"
+    testImplementation "junit:junit:4.13.2"
+    androidTestImplementation "androidx.test:runner:1.3.0"
+}
+
+gradle.taskGraph.whenReady { taskGraph ->
+    def buildingRelease = taskGraph.allTasks.any { task ->
+        def path = task.path
+        path.endsWith(':assembleRelease') ||
+            path.endsWith(':bundleRelease') ||
+            path.contains('PackageRelease') ||
+            path.endsWith(':lintVitalRelease')
+    }
+    if (!buildingRelease) {
+        return
+    }
+    if (!dartDefines.get('APP_ENV')) {
+        throw new GradleException(
+            "Release builds require Flutter dart-defines with an explicit APP_ENV. " +
+            "Build with flutter build ... --dart-define-from-file=env/<flavor>.json " +
+            "(see app/env/*.json.example); refusing to assume the test flavor for a release build."
+        )
+    }
+    if (!googleMapsApiKey && !isTestFlavor) {
+        throw new GradleException(
+            "GOOGLE_MAPS_API_KEY is missing for a release build (APP_ENV=${appEnv}). " +
+            "Build with --dart-define-from-file=env/<flavor>.json (see app/env/*.json.example) " +
+            "so the real key reaches Gradle through the dart-defines bridge; an empty key is " +
+            "not acceptable for a release build."
+        )
+    }
+    if (!isTestFlavor && resolvedGoogleMapsApiKey == TEST_ONLY_MAPS_KEY) {
+        throw new GradleException(
+            "The test-only Maps key placeholder cannot be used for a release build with " +
+            "APP_ENV=${appEnv}. Supply a real GOOGLE_MAPS_API_KEY via dart-defines."
+        )
+    }
+    if (!hasReleaseSigningConfig) {
+        throw new GradleException(
+            "Release signing config is missing. Create app/android/key.properties (gitignored) " +
+            "with storeFile/storePassword/keyAlias/keyPassword, or set the " +
+            "ANDROID_RELEASE_STORE_FILE / ANDROID_RELEASE_STORE_PASSWORD / " +
+            "ANDROID_RELEASE_KEY_ALIAS / ANDROID_RELEASE_KEY_PASSWORD environment variables. " +
+            "Refusing to fall back to debug signing for a release build."
+        )
+    }
 }

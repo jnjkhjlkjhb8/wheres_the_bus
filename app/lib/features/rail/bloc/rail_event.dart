@@ -1,7 +1,4 @@
 import 'package:equatable/equatable.dart';
-import 'package:flutter/material.dart' show TimeOfDay;
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/models/tra_models.dart';
 
 enum RailSystem { tra, thsr }
 
@@ -18,69 +15,42 @@ final class RailSystemChanged extends RailEvent {
   List<Object?> get props => [system];
 }
 
-final class RailStationSelected extends RailEvent {
-  const RailStationSelected({
-    required this.stationId,
-    required this.stationName,
-  });
-  final String stationId;
-  final String stationName;
+final class RailStationSelection extends Equatable {
+  const RailStationSelection({required this.name, this.id});
+
+  final String name;
+  final String? id;
+
   @override
-  List<Object?> get props => [stationId, stationName];
-}
-
-final class RailLiveBoardStarted extends RailEvent {
-  const RailLiveBoardStarted();
-}
-
-final class RailLiveBoardStopped extends RailEvent {
-  const RailLiveBoardStopped();
-}
-
-final class RailQueryChanged extends RailEvent {
-  const RailQueryChanged({
-    this.originId,
-    this.originName,
-    this.destId,
-    this.destName,
-    this.date,
-    this.time,
-    this.departureMode,
-  });
-  final String? originId;
-  final String? originName;
-  final String? destId;
-  final String? destName;
-  final DateTime? date;
-  final TimeOfDay? time;
-  final bool? departureMode;
-  @override
-  List<Object?> get props => [
-    originId,
-    originName,
-    destId,
-    destName,
-    date,
-    time,
-    departureMode,
-  ];
-}
-
-final class RailQuerySubmitted extends RailEvent {
-  const RailQuerySubmitted();
+  List<Object?> get props => [name, id];
 }
 
 final class RailTimetableRequested extends RailEvent {
   const RailTimetableRequested({
-    required this.originId,
-    required this.destId,
+    required this.system,
+    required this.origin,
+    required this.destination,
     required this.date,
+    this.cutoffMinutes,
+    this.isDeparture = true,
   });
-  final String originId;
-  final String destId;
+  final RailSystem system;
+  final RailStationSelection origin;
+  final RailStationSelection destination;
   final String date;
+  // Minutes-of-day the user picked. With [isDeparture] it bounds the results:
+  // depart at/after it (true) or arrive at/before it (false). null = no bound.
+  final int? cutoffMinutes;
+  final bool isDeparture;
   @override
-  List<Object?> get props => [originId, destId, date];
+  List<Object?> get props => [
+    system,
+    origin,
+    destination,
+    date,
+    cutoffMinutes,
+    isDeparture,
+  ];
 }
 
 final class RailTrainStopsRequested extends RailEvent {
@@ -96,21 +66,4 @@ final class RailDelaysUpdated extends RailEvent {
   final Map<String, int> delays;
   @override
   List<Object?> get props => [delays];
-}
-
-/// Internal: a fresh live-board snapshot arrived on the resilient stream. The
-/// handler reads the current state rather than a captured value.
-final class RailLiveBoardItemsUpdated extends RailEvent {
-  const RailLiveBoardItemsUpdated(this.items);
-  final List<TraLiveBoardItem> items;
-  @override
-  List<Object?> get props => [items];
-}
-
-/// Internal: the live-board stream failed terminally after retries.
-final class RailLiveBoardFailed extends RailEvent {
-  const RailLiveBoardFailed(this.error);
-  final AppError error;
-  @override
-  List<Object?> get props => [error];
 }

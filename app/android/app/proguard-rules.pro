@@ -2,3 +2,5 @@
 -keep class com.google.android.gms.maps.** { *; }
 -keep class com.google.maps.** { *; }
 -dontwarn io.flutter.embedding.**
+-dontwarn com.google.j2objc.annotations.ReflectionSupport
+-dontwarn com.google.j2objc.annotations.RetainedWith

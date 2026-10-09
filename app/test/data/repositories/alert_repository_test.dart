@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/repositories/alert_repository.dart';
-import 'package:wheres_the_car/data/repositories/settings_repository.dart';
+import 'package:wheres_the_bus/data/repositories/alert_repository.dart';
+import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 
 import '../../support/helpers/in_memory_settings_store.dart';
 

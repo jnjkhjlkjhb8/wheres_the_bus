@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
+
+service Feedback_Service {
+  rpc postFeedback(PostFeedbackRequest) returns (ReportReceipt) {}
+}
+
+message ReportDiagnostics {
+  string app_version = 1;
+  string platform = 2;
+  string os_version = 3;
+  string screen = 4;
+  string locale = 5;
+}
+
+// category is one of "route_data" | "eta" | "crash" | "suggestion"; the server
+// rejects anything else so the ops-side grouping can't drift with app releases.
+message PostFeedbackRequest {
+  string install_id = 1;
+  string category = 2;
+  string body = 3;
+  ReportDiagnostics diagnostics = 4;
+}
+
+// thread_id is a UUID. The app shows its first eight characters as the case
+// number a rider can quote back, which is why the full value is returned
+// rather than a separate short code that would have to stay in sync.
+message ReportReceipt {
+  string thread_id = 1;
+  int64 created_at_unix = 2;
+}

@@ -3,7 +3,8 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:wheres_the_car/data/models/timeline_stop.dart';
+import 'package:wheres_the_bus/data/models/timeline_stop.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 
 const double _kAnglePerStation = 2 * pi / 3;
 
@@ -99,7 +100,25 @@ class _WheelState extends State<Wheel> {
     }
   }
 
-  void _onPanEnd(DragEndDetails _) => _accDelta = 0;
+  void _onPanEnd(DragEndDetails _) {
+    _accDelta = 0;
+    final sc = widget.scrollController;
+    if (sc != null && sc.hasClients) {
+      final max = sc.position.maxScrollExtent;
+      final target = widget.stationOffsets[_currentStation].clamp(0.0, max);
+      if (MediaQuery.disableAnimationsOf(context)) {
+        sc.jumpTo(target);
+      } else {
+        unawaited(
+          sc.animateTo(
+            target,
+            duration: AppMotion.short,
+            curve: AppMotion.easeOut,
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

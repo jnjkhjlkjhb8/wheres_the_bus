@@ -1,0 +1,30 @@
+# functions (ROLE="" legacy prod path: realtime ETA crons, notifications,
+# MQTT, static transforms boot-load) allowlist. Source of truth: grep
+# os.Getenv in services/functions/*.go, services/functions/notify/*.go, and
+# services/shared/bootstrap.go. See docs/config.md.
+DATABASE_URL
+PG_SCHEMA
+FUNCTIONS_DB_MAX_CONNS
+FUNCTIONS_DB_MIN_CONNS
+REDIS_PASSWORD
+CWA_API_KEY
+MQTT_CLIENT_ID
+MQTT_USERNAME
+MQTT_PASSWORD
+# registerLiveCrons (busEta/mrtEta/bikeEta/traEta) fetches TDX's realtime
+# endpoints directly, same as the ingestor's raw landing — this is the
+# process that AGENTS.md's "TDX creds prod-only" note describes as prod's
+# `functions` service.
+TDX_CLIENT_ID
+TDX_CLIENT_SECRET
+# trtcEta polls the Metro Taipei SOAP API for TRTC arrivals + congestion
+# (ADR-0014). Empty credentials skip the job entirely (zero requests).
+TRTC_USERNAME
+TRTC_PASSWORD
+APP_ENV
+BUS_ETA_MODEL_PATH
+HEALTH_FILE
+SENTRY_DSN
+SENTRY_ENVIRONMENT
+SENTRY_TRACES_SAMPLE_RATE
+ARCHIVE_MYSQL_DSN

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/repositories/settings_repository.dart';
+import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 
 import '../../support/helpers/in_memory_settings_store.dart';
 
@@ -10,23 +10,12 @@ void main() {
   test('bool settings default to their documented values', () {
     final repo = build();
     expect(repo.liveActivityEnabled, isTrue);
-    expect(repo.navigationLocationEnabled, isTrue);
     expect(repo.pushEnabled, isTrue);
-    expect(repo.analyticsEnabled, isTrue);
-    expect(repo.crashlyticsEnabled, isTrue);
-    expect(repo.performanceEnabled, isTrue);
-    expect(repo.devModeEnabled, isFalse);
-    expect(repo.largeText, isFalse);
   });
 
   test('bool settings round-trip through the store', () {
-    final repo = build()
-      ..liveActivityEnabled = false
-      ..devModeEnabled = true
-      ..largeText = true;
+    final repo = build()..liveActivityEnabled = false;
     expect(repo.liveActivityEnabled, isFalse);
-    expect(repo.devModeEnabled, isTrue);
-    expect(repo.largeText, isTrue);
   });
 
   test('favMetroStations round-trips a list', () {

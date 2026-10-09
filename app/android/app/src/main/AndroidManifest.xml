@@ -2,18 +2,30 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <application
-        android:label="bus"
+        android:label="@string/app_name"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true">
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="@string/google_maps_api_key"
             />
+        <!-- Impeller on the OpenGLES backend. Impeller ships precompiled
+             shaders, so the map settle no longer stalls the raster thread on
+             runtime Skia shader compilation; pinning the backend away from
+             Vulkan keeps the ErrorOutOfHostMemory case that closed Impeller
+             out in the first place (docs/requirements.md) off the table. -->
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"
-            android:value="false" />
+            android:value="true" />
+        <meta-data
+            android:name="io.flutter.embedding.android.ImpellerBackend"
+            android:value="opengles" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="@string/fcm_default_channel_id" />
@@ -21,7 +33,6 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:supportsPictureInPicture="true"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -39,7 +50,57 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Hands the incoming URL to go_router instead of the legacy
+                 initial-route channel. -->
+            <meta-data
+                android:name="flutter_deeplinking_enabled"
+                android:value="true" />
+            <!-- Verified App Links, scoped to /app so the rest of the site
+                 still opens in the browser. Verification needs
+                 https://rabbitsayhello.me/.well-known/assetlinks.json to name
+                 this package's release signing fingerprint; until it does the
+                 links simply stay in the browser. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"
+                      android:host="rabbitsayhello.me"
+                      android:pathPrefix="/app"/>
+            </intent-filter>
+            <!-- Kept alongside the App Link: it needs no hosting, so it works
+                 on debug builds and from adb. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="wheresthebus"/>
+            </intent-filter>
         </activity>
+        <!-- Redraws the tracking card from a server push (ADR-0018). A receiver
+             rather than a FirebaseMessagingService: firebase_messaging already
+             declares that service and only one may win, and taking it would
+             break the Dart background handler the 下車提醒 vibration rides on.
+             Receivers do not compete, and a broadcast can start a process the
+             system has already killed. -->
+        <receiver
+            android:name=".TrackPushReceiver"
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+            </intent-filter>
+        </receiver>
+        <!-- 取消追蹤 on a card whose process is gone. The plugin's own dynamic
+             receiver ends the session properly while Dart is alive; this one
+             guarantees the button always at least takes the card down. -->
+        <receiver
+            android:name=".TrackCancelReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.wheres.bus.action.CANCEL_TRACK" />
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -55,6 +116,15 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Rail booking install-->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="tra-tip"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="thsrc"/>
         </intent>
     </queries>
 </manifest>

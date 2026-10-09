@@ -1,0 +1,19 @@
+# Operator must provide the staging tunnel id in the credentials/config bundle.
+# Keeping this placeholder makes an unconfigured tunnel fail closed.
+tunnel: REPLACE_WITH_STAGING_TUNNEL_ID
+credentials-file: /etc/cloudflared/creds.json
+
+ingress:
+  - hostname: api.stag.rabbitsayhello.me
+    service: http://router:8080
+
+  - hostname: sync.stag.rabbitsayhello.me
+    service: http://powersync:8080
+
+  - hostname: grpc.stag.rabbitsayhello.me
+    service: https://router:50051
+    originRequest:
+      http2Origin: true
+      noTLSVerify: true
+
+  - service: http_status:404

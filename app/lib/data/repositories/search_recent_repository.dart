@@ -1,5 +1,5 @@
-import 'package:wheres_the_car/core/storage/hive_store.dart';
-import 'package:wheres_the_car/features/search/bloc/search_state.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
+import 'package:wheres_the_bus/data/models/search_models.dart';
 
 class SearchRecentRepository {
   const SearchRecentRepository._();
@@ -14,7 +14,7 @@ class SearchRecentRepository {
     if (raw is! List) return const [];
     return raw
         .whereType<Map<dynamic, dynamic>>()
-        .map(_fromMap)
+        .map(SearchResult.fromStorageMap)
         .whereType<SearchResult>()
         .toList(growable: false);
   }
@@ -24,7 +24,10 @@ class SearchRecentRepository {
     final current = all()
         .where((r) => r.type != result.type || r.uid != result.uid)
         .toList();
-    final next = [result, ...current].take(_maxItems).map(_toMap).toList();
+    final next = [
+      result,
+      ...current,
+    ].take(_maxItems).map((r) => r.toStorageMap()).toList();
     await HiveStore.settings.put(_key, next);
   }
 
@@ -32,41 +35,23 @@ class SearchRecentRepository {
     if (!HiveStore.settingsReady) return;
     final next = all()
         .where((r) => r.type != result.type || r.uid != result.uid)
-        .map(_toMap)
+        .map((r) => r.toStorageMap())
         .toList();
+    await HiveStore.settings.put(_key, next);
+  }
+
+  Future<void> restore(SearchResult result, int index) async {
+    if (!HiveStore.settingsReady) return;
+    final current = all()
+        .where((r) => r.type != result.type || r.uid != result.uid)
+        .toList();
+    current.insert(index.clamp(0, current.length), result);
+    final next = current.take(_maxItems).map((r) => r.toStorageMap()).toList();
     await HiveStore.settings.put(_key, next);
   }
 
   Future<void> clear() async {
     if (!HiveStore.settingsReady) return;
     await HiveStore.settings.delete(_key);
-  }
-
-  Map<String, Object?> _toMap(SearchResult result) => {
-    'type': result.type.name,
-    'uid': result.uid,
-    'name': result.name,
-    'subtitle': result.subtitle,
-    'city': result.city,
-    'lat': result.lat,
-    'lon': result.lon,
-  };
-
-  SearchResult? _fromMap(Map<dynamic, dynamic> map) {
-    final typeName = map['type'] as String?;
-    final type = SearchResultType.values.where((t) => t.name == typeName);
-    if (type.isEmpty) return null;
-    final uid = map['uid'] as String? ?? '';
-    final name = map['name'] as String? ?? '';
-    if (uid.isEmpty || name.isEmpty) return null;
-    return SearchResult(
-      type: type.first,
-      uid: uid,
-      name: name,
-      subtitle: map['subtitle'] as String? ?? '',
-      city: map['city'] as String?,
-      lat: (map['lat'] as num?)?.toDouble(),
-      lon: (map['lon'] as num?)?.toDouble(),
-    );
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/shared/widgets/app_switch.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_switch.dart';
 
 /// A labelled group of settings rows.
 class SettingsGroup extends StatelessWidget {
@@ -17,7 +19,12 @@ class SettingsGroup extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          AppTheme.space8,
+          AppTheme.space16,
+          AppTheme.space6,
+        ),
         child: Text(title, style: Theme.of(context).textTheme.labelMedium),
       ),
       ...children,
@@ -43,11 +50,14 @@ class SettingsSwitchRow extends StatelessWidget {
   final ValueChanged<bool>? onChanged;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    leading: icon == null ? null : Icon(icon),
-    title: Text(title),
-    subtitle: subtitle == null ? null : Text(subtitle!),
-    trailing: AppSwitch(value: value, onChanged: onChanged),
+  Widget build(BuildContext context) => Pressable(
     onTap: onChanged == null ? null : () => onChanged!(!value),
+    semanticLabel: title,
+    child: ListTile(
+      leading: icon == null ? null : Icon(icon),
+      title: Text(title),
+      subtitle: subtitle == null ? null : Text(subtitle!),
+      trailing: AppSwitch(value: value, onChanged: onChanged),
+    ),
   );
 }

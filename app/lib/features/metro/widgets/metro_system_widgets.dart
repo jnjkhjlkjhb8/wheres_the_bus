@@ -1,5 +1,38 @@
 part of '../view/metro_screen.dart';
 
+/// Floating time/fare toggle mirroring the system pill's card styling. Drives
+/// [MetroMapMode], which controls the labels shown on every station across
+/// the map.
+class _MapModeChip extends StatelessWidget {
+  const _MapModeChip({
+    required this.mode,
+    required this.onChanged,
+    super.key,
+  });
+
+  final MetroMapMode mode;
+  final ValueChanged<MetroMapMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final i18n = AppI18n.of(context);
+    return AppSlidingSegment<MetroMapMode>(
+      style: AppSegmentStyle.floating,
+      // Hugs its labels rather than stretching: it floats beside the system
+      // pill over the map, where a full-width control would cover the network.
+      fill: false,
+      // Built per call rather than held in a static: the labels follow the
+      // rider's language, which a `static const` would freeze at first load.
+      options: {
+        MetroMapMode.time: i18n.metroMapModeTime,
+        MetroMapMode.fare: i18n.metroMapModeFare,
+      },
+      value: mode,
+      onChanged: onChanged,
+    );
+  }
+}
+
 class _SystemPill extends StatefulWidget {
   const _SystemPill();
 
@@ -8,34 +41,40 @@ class _SystemPill extends StatefulWidget {
 }
 
 class _SystemPillState extends State<_SystemPill> {
-  static const _others = ['高雄捷運', '桃園機捷', '高雄輕軌'];
+  /// Resolved per build rather than held in a static: the labels follow the
+  /// rider's language, which a `static const` would freeze at first load.
+  List<String> _others(AppI18n i18n) => [
+    i18n.metroSystemKrtc,
+    i18n.metroSystemTymc,
+    i18n.metroSystemKlrt,
+  ];
   bool _isPickerOpen = false;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final surface = cs.brightness == Brightness.light
-        ? Colors.white
-        : cs.surfaceContainerHigh;
     return Semantics(
-      label: '切換捷運系統',
+      label: AppI18n.of(context).metroSwitchSystem,
       button: true,
-      child: GestureDetector(
+      child: Pressable(
         onTap: () => _showPicker(context),
         child: Container(
           height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: surface,
-            borderRadius: const BorderRadius.all(Radius.circular(999)),
-            boxShadow: AppShadows.floating,
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space14),
+          // Same skin as the back button and the time/fare segment beside it:
+          // hand-rolling it here drifted (shadow in dark mode, no hairline).
+          decoration: AppTheme.floatingControl(
+            cs,
+            borderRadius: const BorderRadius.all(
+              Radius.circular(AppTheme.radiusStadium),
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            spacing: 4,
+            spacing: AppTheme.space4,
             children: [
               Text(
-                '台北捷運',
+                AppI18n.of(context).metroSystemTrtc,
                 style: AppTextStyles.bodyLarge.copyWith(
                   fontWeight: FontWeight.w600,
                   color: cs.onSurface,
@@ -43,7 +82,7 @@ class _SystemPillState extends State<_SystemPill> {
               ),
               AnimatedRotation(
                 turns: _isPickerOpen ? 0.5 : 0.0,
-                duration: const Duration(milliseconds: 200),
+                duration: AppMotion.short,
                 child: Icon(
                   Icons.expand_more_rounded,
                   size: 18,
@@ -81,11 +120,13 @@ class _SystemPillState extends State<_SystemPill> {
           pos.dx + box.size.width,
           0,
         ),
-        items: _others
+        items: _others(AppI18n.of(context))
             .map(
               (s) => PopupMenuItem(
                 value: s,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.space12,
+                ),
                 child: Text(
                   s,
                   style: AppTextStyles.bodyLarge.copyWith(
@@ -101,7 +142,7 @@ class _SystemPillState extends State<_SystemPill> {
           setState(() => _isPickerOpen = false);
         }
         if (value != null && context.mounted) {
-          AppSnackbar.show(context, '$value 尚未支援');
+          AppSnackbar.show(context, AppI18n.of(context).comingSoonValue(value));
         }
       }),
     );

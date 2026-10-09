@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce_flutter/adapters.dart';
-import 'package:wheres_the_car/data/models/favorite.dart';
-import 'package:wheres_the_car/data/repositories/favorites_repository.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_bloc.dart';
-import 'package:wheres_the_car/features/favorites/bloc/favorites_event.dart';
+import 'package:wheres_the_bus/data/models/favorite.dart';
+import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
+import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
+import 'package:wheres_the_bus/features/favorites/bloc/favorites_event.dart';
 
 // Long enough to outlast the fake's coalesce window and let the queued
 // FavoritesRefreshed event drain.
@@ -96,8 +96,7 @@ Favorite _favorite(String refId) => Favorite(
 class _FakeFavoritesRepository implements FavoritesRepository {
   _FakeFavoritesRepository({List<Favorite> items = const []})
     : _items = {
-        for (final (i, item) in items.indexed)
-          item.id: item.copyWith(order: i),
+        for (final (i, item) in items.indexed) item.id: item.copyWith(order: i),
       };
 
   final Map<String, Favorite> _items;

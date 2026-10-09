@@ -1,0 +1,15 @@
+[
+  {
+    "TrainDate": "2026-07-10",
+    "Items": [
+      {"TrainNo": "0801", "OriginStationID": "0990", "DestinationStationID": "1000", "StandardSeatStatus": "O", "BusinessSeatStatus": "O"},
+      {"TrainNo": "0801", "OriginStationID": "1000", "DestinationStationID": "1070", "StandardSeatStatus": "L", "BusinessSeatStatus": "O"}
+    ]
+  },
+  {
+    "TrainDate": "2026-07-10",
+    "Items": [
+      {"TrainNo": "0803", "OriginStationID": "0990", "DestinationStationID": "1070", "StandardSeatStatus": "O", "BusinessSeatStatus": "L"}
+    ]
+  }
+]

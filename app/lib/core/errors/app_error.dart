@@ -3,8 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:grpc/grpc.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-sealed class AppError {
+/// Implements [Exception] so repositories can throw it directly rather than
+/// wrapping it in a second error type on the way out.
+sealed class AppError implements Exception {
   const AppError();
 
   factory AppError.from(Object e) {
@@ -22,8 +25,8 @@ sealed class AppError {
     return const UnknownError();
   }
 
-  String get title;
-  String get hint;
+  String titleOf(AppI18n i18n);
+  String hintOf(AppI18n i18n);
   IconData get icon;
 }
 
@@ -31,10 +34,10 @@ class OfflineError extends AppError {
   const OfflineError();
 
   @override
-  String get title => '目前無法取得即時資訊';
+  String titleOf(AppI18n i18n) => i18n.errorOfflineTitle;
 
   @override
-  String get hint => '已離線,連上網路後可重新整理';
+  String hintOf(AppI18n i18n) => i18n.errorOfflineHint;
 
   @override
   IconData get icon => Icons.cloud_off_rounded;
@@ -44,10 +47,10 @@ class TimeoutError extends AppError {
   const TimeoutError();
 
   @override
-  String get title => '連線逾時';
+  String titleOf(AppI18n i18n) => i18n.errorTimeoutTitle;
 
   @override
-  String get hint => '網路回應太慢,請稍後再試';
+  String hintOf(AppI18n i18n) => i18n.errorTimeoutHint;
 
   @override
   IconData get icon => Icons.hourglass_empty_rounded;
@@ -57,10 +60,10 @@ class NotFoundError extends AppError {
   const NotFoundError();
 
   @override
-  String get title => '查無資料';
+  String titleOf(AppI18n i18n) => i18n.errorNotFoundTitle;
 
   @override
-  String get hint => '目前沒有可顯示的內容';
+  String hintOf(AppI18n i18n) => i18n.errorNotFoundHint;
 
   @override
   IconData get icon => Icons.search_off_rounded;
@@ -72,10 +75,10 @@ class ServerError extends AppError {
   final int code;
 
   @override
-  String get title => '服務暫時無法使用';
+  String titleOf(AppI18n i18n) => i18n.errorServerTitle;
 
   @override
-  String get hint => '我們正在處理,請稍後再試';
+  String hintOf(AppI18n i18n) => i18n.errorServerHint;
 
   @override
   IconData get icon => Icons.error_outline_rounded;
@@ -85,10 +88,10 @@ class UnknownError extends AppError {
   const UnknownError();
 
   @override
-  String get title => '發生未預期的錯誤';
+  String titleOf(AppI18n i18n) => i18n.errorUnknownTitle;
 
   @override
-  String get hint => '請稍後再試';
+  String hintOf(AppI18n i18n) => i18n.errorUnknownHint;
 
   @override
   IconData get icon => Icons.error_outline_rounded;

@@ -1,0 +1,15 @@
+# motis allowlist — one VAR name per line, blank lines and #-comments ignored.
+# Consumed by motis-import in docker/docker-compose.yaml, not by a Go binary:
+# the import job substitutes these into the rendered config.yml before running
+# `motis import`. See docs/config.md.
+#
+# MOTIS itself reads no environment. `motis server` takes everything from the
+# config.yml inside the data directory the import produced, which is why the
+# credential has to be substituted at import time rather than injected at run
+# time — and why the motis service has no env_file at all.
+#
+# Shared secret MOTIS sends to the router's GTFS-RT endpoint (ADR-0019,
+# services/router/gtfs_rt.go). This is the only value the import substitutes.
+# Empty means MOTIS polls an endpoint that is not mounted and keeps serving the
+# static timetable, which is the documented degraded mode, not an outage.
+GTFS_RT_CREDENTIAL

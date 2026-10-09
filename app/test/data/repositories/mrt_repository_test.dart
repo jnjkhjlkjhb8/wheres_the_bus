@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grpc/grpc.dart';
-import 'package:wheres_the_car/data/generated/mrt.pbgrpc.dart';
-import 'package:wheres_the_car/data/repositories/mrt_repository.dart';
+import 'package:wheres_the_bus/data/generated/mrt.pbgrpc.dart';
+import 'package:wheres_the_bus/data/repositories/mrt_repository.dart';
 
 import '../../support/helpers/fake_grpc.dart';
 

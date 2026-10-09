@@ -1,0 +1,100 @@
+# Point-in-time restore drill (docs/runbooks/k3s.md): a separate PostgreSQL
+# instance restored from the pgBackRest repository. It is not part of any
+# kustomization; the operator fills in RESTORE_TARGET and POSTGRES_IMAGE, then
+# applies it by hand.
+#
+# It must never write to the production repository: archive_mode is off, and it
+# reads the repository with the read-only SFTP account
+# (pgbackrest-restore-env / pgbackrest-restore-sftp-key).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-restore-data
+  namespace: bus
+spec:
+  storageClassName: local-path
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-restore
+  namespace: bus
+  labels:
+    app: postgres-restore
+spec:
+  priorityClassName: bus-batch
+  automountServiceAccountToken: false
+  imagePullSecrets: [{name: ghcr-pull}]
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: restore
+      image: POSTGRES_IMAGE
+      command:
+        - pgbackrest
+        - --stanza=bus
+        - --type=time
+        - --target=RESTORE_TARGET # e.g. 2026-11-01 03:00:00+08
+        - --target-action=promote
+        - restore
+      envFrom:
+        - secretRef:
+            name: pgbackrest-restore-env
+      securityContext: &hardened
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      volumeMounts: &mounts
+        - name: data
+          mountPath: /var/lib/postgresql
+        - name: config
+          mountPath: /etc/pgbackrest/pgbackrest.conf
+          subPath: pgbackrest.conf
+        - name: sftp-key
+          mountPath: /etc/pgbackrest/sftp
+          readOnly: true
+        - name: run
+          mountPath: /var/run/postgresql
+  containers:
+    - name: postgres
+      image: POSTGRES_IMAGE
+      # restore wrote restore_command (archive-get) into postgresql.auto.conf;
+      # the WAL replay reads through the same read-only account.
+      command: ["postgres", "-c", "archive_mode=off"]
+      envFrom:
+        - secretRef:
+            name: pgbackrest-restore-env
+      env:
+        - name: PGDATA
+          value: /var/lib/postgresql/18/docker
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          memory: 4Gi
+      securityContext: *hardened
+      volumeMounts: *mounts
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: postgres-restore-data
+    - name: config
+      configMap:
+        name: postgres-config
+    - name: sftp-key
+      secret:
+        secretName: pgbackrest-restore-sftp-key
+        defaultMode: 0400
+    - name: run
+      emptyDir: {}

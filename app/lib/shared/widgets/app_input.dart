@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
 class AppInput extends StatelessWidget {
   const AppInput({
@@ -15,6 +15,10 @@ class AppInput extends StatelessWidget {
     this.keyboardType,
     this.prefixIcon,
     this.suffixIcon,
+    this.minLines,
+    this.maxLines = 1,
+    this.maxLength,
+    this.autofocus = false,
   });
 
   final String label;
@@ -27,6 +31,20 @@ class AppInput extends StatelessWidget {
   final TextInputType? keyboardType;
   final Widget? prefixIcon;
   final Widget? suffixIcon;
+
+  /// Height floor for a multiline field, in lines. Paired with [maxLines] it
+  /// gives a box that opens at a useful size and then grows with the text.
+  final int? minLines;
+
+  /// Line ceiling. The default of 1 keeps every existing single-line call
+  /// site unchanged; pass null to let the field grow without bound.
+  final int? maxLines;
+
+  /// Hard input ceiling. Material's own counter is suppressed: a field that
+  /// reports its length from the first character reads as a form to satisfy,
+  /// so call sites surface remaining length on their own terms.
+  final int? maxLength;
+  final bool autofocus;
 
   OutlineInputBorder _border(Color color, {double width = 1}) =>
       OutlineInputBorder(
@@ -42,10 +60,18 @@ class AppInput extends StatelessWidget {
       onChanged: onChanged,
       obscureText: obscureText,
       keyboardType: keyboardType,
+      minLines: minLines,
+      maxLines: maxLines,
+      maxLength: maxLength,
+      autofocus: autofocus,
       style: AppTextStyles.bodyLarge,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
+        // A multiline field's label must sit at the top of the box rather than
+        // vertically centred against several lines of text.
+        alignLabelWithHint: (maxLines ?? 2) > 1,
+        counterText: '',
         helperText: error == null ? helper : null,
         errorText: error,
         prefixIcon: prefixIcon,
@@ -56,8 +82,8 @@ class AppInput extends StatelessWidget {
         errorBorder: _border(cs.error),
         focusedErrorBorder: _border(cs.error, width: 2),
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
+          horizontal: AppTheme.space16,
+          vertical: AppTheme.space12,
         ),
         labelStyle: AppTextStyles.bodyRegular.copyWith(
           color: cs.onSurfaceVariant,

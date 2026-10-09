@@ -1,0 +1,228 @@
+# Batch runs (ADR-0026). Every container of one Job shares PIPELINE_RUN_ID,
+# the Job's UID, so the export, the MOTIS import and the publish all name the
+# same run directory.
+#
+# nightly: export the run (init 1), import its feed into MOTIS (init 2), then
+# publish it (main). A failed step stops the Job and nothing is published, so
+# MOTIS and GTFS-RT keep the previous run.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pipeline-nightly
+  namespace: bus
+spec:
+  schedule: "0 3 * * *"
+  timeZone: Asia/Taipei
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 14400
+      template:
+        metadata:
+          labels:
+            app: pipeline
+        spec:
+          priorityClassName: bus-batch
+          automountServiceAccountToken: false
+          imagePullSecrets: [{name: ghcr-pull}]
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: nightly
+              image: ghcr.io/jnjkhjlkjhb8/bus-pipeline
+              args: ["run", "nightly"]
+              envFrom:
+                - secretRef:
+                    name: pipeline-env
+              env: &pipelineEnv
+                - name: TZ
+                  value: Asia/Taipei
+                - name: REDIS_ADDR
+                  value: redis:6379
+                - name: GTFS_OUT_DIR
+                  value: /data/gtfs
+                - name: TMPDIR
+                  value: /spool
+                - name: PIPELINE_RUN_ID
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
+              resources: &pipelineResources
+                requests:
+                  cpu: 500m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+              securityContext: &restricted
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts: &pipelineMounts
+                - name: gtfs
+                  mountPath: /data/gtfs
+                - name: spool
+                  mountPath: /spool
+                - name: tmp
+                  mountPath: /tmp
+            - name: motis-import
+              image: ghcr.io/motis-project/motis:2.11.2@sha256:6055f51eec43eeed28524037ca0161b96efe9cd05728eaa9ac04c20c2826d330
+              envFrom:
+                - secretRef:
+                    name: motis-env # GTFS_RT_CREDENTIAL
+              env:
+                - name: PIPELINE_RUN_ID
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
+                - name: OSM_URL
+                  value: https://download.geofabrik.de/asia/taiwan-latest.osm.pbf
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  run=/data/gtfs/runs/$PIPELINE_RUN_ID
+                  # The OSM extract is cached on its own volume and refreshed
+                  # only when Geofabrik publishes a different checksum.
+                  want="$(wget -qO- "$OSM_URL.md5" | cut -d' ' -f1)"
+                  if [ ! -f /osm/taiwan.osm.pbf ] || [ "$(md5sum /osm/taiwan.osm.pbf | cut -d' ' -f1)" != "$want" ]; then
+                    wget -qO /osm/.taiwan.osm.pbf.tmp "$OSM_URL"
+                    [ "$(md5sum /osm/.taiwan.osm.pbf.tmp | cut -d' ' -f1)" = "$want" ]
+                    mv /osm/.taiwan.osm.pbf.tmp /osm/taiwan.osm.pbf
+                  fi
+                  rm -rf "$run/.motis-build" && mkdir -p "$run/.motis-build"
+                  umask 077
+                  sed -e "s|__GTFS_RT_CREDENTIAL__|${GTFS_RT_CREDENTIAL:-}|" \
+                      -e "s|__GTFS_PATH__|$run/gtfs.zip|" \
+                      -e "s|http://router:8080|http://api:8080|" \
+                      /conf/config.yml > "$run/.motis-build/config.yml"
+                  /motis import -c "$run/.motis-build/config.yml" -d "$run/.motis-build/data"
+                  cp "$run/.motis-build/config.yml" "$run/.motis-build/data/config.yml"
+                  touch "$run/.motis-build/data/.complete"
+                  mv "$run/.motis-build/data" "$run/motis"
+                  rm -rf "$run/.motis-build"
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 2Gi
+                limits:
+                  memory: 4Gi
+              securityContext: *restricted
+              volumeMounts:
+                - name: gtfs
+                  mountPath: /data/gtfs
+                - name: osm
+                  mountPath: /osm
+                - name: motis-config
+                  mountPath: /conf
+                - name: tmp
+                  mountPath: /tmp
+          containers:
+            - name: publish
+              image: ghcr.io/jnjkhjlkjhb8/bus-pipeline
+              args: ["run", "publish"]
+              envFrom:
+                - secretRef:
+                    name: pipeline-env
+              env: *pipelineEnv
+              resources: *pipelineResources
+              securityContext: *restricted
+              volumeMounts: *pipelineMounts
+          volumes:
+            - name: gtfs
+              persistentVolumeClaim:
+                claimName: gtfs
+            - name: osm
+              persistentVolumeClaim:
+                claimName: osm
+            - name: motis-config
+              configMap:
+                name: motis-config
+            - name: spool
+              emptyDir:
+                sizeLimit: 4Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+---
+# hourly: re-land bus_dailytimetable and load the cities that moved. It skips
+# itself while a nightly run holds the run lock.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pipeline-hourly
+  namespace: bus
+spec:
+  schedule: "10 * * * *"
+  timeZone: Asia/Taipei
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 2700
+      template:
+        metadata:
+          labels:
+            app: pipeline
+        spec:
+          priorityClassName: bus-batch
+          automountServiceAccountToken: false
+          imagePullSecrets: [{name: ghcr-pull}]
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: hourly
+              image: ghcr.io/jnjkhjlkjhb8/bus-pipeline
+              args: ["run", "hourly"]
+              envFrom:
+                - secretRef:
+                    name: pipeline-env
+              env:
+                - name: TZ
+                  value: Asia/Taipei
+                - name: REDIS_ADDR
+                  value: redis:6379
+                - name: TMPDIR
+                  value: /spool
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: spool
+                  mountPath: /spool
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: spool
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi

@@ -1,19 +1,14 @@
 import 'package:equatable/equatable.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/models/arrival_display.dart';
-import 'package:wheres_the_car/data/models/bus_models.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/models/arrival_display.dart';
+import 'package:wheres_the_bus/data/models/bus_models.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 enum BusStopStatus { loading, loaded, empty, error }
 
-/// One arrival mapped to the shared tile contract ([ArrivalDisplay]) plus the
-/// routing identifiers the stop sheet still needs: [stationId] for per-stop
-/// grouping and [subRouteUid] for the tap target. The map/sort/group derivation
-/// runs in the bloc when arrivals change, so the sheet build stays pure layout.
-/// Equality flows from the source arrival (itself Equatable), keeping items
-/// stable across an unchanged re-push.
 class BusStopArrivalItem extends Equatable {
-  BusStopArrivalItem(this.source)
-    : display = ArrivalDisplay.fromBusStop(source);
+  BusStopArrivalItem(AppI18n i18n, this.source)
+    : display = ArrivalDisplay.fromBusStop(i18n, source);
 
   final BusStopArrival source;
   final ArrivalDisplay display;
@@ -22,12 +17,51 @@ class BusStopArrivalItem extends Equatable {
   String get subRouteUid => source.subRouteUid;
   int get rank => display.rank;
 
-  /// Stable per-arrival identity for list keys: a route (sub-route) at a member
-  /// stop. Keeps StaggerItem element↔State pairing correct across a re-sort.
+  /// Stable per-arrival identity for list keys: a route (sub-route) at a
+  /// member stop. Keeps each row's element paired with the right item across
+  /// a re-sort.
   String get itemKey => '$stationId:$subRouteUid';
 
   @override
   List<Object?> get props => [source];
+}
+
+const String kMemberDestinationPrefix = '往';
+
+Map<String, String> memberStopLabels(
+  List<BusStationMember> members,
+  Map<String, List<BusStopArrivalItem>> byStation,
+) {
+  if (members.isEmpty) return const {};
+
+  String base(BusStationMember m) {
+    final dests = <String>{
+      for (final a in byStation[m.stationUid] ?? const <BusStopArrivalItem>[])
+        if (a.display.destination.isNotEmpty) a.display.destination,
+    };
+    if (dests.isNotEmpty) {
+      return '$kMemberDestinationPrefix${dests.take(2).join('、')}';
+    }
+    return m.stationName;
+  }
+
+  final bases = {for (final m in members) m.stationUid: base(m)};
+  final counts = <String, int>{};
+  for (final v in bases.values) {
+    counts[v] = (counts[v] ?? 0) + 1;
+  }
+  final seen = <String, int>{};
+  final labels = <String, String>{};
+  for (final m in members) {
+    var label = bases[m.stationUid]!;
+    if ((counts[label] ?? 0) > 1) {
+      final n = (seen[label] ?? 0) + 1;
+      seen[label] = n;
+      if (n > 1) label = '$label $n';
+    }
+    labels[m.stationUid] = label;
+  }
+  return labels;
 }
 
 class BusStopState extends Equatable {

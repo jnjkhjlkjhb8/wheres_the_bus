@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">我公車呢</string>
     <string name="fcm_default_channel_id">traffic_alerts</string>
     <string name="fcm_default_channel_name">交通通知</string>
     <string name="fcm_default_channel_description">路線異常與到站提醒</string>

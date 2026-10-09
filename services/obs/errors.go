@@ -2,7 +2,8 @@ package obs
 
 import (
 	"errors"
-	"fmt"
+
+	"github.com/samber/oops"
 )
 
 var (
@@ -21,7 +22,7 @@ func Transient(err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%w: %w", ErrTransient, err)
+	return oops.Join(ErrTransient, err)
 }
 
 // NotFound wraps err so it satisfies errors.Is(_, ErrNotFound). A nil err
@@ -30,5 +31,5 @@ func NotFound(err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%w: %w", ErrNotFound, err)
+	return oops.Join(ErrNotFound, err)
 }

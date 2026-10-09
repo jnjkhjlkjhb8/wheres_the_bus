@@ -1,13 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grpc/grpc.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/data/generated/firebase.pbgrpc.dart';
-import 'package:wheres_the_car/data/models/tra_models.dart';
-import 'package:wheres_the_car/data/repositories/firebase_repository.dart';
-import 'package:wheres_the_car/data/repositories/tra_repository.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_train_bloc.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_train_event.dart';
-import 'package:wheres_the_car/features/rail/bloc/rail_train_state.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/models/tra_models.dart';
+import 'package:wheres_the_bus/data/repositories/tra_repository.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_train_bloc.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_train_event.dart';
+import 'package:wheres_the_bus/features/rail/bloc/rail_train_state.dart';
 
 // Fare resolution hits PowerSync, which is uninitialized under `flutter test`;
 // that throws and _loadFare swallows it, so fullFare is always null here. These
@@ -156,96 +156,80 @@ void main() {
     await next;
   });
 
-  test('toggling a reminder arms then cancels it', () async {
-    final fb = _FakeFirebase();
+  test('TRA live delay frame updates liveDelayMinutes', () async {
+    final repo = _FakeTraRepository(
+      stopsResult: const [
+        TraStopTime(
+          stationName: '台北',
+          arrivalTime: '',
+          departureTime: '08:00',
+          sequence: 1,
+        ),
+        TraStopTime(
+          stationName: '台中',
+          arrivalTime: '09:00',
+          departureTime: '',
+          sequence: 2,
+        ),
+      ],
+    )..delayStream = Stream.value(const {'123': 7});
+
     final b = RailTrainBloc(
       type: '台鐵',
       trainNo: '123',
-      date: '2099-01-01', // far future so the stop's arrival is armable
-      tra: _FakeTraRepository(stopsResult: _threeStops),
-      firebase: fb,
+      date: '2026-07-20',
+      tra: repo,
     );
     addTearDown(b.close);
 
     b.add(const RailTrainStarted());
-    await b.stream.firstWhere((s) => s.status == RailTrainStatus.loaded);
-
-    final armed = expectLater(
-      b.stream,
-      emitsThrough(
-        isA<RailTrainState>().having(
-          (s) => s.reminders['台中'],
-          'reminder',
-          'rid-台中',
-        ),
-      ),
-    );
-    b.add(const RailTrainReminderToggled('台中'));
-    await armed;
-    expect(fb.created, ['台中']);
-
-    final cleared = expectLater(
-      b.stream,
-      emitsThrough(
-        isA<RailTrainState>().having(
-          (s) => s.reminders.containsKey('台中'),
-          'reminder gone',
-          false,
-        ),
-      ),
-    );
-    b.add(const RailTrainReminderToggled('台中'));
-    await cleared;
-    expect(fb.cancelled, ['rid-台中']);
+    final s = await b.stream.firstWhere((s) => s.liveDelayMinutes == 7);
+    expect(s.liveDelayMinutes, 7);
   });
 
-  test('reminder for an already-departed stop is a no-op', () async {
-    final fb = _FakeFirebase();
-    final b = RailTrainBloc(
-      type: '台鐵',
-      trainNo: '123',
-      date: '2000-01-01', // in the past — nothing to arm
-      tra: _FakeTraRepository(stopsResult: _threeStops),
-      firebase: fb,
-    );
-    addTearDown(b.close);
+  test('closing during load does not add to a closed bloc', () async {
+    final repo = _FakeTraRepository(
+      stopsResult: const [
+        TraStopTime(
+          stationName: '台北',
+          arrivalTime: '',
+          departureTime: '08:00',
+          sequence: 1,
+        ),
+        TraStopTime(
+          stationName: '台中',
+          arrivalTime: '09:00',
+          departureTime: '',
+          sequence: 2,
+        ),
+      ],
+    )..delayStream = Stream.value(const {'123': 7});
 
-    b.add(const RailTrainStarted());
-    await b.stream.firstWhere((s) => s.status == RailTrainStatus.loaded);
+    Object? uncaught;
+    await runZonedGuarded(() async {
+      final b = RailTrainBloc(
+        type: '台鐵',
+        trainNo: '123',
+        date: '2026-07-20',
+        tra: repo,
+      )..add(const RailTrainStarted());
+      await b.close(); // awaits the in-flight handler to completion
+      // Let any leaked delay frame land after close.
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }, (error, _) => uncaught = error);
 
-    b.add(const RailTrainReminderToggled('台中'));
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(fb.created, isEmpty);
-    expect(b.state.reminders, isEmpty);
+    expect(uncaught, isNull);
   });
 }
-
-const _threeStops = [
-  TraStopTime(
-    stationName: '台北',
-    arrivalTime: '',
-    departureTime: '08:00',
-    sequence: 1,
-  ),
-  TraStopTime(
-    stationName: '台中',
-    arrivalTime: '09:00',
-    departureTime: '09:02',
-    sequence: 2,
-  ),
-  TraStopTime(
-    stationName: '高雄',
-    arrivalTime: '11:00',
-    departureTime: '',
-    sequence: 3,
-  ),
-];
 
 class _FakeTraRepository implements TraRepository {
   _FakeTraRepository({this.stopsResult = const [], this.error});
 
   final List<TraStopTime> stopsResult;
   final Exception? error;
+
+  /// Live delay frames the bloc subscribes after stops load (TRA only).
+  Stream<Map<String, int>> delayStream = const Stream.empty();
 
   @override
   Future<List<TraStopTime>> stops(String date, String trainNo) async {
@@ -254,32 +238,8 @@ class _FakeTraRepository implements TraRepository {
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      throw UnimplementedError('${invocation.memberName} not faked');
-}
-
-class _FakeFirebase implements FirebaseRepository {
-  final List<String> created = [];
-  final List<String> cancelled = [];
-
-  @override
-  Future<ArrivalReminder> createArrivalReminder({
-    required String routeType,
-    required String routeKey,
-    required String stopKey,
-    required String direction,
-    required int leadMinutes,
-    required DateTime expiresAt,
-  }) async {
-    created.add(stopKey);
-    return ArrivalReminder(reminderId: 'rid-$stopKey');
-  }
-
-  @override
-  Future<Ack> cancelArrivalReminder(String reminderId) async {
-    cancelled.add(reminderId);
-    return Ack(ok: true);
-  }
+  Stream<Map<String, int>> delay(String date, String origin, String dest) =>
+      delayStream;
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

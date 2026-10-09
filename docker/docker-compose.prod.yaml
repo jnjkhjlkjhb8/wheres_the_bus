@@ -1,0 +1,65 @@
+services:
+  router:
+    environment:
+      APP_ENV: production
+      PG_SCHEMA: public
+      ROUTER_DB_MAX_CONNS: 10
+      ROUTER_DB_MIN_CONNS: 2
+    # Prod terminates gRPC TLS and enables Firebase App Check, so the router
+    # needs the cert/key pair plus the Firebase service-account key -- each
+    # mounted as its own file, not the whole ./secrets directory.
+    volumes:
+      - ./secrets/grpc.crt:/run/secrets/grpc.crt:ro
+      - ./secrets/grpc.key:/run/secrets/grpc.key:ro
+      - ./secrets/firebase-sa.json:/run/secrets/firebase-sa.json:ro
+
+  functions:
+    environment:
+      APP_ENV: production
+      PG_SCHEMA: public
+      FUNCTIONS_DB_MAX_CONNS: 5
+      FUNCTIONS_DB_MIN_CONNS: 2
+
+  rider-worker:
+    environment:
+      APP_ENV: production
+      PG_SCHEMA: public
+    # Firebase Admin SDK (FCM notification dispatch) loads Application
+    # Default Credentials from this key.
+    volumes:
+      - ./secrets/firebase-sa.json:/run/secrets/firebase-sa.json:ro
+
+  pipeline:
+    environment:
+      APP_ENV: production
+      PG_SCHEMA: public
+
+  powersync:
+    environment:
+      APP_ENV: production
+      PG_SCHEMA: public
+
+  # Staging and prod run side by side on this host, so each needs its own
+  # tunnel, credentials file, and hostname set -- see the comment in
+  # cloudflared/config.prod.yml for what sharing one would do. Both paths
+  # below are relative to the repo root (--project-directory .), not to this
+  # file.
+  cloudflared:
+    networks:
+      frontend:
+        ipv4_address: 172.30.20.2
+    volumes:
+      - ./cloudflared/config.prod.yml:/etc/cloudflared/config.yml:ro
+      - ./secrets/cloudflared.prod.json:/etc/cloudflared/creds.json:ro
+
+  motis:
+    networks:
+      routing:
+        aliases:
+          - prod-motis
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.30.20.0/24

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 class AppSearchBar extends StatelessWidget {
   const AppSearchBar({
     super.key,
     this.controller,
-    this.hintText = '搜尋',
+    this.hintText,
     this.onChanged,
     this.onTap,
     this.readOnly = false,
@@ -12,7 +13,10 @@ class AppSearchBar extends StatelessWidget {
     this.leading,
   });
   final TextEditingController? controller;
-  final String hintText;
+
+  /// Null takes the standard placeholder, which needs a locale to resolve —
+  /// and a const default has no context to resolve it with.
+  final String? hintText;
   final ValueChanged<String>? onChanged;
   final VoidCallback? onTap;
   final bool readOnly;
@@ -21,7 +25,7 @@ class AppSearchBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SearchBar(
     controller: controller,
-    hintText: hintText,
+    hintText: hintText ?? AppI18n.of(context).commonSearch,
     onChanged: onChanged,
     onTap: onTap,
     readOnly: readOnly,

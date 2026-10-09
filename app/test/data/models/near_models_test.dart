@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/data/models/near_models.dart';
+import 'package:wheres_the_bus/data/models/near_models.dart';
 
 void main() {
   group('formatNearDistance', () {

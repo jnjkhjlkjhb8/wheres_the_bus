@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/shared/widgets/clock_dial.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/widgets/app_button.dart';
+import 'package:wheres_the_bus/shared/widgets/app_dialog.dart';
+import 'package:wheres_the_bus/shared/widgets/clock_dial.dart';
+import 'package:wheres_the_bus/shared/widgets/station_display_field.dart';
 
 const _thsrStations = [
   '南港',
@@ -18,8 +23,9 @@ const _thsrStations = [
 ];
 
 Future<String?> showTHSRStationPicker(BuildContext context) {
-  return showDialog<String>(
+  return showAppModal<String>(
     context: context,
+    barrierLabel: AppI18n.of(context).commonChooseStation,
     builder: (_) => const _THSRPickerDialog(),
   );
 }
@@ -40,21 +46,36 @@ class _THSRPickerDialogState extends State<_THSRPickerDialog> {
 
     return Dialog(
       backgroundColor: cs.surfaceContainerHigh,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusModal),
+      ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space24,
+          AppTheme.space16,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '選擇車站',
+              AppI18n.of(context).commonChooseStation,
               style: AppTextStyles.bodyRegular.copyWith(
                 fontWeight: FontWeight.w600,
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppTheme.space20),
+            // THSR is a single flat line, so the M3 "big value above the dial"
+            // is one always-selected field (no second field, no AM/PM toggle).
+            StationDisplayField(
+              value: _thsrStations[_selectedIndex],
+              active: true,
+              width: 120,
+            ),
+            const SizedBox(height: AppTheme.space24),
             Center(
               child: ClockDial(
                 items: _thsrStations,
@@ -62,31 +83,19 @@ class _THSRPickerDialogState extends State<_THSRPickerDialog> {
                 onSelected: (i) => setState(() => _selectedIndex = i),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppTheme.space16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                TextButton(
+                AppButton.text(
+                  label: AppI18n.of(context).commonCancel,
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text(
-                    '取消',
-                    style: TextStyle(
-                      color: cs.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                 ),
-                const SizedBox(width: 8),
-                TextButton(
+                const SizedBox(width: AppTheme.space8),
+                AppButton.text(
+                  label: AppI18n.of(context).commonConfirm,
                   onPressed: () =>
                       Navigator.of(context).pop(_thsrStations[_selectedIndex]),
-                  child: Text(
-                    '確定',
-                    style: TextStyle(
-                      color: cs.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                 ),
               ],
             ),

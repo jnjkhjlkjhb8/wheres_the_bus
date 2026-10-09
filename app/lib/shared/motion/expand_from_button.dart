@@ -1,7 +1,7 @@
 import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 
-import 'package:wheres_the_car/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 
 class ExpandFromButton<T> extends StatelessWidget {
   const ExpandFromButton({

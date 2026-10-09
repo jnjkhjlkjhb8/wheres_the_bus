@@ -2,19 +2,18 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/core/firebase/crash_reporter.dart';
-import 'package:wheres_the_car/core/firebase/firebase_telemetry.dart';
-import 'package:wheres_the_car/data/decoders/fare_decoder.dart';
-import 'package:wheres_the_car/data/live/arrival_feed.dart';
-import 'package:wheres_the_car/data/models/bus_models.dart';
-import 'package:wheres_the_car/data/models/bus_route_detail.dart';
-import 'package:wheres_the_car/data/reminders/reminder_toggle.dart';
-import 'package:wheres_the_car/data/repositories/bus_repository.dart';
-import 'package:wheres_the_car/data/repositories/firebase_repository.dart';
-import 'package:wheres_the_car/data/repositories/reminders_repository.dart';
-import 'package:wheres_the_car/features/bus/bloc/bus_route_event.dart';
-import 'package:wheres_the_car/features/bus/bloc/bus_route_state.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_telemetry.dart';
+import 'package:wheres_the_bus/data/decoders/fare_decoder.dart';
+import 'package:wheres_the_bus/data/live/arrival_feed.dart';
+import 'package:wheres_the_bus/data/models/bus_models.dart';
+import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
+import 'package:wheres_the_bus/data/repositories/bus_repository.dart';
+import 'package:wheres_the_bus/data/repositories/firebase_repository.dart';
+import 'package:wheres_the_bus/data/repositories/reminders_repository.dart';
+import 'package:wheres_the_bus/features/bus/bloc/bus_route_event.dart';
+import 'package:wheres_the_bus/features/bus/bloc/bus_route_state.dart';
 
 class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
   BusRouteBloc({
@@ -31,7 +30,7 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
     on<BusRouteDirectionToggled>(_onDirectionToggled);
     on<BusRouteEtaUpdated>(_onEtaUpdated);
     on<BusRouteDetailsUpdated>(_onDetailsUpdated);
-    on<BusRouteReminderToggled>(_onReminderToggled);
+    on<BusRoutePinnedReminderArmed>(_onPinnedReminderArmed);
     on<BusRouteStreamFailed>(_onStreamFailed);
     on<BusRouteStreamRecovered>(_onStreamRecovered);
     if (autoStart) add(const BusRouteStarted());
@@ -46,7 +45,7 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
   final _feed = ArrivalFeed<BusStopEtaViewModel>.replace(
     decay: (e, now) => e.decayed(now),
   );
-  StreamSubscription<List<BusStopEtaViewModel>>? _etaSub;
+  StreamSubscription<ArrivalFeedEmission<BusStopEtaViewModel>>? _etaSub;
 
   static String etaKey(BusStopEtaViewModel eta) => eta.sequence > 0
       ? 'seq:${eta.direction}:${eta.sequence}'
@@ -72,6 +71,9 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
           route: route,
           fare: route.fare,
           bufferSequences: decodeBufferSequences(route.fare),
+          // A return-only sub-route has no outbound stops; opening on
+          // direction 0 would show an empty timeline.
+          direction: route.soleDirection ?? state.direction,
           loading: false,
         ),
       );
@@ -83,9 +85,12 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
             onRecovered: () => add(const BusRouteStreamRecovered()),
           )
           .listen(
-            (etaList) => add(
+            // Decay re-emissions carry the same shape as source frames here;
+            // the route bloc has no freshness timestamp to protect, so it
+            // forwards every emission regardless of kind.
+            (emission) => add(
               BusRouteEtaUpdated({
-                for (final e in etaList) etaKey(e): e,
+                for (final e in emission.arrivals) etaKey(e): e,
               }),
             ),
           );
@@ -128,7 +133,7 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
   void _onEtaUpdated(BusRouteEtaUpdated event, Emitter<BusRouteState> emit) {
     // The feed guards empty frames upstream; this stays a defensive no-op.
     if (event.etaMap.isEmpty && state.etaMap.isNotEmpty) return;
-    emit(state.copyWith(etaMap: event.etaMap));
+    emit(state.copyWith(etaMap: event.etaMap, updatedAt: DateTime.now()));
   }
 
   void _onDetailsUpdated(
@@ -144,55 +149,67 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
     );
   }
 
-  // Fixed lead until a per-user picker exists; remote-config
-  // 'arrival_lead_minutes' offers '1,3,5'.
-  static const _leadMinutes = 3;
   static const _reminderTtl = Duration(hours: 2);
 
-  // The optimistic toggle choreography lives in the shared state machine; the
-  // bus wiring adds the local mirror (RemindersRepository) and telemetry that
-  // rail omits.
-  late final ReminderToggle _reminderToggle = ReminderToggle(
-    createReminder: ({
-      required stopKey,
-      required direction,
-      required expiresAt,
-    }) async {
-      final reminder = await _firebase.createArrivalReminder(
-        routeType: 'bus',
-        routeKey: subRouteUid,
-        stopKey: stopKey,
-        direction: direction,
-        leadMinutes: _leadMinutes,
-        expiresAt: expiresAt,
-      );
-      return reminder.reminderId;
-    },
-    cancelReminder: _firebase.cancelArrivalReminder,
-    persistArm: (stopKey, reminderId, expiresAt) =>
-        _reminders.put(subRouteUid, stopKey, reminderId, expiresAt),
-    persistDisarm: (stopKey) => _reminders.remove(subRouteUid, stopKey),
-    onToggled: ({required enabled}) => unawaited(
-      FirebaseTelemetry.instance.arrivalReminderChanged(
-        routeType: 'bus',
-        routeKey: subRouteUid,
-        enabled: enabled,
-        leadMinutes: _leadMinutes,
-      ),
-    ),
-  );
+  // A pinned reminder fires one stop before the alight target.
+  static const _pinnedLeadMinutes = 1;
 
-  Future<void> _onReminderToggled(
-    BusRouteReminderToggled event,
+  // Arms a one-shot arrival reminder for the tracked vehicle: carries the
+  // pinned plate and a one-stop lead, and mirrors its state into the local
+  // RemindersRepository so it survives navigation.
+  Future<void> _onPinnedReminderArmed(
+    BusRoutePinnedReminderArmed event,
     Emitter<BusRouteState> emit,
-  ) => _reminderToggle.run(
-    readReminders: () => state.reminders,
-    emit: (next) => emit(state.copyWith(reminders: next)),
-    isDone: () => emit.isDone,
-    key: event.stopUid,
-    direction: '${state.direction}',
-    armAt: DateTime.now().add(_reminderTtl),
-  );
+  ) async {
+    // Already armed on this stop by a prior pin: leave it be.
+    if (state.reminders.containsKey(event.stopUid)) return;
+    final expiresAt = DateTime.now().add(_reminderTtl);
+    emit(
+      state.copyWith(
+        reminders: {...state.reminders, event.stopUid: 'pending'},
+      ),
+    );
+    try {
+      final receipt = await _firebase.createArrivalReminder(
+        routeType: 'bus',
+        routeKey: subRouteUid,
+        stopKey: event.stopUid,
+        direction: '${state.direction}',
+        leadMinutes: _pinnedLeadMinutes,
+        expiresAt: expiresAt,
+        plate: event.plate,
+        alightEvent: event.event.name,
+      );
+      if (emit.isDone) return;
+      emit(
+        state.copyWith(
+          reminders: {...state.reminders, event.stopUid: receipt.reminderId},
+        ),
+      );
+      await _reminders.put(
+        subRouteUid,
+        event.stopUid,
+        receipt.reminderId,
+        expiresAt,
+      );
+      unawaited(
+        FirebaseTelemetry.instance.arrivalReminderChanged(
+          routeType: 'bus',
+          routeKey: subRouteUid,
+          enabled: true,
+          leadMinutes: _pinnedLeadMinutes,
+        ),
+      );
+    } on Object catch (e, s) {
+      CrashReporter.record(e, s);
+      if (emit.isDone) return;
+      emit(
+        state.copyWith(
+          reminders: Map.of(state.reminders)..remove(event.stopUid),
+        ),
+      );
+    }
+  }
 
   void _onStreamFailed(
     BusRouteStreamFailed event,

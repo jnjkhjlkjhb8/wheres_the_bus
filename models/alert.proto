@@ -1,8 +1,8 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 
 service Alert_Service {
-  rpc busNews(Alert_Bus_Ask)       returns (stream Alert_Msg) {}
+  rpc busAlert(Alert_Bus_Ask)      returns (stream Alert_Msg) {}
   rpc metroAlert(Alert_Metro_Ask)  returns (stream Alert_Msg) {}
   rpc traAlert(Alert_Ask)          returns (stream Alert_Msg) {}
   rpc thsrAlert(Alert_Ask)         returns (stream Alert_Msg) {}
@@ -14,6 +14,23 @@ message Alert_Bus_Ask {
 message Alert_Metro_Ask {
   string system = 1;
 }
+// One MQTT payload after normalization. TDX ships several alerts per message in
+// three different envelopes; the ingestor unwraps all of them, so every payload
+// on the wire is this one shape and carries the channel's current snapshot.
 message Alert_Msg {
-  bytes data = 1;
+  reserved 1;  // was: bytes data, the verbatim TDX payload
+  repeated Alert_Item items = 2;
+}
+// One service disruption. route_keys are the identities the alert is scoped to
+// (bus subroutes, TRA train numbers, metro lines); empty means it names no
+// route and applies system-wide.
+message Alert_Item {
+  string id = 1;
+  string route_type = 2;
+  repeated string route_keys = 3;
+  string title = 4;
+  string body = 5;
+  string level = 6;
+  int64 time_unix = 7;
+  string department = 8;
 }

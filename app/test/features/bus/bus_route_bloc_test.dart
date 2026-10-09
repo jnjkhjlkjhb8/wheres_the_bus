@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wheres_the_car/core/errors/app_error.dart';
-import 'package:wheres_the_car/features/bus/bloc/bus_route_bloc.dart';
-import 'package:wheres_the_car/features/bus/bloc/bus_route_event.dart';
-import 'package:wheres_the_car/features/bus/bloc/bus_route_state.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/features/bus/bloc/bus_route_bloc.dart';
+import 'package:wheres_the_bus/features/bus/bloc/bus_route_event.dart';
+import 'package:wheres_the_bus/features/bus/bloc/bus_route_state.dart';
 
 void main() {
   test('BusRouteStreamFailed sets AppError', () async {

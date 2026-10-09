@@ -31,16 +31,15 @@ class _SearchResultRow extends StatelessWidget {
       onTap: onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 62),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        decoration: BoxDecoration(
-          color: cs.brightness == Brightness.light
-              ? Colors.white
-              : cs.surfaceContainerLow,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space12,
         ),
+        decoration: BoxDecoration(color: cs.surfaceContainerLow),
         child: Row(
           children: [
             leadingWidget,
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTheme.space12),
             Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -48,8 +47,7 @@ class _SearchResultRow extends StatelessWidget {
                 children: [
                   Text(
                     result.name,
-                    style: TextStyle(
-                      fontSize: 14,
+                    style: AppTextStyles.bodyRegular.copyWith(
                       fontWeight: FontWeight.w600,
                       color: cs.onSurface,
                       height: 1.3,
@@ -57,12 +55,10 @@ class _SearchResultRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppTheme.space2),
                   Text(
                     result.subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w400,
+                    style: AppTextStyles.bodySmall.copyWith(
                       color: cs.onSurfaceVariant,
                       height: 1.3,
                     ),
@@ -72,11 +68,11 @@ class _SearchResultRow extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             Icon(
               Icons.chevron_right_rounded,
               size: 24,
-              color: cs.outline,
+              color: cs.onSurfaceVariant,
             ),
           ],
         ),

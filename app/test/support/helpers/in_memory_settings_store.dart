@@ -1,4 +1,4 @@
-import 'package:wheres_the_car/data/repositories/settings_repository.dart';
+import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 
 /// In-memory [SettingsStore] so repository/bloc tests never open a Hive box.
 class InMemorySettingsStore implements SettingsStore {

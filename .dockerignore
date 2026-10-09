@@ -1,0 +1,28 @@
+# Allowlist-style: deny everything, then un-ignore exactly what the
+# Dockerfiles in services/router, services/functions, and embed/ need to
+# COPY. Keeps the build context small (the workspace itself is ~20+ GB of
+# Flutter build output, OSRM data, and local tooling) and guarantees secrets,
+# env files, and git history never reach the Docker daemon even by accident.
+*
+
+!go.mod
+!go.sum
+!models/
+!models/*.proto
+!services/obs/
+!services/obs/**
+!services/shared/
+!services/shared/**
+!services/api/
+!services/api/**
+!services/worker/
+!services/worker/**
+!embed/
+!embed/**
+
+# Re-exclude generated/vendored/test output that could have been pulled back
+# in by the broad service un-ignores above.
+**/*_test.go
+**/testdata/
+**/*.pb.go
+**/*_grpc.pb.go

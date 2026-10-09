@@ -1,21 +1,46 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
-service TRA_station_service{
-  rpc live_board(ask_staiton) returns (stream Resp_tra_live_board) {}
-}
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 service TRA_timetable_service{
   rpc timetable(ask_route) returns (tra_timetables) {}
-  rpc fare(ask_staiton) returns (TraFareItem) {}
+  rpc fare(ask_staiton) returns (tra_fare_items) {}
   rpc delay(ask_route) returns (stream Resp_tra_delay) {}
+  rpc station_board(ask_station_board) returns (tra_station_board) {}
+}
+// A station's next departures in one direction — the board a rider gets by
+// tapping the station on the map, with no destination to pick.
+message ask_station_board{
+  // Numeric station id or a station name; the router resolves names the same
+  // 臺/台-tolerant way it does for the O/D RPCs.
+  string station_id = 1;
+  string date = 2;
+  // Lower bound on departure time, `HH:mm:ss`. The caller sends its own clock
+  // rather than the server reading one: the router runs in UTC and the rider
+  // is in Asia/Taipei. Empty means the whole day.
+  string after = 3;
+  // 0 順行 / 1 逆行.
+  int32 direction = 4;
+  // Departures to return. 0 means the default (20); the router caps it.
+  int32 limit = 5;
+}
+message tra_station_board{
+  repeated tra_station_departure items = 1;
+}
+message tra_station_departure{
+  // The service date this departure runs on, which is not always the date
+  // asked for: a board opened near midnight is topped up from the next day.
+  string TrainDate = 1;
+  string TrainNo = 2;
+  string TrainTypeCode = 3;
+  string TrainTypeName = 4;
+  string Destination_Station_Name = 5;
+  string DepartureTime = 6;
+  int32 Direction = 7;
+  int32 mask = 8;
+  string Note = 9;
 }
 service TRA_Detain_service{
   rpc stops(ask_detain) returns (tra_stoptimes) {}
   rpc delay(ask_detain) returns (stream Resp_tra_delay) {}
-}
-// Wire-compatible with the former `bytes data = 1`: field 1 still carries a
-// marshaled tra_LiveBoards, now typed for the interface.
-message Resp_tra_live_board{
-  tra_LiveBoards data = 1;
 }
 // Wire-compatible with the former `bytes data = 1`: field 1 still carries a
 // marshaled tra_delays (both the system-wide and per-train delay RPCs).
@@ -81,21 +106,4 @@ message tra_delay{
   string train_no = 1;
   string station_id = 2;
   int32 delay = 3;
-}
-message tra_LiveBoard{
-  string train_no = 1;
-  bool direction = 2;
-  string train_type_id = 3;
-  string train_type_code = 4;
-  string train_type_name = 5;
-  string ending_station_id = 6;
-  string ending_station_name = 7;
-  string scheduled_arrival_time = 8;
-  string scheduled_departure_time = 9;
-  int32 delay = 10;
-  int32 trip_line = 11;
-}
-message tra_LiveBoards{
-  string station_id = 1;
-  repeated tra_LiveBoard items = 2;
 }

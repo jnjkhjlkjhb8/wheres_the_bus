@@ -1,8 +1,9 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
-import 'package:wheres_the_car/app/theme/app_theme.dart';
-import 'package:wheres_the_car/shared/widgets/app_button.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 
 class AppTimePicker {
   AppTimePicker._();
@@ -25,7 +26,12 @@ class AppTimePicker {
         return SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space8,
+              AppTheme.space8,
+              AppTheme.space8,
+              AppTheme.space8,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -33,12 +39,15 @@ class AppTimePicker {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     AppButton.text(
-                      label: '取消',
+                      label: AppI18n.of(context).commonCancel,
                       onPressed: () => Navigator.pop(ctx, false),
                     ),
-                    const Text('選擇時間', style: AppTextStyles.heading2),
+                    Text(
+                      AppI18n.of(context).commonSelectTime,
+                      style: AppTextStyles.heading2,
+                    ),
                     AppButton.text(
-                      label: '完成',
+                      label: AppI18n.of(context).commonDone,
                       onPressed: () => Navigator.pop(ctx, true),
                     ),
                   ],

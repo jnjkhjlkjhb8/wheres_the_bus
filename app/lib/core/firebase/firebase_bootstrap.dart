@@ -8,13 +8,14 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_performance/firebase_performance.dart';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/foundation.dart';
-import 'package:wheres_the_car/core/firebase/firebase_gate.dart';
-import 'package:wheres_the_car/core/firebase/firebase_notifications.dart';
-import 'package:wheres_the_car/core/firebase/firebase_telemetry.dart';
-import 'package:wheres_the_car/core/firebase/remote_config.dart';
-import 'package:wheres_the_car/core/storage/hive_store.dart';
-import 'package:wheres_the_car/data/repositories/firebase_repository.dart';
-import 'package:wheres_the_car/firebase_options.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_notifications.dart';
+import 'package:wheres_the_bus/core/firebase/firebase_telemetry.dart';
+import 'package:wheres_the_bus/core/firebase/remote_config.dart';
+import 'package:wheres_the_bus/core/firebase/subscription_sync.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
+import 'package:wheres_the_bus/data/repositories/firebase_repository.dart';
+import 'package:wheres_the_bus/firebase_options.dart';
 
 class FirebaseTokenSyncGuard {
   String? _lastKey;
@@ -56,16 +57,21 @@ class FirebaseBootstrap {
 
   static final _tokenSyncGuard = FirebaseTokenSyncGuard();
   static bool _notificationsInitialized = false;
+  static StreamSubscription<RemoteConfigUpdate>? _remoteConfigSub;
+  static StreamSubscription<String>? _tokenRefreshSub;
+  static Future<void>? _coreInitFuture;
 
   static Future<void> initFailSoft({
-    Future<void> Function() initializer = init,
+    Future<void> Function({Future<void>? hiveReady}) initializer = init,
     Duration timeout = const Duration(seconds: 10),
+    Future<void>? hiveReady,
   }) async {
     try {
-      await initializer().timeout(timeout);
+      await initializer(hiveReady: hiveReady).timeout(timeout);
     } on Object catch (error, stack) {
       debugPrint('Firebase startup skipped: $error');
       debugPrintStack(stackTrace: stack);
+      rethrow;
     }
   }
 
@@ -82,26 +88,52 @@ class FirebaseBootstrap {
     }
   }
 
-  static Future<void> ensureCoreInitialized() async {
-    if (!FirebaseGate.enabled || Firebase.apps.isNotEmpty) return;
-    FirebaseGate.ensureSecureTransport();
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
+  @visibleForTesting
+  static Future<void> singleFlightCoreInit(
+    Future<void> Function() initializer,
+  ) {
+    final existing = _coreInitFuture;
+    if (existing != null) return existing;
+    final future = initializer();
+    _coreInitFuture = future;
+    unawaited(
+      future.catchError((Object _, StackTrace _) {
+        _coreInitFuture = null;
+      }),
     );
+    return future;
   }
 
-  static Future<void> init() async {
+  @visibleForTesting
+  static void resetCoreInitForTesting() => _coreInitFuture = null;
+
+  static Future<void> ensureCoreInitialized() {
+    if (!FirebaseGate.enabled || Firebase.apps.isNotEmpty) {
+      return Future<void>.value();
+    }
+    return singleFlightCoreInit(() async {
+      FirebaseGate.ensureSecureTransport();
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    });
+  }
+
+  static Future<void> init({Future<void>? hiveReady}) async {
     if (!FirebaseGate.enabled) return;
     await ensureCoreInitialized();
+    await hiveReady;
     const isProd = FirebaseGate.appEnv == 'production';
+    const debugToken = FirebaseGate.appCheckDebugToken;
+    final pinnedDebugToken = debugToken.isEmpty ? null : debugToken;
     await runOptionalSteps([
       () => FirebaseAppCheck.instance.activate(
         providerApple: isProd
             ? const AppleAppAttestProvider()
-            : const AppleDebugProvider(),
+            : AppleDebugProvider(debugToken: pinnedDebugToken),
         providerAndroid: isProd
             ? const AndroidPlayIntegrityProvider()
-            : const AndroidDebugProvider(),
+            : AndroidDebugProvider(debugToken: pinnedDebugToken),
       ),
     ]);
     FlutterError.onError = (details) {
@@ -117,36 +149,53 @@ class FirebaseBootstrap {
     final remoteConfig = FirebaseRemoteConfig.instance;
     final messaging = FirebaseMessaging.instance;
     await runOptionalSteps([
-      () => FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(
-        HiveStore.analyticsEnabled,
-      ),
-      () => FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
-        HiveStore.crashlyticsEnabled,
-      ),
-      () => FirebasePerformance.instance.setPerformanceCollectionEnabled(
-        HiveStore.performanceEnabled,
-      ),
+      // Telemetry is not user-configurable: analytics, crash and performance
+      // collection are always on, so there is no stored preference to read.
+      () => FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true),
+      () => FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true),
+      () => FirebasePerformance.instance.setPerformanceCollectionEnabled(true),
       () async {
         await remoteConfig.setConfigSettings(
           RemoteConfigSettings(
             fetchTimeout: const Duration(seconds: 5),
-            minimumFetchInterval: const Duration(hours: 1),
+            // Short so a cold start reflects an ops push (maintenance banner,
+            // min version) quickly; foreground apps use Realtime below.
+            minimumFetchInterval: const Duration(minutes: 1),
           ),
         );
         await remoteConfig.setDefaults(AppConfig.defaults);
         await remoteConfig.fetchAndActivate();
+        // This init runs after runApp (fire-and-forget), so the UI already
+        // built with defaults — bump to re-read the just-fetched values.
+        AppConfig.version.value++;
+        await _remoteConfigSub?.cancel();
+        _remoteConfigSub = remoteConfig.onConfigUpdated.listen((_) async {
+          await remoteConfig.activate();
+          AppConfig.version.value++;
+        });
       },
       () async => updatePushPreference(requested: HiveStore.pushEnabled),
       () async {
-        messaging.onTokenRefresh.listen(_syncToken);
+        await _tokenRefreshSub?.cancel();
+        _tokenRefreshSub = messaging.onTokenRefresh.listen(_syncToken);
       },
     ]);
   }
 
+  @visibleForTesting
+  static Future<void> disposeForTesting() async {
+    await _remoteConfigSub?.cancel();
+    _remoteConfigSub = null;
+    await _tokenRefreshSub?.cancel();
+    _tokenRefreshSub = null;
+  }
+
   static Future<bool> updatePushPreference({required bool requested}) async {
     HiveStore.pushEnabled = requested;
-    debugPrint('[firebase-reg] enabled=${FirebaseGate.enabled} '
-        'requested=$requested');
+    debugPrint(
+      '[firebase-reg] enabled=${FirebaseGate.enabled} '
+      'requested=$requested',
+    );
     if (!FirebaseGate.enabled) return requested;
 
     var enabled = false;
@@ -173,8 +222,10 @@ class FirebaseBootstrap {
     } on Object catch (_) {}
     try {
       final token = await FirebaseMessaging.instance.getToken();
-      debugPrint('[firebase-reg] fcm token '
-          '${token == null ? 'null' : 'len=${token.length}'}');
+      debugPrint(
+        '[firebase-reg] fcm token '
+        '${token == null ? 'null' : 'len=${token.length}'}',
+      );
       if (token != null && token.isNotEmpty) await _syncToken(token);
     } on Object catch (error) {
       debugPrint('[firebase-reg] getToken failed: $error');
@@ -186,12 +237,13 @@ class FirebaseBootstrap {
     try {
       await _tokenSyncGuard.run(
         token,
-        '${HiveStore.pushEnabled}:${HiveStore.analyticsEnabled}:'
-        '${HiveStore.crashlyticsEnabled}:'
-        '${HiveStore.performanceEnabled}',
+        '${HiveStore.pushEnabled}',
         () async {
           await FirebaseRepository.instance.upsertDevice(fcmToken: token);
           debugPrint('[firebase-reg] upsertDevice ok');
+          // Only now: subscription rows reference the device row, so the
+          // first scope push has to follow the registration that creates it.
+          SubscriptionSync.instance.start();
         },
       );
     } on Object catch (error, stack) {

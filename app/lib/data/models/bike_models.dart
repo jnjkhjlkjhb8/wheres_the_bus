@@ -20,11 +20,18 @@ class BikeAvailability extends Equatable {
 
 /// Static bike-station facts.
 class BikeStationInfo extends Equatable {
-  const BikeStationInfo({required this.name, required this.capacity});
+  const BikeStationInfo({
+    required this.name,
+    required this.capacity,
+    required this.lat,
+    required this.lon,
+  });
 
   final String name;
   final int capacity;
+  final double lat;
+  final double lon;
 
   @override
-  List<Object?> get props => [name, capacity];
+  List<Object?> get props => [name, capacity, lat, lon];
 }

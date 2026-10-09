@@ -1,9 +1,35 @@
 syntax = "proto3";
-option go_package = "github.com/jnjkhjlkjhb8/wheres_the_car/models";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
 service Thsr_timetable_service{
-  rpc fare(Ask_Thsr) returns (thsa_fare) {}
+  rpc fare(Ask_Thsr) returns (thsa_fares) {}
   rpc timetable(Ask_Thsr) returns (thsr_timetables) {}
   rpc available_seats(Ask_Thsr) returns (stream Resp_thsr_seats) {}
+  rpc station_board(thsr_ask_station_board) returns (thsr_station_board) {}
+}
+// THSR's half of the station departure board. Shaped like tra_station_board
+// but declared separately: the two protos share no imports, matching how
+// every other rail message in this repo is duplicated per system.
+message thsr_ask_station_board{
+  string station_id = 1;
+  string date = 2;
+  // Lower bound on departure time, `HH:mm:ss`, from the caller's clock. Empty
+  // means the whole day.
+  string after = 3;
+  // 0 南下 / 1 北上.
+  int32 direction = 4;
+  // Departures to return. 0 means the default (20); the router caps it.
+  int32 limit = 5;
+}
+message thsr_station_board{
+  repeated thsr_station_departure items = 1;
+}
+message thsr_station_departure{
+  string TrainDate = 1;
+  string TrainNo = 2;
+  string Destination_Station_Name = 3;
+  string DepartureTime = 4;
+  int32 Direction = 5;
+  string Note = 6;
 }
 service Thsr_Detain_service{
   rpc stops(thsr_ask_detain) returns (thsr_stoptimes) {}

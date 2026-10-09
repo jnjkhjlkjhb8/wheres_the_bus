@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:wheres_the_car/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 
 class RouteTabBar extends StatelessWidget implements PreferredSizeWidget {
   const RouteTabBar({
     required this.controller,
     required this.tabs,
-    this.backgroundColor,
+    this.raised = false,
     super.key,
   });
 
   final TabController controller;
   final List<String> tabs;
-  final Color? backgroundColor;
+
+  final bool raised;
 
   @override
   Size get preferredSize => const Size.fromHeight(kTextTabBarHeight);
@@ -20,7 +21,7 @@ class RouteTabBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return ColoredBox(
-      color: backgroundColor ?? cs.surface,
+      color: raised ? cs.surfaceContainerLow : cs.surface,
       child: TabBar(
         controller: controller,
         tabs: [for (final t in tabs) Tab(text: t)],

@@ -1,7 +1,7 @@
-import 'package:wheres_the_car/data/generated/bus.pb.dart';
-import 'package:wheres_the_car/data/models/bus_models.dart';
-import 'package:wheres_the_car/data/models/bus_route_detail.dart';
-import 'package:wheres_the_car/data/models/eta_format.dart';
+import 'package:wheres_the_bus/data/generated/bus.pb.dart';
+import 'package:wheres_the_bus/data/models/bus_models.dart';
+import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
+import 'package:wheres_the_bus/data/models/eta_format.dart';
 
 class BusDecoder {
   const BusDecoder._();
@@ -30,6 +30,8 @@ class BusDecoder {
         nextBusTime: s.nextBusTime,
         stopStatus: s.stopStatus,
         arrivalUnix: arrivalUnix,
+        plate: s.plateNumb,
+        isLastBus: s.isLastBus,
         vehiclePlates: s.buses.map((b) => b.plateNumb).toList(),
         vehicles: [
           for (final b in s.buses)
@@ -39,6 +41,9 @@ class BusDecoder {
                 lat: b.positionLat,
                 lon: b.positionLon,
                 azimuth: b.azimuth,
+                dutyStatus: b.dutyStatus,
+                busStatus: b.busStatus,
+                gpsTimeUnix: b.gpsTimeUnix.toInt(),
               ),
         ],
       );
@@ -63,11 +68,17 @@ class BusDecoder {
         stationId: r.stopUid,
         subRouteUid: r.subRouteUid,
         routeName: r.routeName,
-        destination: r.direction == 1 ? '返程' : '去程',
+        // Terminal stop name from static data; direction label only when the
+        // server knows no terminal for this subroute+direction.
+        destination: r.destination.isNotEmpty
+            ? r.destination
+            : (r.direction == 1 ? '返程' : '去程'),
         estimateSeconds: estimateSeconds,
         nextBusTime: r.nextBusTime,
         stopStatus: r.stopStatus,
         arrivalUnix: arrivalUnix,
+        crowdLevel: crowdLevelOf(r.crowdLevel),
+        isLastBus: r.isLastBus,
       );
     }).toList();
   }
@@ -100,14 +111,41 @@ class BusDecoder {
       city: route.city,
       headsignGo: dir0?.destinationStopName ?? '',
       headsignReturn: dir1?.destinationStopName ?? '',
-      operatorName: '',
+      operators: route.operators.map(_operator).toList(),
       stopsGo: dir0?.stops.map(_stop).toList() ?? [],
       stopsReturn: dir1?.stops.map(_stop).toList() ?? [],
       geometryGo: dir0?.geometry ?? '',
       geometryReturn: dir1?.geometry ?? '',
+      schedulesGo: dir0?.schedules.map(_service).toList() ?? [],
+      schedulesReturn: dir1?.schedules.map(_service).toList() ?? [],
       fare: route.hasFare() ? _fare(route.fare) : null,
     );
   }
+
+  // The proto packs two shapes into one message: for a fixed timetable entry
+  // the headway fields carry the origin stop's arrival/departure clock times,
+  // for a headway entry they carry the minutes.
+  BusServiceEntry _service(Bus_Schedule s) => BusServiceEntry(
+    isTimetable: s.isTimetable,
+    serviceDay: s.serviceDay,
+    tripId: s.tripid,
+    isLowFloor: s.islowfloor,
+    departureTime: s.isTimetable
+        ? (s.maxHeadwayMinsDepartureTime.isNotEmpty
+              ? s.maxHeadwayMinsDepartureTime
+              : s.minHeadwayMinsArrivalTime)
+        : '',
+    startTime: s.isTimetable ? '' : s.startTime,
+    endTime: s.isTimetable ? '' : s.endTime,
+    minHeadwayMins: s.isTimetable ? '' : s.minHeadwayMinsArrivalTime,
+    maxHeadwayMins: s.isTimetable ? '' : s.maxHeadwayMinsDepartureTime,
+  );
+
+  BusOperatorInfo _operator(BusOperator o) => BusOperatorInfo(
+    name: o.operatorName,
+    phone: o.operatorPhone,
+    url: o.operatorUrl,
+  );
 
   BusFareInfo _fare(Bus_Fare f) => BusFareInfo(
     pricingType: f.farePricingType,
@@ -148,3 +186,13 @@ class BusDecoder {
     );
   }
 }
+
+/// Maps the wire crowding enum onto the app's own. An unrecognised value is
+/// [CrowdLevel.unknown]: a level this build does not know is not a reading it
+/// can show.
+CrowdLevel crowdLevelOf(BusCrowdLevel wire) => switch (wire) {
+  BusCrowdLevel.BUS_CROWD_COMFORTABLE => CrowdLevel.comfortable,
+  BusCrowdLevel.BUS_CROWD_NORMAL => CrowdLevel.normal,
+  BusCrowdLevel.BUS_CROWD_CROWDED => CrowdLevel.crowded,
+  _ => CrowdLevel.unknown,
+};

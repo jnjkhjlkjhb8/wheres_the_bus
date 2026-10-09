@@ -8,15 +8,21 @@ import GoogleMaps
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    if let googleMapsApiKey = Bundle.main.object(forInfoDictionaryKey: "GOOGLE_MAPS_API_KEY") as? String {
-      GMSServices.provideAPIKey(googleMapsApiKey)
+    let mapsAPIKey = DartDefines.mapsAPIKey(
+      from: Bundle.main.infoDictionary,
+      failClosed: DartDefines.isFailClosed()
+    )
+    if !mapsAPIKey.isEmpty {
+      GMSServices.provideAPIKey(mapsAPIKey)
     }
-    GeneratedPluginRegistrant.register(with: self)
-    LiveActivityPlugin.register(with: registrar(forPlugin: "LiveActivityPlugin")!)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let registry = engineBridge.pluginRegistry
+    GeneratedPluginRegistrant.register(with: registry)
+    guard !registry.hasPlugin("LiveActivityPlugin") else { return }
+    guard let registrar = registry.registrar(forPlugin: "LiveActivityPlugin") else { return }
+    LiveActivityPlugin.register(with: registrar)
   }
 }

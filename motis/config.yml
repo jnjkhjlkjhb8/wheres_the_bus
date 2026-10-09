@@ -1,0 +1,87 @@
+# MOTIS v2 configuration (ADR-0022).
+#
+# This file is a template, not the file MOTIS reads. `motis-import` in
+# docker/docker-compose.yaml substitutes __GTFS_RT_CREDENTIAL__ and writes the
+# result into the data directory, because `motis server` reads config.yml from
+# inside the directory `motis import` produced -- not from here. Changing
+# anything below therefore takes effect on the next import, not on restart.
+#
+# The credential ends up on disk inside the motis_data volume. That is the same
+# exposure the rendered env files already have on this host, and there is no
+# other way to give MOTIS a bearer token: `headers:` is read from config.
+#
+# Paths are absolute so they do not depend on the import job's working
+# directory. Both inputs are mounted read-only.
+
+osm: /osm/taiwan.osm.pbf
+
+timetable:
+  # TODAY is resolved when `motis import` runs, not when the server starts. Each
+  # nightly pipeline run exports a new gtfs.zip, which changes the import's content
+  # hash and so forces a rebuild -- that is what keeps the window moving. A run
+  # of nights where the loader fails leaves the window where it was and it
+  # eventually expires, which is the intended failure: stale is visible, wrong
+  # is not.
+  first_day: TODAY
+  # 15 days. The planner's date picker is bounded to match (ADR-0022); a query
+  # past the window returns no plan rather than a worse one.
+  num_days: 15
+  # Trip-based routing off: it trades a much larger index for query speed the
+  # 6 GB host cannot pay for.
+  tb: false
+  # railviz serves the live-map UI, which nothing here consumes.
+  railviz: false
+  with_shapes: true
+  adjust_footpaths: true
+  link_stop_distance: 100
+  # Seconds between GTFS-RT polls. The router rebuilds the feed every 30s
+  # (ADR-0019), so a 60s poll is a beat behind at worst.
+  update_interval: 60
+  http_timeout: 30
+  datasets:
+    taiwan:
+      # Filled in at import time: a pipeline run's own feed in k3s, the active
+      # (published) feed under compose.
+      path: __GTFS_PATH__
+      # Bikes and cars on transit are not modelled in the feed; leaving these
+      # true would let the planner invent a bike-on-bus leg.
+      default_bikes_allowed: false
+      default_cars_allowed: false
+      rt:
+        # Same-day cancellations and delays. A 503 here (builder stopped, key
+        # expired) leaves the static plan standing, which is the documented
+        # contract in ADR-0019.
+        - url: http://router:8080/api/gtfs-rt/trip-updates.pb
+          headers:
+            Authorization: Bearer __GTFS_RT_CREDENTIAL__
+
+gbfs:
+  # YouBike and the other Taiwan operators, served by the router from
+  # bike_stations plus live availability in Redis (services/api/gbfs.go).
+  # This is what backs firstMileMode/lastMileMode = 3 (shared bike).
+  feeds:
+    tw:
+      url: http://router:8080/gbfs/gbfs.json
+  # The router's own bike availability refreshes every 30s; 120s here keeps the
+  # station set current without spending the router's GBFS rate limit on a
+  # single consumer.
+  update_interval: 120
+  http_timeout: 30
+
+# Street routing replaces OSRM: it supplies walk geometry inside plan legs and
+# backs /api/v1/one-to-many for nearby walking times (ADR-0022).
+street_routing: true
+osr_footpath: true
+geocoding: true
+reverse_geocoding: true
+# No elevation data is shipped, and elevators need an external feed Taiwan has
+# no source for.
+elevators: false
+
+limits:
+  # /api/v1/one-to-many rejects the whole request with 422 once "many" exceeds
+  # this count. nearby.go queries 5 modes at up to 80 candidates each and
+  # sends every candidate in one call, so the worst case is 400; MOTIS's
+  # default of 128 was already being hit in practice (router logs: "MOTIS
+  # one-to-many HTTP" status_code=422 destinations=161).
+  onetomany_max_many: 400

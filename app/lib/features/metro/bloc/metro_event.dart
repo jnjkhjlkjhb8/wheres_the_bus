@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import 'package:wheres_the_car/data/models/journey_info.dart';
+import 'package:wheres_the_bus/data/models/journey_info.dart';
 
 sealed class MetroEvent extends Equatable {
   const MetroEvent();

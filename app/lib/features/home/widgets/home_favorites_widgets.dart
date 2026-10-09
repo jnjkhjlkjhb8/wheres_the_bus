@@ -9,28 +9,34 @@ class _SearchBar extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Pressable(
       onTap: onTap,
-      semanticLabel: '搜尋已儲存或附近站牌',
+      semanticLabel: AppI18n.of(context).homeSearchHint,
       child: Container(
-        height: 44,
+        constraints: const BoxConstraints(minHeight: 44),
         decoration: BoxDecoration(
           color: cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(AppTheme.radiusCard),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space14,
+          vertical: AppTheme.space10,
+        ),
+        alignment: Alignment.center,
         child: Row(
           children: [
             Icon(
               Icons.search_rounded,
               size: 18,
-              color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+              color: cs.onSurfaceVariant,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppTheme.space8),
             Expanded(
               child: Text(
-                '搜尋已儲存或附近站牌',
+                AppI18n.of(context).homeSearchHint,
                 style: AppTextStyles.bodyRegular.copyWith(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                  color: cs.onSurfaceVariant,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -70,13 +76,15 @@ class _SeeMoreButton extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Pressable(
       onTap: () {
-        unawaited(HapticService.instance.lightTap());
-        unawaited(context.push('/favorites'));
+        unawaited(context.push(AppRoutes.favorites));
       },
-      semanticLabel: '查看全部收藏',
+      semanticLabel: AppI18n.of(context).homeSeeAllFavorites,
       child: Container(
         constraints: const BoxConstraints(minHeight: 48),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space20,
+          vertical: AppTheme.space14,
+        ),
         decoration: BoxDecoration(
           border: Border(
             top: BorderSide(
@@ -90,12 +98,12 @@ class _SeeMoreButton extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              '查看更多',
+              AppI18n.of(context).homeSeeAllFavorites,
               style: AppTextStyles.bodyRegular.copyWith(
                 color: cs.onSurfaceVariant,
               ),
             ),
-            const SizedBox(width: 2),
+            const SizedBox(width: AppTheme.space2),
             Icon(
               Icons.chevron_right_rounded,
               size: 18,
@@ -113,56 +121,87 @@ class _FavoritesEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _EmptyState(
+      icon: Icons.push_pin_outlined,
+      heading: AppI18n.of(context).homeNoPinned,
+      body: AppI18n.of(context).homeNoPinnedBody,
+      actionLabel: AppI18n.of(context).homeGoToFavorites,
+      onAction: () {
+        unawaited(context.push(AppRoutes.favorites));
+      },
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.heading,
+    required this.body,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String heading;
+  final String body;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Center(
+    return Align(
+      alignment: const Alignment(0, -0.35),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.push_pin_outlined, size: 36, color: cs.outline),
-            const SizedBox(height: 12),
+            Icon(icon, size: 36, color: cs.onSurfaceVariant),
+            const SizedBox(height: AppTheme.space12),
             Text(
-              '尚無釘選的收藏',
+              heading,
               style: AppTextStyles.bodyLarge.copyWith(
                 fontWeight: FontWeight.w600,
                 color: cs.onSurface,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppTheme.space6),
             Text(
-              '在收藏頁釘選常用站牌或路線，這裡就會顯示',
+              body,
               textAlign: TextAlign.center,
               style: AppTextStyles.bodySmall.copyWith(
                 color: cs.onSurfaceVariant,
                 height: 1.5,
               ),
             ),
-            const SizedBox(height: 16),
-            Pressable(
-              onTap: () {
-                unawaited(HapticService.instance.lightTap());
-                unawaited(context.push('/favorites'));
-              },
-              semanticLabel: '前往收藏頁',
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-                ),
-                child: Text(
-                  '管理收藏',
-                  style: AppTextStyles.bodyRegular.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: cs.onSurface,
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: AppTheme.space16),
+              Pressable(
+                onTap: onAction,
+                semanticLabel: actionLabel,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.space20,
+                    vertical: AppTheme.space10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(
+                      AppTheme.radiusButton,
+                    ),
+                  ),
+                  child: Text(
+                    actionLabel!,
+                    style: AppTextStyles.bodyRegular.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ],
         ),
       ),
