@@ -1,0 +1,53 @@
+# Per-release migration Job template (ADR-0027). The deploy workflow fills in
+# MIGRATE_JOB_NAME (migrate-<commit>) and MIGRATE_IMAGE (the release digest)
+# and creates it before rolling out the app. It is not part of k8s/app, so
+# apply, prune and the last-known-good snapshot never touch it, and a rollback
+# never re-runs a migration.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: MIGRATE_JOB_NAME
+  namespace: bus
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2400
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: migrate
+    spec:
+      priorityClassName: bus-critical
+      automountServiceAccountToken: false
+      imagePullSecrets: [{name: ghcr-pull}]
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: MIGRATE_IMAGE
+          envFrom:
+            - secretRef:
+                name: migrate-env # DATABASE_URL for bus_migrator
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

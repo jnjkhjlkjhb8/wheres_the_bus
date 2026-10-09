@@ -1,0 +1,113 @@
+# cert-manager, installed through k3s' built-in Helm controller, and the
+# private CA for service-to-service mutual TLS (ADR-0026).
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: cert-manager
+  namespace: kube-system
+spec:
+  repo: https://charts.jetstack.io
+  chart: cert-manager
+  version: v1.19.1
+  targetNamespace: cert-manager
+  createNamespace: true
+  valuesContent: |-
+    crds:
+      enabled: true
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: bus-selfsigned
+  namespace: bus
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: bus-ca
+  namespace: bus
+spec:
+  isCA: true
+  commonName: bus-internal-ca
+  secretName: bus-ca
+  duration: 87600h # 10 years; the CA only signs in-cluster leaves
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: bus-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: bus-ca
+  namespace: bus
+spec:
+  ca:
+    secretName: bus-ca
+---
+# rider-api's serving certificate. Leaves rotate every 30 days; cert-manager
+# rewrites the Secret and the services pick the new files up on restart.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: rider-api-tls
+  namespace: bus
+spec:
+  secretName: rider-api-tls
+  duration: 720h
+  renewBefore: 240h
+  dnsNames:
+    - rider-api
+    - rider-api.bus.svc
+    - rider-api.bus.svc.cluster.local
+  usages: [server auth, client auth]
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: bus-ca
+    kind: Issuer
+---
+# api's client certificate for calling rider-api.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-client-tls
+  namespace: bus
+spec:
+  secretName: api-client-tls
+  duration: 720h
+  renewBefore: 240h
+  commonName: api
+  dnsNames: [api]
+  usages: [client auth]
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: bus-ca
+    kind: Issuer
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-grpc-tls
+  namespace: bus
+spec:
+  secretName: api-grpc-tls
+  duration: 720h
+  renewBefore: 240h
+  commonName: api
+  dnsNames: [api, api.bus.svc, api.bus.svc.cluster.local]
+  usages: [server auth]
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: bus-ca
+    kind: Issuer

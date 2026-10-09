@@ -1,0 +1,45 @@
+# Cluster-level objects for bus (ADR-0025). Operator-applied: CI's role
+# cannot create any of these.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bus
+  labels:
+    # Every Pod must run non-root, drop all capabilities and use the runtime
+    # seccomp profile; the API server rejects any that does not.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Under memory pressure the kubelet evicts lower priorities first: batch and
+# MOTIS import go before the long-running services, and the database and the
+# public entry go last.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: bus-critical
+value: 1000000
+description: PostgreSQL, api and rider-api.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: bus-standard
+value: 500000
+description: Long-running workers and support services.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: bus-batch
+value: 100000
+description: Nightly and hourly pipeline runs, MOTIS import.
+---
+# local-path with Retain: deleting a PVC must never delete the database or the
+# feed history underneath it.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path-retain
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer

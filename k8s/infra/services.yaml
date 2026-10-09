@@ -1,0 +1,402 @@
+# Support services: Redis, PowerSync, MOTIS and the Cloudflare Tunnel
+# connector. Operator-applied, like the database.
+#
+# Images whose USER is a name rather than a number (MOTIS, PowerSync) get an
+# explicit runAsUser so the restricted Pod Security level can prove they are not
+# root. Verify those UIDs against the pinned images in the rehearsal (FDPL-115).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: bus
+spec:
+  storageClassName: local-path-retain
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: bus
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: bus
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      priorityClassName: bus-standard
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+          command: ["sh", "-c", "exec redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass \"$REDIS_PASSWORD\""]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-env
+                  key: REDIS_PASSWORD
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: powersync-config
+  namespace: bus
+data:
+  config.yaml: |
+    replication:
+      connections:
+        - type: postgresql
+          uri: !env PS_SOURCE_DATABASE_URL
+          max_pool_size: 2
+    storage:
+      type: postgresql
+      uri: !env PS_DATABASE_URL
+      max_pool_size: 2
+    client_auth:
+      jwks_uri: http://api:8080/api/.well-known/jwks.json
+      audience:
+        - powersync
+    sync_config:
+      path: /config/sync-rules.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: powersync
+  namespace: bus
+spec:
+  selector:
+    app: powersync
+  ports:
+    - port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: powersync
+  namespace: bus
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: powersync
+  template:
+    metadata:
+      labels:
+        app: powersync
+    spec:
+      priorityClassName: bus-standard
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: powersync
+          image: journeyapps/powersync-service:1.23.3@sha256:b6b22fa7d0d862f04bdff62846e656756d17bcf3dd6eca399a0633671051438b
+          envFrom:
+            - secretRef:
+                name: powersync-env # PS_SOURCE_DATABASE_URL, PS_DATABASE_URL
+          env:
+            - name: POWERSYNC_CONFIG_PATH
+              value: /config/config.yaml
+            - name: POWERSYNC_SYNC_RULES_PATH
+              value: /config/sync-rules.yaml
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /probes/readiness
+              port: 8080
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          projected:
+            sources:
+              - configMap:
+                  name: powersync-config
+              - configMap:
+                  name: powersync-sync-rules
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+# Holds the nightly runs: runs/<run_id>/{gtfs.zip,manifest.json,motis/} and
+# the active/previous links `pipeline run publish` moves. MOTIS serves
+# active/motis.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gtfs
+  namespace: bus
+spec:
+  storageClassName: local-path-retain
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Gi
+---
+# The OSM extract MOTIS imports, cached between nights.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: osm
+  namespace: bus
+spec:
+  storageClassName: local-path-retain
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: motis
+  namespace: bus
+spec:
+  selector:
+    app: motis
+  ports:
+    - port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: motis
+  namespace: bus
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: motis
+  template:
+    metadata:
+      labels:
+        app: motis
+    spec:
+      priorityClassName: bus-standard
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: motis
+          image: ghcr.io/motis-project/motis:2.11.2@sha256:6055f51eec43eeed28524037ca0161b96efe9cd05728eaa9ac04c20c2826d330
+          # Records which run it started on. When publish moves active, the
+          # liveness check below fails and the kubelet restarts MOTIS onto the
+          # new dataset; no API token is needed to trigger the restart.
+          command: ["/bin/sh", "-c", "readlink /data/gtfs/active > /tmp/started-on && exec /motis server -d /data/gtfs/active/motis"]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            periodSeconds: 15
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test \"$(readlink /data/gtfs/active)\" = \"$(cat /tmp/started-on)\""]
+            periodSeconds: 30
+            failureThreshold: 1
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 3Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: gtfs
+              mountPath: /data/gtfs
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: gtfs
+          persistentVolumeClaim:
+            claimName: gtfs
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: bus
+data:
+  # The tunnel id is not secret; its credentials file is (Secret cloudflared).
+  config.yml: |
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    ingress:
+      - hostname: api.rabbitsayhello.me
+        service: http://api:8080
+      - hostname: sync.rabbitsayhello.me
+        service: http://powersync:8080
+      - hostname: grpc.rabbitsayhello.me
+        service: https://api:50051
+        originRequest:
+          http2Origin: true
+          # Verify api's serving certificate (issued by bus-ca) instead of skipping checks.
+          caPool: /etc/cloudflared/ca/ca.crt
+          originServerName: api
+      - service: http_status:404
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: bus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      priorityClassName: bus-standard
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
+          args: ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "--config", "/etc/cloudflared/config.yml", "--protocol", "http2", "run", "$(TUNNEL_ID)"]
+          env:
+            - name: TUNNEL_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: cloudflared-tunnel
+                  key: id
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config.yml
+              subPath: config.yml
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+            - name: bus-ca
+              mountPath: /etc/cloudflared/ca
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
+        - name: creds
+          secret:
+            secretName: cloudflared
+        # Only the CA certificate: the bus-ca Secret also holds its private key.
+        - name: bus-ca
+          secret:
+            secretName: bus-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

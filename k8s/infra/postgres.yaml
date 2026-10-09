@@ -1,0 +1,186 @@
+# PostgreSQL 18 with PostGIS and pgvector (docker/postgres), one replica on a
+# Retain PVC (ADR-0025). WAL is archived and backups are taken with pgBackRest
+# to the SFTP repository on the backup host; the host, user, key and cipher
+# pass come from the pgbackrest-env Secret, never from this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: bus
+data:
+  pgbackrest.conf: |
+    [global]
+    repo1-type=sftp
+    repo1-path=/srv/pgbackrest/bus
+    repo1-sftp-private-key-file=/etc/pgbackrest/sftp/id_ed25519
+    repo1-sftp-host-key-check-type=fingerprint
+    repo1-sftp-host-key-hash-type=sha1
+    repo1-cipher-type=aes-256-cbc
+    repo1-retention-full=2
+    compress-type=zst
+    log-level-console=info
+    start-fast=y
+
+    [bus]
+    pg1-path=/var/lib/postgresql/18/docker
+  # Hourly archiving bounds data loss at about an hour (RPO 1 h). The slot
+  # cap keeps a stalled PowerSync from filling the disk with retained WAL.
+  postgresql.args: >-
+    -c wal_level=logical
+    -c max_wal_senders=10
+    -c max_replication_slots=10
+    -c max_slot_wal_keep_size=20GB
+    -c archive_mode=on
+    -c archive_timeout=3600
+    -c archive_command='pgbackrest --stanza=bus archive-push %p'
+    -c shared_buffers=2GB
+    -c effective_cache_size=6GB
+    -c work_mem=16MB
+    -c maintenance_work_mem=512MB
+    -c max_connections=100
+    -c shared_preload_libraries=pg_stat_statements
+    -c password_encryption=scram-sha-256
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: bus
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: bus
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      priorityClassName: bus-critical
+      terminationGracePeriodSeconds: 120
+      imagePullSecrets: [{name: ghcr-pull}]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: ghcr.io/jnjkhjlkjhb8/bus-postgres:pinned-by-release
+          command: ["sh", "-c", "exec docker-entrypoint.sh postgres $(cat /etc/postgres-config/postgresql.args)"]
+          envFrom:
+            - secretRef:
+                name: postgres-env # POSTGRES_PASSWORD
+            - secretRef:
+                name: pgbackrest-env # PGBACKREST_REPO1_SFTP_HOST, _HOST_USER, _HOST_FINGERPRINT, _CIPHER_PASS
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/18/docker
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: config
+              mountPath: /etc/postgres-config
+            - name: config
+              mountPath: /etc/pgbackrest/pgbackrest.conf
+              subPath: pgbackrest.conf
+            - name: sftp-key
+              mountPath: /etc/pgbackrest/sftp
+              readOnly: true
+            - name: run
+              mountPath: /var/run/postgresql
+        # Daily incremental, Sunday full. It shares the data volume and the
+        # socket directory, so pgBackRest backs up the live cluster locally.
+        - name: backup
+          image: ghcr.io/jnjkhjlkjhb8/bus-postgres:pinned-by-release
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                if [ "$(TZ=Asia/Taipei date +%H%M)" = "0200" ]; then
+                  type=incr; [ "$(TZ=Asia/Taipei date +%u)" = "7" ] && type=full
+                  pgbackrest --stanza=bus --type=$type backup || echo "backup ($type) failed"
+                  sleep 60
+                fi
+                sleep 30
+              done
+          envFrom:
+            - secretRef:
+                name: pgbackrest-env
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: config
+              mountPath: /etc/pgbackrest/pgbackrest.conf
+              subPath: pgbackrest.conf
+            - name: sftp-key
+              mountPath: /etc/pgbackrest/sftp
+              readOnly: true
+            - name: run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: config
+          configMap:
+            name: postgres-config
+        - name: sftp-key
+          secret:
+            secretName: pgbackrest-sftp-key
+            defaultMode: 0400
+        - name: run
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: local-path-retain
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 64Gi

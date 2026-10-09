@@ -1,0 +1,9 @@
+# SOPS rules for the k3s Secrets (ADR-0027). Only Secret payloads are
+# encrypted, so a diff still shows which Secret and which keys changed.
+# The age private key lives only on the operator's machine
+# (~/.config/sops/age/keys.txt) and in the password manager.
+creation_rules:
+  - path_regex: k8s/infra/secrets/.*\.enc\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    # Replace with the public key printed by `age-keygen -o ~/.config/sops/age/keys.txt`.
+    age: age126dq405qx03e5f67qqrrfkrh7gqasklrn44ym055t5f33m4emqws4fzfrf

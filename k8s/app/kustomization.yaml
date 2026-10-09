@@ -1,0 +1,27 @@
+# The CI-deployed app tree (ADR-0027). The deploy workflow pins the images to
+# the release digests (`kustomize edit set image`), renders with the load
+# restrictor off (it reads motis/config.yml), and applies with a prune
+# allowlist of Deployment, CronJob and ConfigMap.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bus
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: bus-app
+    includeSelectors: false
+resources:
+  - services.yaml
+  - pipeline.yaml
+configMapGenerator:
+  - name: motis-config
+    files:
+      - config.yml=../../motis/config.yml
+images:
+  - name: ghcr.io/jnjkhjlkjhb8/bus-api
+    newTag: unpinned
+  - name: ghcr.io/jnjkhjlkjhb8/bus-realtime
+    newTag: unpinned
+  - name: ghcr.io/jnjkhjlkjhb8/bus-rider
+    newTag: unpinned
+  - name: ghcr.io/jnjkhjlkjhb8/bus-pipeline
+    newTag: unpinned

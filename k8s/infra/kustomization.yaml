@@ -1,0 +1,28 @@
+# Operator-applied infrastructure (ADR-0027). It reads config files that live
+# outside this directory, so render with the load restrictor off:
+#   kubectl kustomize --load-restrictor LoadRestrictionsNone k8s/infra | kubectl apply -f -
+#   scripts/k3s-secrets.sh apply
+# The CI deploy role cannot change anything here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base.yaml
+  - cert-manager.yaml
+  - postgres.yaml
+  - services.yaml
+  - networkpolicy.yaml
+  - ci-deployer.yaml
+configMapGenerator:
+  - name: powersync-sync-rules
+    namespace: bus
+    files:
+      - sync-rules.yaml=../../powersync/sync-rules.yaml
+  # The tunnel id is public; its credentials are the cloudflared Secret.
+  - name: cloudflared-tunnel
+    namespace: bus
+    literals:
+      - id=75282106-76dd-4898-a8e2-1f700c92066f
+images:
+  # Pin to the digest build-images publishes before applying.
+  - name: ghcr.io/jnjkhjlkjhb8/bus-postgres
+    newTag: pinned-by-release
