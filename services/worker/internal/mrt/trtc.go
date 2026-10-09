@@ -16,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -68,13 +68,6 @@ type trtcWeightBR struct {
 	Car4      string `json:"Car4"`
 }
 
-// TrtcAliases absorbs known misspellings in the official feed before station
-// lookup. Extend as new dirty names surface in resolve-failure logs.
-var TrtcAliases = map[string]string{
-	"港漧":   "港墘",
-	"松山機楊": "松山機場",
-}
-
 // parseTrtcCountdown maps the official CountDown string onto the EstimateTime
 // seconds contract the app already renders: "mm:ss" → seconds, "列車進站" → 0.
 // Anything else ("資料擷取中", garbage) carries no information — not ok.
@@ -82,39 +75,11 @@ func parseTrtcCountdown(s string) (int32, bool) {
 	if s == "列車進站" {
 		return 0, true
 	}
-	total, ok := ParseMMSS(s)
+	total, ok := shared.ParseMMSS(s)
 	if !ok {
 		return 0, false
 	}
 	return int32(total), true
-}
-
-// ParseMMSS parses a "mm:ss" countdown into total seconds. Minutes are
-// unbounded (the feed publishes three-digit waits); seconds must be 0..59.
-func ParseMMSS(s string) (int, bool) {
-	minutes, seconds, found := strings.Cut(s, ":")
-	if !found {
-		return 0, false
-	}
-	mi, errMin := strconv.Atoi(minutes)
-	si, errSec := strconv.Atoi(seconds)
-	if errMin != nil || errSec != nil {
-		return 0, false
-	}
-	if mi < 0 || si < 0 || si > 59 {
-		return 0, false
-	}
-	return mi*60 + si, true
-}
-
-// TrtcLinePrefix returns the line letters of a station ID ("BL12" → "BL").
-func TrtcLinePrefix(stationID string) string {
-	for i, r := range stationID {
-		if r >= '0' && r <= '9' {
-			return stationID[:i]
-		}
-	}
-	return stationID
 }
 
 // _trtcTrainLine maps a getTrackInfo TrainNumber's hundreds digit to its line;
@@ -129,7 +94,7 @@ func resolveTrtcStation(names map[string][]string, station, dest, trainNumber st
 	lines := []string{}
 	for _, s := range sIDs {
 		for _, d := range dIDs {
-			if l := TrtcLinePrefix(s); l == TrtcLinePrefix(d) {
+			if l := shared.TrtcLinePrefix(s); l == shared.TrtcLinePrefix(d) {
 				if _, seen := byLine[l]; !seen {
 					byLine[l] = pair{s, d}
 					lines = append(lines, l)
@@ -157,7 +122,7 @@ func resolveTrtcStation(names map[string][]string, station, dest, trainNumber st
 // suffix (the feed writes 動物園站; mrt_station stores 動物園 but also names
 // that legitimately end in 站, like 台北車站).
 func trtcLookup(names map[string][]string, name string) []string {
-	if a, ok := TrtcAliases[name]; ok {
+	if a, ok := shared.TrtcAliases[name]; ok {
 		name = a
 	}
 	if ids, ok := names[name]; ok {
@@ -178,7 +143,7 @@ func trtcStationNames(ctx context.Context, db *pgxpool.Pool) (map[string][]strin
 		if err := rows.Scan(&id, &name); err != nil {
 			return nil, err
 		}
-		if a, ok := TrtcAliases[name]; ok {
+		if a, ok := shared.TrtcAliases[name]; ok {
 			name = a
 		}
 		names[name] = append(names[name], id)

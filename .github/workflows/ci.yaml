@@ -16,7 +16,7 @@ concurrency:
 jobs:
   go:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
     # Postgres is started as a step, not a service: it is built from
@@ -35,6 +35,9 @@ jobs:
       FIREBASE_ENABLED: "false"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # The quality gates diff against the push/PR base commit.
+          fetch-depth: 0
       - name: start postgres (docker/postgres image)
         run: |
           docker build -q -t bus-postgres:ci docker/postgres
@@ -66,6 +69,12 @@ jobs:
           REQUIRE_DB_TESTS: "1"
           BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: ./scripts/ci.sh go
+      - name: quality gates (CRAP + mutation on changed Go code)
+        env:
+          QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          REQUIRE_DB_TESTS: "1"
+          BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: ./scripts/check-quality.sh go
       - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
         with:
@@ -110,6 +119,96 @@ jobs:
       - name: migration lint (squawk) + replay gate (baseline + full history)
         run: ./scripts/ci.sh migrations
 
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: render + kubeconform (k8s/infra, k8s/app, k8s/migrate, k8s/restore)
+        run: |
+          d="sha256:$(printf '0%.0s' $(seq 64))"
+          jq -n --arg d "$d" '{commit: "ci", images: ({} | .api = "ghcr.io/x/bus-api@\($d)"
+            | .realtime = "ghcr.io/x/bus-realtime@\($d)" | .rider = "ghcr.io/x/bus-rider@\($d)"
+            | .pipeline = "ghcr.io/x/bus-pipeline@\($d)")}' > release.json
+          ./scripts/k3s-deploy.sh render release.json app.yaml
+          kubectl kustomize --load-restrictor LoadRestrictionsNone k8s/infra > infra.yaml
+          # CRDs (cert-manager, k3s HelmChart) have no bundled schema.
+          kubeconform -strict -summary -ignore-missing-schemas infra.yaml app.yaml k8s/migrate/job.yaml k8s/restore/postgres-restore.yaml
+
+  # Old code on the new schema: the release running in the cluster (the last
+  # successful deploy) must keep working after this change's migrations, since
+  # migrations run before the rollout and are never rolled back.
+  schema-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    services:
+      redis:
+        image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgres://bus:bus@localhost:5432/bus_test?sslmode=disable
+      REDIS_ADDR: localhost:6379
+      REDIS_TEST_ADDR: localhost:6379
+      PG_SCHEMA: public
+      FIREBASE_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: find last-known-good commit
+        id: lkg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yaml --branch main \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // empty')
+          if [ -z "$sha" ]; then
+            echo "::notice::no successful deploy yet; nothing is live to stay compatible with"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: start postgres (docker/postgres image)
+        if: steps.lkg.outputs.sha != ''
+        run: |
+          docker build -q -t bus-postgres:ci docker/postgres
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_DB=bus_test -e POSTGRES_USER=bus -e POSTGRES_PASSWORD=bus \
+            bus-postgres:ci
+          for _ in $(seq 1 30); do
+            docker exec postgres pg_isready -U bus -d bus_test && break
+            sleep 2
+          done
+          docker exec postgres pg_isready -U bus -d bus_test
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: steps.lkg.outputs.sha != ''
+        with:
+          go-version-file: go.mod
+      - name: apply this change's migrations
+        if: steps.lkg.outputs.sha != ''
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client protobuf-compiler
+          ./scripts/prepare-ci-db.sh
+      - name: run the last-known-good release's DB tests
+        if: steps.lkg.outputs.sha != ''
+        env:
+          LKG_SHA: ${{ steps.lkg.outputs.sha }}
+          REQUIRE_DB_TESTS: "1"
+          BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          git worktree add "$RUNNER_TEMP/lkg" "$LKG_SHA"
+          cd "$RUNNER_TEMP/lkg"
+          make proto-go
+          go test ./...
+
   security:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -139,11 +238,14 @@ jobs:
 
   flutter:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # The quality gates diff against the push/PR base commit.
+          fetch-depth: 0
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           # Exact version (not `channel: stable`) so a channel promotion
@@ -163,6 +265,10 @@ jobs:
         env:
           FLUTTER_TEST_ARGS: --coverage --file-reporter=json:test-results.json
         run: ./scripts/ci.sh flutter
+      - name: quality gates (CRAP + mutation on changed Dart code)
+        env:
+          QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/check-quality.sh flutter
       - run: tojunit --input test-results.json --output junit.xml
         if: ${{ !cancelled() && hashFiles('app/test-results.json') != '' }}
         working-directory: app

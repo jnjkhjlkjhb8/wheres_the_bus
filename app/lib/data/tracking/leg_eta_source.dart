@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:wheres_the_bus/core/grpc/resilient_stream.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/repositories/bus_repository.dart';
 import 'package:wheres_the_bus/data/repositories/tra_repository.dart';
@@ -13,7 +14,10 @@ typedef RouteEtaStream =
 /// Live per-stop ETA/vehicle stream for a route, used to track a pinned
 /// vehicle's stop-by-stop progress toward the alight stop.
 Stream<List<BusStopEtaViewModel>> defaultRouteEtaStream(String routeKey) =>
-    BusRepository.instance.routeEta(routeKey);
+    resilientStream(
+      () => BusRepository.instance.routeEta(routeKey),
+      foreground: alwaysForeground,
+    );
 
 /// Live ETA for bus legs whose notification identity resolved; every other
 /// leg counts down from its scheduled departure. Non-bus legs will gain live
@@ -23,7 +27,10 @@ Stream<Duration?> defaultLegEtaStream(JourneyLeg leg) {
   if (leg.kind == JourneyLegKind.bus &&
       leg.identity.supported &&
       stopKey.isNotEmpty) {
-    return BusRepository.instance.stationEta('', stopKey).map((arrivals) {
+    return resilientStream(
+      () => BusRepository.instance.stationEta('', stopKey),
+      foreground: alwaysForeground,
+    ).map((arrivals) {
       for (final a in arrivals) {
         if (leg.routeLabel.startsWith(a.routeName) && a.minutes != null) {
           return Duration(minutes: a.minutes!);
@@ -38,7 +45,10 @@ Stream<Duration?> defaultLegEtaStream(JourneyLeg leg) {
   if (leg.kind == JourneyLegKind.bus &&
       leg.identity.routeKey.isNotEmpty &&
       stopKey.isNotEmpty) {
-    return BusRepository.instance.routeEta(leg.identity.routeKey).map((etas) {
+    return resilientStream(
+      () => BusRepository.instance.routeEta(leg.identity.routeKey),
+      foreground: alwaysForeground,
+    ).map((etas) {
       for (final e in etas) {
         if (e.stopUid != stopKey) continue;
         if (leg.identity.direction.isNotEmpty &&
@@ -188,7 +198,8 @@ Stream<Duration> _railDelayStream(JourneyLeg leg) {
   final date = leg.identity.direction;
   final origin = leg.railSchedule.first.name;
   final dest = leg.railSchedule.last.name;
-  return TraRepository.instance
-      .delay(date, origin, dest)
-      .map((m) => Duration(minutes: m[trainNo] ?? 0));
+  return resilientStream(
+    () => TraRepository.instance.delay(date, origin, dest),
+    foreground: alwaysForeground,
+  ).map((m) => Duration(minutes: m[trainNo] ?? 0));
 }

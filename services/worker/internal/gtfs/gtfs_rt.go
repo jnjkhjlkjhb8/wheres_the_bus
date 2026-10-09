@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -27,14 +28,8 @@ const (
 	// RTBuildTimeout bounds one rebuild. The Redis scan dominates it; the
 	// static index is already in memory.
 	RTBuildTimeout = 60 * time.Second
-	// RTIndexTimeout bounds the once-a-day static index query, which repeats
-	// the same lateral expansion of raw_tdx.bus_schedule the GTFS static build
-	// pays for.
+	// RTIndexTimeout bounds one load of the published index snapshot.
 	RTIndexTimeout = 10 * time.Minute
-	// _gtfsRTIndexReadyHour is the local hour from which the index may be rebuilt
-	// for a new day: the 03:00 landing and 03:30 load are both done by then, so
-	// the index is derived from the same raw rows the static feed was.
-	_gtfsRTIndexReadyHour = 4
 	// _gtfsRTMGetBatch bounds one MGET. A few thousand subroutes is a handful of
 	// round trips at this size, and no single reply is large enough to matter.
 	_gtfsRTMGetBatch = 256
@@ -60,8 +55,10 @@ type gtfsRTTrip struct {
 
 // gtfsRTIndex is the static half, rebuilt once a day.
 type gtfsRTIndex struct {
-	// builtFor is the service date the index was loaded for, in Taipei local
-	// time. A different date past gtfsRTIndexReadyHour triggers a reload.
+	// runID is the published pipeline run the index was loaded from, and
+	// builtFor the service date (Taipei local) its rail trains were picked for.
+	// Either one changing triggers a reload.
+	runID    string
 	builtFor string
 	trips    map[gtfsRTRouteKey][]gtfsRTTrip
 	// rail is today's TRA trains by train number, for the delay producer. It
@@ -89,14 +86,13 @@ type gtfsRTStats struct {
 	cancellations    int
 }
 
-var _gtfsRTTripIndexSQL = `
-SELECT DISTINCT trip_id, direction_id, service_id
-FROM (
-  SELECT trip_id, direction_id, service_id FROM (` + _busScheduleSource + `) s
-  UNION ALL
-  SELECT trip_id, direction_id, service_id FROM (` + _busPatternTripsSQL + `) o
-) t
-WHERE trip_id <> '' AND service_id LIKE 'W:%'`
+// The index reads the snapshot `pipeline` froze for the published run
+// (migrations/2026-10-08-static-release-gtfs-rt-snapshot.sql).
+const (
+	_publishedRunSQL = `SELECT run_id FROM static_release ORDER BY build_seq DESC LIMIT 1`
+
+	_gtfsRTTripIndexSQL = `SELECT trip_id, direction_id, service_id FROM gtfs_rt_bus_trip WHERE run_id = $1`
+)
 
 // gtfsRTBuilder owns the static index between ticks. Only the cron entry touches
 // it, and addStaticCron's non-overlap guard keeps that single-threaded.
@@ -153,17 +149,36 @@ func (b *gtfsRTBuilder) Run(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-// refreshIndex reloads the static half when the service date has moved on and
-// today's landing and load have had time to finish. Before that hour the
-// previous day's index is still the one the published static feed matches.
+// refreshIndex reloads the static half from the published run's snapshot when
+// a new run is published or the service date moves on. It reads only what
+// `pipeline run publish` has released, so the index always matches the feed
+// MOTIS is serving, whenever the nightly run finishes.
 func (b *gtfsRTBuilder) refreshIndex(ctx context.Context, now time.Time) error {
 	today := now.Format(time.DateOnly)
-	if b.index != nil && (b.index.builtFor == today || now.Hour() < _gtfsRTIndexReadyHour) {
-		return nil
-	}
 	indexCtx, cancel := context.WithTimeout(ctx, RTIndexTimeout)
 	defer cancel()
-	index, err := loadGTFSRTIndex(indexCtx, b.db, today)
+	var runID string
+	err := b.db.QueryRow(indexCtx, _publishedRunSQL).Scan(&runID)
+	if errors.Is(err, pgx.ErrNoRows) && b.index == nil {
+		return errors.New("gtfs-rt: no published static run")
+	}
+	if err != nil && b.index != nil {
+		zap.S().Warnw("release check failed",
+			"component", "gtfs_rt",
+			"action", "index",
+			"event", "release_check_failed",
+			"keeping", b.index.runID,
+			"err", err,
+		)
+		return nil
+	}
+	if err != nil {
+		return _oops.Wrapf(err, "gtfs-rt: read published run")
+	}
+	if b.index != nil && b.index.runID == runID && b.index.builtFor == today {
+		return nil
+	}
+	index, err := loadGTFSRTIndex(indexCtx, b.db, runID, today)
 	if err != nil {
 		// A failed reload keeps yesterday's index rather than emptying the feed:
 		// the two differ only by whatever TDX republished overnight, which is far
@@ -185,6 +200,7 @@ func (b *gtfsRTBuilder) refreshIndex(ctx context.Context, now time.Time) error {
 		"component", "gtfs_rt",
 		"action", "index",
 		"event", "loaded",
+		"run_id", index.runID,
 		"date", index.builtFor,
 		"routes", len(index.trips),
 		"rail_trains", len(index.rail),
@@ -193,15 +209,15 @@ func (b *gtfsRTBuilder) refreshIndex(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-// loadGTFSRTIndex reads every schedule-derived bus trip and groups it by the
-// canonical subroute direction the daily timetable is keyed by.
-func loadGTFSRTIndex(ctx context.Context, db *pgxpool.Pool, today string) (*gtfsRTIndex, error) {
-	rows, err := db.Query(ctx, _gtfsRTTripIndexSQL)
+// loadGTFSRTIndex reads run runID's bus trips and groups them by the canonical
+// subroute direction the daily timetable is keyed by.
+func loadGTFSRTIndex(ctx context.Context, db *pgxpool.Pool, runID, today string) (*gtfsRTIndex, error) {
+	rows, err := db.Query(ctx, _gtfsRTTripIndexSQL, runID)
 	if err != nil {
 		return nil, _oops.Wrapf(err, "gtfs-rt: load trip index")
 	}
 	defer rows.Close()
-	index := &gtfsRTIndex{builtFor: today, trips: make(map[gtfsRTRouteKey][]gtfsRTTrip, 8192)}
+	index := &gtfsRTIndex{runID: runID, builtFor: today, trips: make(map[gtfsRTRouteKey][]gtfsRTTrip, 8192)}
 	for rows.Next() {
 		var tripID, serviceID string
 		var direction int32
@@ -217,12 +233,12 @@ func loadGTFSRTIndex(ctx context.Context, db *pgxpool.Pool, today string) (*gtfs
 	if err := rows.Err(); err != nil {
 		return nil, _oops.Wrapf(err, "gtfs-rt: load trip index: rows")
 	}
-	rail, err := loadRailDelayIndex(ctx, db, today)
+	rail, err := loadRailDelayIndex(ctx, db, runID, today)
 	if err != nil {
 		return nil, err
 	}
 	index.rail = rail
-	offsets, err := loadBusPatternOffsets(ctx, db)
+	offsets, err := loadBusPatternOffsets(ctx, db, runID)
 	if err != nil {
 		return nil, err
 	}

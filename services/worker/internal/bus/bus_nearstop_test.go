@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 )
 
 func nearStopAt(now time.Time, offset time.Duration) string {

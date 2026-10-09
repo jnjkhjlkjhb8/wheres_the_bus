@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 )
 
 func TestLiveDecodersRejectWrongDelimitersAndTrailingData(t *testing.T) {

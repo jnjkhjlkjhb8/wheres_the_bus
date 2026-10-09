@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/predict"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 	"go.uber.org/zap"
 )
 

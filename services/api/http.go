@@ -26,15 +26,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/feed"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/installid"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/livestream"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/maas"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/metro"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/rail"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/ratelimit"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/riderfwd"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/search"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/static"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/installid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -92,6 +92,9 @@ type httpServerConfig struct {
 	// unauthenticated, and station_status costs a full station scan.
 	GBFSRateLimit          int
 	GTFSRealtimeCredential string
+	// trackCancel proxies the Live Activity cancel to rider-api; nil leaves
+	// the route unmounted.
+	trackCancel gin.HandlerFunc
 }
 
 func httpServerConfigFromEnv() (httpServerConfig, error) {
@@ -266,12 +269,11 @@ func newHTTPRouter(db *pgxpool.Pool, live *livestream.LiveHub, key *rsa.PrivateK
 	r.GET("/api/booking/deeplink",
 		httpRateLimit(limiter, "GET /api/booking/deeplink", _httpBookingRateLimit, time.Minute),
 		rail.HandleBookingDeeplink(config.booking))
-	// Mounted only with a Redis client: cancelling has to publish the session's
-	// ending, and a cancel a watching app never hears about is half a cancel.
-	if config.redis != nil {
-		r.POST(metro.TrackCancelPath,
-			httpRateLimit(limiter, "POST "+metro.TrackCancelPath, metro.HTTPTrackCancelRateLimit, time.Minute),
-			metro.HandleTrackCancel(metro.TrackCancelStoreFor(db), config.redis))
+	// rider-api owns tracking sessions; api only rate-limits and passes through.
+	if config.trackCancel != nil {
+		r.POST(riderfwd.TrackCancelPath,
+			httpRateLimit(limiter, "POST "+riderfwd.TrackCancelPath, riderfwd.HTTPTrackCancelRateLimit, time.Minute),
+			config.trackCancel)
 	}
 	// GBFS is mounted only with a Redis client: station_status is the point of
 	// the feed, and it cannot be answered without one.
@@ -452,6 +454,31 @@ func signRS256(key *rsa.PrivateKey, claims map[string]any) (string, error) {
 func b64j(v any) string {
 	b, _ := json.Marshal(v)
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// loadSigningKey loads the PowerSync JWT signing key every api replica shares.
+// With POWERSYNC_KEY_FILE set (always, in k3s) the key must already exist: two
+// replicas generating their own would sign tokens the other's JWKS rejects, so
+// a missing or unreadable key stops startup instead. Unset, it falls back to
+// generate-on-first-boot for a single local process.
+func loadSigningKey() (*rsa.PrivateKey, error) {
+	path := os.Getenv("POWERSYNC_KEY_FILE")
+	if path == "" {
+		return loadOrGenerateKey()
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, _oops.With("key_file", path).Wrapf(err, "read PowerSync signing key")
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, _oops.With("key_file", path).Errorf("PowerSync signing key is not PEM")
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, _oops.With("key_file", path).Wrapf(err, "parse PowerSync signing key")
+	}
+	return key, nil
 }
 
 func loadOrGenerateKey() (*rsa.PrivateKey, error) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 )
 
 func TestRunLiveIsolatesFailingSpec(t *testing.T) {

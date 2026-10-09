@@ -16,8 +16,8 @@
 osm: /osm/taiwan.osm.pbf
 
 timetable:
-  # TODAY is resolved when `motis import` runs, not when the server starts. The
-  # nightly loader publishes a new gtfs.zip, which changes the import's content
+  # TODAY is resolved when `motis import` runs, not when the server starts. Each
+  # nightly pipeline run exports a new gtfs.zip, which changes the import's content
   # hash and so forces a rebuild -- that is what keeps the window moving. A run
   # of nights where the loader fails leaves the window where it was and it
   # eventually expires, which is the intended failure: stale is visible, wrong
@@ -40,7 +40,9 @@ timetable:
   http_timeout: 30
   datasets:
     taiwan:
-      path: /data/gtfs/gtfs.zip
+      # Filled in at import time: a pipeline run's own feed in k3s, the active
+      # (published) feed under compose.
+      path: __GTFS_PATH__
       # Bikes and cars on transit are not modelled in the feed; leaving these
       # true would let the planner invent a bike-on-bus leg.
       default_bikes_allowed: false

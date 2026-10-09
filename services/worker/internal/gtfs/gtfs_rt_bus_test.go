@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 )
 
 // busTestMidnight is the service day every case below is expressed against.

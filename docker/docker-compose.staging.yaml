@@ -23,12 +23,12 @@ services:
       FUNCTIONS_DB_MAX_CONNS: 3
       FUNCTIONS_DB_MIN_CONNS: 1
 
-  ingestor:
+  rider-worker:
     environment:
       APP_ENV: staging
       PG_SCHEMA: staging
 
-  loader:
+  pipeline:
     environment:
       APP_ENV: staging
       PG_SCHEMA: staging

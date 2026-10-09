@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/gtfs"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
 	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"

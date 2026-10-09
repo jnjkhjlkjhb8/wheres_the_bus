@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/installid"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/installid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )

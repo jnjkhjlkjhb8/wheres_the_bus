@@ -7,18 +7,17 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/bike"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/bus"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/mrt"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/rail"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/notify"
 	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
 
-func liveRegistry(db *pgxpool.Pool, dispatcher *notify.Dispatcher) []pipeline.LiveSpec {
+func liveRegistry(db *pgxpool.Pool, notifier bus.ArrivalNotifier) []pipeline.LiveSpec {
 	bikeOwnedKey := func(fetchName string) string {
 		return shared.LiveOwnedKeysKey("bike", strings.TrimPrefix(fetchName, "bike_availability"))
 	}
@@ -42,11 +41,11 @@ func liveRegistry(db *pgxpool.Pool, dispatcher *notify.Dispatcher) []pipeline.Li
 			}},
 		{Key: "bus", Cadence: "@every 30s", TTLPatterns: nil,
 			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
-				return bus.Eta(ctx, fetch, sink, db, dispatcher)
+				return bus.Eta(ctx, fetch, sink, db, notifier)
 			}},
 		{Key: "bus_fast", Cadence: "@every 20s", TTLPatterns: nil,
 			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
-				return bus.EtaFast(ctx, fetch, sink, db, dispatcher)
+				return bus.EtaFast(ctx, fetch, sink, db, notifier)
 			}},
 		{Key: "mrt", Cadence: "@every 15s",
 			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
@@ -67,10 +66,10 @@ func liveTickDeadline(cadence string) time.Duration {
 	return d - d/6
 }
 
-func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool, dispatcher *notify.Dispatcher) {
+func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool, notifier bus.ArrivalNotifier) {
 	src := pipeline.NewRESTLiveSource(tdx)
 	sink := pipeline.NewRedisLiveSink(rc)
-	specs := liveRegistry(db, dispatcher)
+	specs := liveRegistry(db, notifier)
 
 	// Group specs by cadence, keeping registry order within each group so the
 	// 30s tick still runs bike before bus.
@@ -115,97 +114,4 @@ func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db
 		})
 	}
 
-	// Rail arrival reminders fire on a schedule (fire_at = arrival − lead) rather
-	// than off a live ETA, so they dispatch on their own tick. Nil-safe when push
-	// is disabled.
-	_, _ = addStaticCron(r, "@every 30s", func() {
-		pipeline.WithTimeout(_liveJobTimeout, func(ctx context.Context) {
-			if err := dispatcher.FireScheduled(ctx); err != nil {
-				zap.S().Errorw("error",
-					"component", "live",
-					"action", "run",
-					"event", "error",
-					"job", "scheduled_reminders",
-					"err", err,
-				)
-			}
-		})
-	})
-}
-
-const _reminderDemandCitiesSQL = `
-	SELECT left(route_key, 3) AS city_prefix, max(expires_at)
-	FROM firebase_arrival_reminder
-	WHERE route_type = 'bus' AND status = 'pending' AND expires_at > NOW()
-	GROUP BY city_prefix`
-
-func restoreReminderDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.LiveSink) int {
-	if db == nil || sink == nil {
-		return 0
-	}
-	rows, err := db.Query(ctx, _reminderDemandCitiesSQL)
-	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "live",
-			"action", "restore_reminder_demand",
-			"event", "failed",
-			"err", err,
-		)
-		return 0
-	}
-	defer rows.Close()
-
-	pipe := sink.Pipe()
-	restored := 0
-	now := time.Now()
-	for rows.Next() {
-		var (
-			prefix    string
-			expiresAt time.Time
-		)
-		if err := rows.Scan(&prefix, &expiresAt); err != nil {
-			zap.S().Errorw("scan failed",
-				"component", "live",
-				"action", "restore_reminder_demand",
-				"event", "failed",
-				"err", err,
-			)
-			return 0
-		}
-		city := shared.CityFromUID(prefix)
-		ttl := expiresAt.Sub(now)
-		if city == "" || ttl <= 0 {
-			continue
-		}
-		pipe.Set(shared.LiveDemandKey("bus_eta", city), "1", ttl)
-		restored++
-	}
-	if err := rows.Err(); err != nil {
-		zap.S().Errorw("rows failed",
-			"component", "live",
-			"action", "restore_reminder_demand",
-			"event", "failed",
-			"err", err,
-		)
-		return 0
-	}
-	if restored == 0 {
-		return 0
-	}
-	if err := pipe.Exec(ctx); err != nil {
-		zap.S().Errorw("write failed",
-			"component", "live",
-			"action", "restore_reminder_demand",
-			"event", "failed",
-			"err", err,
-		)
-		return 0
-	}
-	zap.S().Infow("success",
-		"component", "live",
-		"action", "restore_reminder_demand",
-		"event", "success",
-		"cities", restored,
-	)
-	return restored
 }

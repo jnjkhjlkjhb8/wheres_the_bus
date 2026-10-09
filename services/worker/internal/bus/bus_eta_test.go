@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 )
 
 func TestBusEtaCityListsPartitionCities(t *testing.T) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/grpc/resilient_stream.dart';
 import 'package:wheres_the_bus/data/models/arrival_display.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/models/search_models.dart';
@@ -24,7 +25,9 @@ const int _kArrivalsPerCard = 3;
 typedef StopEtaSource = Stream<List<BusStopArrival>> Function(SearchResult);
 
 Stream<List<BusStopArrival>> _defaultEtaSource(SearchResult stop) =>
-    BusRepository.instance.stationEta(stop.city ?? '', stop.uid);
+    resilientStream(
+      () => BusRepository.instance.stationEta(stop.city ?? '', stop.uid),
+    );
 
 class GenUiRenderer extends StatelessWidget {
   const GenUiRenderer({

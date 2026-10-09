@@ -3,7 +3,9 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 allowlist_dir="$repo_root/scripts/env-allowlists"
-services=(router functions ingestor loader powersync motis)
+# RENDER_SERVICES (space-separated) overrides the list; scripts/k3s-secrets.sh
+# uses it to render the k3s services' env files.
+read -r -a services <<<"${RENDER_SERVICES:-router functions rider pipeline powersync motis}"
 
 usage() {
   echo "usage: $(basename "$0") <source-env-file> <output-dir>" >&2

@@ -18,18 +18,9 @@ type railDelayTrip struct {
 	stations map[string]bool
 }
 
-var _railDelayIndexSQL = `
-SELECT t.train_no,
-       t.operator || ':' || t.train_no || ':' || to_char(t.service_date, 'YYYYMMDD') AS trip_id,
-       array_agg(DISTINCT c->>'StationID') AS stations
-FROM (` + _railTripSource + `) t
-CROSS JOIN LATERAL jsonb_array_elements(t.stoptimes) c
-WHERE t.operator = 'TRA'
-  AND t.service_date = $1::date
-  AND jsonb_typeof(t.stoptimes) = 'array'
-  AND COALESCE(c->>'StationID', '') <> ''
-GROUP BY 1, 2
-HAVING count(*) > 1`
+const _railDelayIndexSQL = `
+SELECT train_no, trip_id, stations FROM gtfs_rt_rail_trip
+WHERE run_id = $1 AND service_date = $2::date`
 
 // gtfsRTRailDelayStats records why a reported delay did not reach the feed. The
 // producer is deliberately silent in several cases, so the silence has to be
@@ -45,8 +36,8 @@ type gtfsRTRailDelayStats struct {
 // loadRailDelayIndex reads today's TRA trains. It is refreshed on the same daily
 // cadence as the bus index: a train number is reused across days, so an index
 // built for yesterday would name yesterday's trip.
-func loadRailDelayIndex(ctx context.Context, db *pgxpool.Pool, today string) (map[string]railDelayTrip, error) {
-	rows, err := db.Query(ctx, _railDelayIndexSQL, today)
+func loadRailDelayIndex(ctx context.Context, db *pgxpool.Pool, runID, today string) (map[string]railDelayTrip, error) {
+	rows, err := db.Query(ctx, _railDelayIndexSQL, runID, today)
 	if err != nil {
 		return nil, _oops.Wrapf(err, "gtfs-rt: load rail delay index")
 	}

@@ -18,13 +18,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/holiday"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/predict"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/weather"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/notify"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/holiday"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/weather"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -97,17 +97,19 @@ func buildDirectionAwareBusPositionMap(city string, positions []busmodel.RawPosi
 	return byIdentity
 }
 
-type busArrivalNotifier interface {
-	Arrivals(context.Context, []notify.ArrivalEvent) error
+// ArrivalNotifier receives each tick's arrival events: riderevent.Publisher in
+// production, which hands them to rider for reminder dispatch.
+type ArrivalNotifier interface {
+	Arrivals(context.Context, []riderevent.ArrivalEvent) error
 }
 
 type busArrivalBatch struct {
 	mu     sync.Mutex
-	target busArrivalNotifier
-	events []notify.ArrivalEvent
+	target ArrivalNotifier
+	events []riderevent.ArrivalEvent
 }
 
-func (b *busArrivalBatch) Arrivals(_ context.Context, events []notify.ArrivalEvent) error {
+func (b *busArrivalBatch) Arrivals(_ context.Context, events []riderevent.ArrivalEvent) error {
 	b.mu.Lock()
 	b.events = append(b.events, events...)
 	b.mu.Unlock()
@@ -119,7 +121,7 @@ func (b *busArrivalBatch) flush(ctx context.Context) error {
 		return nil
 	}
 	b.mu.Lock()
-	events := append([]notify.ArrivalEvent(nil), b.events...)
+	events := append([]riderevent.ArrivalEvent(nil), b.events...)
 	b.events = nil
 	b.mu.Unlock()
 	return b.target.Arrivals(ctx, events)
@@ -137,7 +139,7 @@ type busLiveJob struct {
 	fetch    pipeline.BoundFetch
 	sink     pipeline.LiveSink
 	store    busEtaStore
-	notifier busArrivalNotifier
+	notifier ArrivalNotifier
 	vehicles map[string]vehicleSource
 	eta      map[string]etaSource
 	now      func() time.Time
@@ -245,10 +247,10 @@ func Eta(
 	fetch pipeline.BoundFetch,
 	sink pipeline.LiveSink,
 	db *pgxpool.Pool,
-	dispatcher *notify.Dispatcher,
+	notifier ArrivalNotifier,
 ) error {
 	return runBusEtaTick(ctx, "bus_eta", _busEtaSlowCities, history.BusEtaTickInterval,
-		nil, nil, fetch, sink, db, dispatcher, "bus_eta")
+		nil, nil, fetch, sink, db, notifier, "bus_eta")
 }
 
 func EtaFast(
@@ -256,7 +258,7 @@ func EtaFast(
 	fetch pipeline.BoundFetch,
 	sink pipeline.LiveSink,
 	db *pgxpool.Pool,
-	dispatcher *notify.Dispatcher,
+	notifier ArrivalNotifier,
 ) error {
 	// One feed per Data.taipei city, shared between the vehicle overlay and the
 	// ETA override: both read the same blob container.
@@ -268,7 +270,7 @@ func EtaFast(
 		etaFeeds[city] = feed
 	}
 	return runBusEtaTick(ctx, "bus_eta_fast", _busEtaFastCities, history.BusEtaFastTickInterval,
-		vehicles, etaFeeds, fetch, sink, db, dispatcher, "")
+		vehicles, etaFeeds, fetch, sink, db, notifier, "")
 }
 
 // runBusEtaTick is the shared body of Eta and EtaFast: build the job,
@@ -284,7 +286,7 @@ func runBusEtaTick(
 	fetch pipeline.BoundFetch,
 	sink pipeline.LiveSink,
 	db *pgxpool.Pool,
-	dispatcher *notify.Dispatcher,
+	notifier ArrivalNotifier,
 	demandDataset string,
 ) error {
 	zap.S().Infow("start", "component", component, "action", "Bus_eta", "event", "start")
@@ -299,7 +301,7 @@ func runBusEtaTick(
 
 		demandDataset: demandDataset,
 	}
-	jobErr := runBusEtaCities(ctx, cityList, &job, dispatcher)
+	jobErr := runBusEtaCities(ctx, cityList, &job, notifier)
 	zap.S().Infow("complete", "component", component, "action", "Bus_eta", "event", "complete")
 	return jobErr
 }
@@ -328,7 +330,7 @@ func (j busLiveJob) shouldRunCity(ctx context.Context, city string) bool {
 	return pipeline.LiveDemandGate(ctx, j.sink, j.demandDataset, city)
 }
 
-func runBusEtaCities(ctx context.Context, cityNames []string, job *busLiveJob, target busArrivalNotifier) error {
+func runBusEtaCities(ctx context.Context, cityNames []string, job *busLiveJob, target ArrivalNotifier) error {
 	arrivalBatch := &busArrivalBatch{target: target}
 	job.notifier = arrivalBatch
 	sem := make(chan struct{}, 4)
@@ -601,7 +603,7 @@ func (j busLiveJob) runCity(ctx context.Context, city string) (err error) {
 	var (
 		predictionRows        []history.PredictionRecord
 		historyRows           [][]any
-		arrivalEvents         []notify.ArrivalEvent
+		arrivalEvents         []riderevent.ArrivalEvent
 		fillsWithoutDeparture int
 	)
 	for _, b := range mp {
@@ -753,7 +755,7 @@ func (j busLiveJob) runCity(ctx context.Context, city string) (err error) {
 			IsLastBus:     eta.IsLastBus == 1,
 		})
 		if shouldDispatchBusArrival(ok, status, est) {
-			arrivalEvents = append(arrivalEvents, notify.ArrivalEvent{
+			arrivalEvents = append(arrivalEvents, riderevent.ArrivalEvent{
 				RouteType: "bus", RouteKey: uid, StopKey: b.StopUID,
 				Direction: strconv.Itoa(int(dir)), ETASeconds: est,
 				ArrivingPlate: normalizeArrivalPlate(eta.PlateNumb),

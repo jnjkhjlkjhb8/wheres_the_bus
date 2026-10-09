@@ -20,8 +20,6 @@ REDIS_PASSWORD
 # describes the raw-landing ingestor only and predates this carve-out.
 TDX_CLIENT_ID
 TDX_CLIENT_SECRET
-TRTC_USERNAME
-TRTC_PASSWORD
 FIREBASE_ENABLED
 FIREBASE_PROJECT_ID
 GOOGLE_APPLICATION_CREDENTIALS
@@ -35,8 +33,11 @@ SENTRY_TRACES_SAMPLE_RATE
 # Chat webhook the feedback service announces new rider reports to
 # (services/router/feedback_service.go newFeedbackNotifier). Empty disables
 # the announcement; reports are still stored.
-FEEDBACK_WEBHOOK_URL
 # Shared secret MOTIS sends to the GTFS-RT endpoint (services/router/gtfs_rt.go,
 # ADR-0019). Empty leaves the route unmounted; prod's HTTP port is public, so an
 # ungated feed would publish what was scoped as internal.
 GTFS_RT_CREDENTIAL
+RIDER_API_ADDR
+RIDER_HTTP_URL
+RIDER_TLS_DIR
+POWERSYNC_KEY_FILE

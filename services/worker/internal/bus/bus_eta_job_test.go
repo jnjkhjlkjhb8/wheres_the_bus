@@ -10,11 +10,11 @@ import (
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/predict"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/notify"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -79,7 +79,7 @@ type captureBusArrivalNotifier struct {
 	batches int
 }
 
-func (n *captureBusArrivalNotifier) Arrivals(_ context.Context, events []notify.ArrivalEvent) error {
+func (n *captureBusArrivalNotifier) Arrivals(_ context.Context, events []riderevent.ArrivalEvent) error {
 	n.batches++
 	for _, event := range events {
 		n.calls = append(n.calls, busArrivalCall{
@@ -93,12 +93,12 @@ func (n *captureBusArrivalNotifier) Arrivals(_ context.Context, events []notify.
 func TestBusArrivalBatchFlushesOncePerTick(t *testing.T) {
 	target := &captureBusArrivalNotifier{}
 	batch := busArrivalBatch{target: target}
-	first := notify.ArrivalEvent{RouteType: "bus", RouteKey: "R1", StopKey: "S1", Direction: "0", ETASeconds: 60}
-	second := notify.ArrivalEvent{RouteType: "bus", RouteKey: "R2", StopKey: "S2", Direction: "1", ETASeconds: 120}
-	if err := batch.Arrivals(context.Background(), []notify.ArrivalEvent{first}); err != nil {
+	first := riderevent.ArrivalEvent{RouteType: "bus", RouteKey: "R1", StopKey: "S1", Direction: "0", ETASeconds: 60}
+	second := riderevent.ArrivalEvent{RouteType: "bus", RouteKey: "R2", StopKey: "S2", Direction: "1", ETASeconds: 120}
+	if err := batch.Arrivals(context.Background(), []riderevent.ArrivalEvent{first}); err != nil {
 		t.Fatal(err)
 	}
-	if err := batch.Arrivals(context.Background(), []notify.ArrivalEvent{second}); err != nil {
+	if err := batch.Arrivals(context.Background(), []riderevent.ArrivalEvent{second}); err != nil {
 		t.Fatal(err)
 	}
 	if target.batches != 0 {
@@ -359,7 +359,7 @@ func TestBusSpec304RefreshesCityTTL(t *testing.T) {
 		fetch:    pipeline.BindFetch(src, sink, busTestSpec()),
 		sink:     sink,
 		store:    pgBusEtaStore{},
-		notifier: (*notify.Dispatcher)(nil),
+		notifier: nil,
 		now:      time.Now,
 	}
 	_ = job.runCity(context.Background(), "Taipei")
@@ -392,7 +392,7 @@ func TestBusCityAbortRefreshesCityTTL(t *testing.T) {
 		fetch:    pipeline.BindFetch(src, sink, busTestSpec()),
 		sink:     sink,
 		store:    pgBusEtaStore{},
-		notifier: (*notify.Dispatcher)(nil),
+		notifier: nil,
 		now:      time.Now,
 	}
 	if err := job.runCity(context.Background(), "Taipei"); err == nil {
@@ -422,7 +422,7 @@ func TestBusCityPublishSkipsRedundantRefresh(t *testing.T) {
 		fetch:    pipeline.BindFetch(src, sink, busTestSpec()),
 		sink:     sink,
 		store:    pgBusEtaStore{},
-		notifier: (*notify.Dispatcher)(nil),
+		notifier: nil,
 		now:      time.Now,
 	}
 	if err := job.runCity(context.Background(), "Taipei"); err != nil {

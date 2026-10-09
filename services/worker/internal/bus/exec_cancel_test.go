@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/predict"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 )
 
 func TestBusWriterCancelsDuringExecWithoutAck(t *testing.T) {

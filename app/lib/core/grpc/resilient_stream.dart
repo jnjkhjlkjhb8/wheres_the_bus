@@ -192,3 +192,41 @@ class ResilientSubscription<T> {
 
   static final Random _random = Random();
 }
+
+/// A `foreground` that never goes false, for feeds behind the tracking card:
+/// the card is read on the lock screen, where the app is never resumed, and
+/// pausing the feed there freezes the card.
+final ValueListenable<bool> alwaysForeground = ValueNotifier<bool>(true);
+
+/// [source] as a single stream that survives drops: a broken or closed
+/// connection (a server rollout ends every stream) is reopened with the same
+/// backoff as [ResilientSubscription], and listeners see nothing of it. Only
+/// sustained failure ([maxFailures] in a row) reaches them, as one error
+/// event, so an `onError` fallback still fires for a real outage.
+Stream<T> resilientStream<T>(
+  Stream<T> Function() source, {
+  int maxFailures = 5,
+  Duration baseDelay = const Duration(seconds: 2),
+  Duration maxDelay = const Duration(seconds: 30),
+  void Function(Object, StackTrace)? reportError,
+  ValueListenable<bool>? foreground,
+  ValueListenable<bool>? online,
+}) {
+  ResilientSubscription<T>? sub;
+  late final StreamController<T> controller;
+  controller = StreamController<T>(
+    onListen: () => sub = ResilientSubscription<T>(
+      source: source,
+      onData: controller.add,
+      onFailure: controller.addError,
+      maxFailures: maxFailures,
+      baseDelay: baseDelay,
+      maxDelay: maxDelay,
+      reportError: reportError,
+      foreground: foreground,
+      online: online,
+    ),
+    onCancel: () => sub?.cancel(),
+  );
+  return controller.stream;
+}

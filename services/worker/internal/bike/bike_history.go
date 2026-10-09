@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/history"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"go.uber.org/zap"
 )
 

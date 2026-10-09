@@ -124,6 +124,10 @@ class JourneySessionBloc
     final lease = await _channel?.start(_content(state));
     if (generation == _generation) {
       _lease = lease;
+      // Ticks that landed while start was in flight (the permission dialog
+      // can hold it for seconds) were dropped for want of a lease; without
+      // this the card keeps its pre-tick content until the feed next changes.
+      if (lease != null) unawaited(_channel?.update(lease, _content(state)));
     } else if (lease != null) {
       // Another journey started (or this one was cancelled — _end bumps the
       // generation) while the start round-trip was in flight: nothing will

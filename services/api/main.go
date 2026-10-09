@@ -19,18 +19,18 @@ import (
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/alert"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/cache"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/feedback"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/firebase"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/installid"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/livestream"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/maas"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/metro"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/nearby"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/rail"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/ratelimit"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/riderfwd"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/transit"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/installid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -263,7 +263,13 @@ func run() error {
 			plannerMonitor.Start(healthCtx)
 		}
 		httpConfig.plannerHealth = plannerMonitor
-		httpRuntime, err := prepareHTTPServer(db, live, httpConfig, loadOrGenerateKey, net.Listen)
+		rider, err := dialRider()
+		if err != nil {
+			return err
+		}
+		runtime.addCleanup(func() { _ = rider.conn.Close() })
+		httpConfig.trackCancel = rider.trackCancel
+		httpRuntime, err := prepareHTTPServer(db, live, httpConfig, loadSigningKey, net.Listen)
 		if err != nil {
 			return err
 		}
@@ -299,12 +305,7 @@ func run() error {
 		pb.RegisterBus_Route_ServiceServer(grpcServer, transit.NewBusRouteServer(db, rc, cache.NewTTLCache(), live))
 		pb.RegisterBus_Station_ServiceServer(grpcServer, transit.NewBusStationServer(db, rc, live))
 		pb.RegisterBike_ServiceServer(grpcServer, transit.NewBikeServer(db, rc, cache.NewTTLCache(), live))
-		pb.RegisterMrt_ServiceServer(grpcServer, metro.NewMrtServer(
-			db, rc, live,
-			firebase.NewFirebaseStore(db),
-			shared.NewTRTCTrainInfoClient(os.Getenv("TRTC_USERNAME"), os.Getenv("TRTC_PASSWORD")),
-			time.Now,
-		))
+		pb.RegisterMrt_ServiceServer(grpcServer, metro.NewMrtServer(db, rc, live, pb.NewMrt_ServiceClient(rider.conn)))
 		pb.RegisterThsrTimetableServiceServer(grpcServer, rail.NewThsrServer(db, rc, live))
 		pb.RegisterTRATimetableServiceServer(grpcServer, rail.NewTraTimetableServer(db, rc, live))
 		pb.RegisterTRA_DetainServiceServer(grpcServer, rail.NewTraDetainServer(db, rc, live))
@@ -331,13 +332,10 @@ func run() error {
 		// flight is canceled and joined before those backends close under it.
 		runtime.addCleanup(maasServer.Close)
 		pb.RegisterMaasServiceServer(grpcServer, maasServer)
-		pb.RegisterFirebase_ServiceServer(grpcServer,
-			firebase.NewFirebaseServer(firebase.NewFirebaseStore(db), time.Now, live))
-		pb.RegisterFeedback_ServiceServer(grpcServer, feedback.NewFeedbackServer(
-			feedback.NewFeedbackStore(db),
-			firebase.NewFirebaseStore(db),
-			feedback.NewFeedbackNotifier(),
-		))
+		// Rider state lives behind rider-api (ADR-0026); api forwards after App
+		// Check and rate limiting.
+		pb.RegisterFirebase_ServiceServer(grpcServer, riderfwd.Firebase{Client: pb.NewFirebase_ServiceClient(rider.conn)})
+		pb.RegisterFeedback_ServiceServer(grpcServer, riderfwd.Feedback{Client: pb.NewFeedback_ServiceClient(rider.conn)})
 		zap.S().Infow("gRPC server is running", "port", 50051)
 		zap.S().Infow("server running on 0.0.0.0:8080", "component", "http")
 		coordinator := serverCoordinator{

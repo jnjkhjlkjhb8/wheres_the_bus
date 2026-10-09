@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/core/grpc/resilient_stream.dart';
 import 'package:wheres_the_bus/data/models/rail_fare_quote.dart';
 import 'package:wheres_the_bus/data/repositories/thsr_repository.dart';
 import 'package:wheres_the_bus/data/repositories/tra_repository.dart';
@@ -90,12 +91,15 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
 
       if (!_isThsr && stops.length >= 2 && !isClosed) {
         unawaited(_delaySub?.cancel());
-        _delaySub = _tra.delay(date, stops.first.name, stops.last.name).listen(
-          (m) {
-            if (!isClosed) add(RailTrainDelayUpdated(m[trainNo] ?? 0));
-          },
-          onError: (Object _) {}, // keep last value; never surface as error
-        );
+        _delaySub =
+            resilientStream(
+              () => _tra.delay(date, stops.first.name, stops.last.name),
+            ).listen(
+              (m) {
+                if (!isClosed) add(RailTrainDelayUpdated(m[trainNo] ?? 0));
+              },
+              onError: (Object _) {}, // keep last value; never surface as error
+            );
       }
     } on Object catch (e) {
       final error = AppError.from(e);

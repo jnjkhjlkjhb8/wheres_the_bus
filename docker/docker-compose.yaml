@@ -104,63 +104,92 @@ services:
       timeout: 5s
       retries: 3
       start_period: 60s
-  ingestor:
+  rider-api:
     build:
       context: .
-      dockerfile: services/worker/Dockerfile
-    image: ${FUNCTIONS_IMAGE:-functions}
-    env_file: ${ENV_FILE_INGESTOR:-${ENV_FILE:-./.env}}
+      dockerfile: services/rider/Dockerfile
+    image: ${RIDER_IMAGE:-rider}
+    env_file: ${ENV_FILE_RIDER:-${ENV_FILE:-./.env}}
     environment:
       TZ: Asia/Taipei
-      GOMEMLIMIT: ${INGESTOR_GOMEMLIMIT:-345MiB}
+      GOMEMLIMIT: ${RIDER_GOMEMLIMIT:-200MiB}
       REDIS_ADDR: redis:6379
-      ROLE: ingestor
-      INGEST_DB_MAX_CONNS: "1"
+    command: ["api"]
+    networks:
+      - backend
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: ${RIDER_MEM_LIMIT:-256m}
+    pids_limit: 128
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+  rider-worker:
+    build:
+      context: .
+      dockerfile: services/rider/Dockerfile
+    image: ${RIDER_IMAGE:-rider}
+    env_file: ${ENV_FILE_RIDER:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      GOMEMLIMIT: ${RIDER_GOMEMLIMIT:-200MiB}
+      REDIS_ADDR: redis:6379
+    command: ["worker"]
+    networks:
+      - backend
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: ${RIDER_MEM_LIMIT:-256m}
+    pids_limit: 128
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/healthy -mmin -2 2>/dev/null | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+  # One-shot batch runs (ADR-0026): `docker compose --profile pipeline run --rm
+  # pipeline run nightly` (or hourly / ingest / load / vector / gtfs). In k3s these
+  # are CronJobs; here nothing schedules them.
+  pipeline:
+    profiles: ["pipeline"]
+    build:
+      context: .
+      dockerfile: services/pipeline/Dockerfile
+    image: ${PIPELINE_IMAGE:-pipeline}
+    env_file: ${ENV_FILE_PIPELINE:-${ENV_FILE:-./.env}}
+    environment:
+      TZ: Asia/Taipei
+      GOMEMLIMIT: ${PIPELINE_GOMEMLIMIT:-345MiB}
+      REDIS_ADDR: redis:6379
+      PIPELINE_DB_MAX_CONNS: "2"
+      PG_STATEMENT_TIMEOUT: 1800s
       TMPDIR: /spool
+    command: ["run", "nightly"]
     networks:
       - backend
     volumes:
       - ingestor_spool:/spool
-    tmpfs:
-      - /tmp:size=64m
-    mem_limit: ${INGESTOR_MEM_LIMIT:-384m}
-    pids_limit: 128
-    cpus: 0.5
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep worker"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-  loader:
-    build:
-      context: .
-      dockerfile: services/worker/Dockerfile
-    image: ${FUNCTIONS_IMAGE:-functions}
-    env_file: ${ENV_FILE_LOADER:-${ENV_FILE:-./.env}}
-    environment:
-      TZ: Asia/Taipei
-      GOMEMLIMIT: ${LOADER_GOMEMLIMIT:-345MiB}
-      REDIS_ADDR: redis:6379
-      ROLE: loader
-      LOAD_DB_MAX_CONNS: "1"
-      PG_STATEMENT_TIMEOUT: 1800s
-    networks:
-      - backend
-    volumes:
       - gtfs_feed:/data/gtfs
     tmpfs:
       - /tmp:size=256m
-    mem_limit: ${LOADER_MEM_LIMIT:-384m}
+    mem_limit: ${PIPELINE_MEM_LIMIT:-384m}
     pids_limit: 128
     cpus: 0.5
     security_opt:
@@ -171,13 +200,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep worker"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    restart: "no"
   powersync:
     image: journeyapps/powersync-service:1.23.3@sha256:b6b22fa7d0d862f04bdff62846e656756d17bcf3dd6eca399a0633671051438b
     ports:
@@ -312,7 +335,8 @@ services:
     command:
       - >
         set -eu; cd /data/motis;
-        gtfs_sha="$$(sha256sum /data/gtfs/gtfs.zip | cut -d' ' -f1)";
+        gtfs_path=/data/gtfs/active/gtfs.zip;
+        gtfs_sha="$$(sha256sum "$$gtfs_path" | cut -d' ' -f1)";
         pbf_sha="$$(sha256sum /osm/${OSRM_PBF_FILE:-taiwan.osm.pbf} | cut -d' ' -f1)";
         config_sha="$$(sha256sum /conf/config.yml | cut -d' ' -f1)";
         image_sha="$${MOTIS_IMPORT_IMAGE_IDENTITY:?MOTIS_IMPORT_IMAGE_IDENTITY is required}";
@@ -322,7 +346,7 @@ services:
           echo "motis-import: $$target already built";
         else
           rm -rf .build && mkdir -p .build &&
-          umask 077; sed "s|__GTFS_RT_CREDENTIAL__|$${GTFS_RT_CREDENTIAL:-}|" /conf/config.yml > .build/config.yml &&
+          umask 077; sed -e "s|__GTFS_RT_CREDENTIAL__|$${GTFS_RT_CREDENTIAL:-}|" -e "s|__GTFS_PATH__|$$gtfs_path|" /conf/config.yml > .build/config.yml &&
           /motis import -c .build/config.yml -d .build/data &&
           touch .build/data/.complete &&
           mv .build/data "$$target" &&

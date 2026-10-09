@@ -31,19 +31,20 @@ services:
       postgres:
         condition: service_healthy
 
-  ingestor:
+  rider-worker:
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
 
-  loader:
+  pipeline:
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+
 
   powersync:
     profiles: ["sync"]

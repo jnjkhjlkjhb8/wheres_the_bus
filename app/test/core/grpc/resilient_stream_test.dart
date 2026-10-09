@@ -428,4 +428,79 @@ void main() {
     expect(recovered, 1);
     await sub.cancel();
   });
+
+  group('resilientStream', () {
+    final foreground = ValueNotifier<bool>(true);
+    final online = ValueNotifier<bool>(true);
+
+    test(
+      'a server-side close is reopened without surfacing anything',
+      () async {
+        var opened = 0;
+        final values = <int>[];
+        final errors = <Object>[];
+        final sub = resilientStream<int>(
+          () {
+            opened++;
+            // Each connection delivers one frame and then ends, the way a
+            // rolling update's GOAWAY ends every stream on the old pod.
+            return Stream<int>.value(opened);
+          },
+          baseDelay: const Duration(milliseconds: 1),
+          maxDelay: const Duration(milliseconds: 2),
+          reportError: (_, _) {},
+          foreground: foreground,
+          online: online,
+        ).listen(values.add, onError: errors.add);
+
+        await eventually(() => values.length >= 3);
+        expect(values.take(3), [1, 2, 3]);
+        expect(errors, isEmpty);
+        await sub.cancel();
+      },
+    );
+
+    test('a transient error is retried silently', () async {
+      var opened = 0;
+      final values = <int>[];
+      final errors = <Object>[];
+      final sub = resilientStream<int>(
+        () {
+          opened++;
+          return opened == 1
+              ? Stream<int>.error(const GrpcError.unavailable())
+              : Stream<int>.value(42);
+        },
+        baseDelay: const Duration(milliseconds: 1),
+        maxDelay: const Duration(milliseconds: 2),
+        reportError: (_, _) {},
+        foreground: foreground,
+        online: online,
+      ).listen(values.add, onError: errors.add);
+
+      await eventually(() => values.isNotEmpty);
+      expect(values.first, 42);
+      expect(errors, isEmpty);
+      await sub.cancel();
+    });
+
+    test('sustained failure reaches onError once', () async {
+      final errors = <Object>[];
+      final sub = resilientStream<int>(
+        () => Stream<int>.error(const GrpcError.unavailable()),
+        maxFailures: 2,
+        baseDelay: const Duration(milliseconds: 1),
+        maxDelay: const Duration(milliseconds: 1),
+        reportError: (_, _) {},
+        foreground: foreground,
+        online: online,
+      ).listen((_) {}, onError: errors.add);
+
+      await eventually(() => errors.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(errors, hasLength(1));
+      expect(errors.single, isA<AppError>());
+      await sub.cancel();
+    });
+  });
 }

@@ -29,20 +29,20 @@ RENDERED_PROD := env/.rendered/prod
 COMPOSE_TEST := ENV_FILE=env/test.env \
 	ROUTING_NETWORK=bus-test-routing \
 	ENV_FILE_ROUTER=$(RENDERED_TEST)/router.env ENV_FILE_FUNCTIONS=$(RENDERED_TEST)/functions.env \
-	ENV_FILE_INGESTOR=$(RENDERED_TEST)/ingestor.env ENV_FILE_LOADER=$(RENDERED_TEST)/loader.env \
+	ENV_FILE_PIPELINE=$(RENDERED_TEST)/pipeline.env ENV_FILE_RIDER=$(RENDERED_TEST)/rider.env \
 	ENV_FILE_POWERSYNC=$(RENDERED_TEST)/powersync.env ENV_FILE_MOTIS=$(RENDERED_TEST)/motis.env \
 	COMPOSE_PROFILES=motis \
 	$(COMPOSE) -p test --env-file ./env/test.env -f docker/docker-compose.yaml -f docker/docker-compose.test.yaml
 COMPOSE_STAGING := ENV_FILE=env/staging.env \
 	ROUTING_NETWORK=bus-routing \
 	ENV_FILE_ROUTER=$(RENDERED_STAGING)/router.env ENV_FILE_FUNCTIONS=$(RENDERED_STAGING)/functions.env \
-	ENV_FILE_INGESTOR=$(RENDERED_STAGING)/ingestor.env ENV_FILE_LOADER=$(RENDERED_STAGING)/loader.env \
+	ENV_FILE_PIPELINE=$(RENDERED_STAGING)/pipeline.env ENV_FILE_RIDER=$(RENDERED_STAGING)/rider.env \
 	ENV_FILE_POWERSYNC=$(RENDERED_STAGING)/powersync.env ENV_FILE_MOTIS=$(RENDERED_STAGING)/motis.env \
 	$(COMPOSE) -p staging --env-file ./env/staging.env -f docker/docker-compose.yaml -f docker/docker-compose.staging.yaml
 COMPOSE_PROD := ENV_FILE=env/prod.env \
 	ROUTING_NETWORK=bus-routing \
 	ENV_FILE_ROUTER=$(RENDERED_PROD)/router.env ENV_FILE_FUNCTIONS=$(RENDERED_PROD)/functions.env \
-	ENV_FILE_INGESTOR=$(RENDERED_PROD)/ingestor.env ENV_FILE_LOADER=$(RENDERED_PROD)/loader.env \
+	ENV_FILE_PIPELINE=$(RENDERED_PROD)/pipeline.env ENV_FILE_RIDER=$(RENDERED_PROD)/rider.env \
 	ENV_FILE_POWERSYNC=$(RENDERED_PROD)/powersync.env ENV_FILE_MOTIS=$(RENDERED_PROD)/motis.env \
 	COMPOSE_PROFILES=motis \
 	$(COMPOSE) -p prod --env-file ./env/prod.env -f docker/docker-compose.yaml -f docker/docker-compose.prod.yaml
@@ -51,7 +51,7 @@ COMPOSE_PROD := ENV_FILE=env/prod.env \
 # Empty (the default) follows every service in the environment.
 SERVICE ?=
 
-.PHONY: up-test up-staging up-prod logs-test logs-staging logs-prod down-test down-staging down-prod migrations-check run-test run-staging build-prod test test-go test-flutter lint lint-fix lint-tool proto-go proto-dart l10n-push l10n-pull l10n-pull-sources verify render-env-test render-env-staging render-env-prod refresh-motis-prod
+.PHONY: up-test up-staging up-prod logs-test logs-staging logs-prod down-test down-staging down-prod migrations-check run-test run-staging build-prod test test-go test-flutter quality lint lint-fix lint-tool proto-go proto-dart l10n-push l10n-pull l10n-pull-sources verify render-env-test render-env-staging render-env-prod refresh-motis-prod
 
 test: test-go test-flutter
 
@@ -61,6 +61,13 @@ test-go: proto-go
 
 test-flutter: proto-dart
 	cd app && flutter analyze --no-fatal-infos && flutter test
+
+# CRAP <= 8 and mutation score >= 90% on code changed since QUALITY_BASE
+# (default HEAD: the uncommitted work). Slow, so not part of `make test`.
+quality: proto-go proto-dart
+	go test -coverprofile=coverage.out ./...
+	cd app && flutter test --coverage
+	./scripts/check-quality.sh go flutter
 
 # lint reads .golangci.yml. lint-fix additionally applies the fixes the enabled
 # linters can make on their own (gofmt + the auto-fixable staticcheck rules).

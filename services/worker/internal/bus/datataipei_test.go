@@ -10,10 +10,10 @@ import (
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/dataset"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/pipeline"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/predict"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/dataset"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 )
 
 func TestDataTaipeiRawPositions(t *testing.T) {

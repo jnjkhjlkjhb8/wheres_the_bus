@@ -17,10 +17,17 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAMESPACE: ${{ github.repository_owner }}
+  COMMIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
-  build-router:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+  build:
+    # branches: [main] also matches a fork PR whose branch is named main, so
+    # only a push to this repository's main may build and push images.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -28,13 +35,22 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-router
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { name: api, file: services/api/Dockerfile, context: . }
+          - { name: realtime, file: services/worker/Dockerfile, context: . }
+          - { name: rider, file: services/rider/Dockerfile, context: . }
+          - { name: pipeline, file: services/pipeline/Dockerfile, context: . }
+          - { name: migrate, file: docker/migrate/Dockerfile, context: . }
+          # Infrastructure: the operator pins this digest in k8s/infra; the
+          # deploy workflow never rolls it out.
+          - { name: postgres, file: docker/postgres/Dockerfile, context: docker/postgres }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ env.COMMIT_SHA }}
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
@@ -45,83 +61,54 @@ jobs:
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: .
-          file: services/api/Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: true
           provenance: true
           sbom: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-router:sha-${{ github.event.workflow_run.head_sha || github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-${{ matrix.name }}:sha-${{ env.COMMIT_SHA }}
       - name: attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-router
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-${{ matrix.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-
-  build-functions:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-functions
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Matrix jobs cannot set outputs per leg, so each leg hands its ref to the
+      # manifest job as a one-line artifact.
+      - name: record image ref
+        env:
+          REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-${{ matrix.name }}@${{ steps.build.outputs.digest }}
+        run: printf '%s' "$REF" > "image-${{ matrix.name }}.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: build and push
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: services/worker/Dockerfile
-          push: true
-          provenance: true
-          sbom: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-functions:sha-${{ github.event.workflow_run.head_sha || github.sha }}
-      - name: attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bus-functions
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
+          name: image-${{ matrix.name }}
+          path: image-${{ matrix.name }}.txt
+          retention-days: 1
 
   manifest:
-    needs: [build-router, build-functions]
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
     steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: image-*
+          merge-multiple: true
       - name: write release manifest
         env:
-          COMMIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           RUN_ID: ${{ github.run_id }}
-          ROUTER_REF: ${{ needs.build-router.outputs.image }}@${{ needs.build-router.outputs.digest }}
-          FUNCTIONS_REF: ${{ needs.build-functions.outputs.image }}@${{ needs.build-functions.outputs.digest }}
         run: |
-          cat > release-manifest.json <<EOF
-          {
-            "commit": "$COMMIT_SHA",
-            "run_id": "$RUN_ID",
-            "images": {
-              "router": "$ROUTER_REF",
-              "functions": "$FUNCTIONS_REF"
-            }
-          }
-          EOF
+          images='{}'
+          for f in image-*.txt; do
+            name="${f#image-}"; name="${name%.txt}"
+            images=$(jq -c --arg n "$name" --arg r "$(cat "$f")" '. + {($n): $r}' <<<"$images")
+          done
+          jq -n --arg commit "$COMMIT_SHA" --arg run "$RUN_ID" --argjson images "$images" \
+            '{commit: $commit, run_id: $run, images: $images}' > release-manifest.json
           cat release-manifest.json
+          [ "$(jq '.images | length' release-manifest.json)" -eq 6 ]
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-manifest

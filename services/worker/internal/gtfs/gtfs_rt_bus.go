@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/worker/internal/busmodel"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -23,10 +22,8 @@ const (
 	_gtfsRTScanBatch = 500
 )
 
-var _busPatternOffsetSQL = `
-  SELECT p.sub_route_uid, p.direction, p.stop_uid, p.offset_secs
-  FROM (` + busmodel.PatternSQL + `) p
-  WHERE p.complete`
+const _busPatternOffsetSQL = `
+SELECT sub_route_uid, direction, stop_uid, offset_secs FROM gtfs_rt_bus_offset WHERE run_id = $1`
 
 func (b *gtfsRTBuilder) readBusArrivals(ctx context.Context) (map[string]*models.Bus_RouteArrival, error) {
 	var keys []string
@@ -101,8 +98,8 @@ type gtfsRTCall struct {
 // loadBusPatternOffsets reads the offsets for every complete route direction. It
 // is refreshed with the rest of the static index rather than per tick: it
 // changes when bus_segment_time is recomputed, which is nightly.
-func loadBusPatternOffsets(ctx context.Context, db *pgxpool.Pool) (map[gtfsRTRouteKey]map[string]int64, error) {
-	rows, err := db.Query(ctx, _busPatternOffsetSQL)
+func loadBusPatternOffsets(ctx context.Context, db *pgxpool.Pool, runID string) (map[gtfsRTRouteKey]map[string]int64, error) {
+	rows, err := db.Query(ctx, _busPatternOffsetSQL, runID)
 	if err != nil {
 		return nil, _oops.Wrapf(err, "gtfs-rt: load bus pattern offsets")
 	}

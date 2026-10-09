@@ -132,8 +132,8 @@ else
     exit 1
   fi
 
-  services="router functions ingestor loader redis powersync cloudflared motis motis-import osrm-fetch"
-  long_running="router functions ingestor loader redis powersync cloudflared motis"
+  services="router functions rider-api rider-worker pipeline redis powersync cloudflared motis motis-import osrm-fetch"
+  long_running="router functions rider-api rider-worker redis powersync cloudflared motis"
 
   service_block() {
     # service_block <name> <file> — prints the YAML block for one service.
