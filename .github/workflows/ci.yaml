@@ -170,8 +170,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sha=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yaml --branch main \
-            --status success --limit 1 --json headSha --jq '.[0].headSha // empty')
+          # deploy.yaml 404s until it reaches the default branch; that means no
+          # deploy has ever succeeded. Any other error must still fail the job.
+          if out=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yaml --branch main \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // empty' 2>&1); then
+            sha="$out"
+          elif grep -q 'HTTP 404' <<<"$out"; then
+            sha=""
+          else
+            echo "$out" >&2
+            exit 1
+          fi
           if [ -z "$sha" ]; then
             echo "::notice::no successful deploy yet; nothing is live to stay compatible with"
           fi

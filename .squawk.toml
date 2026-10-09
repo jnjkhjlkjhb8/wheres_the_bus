@@ -1,0 +1,13 @@
+# squawk lint for migrations/ (scripts/check-migration-lint.sh, ADR-0027).
+pg_version = "18.0"
+
+excluded_rules = [
+    # Every id/count column in the schema is int or smallint by design; widening
+    # them is not a migration-safety concern.
+    "prefer-bigint-over-int",
+    "prefer-bigint-over-smallint",
+    # The migrate Job sets lock_timeout and statement_timeout for the whole
+    # session (PGOPTIONS), so per-file SET statements would be noise.
+    "require-lock-timeout",
+    "require-statement-timeout",
+]

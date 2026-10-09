@@ -1,0 +1,31 @@
+-- 2026-08-21-drop-bike-availability-history.sql
+-- Hand-applied to Azure: psql "$DATABASE_URL" -f migrations/2026-08-21-drop-bike-availability-history.sql
+--
+-- bike_availability_history moves to the MySQL archive host, finishing the
+-- cutover that migrations/mysql/2026-07-30-history-archive.sql described and
+-- never performed: that file created the MySQL table and said the write would
+-- move there, but bike.go kept COPYing into PostgreSQL under a 30-day
+-- cleanupBikeHistory. Both tables have existed since, one filling and one empty.
+--
+-- Nothing reads it online — it is sampled once per 5 minutes per station as
+-- training data for future rentable/returnable prediction — so this is a pure
+-- write-path move with no reader to rewire, unlike bus_eta_history's.
+--
+-- It is also why the 30-day retention goes away rather than following the data:
+-- throwing away eleven months of every year made sense while it was competing
+-- for space on a 2 GB Azure server, and does not on the archive host at
+-- ~11.5 MB/day (~4 GB/yr). It is now kept indefinitely (ADR-0023).
+--
+-- ORDER OF OPERATIONS. Apply this only after the deployed functions image is
+-- writing to MySQL -- confirm with
+--   mysql bus -e "SELECT COUNT(*), MIN(recorded_at), MAX(recorded_at) FROM bike_availability_history"
+-- and check that MAX(recorded_at) is within the last few minutes. Dropping first
+-- loses whatever has not yet been observed elsewhere; unlike the ETA history,
+-- the gap is bounded (availability is re-read every 30s), but the shape of a
+-- given afternoon cannot be recovered.
+--
+-- The PostgreSQL rows are not migrated. They are at most 30 days of samples that
+-- the model has no use for yet; copying them across is available if that changes
+-- while this table still exists.
+
+DROP TABLE IF EXISTS bike_availability_history;
