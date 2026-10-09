@@ -1,5 +1,6 @@
 # Allowlist-style: deny everything, then un-ignore exactly what the
-# Dockerfiles in services/router, services/functions, and embed/ need to
+# Dockerfiles in services/api, worker, rider, pipeline, docker/migrate and embed/
+# need to
 # COPY. Keeps the build context small (the workspace itself is ~20+ GB of
 # Flutter build output, OSRM data, and local tooling) and guarantees secrets,
 # env files, and git history never reach the Docker daemon even by accident.
@@ -17,6 +18,14 @@
 !services/api/**
 !services/worker/
 !services/worker/**
+!services/rider/
+!services/rider/**
+!services/pipeline/
+!services/pipeline/**
+!migrations/
+!migrations/**
+!scripts/
+!scripts/migrate-all.sh
 !embed/
 !embed/**
 

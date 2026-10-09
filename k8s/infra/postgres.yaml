@@ -11,7 +11,7 @@ data:
   pgbackrest.conf: |
     [global]
     repo1-type=sftp
-    repo1-path=/srv/pgbackrest/bus
+    repo1-path=/bus/repo
     repo1-sftp-private-key-file=/etc/pgbackrest/sftp/id_ed25519
     repo1-sftp-host-key-check-type=fingerprint
     repo1-sftp-host-key-hash-type=sha1
@@ -82,7 +82,9 @@ spec:
       containers:
         - name: postgres
           image: ghcr.io/jnjkhjlkjhb8/bus-postgres:pinned-by-release
-          command: ["sh", "-c", "exec docker-entrypoint.sh postgres $(cat /etc/postgres-config/postgresql.args)"]
+          # eval re-parses the quotes in postgresql.args; a plain $(cat ...) would split
+          # archive_command on its spaces and hand "--stanza=bus" to postgres.
+          command: ["sh", "-c", "eval \"exec docker-entrypoint.sh postgres $(cat /etc/postgres-config/postgresql.args)\""]
           envFrom:
             - secretRef:
                 name: postgres-env # POSTGRES_PASSWORD

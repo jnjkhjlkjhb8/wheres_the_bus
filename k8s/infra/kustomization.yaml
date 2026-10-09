@@ -25,4 +25,4 @@ configMapGenerator:
 images:
   # Pin to the digest build-images publishes before applying.
   - name: ghcr.io/jnjkhjlkjhb8/bus-postgres
-    newTag: pinned-by-release
+    digest: sha256:e5d1341ed0f6fbbfff7fd9a41cae73f4dc2fefb9f148452d065a33acd7956002
