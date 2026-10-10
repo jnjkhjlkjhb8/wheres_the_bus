@@ -172,3 +172,39 @@ func TestDeniedWritesFail(t *testing.T) {
 		})
 	}
 }
+
+// TestServiceWritesSucceed covers the writes a service makes outside its own
+// tables: realtime inserts prediction rows and route alerts that pipeline and
+// rider later process.
+func TestServiceWritesSucceed(t *testing.T) {
+	pool := testPool(t)
+	tests := []struct {
+		role string
+		sql  string
+	}{
+		{"realtime_svc", `INSERT INTO public.bus_eta_prediction_error
+			(sub_route_uid, direction, stop_uid, source, predicted_at, predicted_seconds)
+			VALUES ('grant-test', 0, 'grant-test', 'tdx', now(), 1)`},
+		{"realtime_svc", `INSERT INTO public.route_alert_outbox (dedupe_key, route_type, route_key, body)
+			VALUES ('grant-test', 'bus', 'grant-test', '{}')`},
+		{"pipeline_svc", `UPDATE public.bus_eta_prediction_error SET actual_seconds = 1 WHERE false`},
+		{"pipeline_svc", `DELETE FROM public.bus_eta_prediction_error WHERE false`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.role+": "+tt.sql, func(t *testing.T) {
+			ctx := context.Background()
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{tt.role}.Sanitize()); err != nil {
+				t.Fatalf("set role: %v", err)
+			}
+			if _, err := tx.Exec(ctx, tt.sql); err != nil {
+				t.Fatalf("want success, got %v", err)
+			}
+		})
+	}
+}

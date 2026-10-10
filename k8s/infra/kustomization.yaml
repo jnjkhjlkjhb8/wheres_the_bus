@@ -12,7 +12,16 @@ resources:
   - services.yaml
   - networkpolicy.yaml
   - ci-deployer.yaml
+  - db-alerts.yaml
 configMapGenerator:
+  - name: db-alerts-script
+    namespace: bus
+    files:
+      - check.sh=db-alerts/check.sh
+  - name: postgres-hba
+    namespace: bus
+    files:
+      - pg_hba.conf=postgres/pg_hba.conf
   - name: powersync-sync-rules
     namespace: bus
     files:

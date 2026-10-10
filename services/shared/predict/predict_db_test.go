@@ -122,6 +122,21 @@ func TestBatchNextDepartures(t *testing.T) {
 		t.Fatalf("07:00: frequency departure = %s, want %s (clamped to now)", got, want)
 	}
 
+	// Two trips that share a TripID (TDX does this) both start at stop 1:
+	// the earlier one is the next departure, every time.
+	const dupUID = "ZZ_PREDICT_DUP"
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM bus_schedule WHERE sub_route_uid = $1`, dupUID) }()
+	for _, at := range []string{"10:40:00", "10:10:00"} {
+		if _, err := pool.Exec(ctx, insert, dupUID, int16(0), false, "T1", int16(1), "S1", "Stop 1", at, allDays); err != nil {
+			t.Fatalf("insert shared-TripID trip at %s: %v", at, err)
+		}
+	}
+	dupKey := RouteDirKey{SubRouteUID: dupUID, Direction: 0}
+	got = BatchNextDepartures(ctx, pool, []RouteDirKey{dupKey}, "10:00:00", monday)
+	if got, want := got[dupKey].Format("15:04:05"), "10:10:00"; got != want {
+		t.Fatalf("shared TripID at 10:00: departure = %s, want %s", got, want)
+	}
+
 	// Frequency route at 23:00: window closed (ends 22:00), no entry.
 	got = BatchNextDepartures(ctx, pool, keys, "23:00:00", monday)
 	if dep, ok := got[freqKey]; ok {

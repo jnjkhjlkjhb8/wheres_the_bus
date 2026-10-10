@@ -4,6 +4,14 @@
 # api and rider-api roll with zero unavailability: a new Pod must be ready
 # before an old one stops, and an old one first sleeps in preStop so the
 # Service stops routing to it before SIGTERM starts GracefulStop.
+#
+# Database pool budget (*_DB_MAX_CONNS here and in pipeline.yaml; these env
+# entries override the Secrets). The cluster allows 60 of max_connections=100
+# to the apps: api 2x10, realtime 5, rider-api 2x3, rider-worker 3, nightly and
+# hourly pipeline 9 each when they overlap, PowerSync 4, migrate 1 = 57. A
+# rolling api update adds 10 for its duration. The measured api reads (nearby,
+# stations, static, rail) take under 1 ms and text search about 30 ms (FDPL-120),
+# so 10 per Pod is far from saturated.
 apiVersion: v1
 kind: Service
 metadata:
@@ -55,6 +63,8 @@ spec:
             - secretRef:
                 name: api-env
           env:
+            - name: ROUTER_DB_MAX_CONNS
+              value: "10"
             - name: TZ
               value: Asia/Taipei
             - name: REDIS_ADDR
@@ -107,6 +117,9 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
+            - name: bus-ca
+              mountPath: /etc/bus-ca
+              readOnly: true
             - name: rider-client
               mountPath: /tls/rider-client
               readOnly: true
@@ -122,6 +135,12 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        # sslrootcert for the database URL; only the CA certificate,
+        # the bus-ca Secret also holds its private key.
+        - name: bus-ca
+          secret:
+            secretName: bus-ca
+            items: [{key: ca.crt, path: ca.crt}]
         - name: rider-client
           secret:
             secretName: api-client-tls
@@ -173,6 +192,8 @@ spec:
             - secretRef:
                 name: realtime-env
           env:
+            - name: FUNCTIONS_DB_MAX_CONNS
+              value: "5"
             - name: TZ
               value: Asia/Taipei
             - name: REDIS_ADDR
@@ -198,9 +219,18 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
+            - name: bus-ca
+              mountPath: /etc/bus-ca
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        # sslrootcert for the database URL; only the CA certificate,
+        # the bus-ca Secret also holds its private key.
+        - name: bus-ca
+          secret:
+            secretName: bus-ca
+            items: [{key: ca.crt, path: ca.crt}]
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
@@ -257,6 +287,8 @@ spec:
             - secretRef:
                 name: rider-env
           env:
+            - name: RIDER_DB_MAX_CONNS
+              value: "3"
             - name: TZ
               value: Asia/Taipei
             - name: REDIS_ADDR
@@ -290,10 +322,19 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
+            - name: bus-ca
+              mountPath: /etc/bus-ca
+              readOnly: true
             - name: tls
               mountPath: /tls/rider-api
               readOnly: true
       volumes:
+        # sslrootcert for the database URL; only the CA certificate,
+        # the bus-ca Secret also holds its private key.
+        - name: bus-ca
+          secret:
+            secretName: bus-ca
+            items: [{key: ca.crt, path: ca.crt}]
         - name: tls
           secret:
             secretName: rider-api-tls
@@ -335,6 +376,8 @@ spec:
             - secretRef:
                 name: rider-env
           env:
+            - name: RIDER_DB_MAX_CONNS
+              value: "3"
             - name: TZ
               value: Asia/Taipei
             - name: REDIS_ADDR
@@ -360,12 +403,21 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
+            - name: bus-ca
+              mountPath: /etc/bus-ca
+              readOnly: true
             - name: firebase
               mountPath: /secrets/firebase
               readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        # sslrootcert for the database URL; only the CA certificate,
+        # the bus-ca Secret also holds its private key.
+        - name: bus-ca
+          secret:
+            secretName: bus-ca
+            items: [{key: ca.crt, path: ca.crt}]
         - name: firebase
           secret:
             secretName: firebase-sa

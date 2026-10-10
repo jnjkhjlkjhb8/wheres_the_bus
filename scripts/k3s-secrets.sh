@@ -47,6 +47,16 @@ keys_env() {
 }
 
 die() { echo "k3s-secrets: $*" >&2; exit 1; }
+
+# override_db_url <env-file> <rendered env file> <KEY>: replaces DATABASE_URL in
+# the rendered file with the value of KEY from the source env file, if set.
+override_db_url() {
+    local src="$1" file="$2" key="$3" line
+    line="$(grep -m1 -E "^${key}=" "$src" || true)"
+    [ -n "$line" ] || return 0
+    { grep -v -E '^DATABASE_URL=' "$file" || true; printf 'DATABASE_URL=%s\n' "${line#*=}"; } >"$file.new"
+    mv "$file.new" "$file"
+}
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
 
 secret_yaml() { # name, then kubectl create secret generic flags
@@ -77,6 +87,18 @@ seal() {
         allowlists="$allowlists ${pair#*:}"
     done
     RENDER_SERVICES="$allowlists" scripts/render-env.sh "$env_file" "$tmp/env" >/dev/null
+    # Each service has its own database login: <SERVICE>_DATABASE_URL replaces
+    # the shared DATABASE_URL the allowlists copy (scripts/k3s-db-credentials.sh gen).
+    override_db_url "$env_file" "$tmp/env/router.env" API_DATABASE_URL
+    override_db_url "$env_file" "$tmp/env/functions.env" REALTIME_DATABASE_URL
+    override_db_url "$env_file" "$tmp/env/rider.env" RIDER_DATABASE_URL
+    override_db_url "$env_file" "$tmp/env/pipeline.env" PIPELINE_DATABASE_URL
+    # No Secret may carry the Azure connection string (it is the operator's
+    # admin login); the check covers every rendered service file and the migrate URL.
+    if grep -qE '^[A-Z_]*DATABASE_URL=.*azure\.com' "$tmp"/env/*.env ||
+        grep -qE '^MIGRATE_DATABASE_URL=.*azure\.com' "$env_file"; then
+        die "a database URL still points at Azure; run scripts/k3s-db-credentials.sh gen first"
+    fi
 
     mkdir -p "$OUT_DIR"
     for pair in $SERVICES; do
@@ -99,6 +121,14 @@ seal() {
         --docker-server=ghcr.io --docker-username="$GHCR_PULL_USER" --docker-password="$GHCR_PULL_TOKEN" \
         --dry-run=client -o yaml) >"$tmp/ghcr-pull.yaml"
     rm -f "$tmp/ghcr.env"
+    # Discord webhook for the db-alerts CronJob. Without it the CronJob's notify
+    # container cannot start, which is visible in `kubectl -n bus get pods`.
+    if grep -qE '^ALERT_WEBHOOK_URL=.+' "$env_file"; then
+        keys_env "$env_file" "$tmp/alerts.env" ALERT_WEBHOOK_URL
+        secret_yaml alerts-env --from-env-file="$tmp/alerts.env" >"$tmp/alerts-env.yaml"
+    else
+        echo "k3s-secrets: ALERT_WEBHOOK_URL is not set in $env_file; no alerts-env Secret, db-alerts will not run" >&2
+    fi
     local f
     for f in firebase-sa.json cloudflared.json powersync_key.pem pgbackrest_ed25519; do
         [ -f "$files_dir/$f" ] || die "missing $files_dir/$f"

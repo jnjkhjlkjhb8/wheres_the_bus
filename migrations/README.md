@@ -40,6 +40,8 @@ PGOPTIONS="-c search_path=staging" DATABASE_URL=... scripts/apply-migration.sh m
 
 `scripts/deploy-transaction.sh` reads this ledger as a pre-deploy gate: a dated file that is missing from the ledger (unless marked `-- REPLAY: skip`) or whose recorded checksum no longer matches the file blocks the deploy. It never applies SQL — applying stays a manual operator step.
 
+**Superuser-only files**: the k3s migrate Job runs as `bus_migrator`, which cannot create or drop roles or alter a publication it does not own. A file that needs that stops the Job with a hint naming `scripts/k3s-db-credentials.sh apply-superuser migrations/<file>.sql`, which applies it as `postgres` and records it so the next Job skips it. `k3s-db-credentials.sh finish` also creates the ledger on a database restored from Azure (which has none) and backfills every file Azure already reflects.
+
 **Backfill**: a file that was applied to the real database *before* the ledger existed has no row, so the deploy gate will flag it. Record it without re-running its SQL (unlike `apply-migration.sh`, which would re-apply the file):
 
 ```bash

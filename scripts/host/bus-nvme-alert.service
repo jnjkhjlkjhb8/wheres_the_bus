@@ -1,0 +1,15 @@
+[Unit]
+Description=NVMe health alert for the bus host (FDPL-119)
+Documentation=file:///usr/local/sbin/bus-nvme-alert
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/bus-alerts.env
+ExecStart=/usr/local/sbin/bus-nvme-alert
+# smartctl needs raw device access, so no PrivateDevices; limit the rest.
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes

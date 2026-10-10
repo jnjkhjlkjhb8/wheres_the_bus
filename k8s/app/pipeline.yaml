@@ -45,6 +45,10 @@ spec:
                 - secretRef:
                     name: pipeline-env
               env: &pipelineEnv
+                - name: PIPELINE_DB_MAX_CONNS
+                  value: "5"
+                - name: RAW_DB_MAX_CONNS
+                  value: "4"
                 - name: TZ
                   value: Asia/Taipei
                 - name: REDIS_ADDR
@@ -69,6 +73,9 @@ spec:
                 capabilities:
                   drop: [ALL]
               volumeMounts: &pipelineMounts
+                - name: bus-ca
+                  mountPath: /etc/bus-ca
+                  readOnly: true
                 - name: gtfs
                   mountPath: /data/gtfs
                 - name: spool
@@ -140,6 +147,12 @@ spec:
               securityContext: *restricted
               volumeMounts: *pipelineMounts
           volumes:
+            # sslrootcert for the database URL; only the CA certificate,
+            # the bus-ca Secret also holds its private key.
+            - name: bus-ca
+              secret:
+                secretName: bus-ca
+                items: [{key: ca.crt, path: ca.crt}]
             - name: gtfs
               persistentVolumeClaim:
                 claimName: gtfs
@@ -197,6 +210,10 @@ spec:
                 - secretRef:
                     name: pipeline-env
               env:
+                - name: PIPELINE_DB_MAX_CONNS
+                  value: "5"
+                - name: RAW_DB_MAX_CONNS
+                  value: "4"
                 - name: TZ
                   value: Asia/Taipei
                 - name: REDIS_ADDR
@@ -215,11 +232,20 @@ spec:
                 capabilities:
                   drop: [ALL]
               volumeMounts:
+                - name: bus-ca
+                  mountPath: /etc/bus-ca
+                  readOnly: true
                 - name: spool
                   mountPath: /spool
                 - name: tmp
                   mountPath: /tmp
           volumes:
+            # sslrootcert for the database URL; only the CA certificate,
+            # the bus-ca Secret also holds its private key.
+            - name: bus-ca
+              secret:
+                secretName: bus-ca
+                items: [{key: ca.crt, path: ca.crt}]
             - name: spool
               emptyDir:
                 sizeLimit: 1Gi

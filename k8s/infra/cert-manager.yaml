@@ -111,3 +111,24 @@ spec:
   issuerRef:
     name: bus-ca
     kind: Issuer
+---
+# PostgreSQL's serving certificate. Clients verify it against bus-ca with
+# sslmode=verify-full, so the host they dial (postgres) must be a SAN. The
+# server reads the files at start; a restart picks up a renewed leaf.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: postgres-tls
+  namespace: bus
+spec:
+  secretName: postgres-tls
+  duration: 2160h
+  renewBefore: 720h
+  dnsNames: [postgres, postgres.bus.svc, postgres.bus.svc.cluster.local]
+  usages: [server auth]
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: bus-ca
+    kind: Issuer

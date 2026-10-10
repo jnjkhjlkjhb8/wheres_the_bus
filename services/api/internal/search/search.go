@@ -282,7 +282,7 @@ type textSearchCandidate struct {
 }
 
 func textSearch(ctx context.Context, q, city string, limit int, db searchDB) ([]searchResult, error) {
-	rows, err := db.Query(ctx, _textSearchSQL, q, textSearchBranchLimit(limit), city)
+	rows, err := db.Query(ctx, _textSearchSQL, pgx.QueryExecModeExec, q, textSearchBranchLimit(limit), city)
 	if err != nil {
 		return nil, err
 	}

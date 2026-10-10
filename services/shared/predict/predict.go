@@ -60,13 +60,20 @@ func BatchNextDepartures(ctx context.Context, db *pgxpool.Pool, keys []RouteDirK
 		WITH wanted(sub_route_uid, Direction) AS (
 			SELECT unnest($1::text[]), unnest($2::int[])
 		),
+		-- Per key rather than one DISTINCT ON over the whole join: a city's
+		-- trips sorted together reach hundreds of thousands of rows and spill
+		-- to disk, one subroute's fit in memory. TDX reuses a TripID within a
+		-- subroute, so the departure time breaks ties toward the earlier trip.
 		origin AS (
-			SELECT DISTINCT ON (b.sub_route_uid, b.Direction, b.tripid)
-			       b.sub_route_uid, b.Direction, b."arrival_time/StartTime" AS dep
-			FROM bus_schedule b
-			JOIN wanted w ON b.sub_route_uid = w.sub_route_uid AND b.Direction = w.Direction
-			WHERE b.type = false AND (b.service_day & $4) <> 0
-			ORDER BY b.sub_route_uid, b.Direction, b.tripid, b.stopsequence
+			SELECT w.sub_route_uid, w.Direction, o.dep
+			FROM wanted w
+			CROSS JOIN LATERAL (
+				SELECT DISTINCT ON (b.tripid) b."arrival_time/StartTime" AS dep
+				FROM bus_schedule b
+				WHERE b.sub_route_uid = w.sub_route_uid AND b.Direction = w.Direction
+				  AND b.type = false AND (b.service_day & $4) <> 0
+				ORDER BY b.tripid, b.stopsequence, b."arrival_time/StartTime"
+			) o
 		)
 		SELECT sub_route_uid, Direction, dep, 0 AS prio FROM (
 			SELECT sub_route_uid, Direction, MIN(dep) AS dep

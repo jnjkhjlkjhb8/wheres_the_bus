@@ -45,9 +45,18 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
+            - name: bus-ca
+              mountPath: /etc/bus-ca
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        # sslrootcert for the database URL; only the CA certificate,
+        # the bus-ca Secret also holds its private key.
+        - name: bus-ca
+          secret:
+            secretName: bus-ca
+            items: [{key: ca.crt, path: ca.crt}]
         - name: tmp
           emptyDir:
             sizeLimit: 16Mi

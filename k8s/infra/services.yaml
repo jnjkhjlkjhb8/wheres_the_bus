@@ -98,10 +98,15 @@ data:
       connections:
         - type: postgresql
           uri: !env PS_SOURCE_DATABASE_URL
+          # PowerSync ignores sslmode in the URI; bus-ca signs postgres-tls.
+          sslmode: verify-full
+          cacert: !env PS_PG_CACERT
           max_pool_size: 2
     storage:
       type: postgresql
       uri: !env PS_DATABASE_URL
+      sslmode: verify-full
+      cacert: !env PS_PG_CACERT
       max_pool_size: 2
     client_auth:
       jwks_uri: http://api:8080/api/.well-known/jwks.json
@@ -156,6 +161,11 @@ spec:
               value: /config/config.yaml
             - name: POWERSYNC_SYNC_RULES_PATH
               value: /config/sync-rules.yaml
+            - name: PS_PG_CACERT
+              valueFrom:
+                secretKeyRef:
+                  name: bus-ca
+                  key: ca.crt
           ports:
             - containerPort: 8080
           readinessProbe:

@@ -40,6 +40,11 @@ data:
     -c max_connections=100
     -c shared_preload_libraries=pg_stat_statements
     -c password_encryption=scram-sha-256
+    -c ssl=on
+    -c ssl_cert_file=/etc/postgres-tls/tls.crt
+    -c ssl_key_file=/etc/postgres-tls/tls.key
+    -c ssl_min_protocol_version=TLSv1.3
+    -c hba_file=/etc/postgres-hba/pg_hba.conf
 ---
 apiVersion: v1
 kind: Service
@@ -119,6 +124,12 @@ spec:
               mountPath: /var/lib/postgresql
             - name: config
               mountPath: /etc/postgres-config
+            - name: tls
+              mountPath: /etc/postgres-tls
+              readOnly: true
+            - name: hba
+              mountPath: /etc/postgres-hba
+              readOnly: true
             - name: config
               mountPath: /etc/pgbackrest/pgbackrest.conf
               subPath: pgbackrest.conf
@@ -171,6 +182,15 @@ spec:
         - name: config
           configMap:
             name: postgres-config
+        # PostgreSQL refuses a key that is group- or world-writable or, when
+        # owned by root as Secret files are, readable by more than its group.
+        - name: tls
+          secret:
+            secretName: postgres-tls
+            defaultMode: 0440
+        - name: hba
+          configMap:
+            name: postgres-hba
         - name: sftp-key
           secret:
             secretName: pgbackrest-sftp-key

@@ -42,7 +42,7 @@ spec:
     matchExpressions:
       - key: app
         operator: In
-        values: [api, realtime, rider-api, rider-worker, pipeline, cloudflared]
+        values: [api, realtime, rider-api, rider-worker, pipeline, cloudflared, db-alerts]
   policyTypes: [Egress]
   egress:
     - to:
@@ -80,7 +80,7 @@ spec:
   podSelector:
     # postgres-restore: the drill instance in k8s/restore reads the same repository.
     matchExpressions:
-      - { key: app, operator: In, values: [postgres, postgres-restore] }
+      - { key: app, operator: In, values: [postgres, postgres-restore, db-alerts] }
   policyTypes: [Egress]
   egress:
     - to:

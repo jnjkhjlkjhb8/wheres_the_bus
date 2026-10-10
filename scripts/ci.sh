@@ -50,6 +50,10 @@ run_migrations() {
   ./scripts/check-migration-lint.sh --self-test
   echo "== migrations: replay gate =="
   ./scripts/check-migrations.sh
+  echo "== postgres: TLS and pg_hba =="
+  ./scripts/check-postgres-tls.sh
+  echo "== alerts: backup and NVMe checkers =="
+  ./scripts/check-alerts.sh
 }
 
 run_security() {

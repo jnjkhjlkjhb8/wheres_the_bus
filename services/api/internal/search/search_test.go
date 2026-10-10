@@ -67,7 +67,7 @@ func TestHandleSearchPassesCityFilterToQuery(t *testing.T) {
 	}
 	defer db.Close()
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("中正路", textSearchBranchLimit(20), "Taipei").
+		WithArgs(pgx.QueryExecModeExec, "中正路", textSearchBranchLimit(20), "Taipei").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow("bus_route", "R-1", "中正幹線", "Taipei", "A", "B", nil, nil, 2, 0.9))
 
@@ -107,7 +107,7 @@ func TestHandleSearchServesRepeatQueryFromCache(t *testing.T) {
 	defer db.Close()
 	// Exactly one text-search expectation for two identical requests.
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("紅30", textSearchBranchLimit(20), "").
+		WithArgs(pgx.QueryExecModeExec, "紅30", textSearchBranchLimit(20), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow("bus_route", "R-1", "紅30", "Kaohsiung", "A", "B", nil, nil, 1, 1.0))
 
@@ -136,14 +136,14 @@ func TestHandleSearchCacheKeyIncludesCity(t *testing.T) {
 	}
 	defer db.Close()
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("中正路", textSearchBranchLimit(20), "Taipei").
+		WithArgs(pgx.QueryExecModeExec, "中正路", textSearchBranchLimit(20), "Taipei").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow("bus_station", "S-1", "中正路", "Taipei", "", "", nil, nil, 1, 1.0))
 	db.ExpectQuery(`(?s)FROM bus_station_group_members`).
 		WithArgs([]string{"S-1"}).
 		WillReturnRows(pgxmock.NewRows([]string{"type", "uid", "name", "city", "depart", "destin", "lat", "lon"}))
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("中正路", textSearchBranchLimit(20), "").
+		WithArgs(pgx.QueryExecModeExec, "中正路", textSearchBranchLimit(20), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow("bus_station", "S-9", "中正路", "Kaohsiung", "", "", nil, nil, 1, 1.0))
 	db.ExpectQuery(`(?s)FROM bus_station_group_members`).
@@ -178,7 +178,7 @@ func TestHandleSearchSkipsRouteExpansionOnFullPage(t *testing.T) {
 	// A bus_station result would normally trigger the expansion join; the
 	// mock declares no expectation for it, so running it fails the test.
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("中正", textSearchBranchLimit(2), "").
+		WithArgs(pgx.QueryExecModeExec, "中正", textSearchBranchLimit(2), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow("bus_station", "S-1", "中正路", "Taipei", "", "", nil, nil, 1, 1.0).
 			AddRow("bus_station", "S-2", "中正路口", "NewTaipei", "", "", nil, nil, 1, 0.9))
@@ -201,7 +201,7 @@ func TestHandleSearchLimitsQueryByUnicodeRunes(t *testing.T) {
 	defer db.Close()
 
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs(strings.Repeat("界", 128), textSearchBranchLimit(20), "").
+		WithArgs(pgx.QueryExecModeExec, strings.Repeat("界", 128), textSearchBranchLimit(20), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns))
 
 	if got := performSearchRequest(t, db, strings.Repeat("界", 128)); got.Code != http.StatusOK {
@@ -293,7 +293,7 @@ func TestTextSearchReturnsScanError(t *testing.T) {
 	defer db.Close()
 
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("台北", textSearchBranchLimit(20), "").
+		WithArgs(pgx.QueryExecModeExec, "台北", textSearchBranchLimit(20), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow(struct{}{}, "uid", "name", "city", "depart", "destin", nil, nil, 0, 1.0))
 
@@ -346,7 +346,7 @@ func TestHandleSearchDegradesOnVectorScanError(t *testing.T) {
 	}
 	defer db.Close()
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("台北", textSearchBranchLimit(20), "").
+		WithArgs(pgx.QueryExecModeExec, "台北", textSearchBranchLimit(20), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns))
 	db.ExpectQuery(`(?s)FROM search_vector.*ORDER BY embedding`).
 		WithArgs("[1,2]", 20).
@@ -422,7 +422,7 @@ func TestHandleSearchFailsWhenRouteExpansionFails(t *testing.T) {
 	defer db.Close()
 
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("台北車站", textSearchBranchLimit(20), "").
+		WithArgs(pgx.QueryExecModeExec, "台北車站", textSearchBranchLimit(20), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow("bus_station", "G-1", "台北車站", "Taipei", "", "", nil, nil, 0, 1.0))
 	db.ExpectQuery(`(?s)FROM bus_station_group_members`).
@@ -634,7 +634,7 @@ func TestTextSearchDedupesDuplicateBranchHitsDeterministically(t *testing.T) {
 	// exact-uid branch (best rank 0) and once via the contains branch
 	// (worse rank 5), plus an unrelated second result.
 	db.ExpectQuery(`(?s)FROM search_vector.*WHERE uid = \$1`).
-		WithArgs("台北", textSearchBranchLimit(10), "").
+		WithArgs(pgx.QueryExecModeExec, "台北", textSearchBranchLimit(10), "").
 		WillReturnRows(pgxmock.NewRows(_textSearchColumns).
 			AddRow("bus_station", "S-1", "台北車站", "Taipei", "", "", nil, nil, 5, 0.4).
 			AddRow("bus_station", "S-1", "台北車站", "Taipei", "", "", nil, nil, 0, 1.0).
