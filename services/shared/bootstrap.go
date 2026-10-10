@@ -51,6 +51,23 @@ func ConnectRedis() *redis.Client {
 	}
 }
 
+const (
+	dbPingAttempts = 30
+	dbPingDelay    = 2 * time.Second
+)
+
+func pingWithRetry(ping func(context.Context) error, attempts int, delay time.Duration) error {
+	var err error
+	for i := range attempts {
+		if err = ping(context.Background()); err == nil {
+			return nil
+		}
+		zap.S().Warnw("ping retry", "component", "db", "action", "ping", "event", "retry", "attempt", i+1, "err", err)
+		time.Sleep(delay)
+	}
+	return err
+}
+
 func ConnectDB(maxConnsEnv string, maxConnsDefault int32) *pgxpool.Pool {
 	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -72,7 +89,7 @@ func ConnectDB(maxConnsEnv string, maxConnsDefault int32) *pgxpool.Pool {
 		zap.S().Errorw("connect failed", "component", "db", "action", "connect", "event", "failed", "err", err)
 		panic(err)
 	}
-	if err = conn.Ping(context.Background()); err != nil {
+	if err = pingWithRetry(conn.Ping, dbPingAttempts, dbPingDelay); err != nil {
 		zap.S().Errorw("ping failed", "component", "db", "action", "ping", "event", "failed", "err", err)
 		panic(err)
 	}

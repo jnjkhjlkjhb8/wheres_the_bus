@@ -13,6 +13,12 @@ set -euo pipefail
 
 dir="${1:-migrations}"
 : "${DATABASE_URL:?DATABASE_URL is required}"
+ready=0
+for _ in $(seq 1 30); do
+    if pg_isready -q -d "$DATABASE_URL"; then ready=1; break; fi
+    sleep 2
+done
+[ "$ready" -eq 1 ] || { echo "migrate-all: PostgreSQL did not accept connections within 60 s" >&2; exit 1; }
 lock_key=7094703426938431346 # "bus-migr" as a signed 64-bit int
 psql_args=(-X -q -v ON_ERROR_STOP=1 -v target_schema=public)
 
