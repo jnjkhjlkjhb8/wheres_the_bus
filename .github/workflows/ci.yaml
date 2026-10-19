@@ -270,9 +270,9 @@ jobs:
       - run: dart pub global activate junitreport 2.0.2
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
-      # app/assets is tracked (Phase 1) — a clean checkout has everything
-      # flutter analyze/test need; this job is expected to be green, not a
-      # documented-failure gate.
+      # Bundled app/assets are tracked; the metro maps and rail service marks
+      # are served by the router (FDPL-125), so a clean checkout lacks them and
+      # the tests seed RemoteAssets instead.
       - name: flutter analyze + test
         env:
           FLUTTER_TEST_ARGS: --coverage --file-reporter=json:test-results.json

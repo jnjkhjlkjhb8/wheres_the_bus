@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
 import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:wheres_the_bus/app/app.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/core/bootstrap/app_bootstrap.dart';
 import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_bootstrap.dart';
@@ -49,6 +50,7 @@ Future<void> startApp({
   );
   unawaited(ensureFirebaseCore().catchError(CrashReporter.record));
   unawaited(bootstrap.start());
+  unawaited(RemoteAssets.instance.refresh());
 
   runApp(App(bootstrap: bootstrap));
 

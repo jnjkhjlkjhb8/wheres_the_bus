@@ -46,6 +46,7 @@ const (
 	_httpPort             = "8080"
 	_metricsCredentialEnv = "ROUTER_METRICS_TOKEN"
 	_trustedProxiesEnv    = "ROUTER_TRUSTED_PROXIES"
+	_assetsDirEnv         = "ROUTER_ASSETS_DIR"
 	_httpTokenRateLimit   = 10
 	_httpJWKSRateLimit    = 120
 	_httpSearchRateLimit  = 30
@@ -60,6 +61,8 @@ const (
 	// One fetch per app launch, answered from a process-local cache, so this
 	// only has to survive a device relaunching in a loop.
 	_httpStaticVersionRateLimit = 60
+	// A first sync pulls every file the app mirrors at once, a few dozen.
+	_httpAssetsRateLimit = 300
 
 	_httpReadHeaderTimeout = 5 * time.Second
 	_httpReadTimeout       = 10 * time.Second
@@ -92,6 +95,9 @@ type httpServerConfig struct {
 	// unauthenticated, and station_status costs a full station scan.
 	GBFSRateLimit          int
 	GTFSRealtimeCredential string
+	// AssetsDir holds the files served under /api/assets; empty leaves the
+	// route unmounted.
+	AssetsDir string
 	// trackCancel proxies the Live Activity cancel to rider-api; nil leaves
 	// the route unmounted.
 	trackCancel gin.HandlerFunc
@@ -114,6 +120,7 @@ func httpServerConfigFromEnv() (httpServerConfig, error) {
 		MetricsCredential:      metricsCredential,
 		TrustedProxies:         trustedProxies,
 		GTFSRealtimeCredential: gtfsRTCredential,
+		AssetsDir:              strings.TrimSpace(os.Getenv(_assetsDirEnv)),
 		MotisBaseURL:           maas.MotisBaseURLFromEnv(),
 		// Read from the same env var the planner reads, so the geocode proxy
 		// and the planner can never disagree about which backend is live.
@@ -282,6 +289,8 @@ func registerHTTPRoutes(r *gin.Engine, db *pgxpool.Pool, live *livestream.LiveHu
 	r.GET(static.StaticVersionPath,
 		httpRateLimit(limiter, "GET "+static.StaticVersionPath, _httpStaticVersionRateLimit, time.Minute),
 		static.HandleStaticVersion(db))
+	static.RegisterAssetRoutes(r, config.AssetsDir,
+		httpRateLimit(limiter, "GET "+static.AssetsPath, _httpAssetsRateLimit, time.Minute))
 	search.RegisterGeocodeRoutes(r, config.MotisBaseURL, config.MotisEnabled,
 		httpRateLimit(limiter, "GET "+search.GeocodePath, _httpGeocodeRateLimit, time.Minute))
 	// Always mounted, unlike the geocode proxy: an app that cannot tell which

@@ -12,6 +12,7 @@ import 'package:wheres_the_bus/features/rail/view/rail_screen.dart';
 import 'package:wheres_the_bus/features/rail/widgets/rail_query_sheet.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
+import '../../support/helpers/remote_assets.dart';
 
 final now = DateTime(2030, 1, 2, 8);
 
@@ -64,6 +65,8 @@ RailTimetableLoaded loaded({String date = '2030-01-02'}) => RailTimetableLoaded(
 );
 
 void main() {
+  setUp(seedRemoteAssets);
+
   Future<_Rail> show(
     WidgetTester tester,
     RailState state, {

@@ -5,11 +5,17 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 
 final RegExp _mapDigits = RegExp(r'\d+');
+
+/// The map is not bundled: the router serves it and [RemoteAssets] mirrors it.
+RemoteAsset? _mapAsset(bool isDark) => RemoteAssets.instance.lookup(
+  isDark ? 'mrt/TRTC_map_dark.svg' : 'mrt/TRTC_map_light.svg',
+);
 
 /// Line colour for a station id: the prefix of the first (primary) line code.
 /// Interchange ids combine codes (e.g. 'BL15_BR10'); the first wins.
@@ -71,14 +77,10 @@ class MetroSvgMap extends StatefulWidget {
   /// the user navigates here — the one-time ~400ms rasterization otherwise
   /// lands in the middle of the push transition. Safe to call repeatedly.
   static void precache(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final asset = _mapAsset(Theme.of(context).brightness == Brightness.dark);
+    if (asset == null) return;
     unawaited(
-      _RasterSvgState.ensure(
-        isDark
-            ? 'assets/mrt/TRTC_map_dark.svg'
-            : 'assets/mrt/TRTC_map_light.svg',
-        _RasterSvgState.targetWidthFor(context),
-      ),
+      _RasterSvgState.ensure(asset, _RasterSvgState.targetWidthFor(context)),
     );
   }
 
@@ -86,6 +88,9 @@ class MetroSvgMap extends StatefulWidget {
   /// GPU texture, so the count is the assertion that eviction still works.
   @visibleForTesting
   static int get rasterCacheSize => _RasterSvgState.cacheSize;
+
+  @visibleForTesting
+  static List<String> get rasterCacheKeys => _RasterSvgState.cacheKeys;
 
   @override
   State<MetroSvgMap> createState() => _MetroSvgMapState();
@@ -185,10 +190,12 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
                   // layers above, which animate on selection — without this,
                   // every ping/label frame repaints the whole map bitmap too.
                   child: RepaintBoundary(
-                    child: _RasterSvg(
-                      asset: isDark
-                          ? 'assets/mrt/TRTC_map_dark.svg'
-                          : 'assets/mrt/TRTC_map_light.svg',
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: RemoteAssets.instance.revision,
+                      builder: (context, _, _) => switch (_mapAsset(isDark)) {
+                        final asset? => _RasterSvg(asset: asset),
+                        null => const SizedBox.shrink(),
+                      },
                     ),
                   ),
                 ),
@@ -359,7 +366,7 @@ class _StationHitLayerState extends State<_StationHitLayer> {
 class _RasterSvg extends StatefulWidget {
   const _RasterSvg({required this.asset});
 
-  final String asset;
+  final RemoteAsset asset;
 
   @override
   State<_RasterSvg> createState() => _RasterSvgState();
@@ -373,10 +380,16 @@ class _RasterSvgState extends State<_RasterSvg> {
   /// unheld: precache() populates it precisely before any widget holds it.
   static String? _liveKey;
 
-  static String _keyFor(String asset, int targetW) => '$asset@$targetW';
+  // The hash is part of the key so a map the router replaced is rasterized
+  // again instead of served from the old bitmap.
+  static String _keyFor(RemoteAsset asset, int targetW) =>
+      '${asset.file.path}#${asset.hash}@$targetW';
 
   @visibleForTesting
   static int get cacheSize => _cache.length;
+
+  @visibleForTesting
+  static List<String> get cacheKeys => _cache.keys.toList();
 
   static void _evictUnheld() {
     for (final key in _cache.keys.toList()) {
@@ -408,7 +421,7 @@ class _RasterSvgState extends State<_RasterSvg> {
   @override
   void didUpdateWidget(covariant _RasterSvg oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.asset != widget.asset) {
+    if (_keyFor(oldWidget.asset, 0) != _keyFor(widget.asset, 0)) {
       _image = null;
       _load();
     }
@@ -442,7 +455,7 @@ class _RasterSvgState extends State<_RasterSvg> {
           .round()
           .clamp(1080, 2304);
 
-  static Future<ui.Image> ensure(String asset, int targetW) {
+  static Future<ui.Image> ensure(RemoteAsset asset, int targetW) {
     final key = _keyFor(asset, targetW);
     _liveKey = key;
     final cached = _cache[key];
@@ -472,8 +485,8 @@ class _RasterSvgState extends State<_RasterSvg> {
     );
   }
 
-  static Future<ui.Image> _rasterize(String asset, int targetW) async {
-    final info = await vg.loadPicture(SvgAssetLoader(asset), null);
+  static Future<ui.Image> _rasterize(RemoteAsset asset, int targetW) async {
+    final info = await vg.loadPicture(SvgFileLoader(asset.file), null);
     final scale = targetW / info.size.width;
     final targetH = (info.size.height * scale).round();
     final recorder = ui.PictureRecorder();

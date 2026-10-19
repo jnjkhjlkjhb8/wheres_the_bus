@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
+import 'package:wheres_the_bus/core/assets/remote_image.dart';
 import 'package:wheres_the_bus/data/models/thsr_models.dart';
 import 'package:wheres_the_bus/data/models/tra_models.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 enum RailServiceMark {
-  wheelchair('assets/rails/notes/serve-wheelchair.png'),
-  bike('assets/rails/notes/serve-bicy.png'),
-  dining('assets/rails/notes/serve-lunchbox.png'),
-  breastfeeding('assets/rails/notes/serve-nursingroom.png'),
-  daily('assets/rails/notes/serve-everyday.png'),
-  overnight('assets/rails/notes/serve-crossday.png');
+  wheelchair('rails/notes/serve-wheelchair.png'),
+  bike('rails/notes/serve-bicy.png'),
+  dining('rails/notes/serve-lunchbox.png'),
+  breastfeeding('rails/notes/serve-nursingroom.png'),
+  daily('rails/notes/serve-everyday.png'),
+  overnight('rails/notes/serve-crossday.png');
 
   const RailServiceMark(this.asset);
 
@@ -77,7 +78,7 @@ class RailServiceMarkRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           for (final mark in shown) ...[
-            Image.asset(mark.asset, width: 14, height: 14),
+            RemoteImage(mark.asset, size: 14),
             const SizedBox(width: 3),
           ],
           if (overflow > 0)
@@ -109,11 +110,7 @@ class RailServiceMarkChips extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset(
-                mark.asset,
-                width: 20,
-                height: 20,
-              ),
+              RemoteImage(mark.asset, size: 20),
             ],
           ),
       ],

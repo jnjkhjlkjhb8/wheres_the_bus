@@ -1,10 +1,15 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
+import 'package:wheres_the_bus/core/assets/remote_image.dart';
 import 'package:wheres_the_bus/data/models/thsr_models.dart';
 import 'package:wheres_the_bus/data/models/tra_models.dart';
 import 'package:wheres_the_bus/features/rail/widgets/rail_service_marks.dart';
 
 import '../../support/helpers/i18n.dart';
+import '../../support/helpers/remote_assets.dart';
 
 TraTimetableItem _tra({
   bool bike = false,
@@ -38,17 +43,18 @@ ThsrTimetableItem _thsr({required bool overnight}) => ThsrTimetableItem(
 );
 
 void main() {
+  setUp(seedRemoteAssets);
+
   test('every mark points at its own artwork', () {
     expect(
       {for (final m in RailServiceMark.values) m: m.asset},
       {
-        RailServiceMark.wheelchair: 'assets/rails/notes/serve-wheelchair.png',
-        RailServiceMark.bike: 'assets/rails/notes/serve-bicy.png',
-        RailServiceMark.dining: 'assets/rails/notes/serve-lunchbox.png',
-        RailServiceMark.breastfeeding:
-            'assets/rails/notes/serve-nursingroom.png',
-        RailServiceMark.daily: 'assets/rails/notes/serve-everyday.png',
-        RailServiceMark.overnight: 'assets/rails/notes/serve-crossday.png',
+        RailServiceMark.wheelchair: 'rails/notes/serve-wheelchair.png',
+        RailServiceMark.bike: 'rails/notes/serve-bicy.png',
+        RailServiceMark.dining: 'rails/notes/serve-lunchbox.png',
+        RailServiceMark.breastfeeding: 'rails/notes/serve-nursingroom.png',
+        RailServiceMark.daily: 'rails/notes/serve-everyday.png',
+        RailServiceMark.overnight: 'rails/notes/serve-crossday.png',
       },
     );
   });
@@ -131,9 +137,7 @@ void main() {
     );
     expect(find.byType(Image), findsNWidgets(3));
     expect(find.text('+1'), findsOneWidget);
-    final icon = tester.widget<Image>(find.byType(Image).first);
-    expect(icon.width, 14);
-    expect(icon.height, 14);
+    expect(tester.getSize(find.byType(RemoteImage).first), const Size(14, 14));
   });
 
   testWidgets('no overflow counter when everything fits', (tester) async {
@@ -168,11 +172,20 @@ void main() {
         ),
       ),
     );
-    final images = tester.widgetList<Image>(find.byType(Image)).toList();
-    expect(images, hasLength(2));
-    for (final image in images) {
-      expect(image.width, 20);
-      expect(image.height, 20);
+    expect(find.byType(Image), findsNWidgets(2));
+    for (final slot in find.byType(RemoteImage).evaluate()) {
+      expect(tester.getSize(find.byWidget(slot.widget)), const Size(20, 20));
     }
+  });
+
+  testWidgets('a mark whose file has not arrived keeps its slot empty', (
+    tester,
+  ) async {
+    RemoteAssets.instance.debugSeed(Directory.systemTemp, const {});
+    await tester.pumpWidget(
+      i18nApp(const RailServiceMarkChips(marks: [RailServiceMark.bike])),
+    );
+    expect(find.byType(Image), findsNothing);
+    expect(tester.getSize(find.byType(RemoteImage)), const Size(20, 20));
   });
 }

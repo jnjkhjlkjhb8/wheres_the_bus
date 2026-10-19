@@ -113,8 +113,6 @@ flutter:
   assets:
     - assets/marker/
     - assets/rails/
-    - assets/rails/notes/
-    - assets/mrt/
     - assets/mrt/TRTC/
   fonts:
     - family: IBMPlexSans

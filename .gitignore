@@ -113,3 +113,7 @@ app/android/build/
 /.tools/
 k8s/.release/
 *.dump
+
+# Served by the router from /api/assets instead of bundled (FDPL-125)
+app/assets/mrt/TRTC_map_*.svg
+app/assets/rails/notes/

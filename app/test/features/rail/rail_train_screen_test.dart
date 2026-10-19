@@ -23,6 +23,7 @@ import 'package:wheres_the_bus/shared/widgets/alight_track/alight_track_bell.dar
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/transit_timeline.dart';
+import '../../support/helpers/remote_assets.dart';
 
 const stops = [
   RailTrainStop(name: '台北', arrive: '', depart: '08:00'),
@@ -70,6 +71,8 @@ class _Favorites implements FavoritesRepository {
 }
 
 void main() {
+  setUp(seedRemoteAssets);
+
   Future<(_TrainBloc, _JourneyBloc)> pumpTrain(
     WidgetTester tester, {
     RailTrainState? state,

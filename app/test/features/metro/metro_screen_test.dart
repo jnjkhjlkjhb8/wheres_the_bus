@@ -9,8 +9,11 @@ import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/features/metro/bloc/mrt_track_bloc.dart';
 import 'package:wheres_the_bus/features/metro/view/metro_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import '../../support/helpers/remote_assets.dart';
 
 void main() {
+  setUp(seedRemoteAssets);
+
   testWidgets('metro sheet no longer hosts the time/fare sliding segment', (
     tester,
   ) async {

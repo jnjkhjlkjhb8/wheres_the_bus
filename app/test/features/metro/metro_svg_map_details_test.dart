@@ -2,6 +2,7 @@
 // members are read dynamically.
 // ignore_for_file: avoid_dynamic_calls
 
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/features/metro/widgets/metro_svg_map.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
+import '../../support/helpers/remote_assets.dart';
 
 const _scale = 0.5;
 
@@ -72,6 +74,8 @@ double _labelOpacity(WidgetTester tester, String text) => tester
     .value;
 
 void main() {
+  setUp(seedRemoteAssets);
+
   test('line colours follow the first line code of a station id', () {
     expect(metroLineColor('BL13'), AppTheme.mrtBL);
     expect(metroLineColor('R04'), AppTheme.mrtR);
@@ -115,14 +119,18 @@ void main() {
   testWidgets('the raster follows the theme', (tester) async {
     await _pump(tester);
     expect(
-      (_byType('_RasterSvg').evaluate().single.widget as dynamic).asset,
-      'assets/mrt/TRTC_map_light.svg',
+      ((_byType('_RasterSvg').evaluate().single.widget as dynamic).asset.file
+              as File)
+          .path,
+      endsWith('mrt/TRTC_map_light.svg'),
     );
     await _pump(tester, brightness: Brightness.dark);
     await tester.pump(const Duration(seconds: 1));
     expect(
-      (_byType('_RasterSvg').evaluate().single.widget as dynamic).asset,
-      'assets/mrt/TRTC_map_dark.svg',
+      ((_byType('_RasterSvg').evaluate().single.widget as dynamic).asset.file
+              as File)
+          .path,
+      endsWith('mrt/TRTC_map_dark.svg'),
     );
   });
 

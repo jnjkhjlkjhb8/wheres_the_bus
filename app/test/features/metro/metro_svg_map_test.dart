@@ -1,9 +1,15 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/features/metro/widgets/metro_svg_map.dart';
+import '../../support/helpers/remote_assets.dart';
 
 void main() {
+  setUp(seedRemoteAssets);
+
   testWidgets(
     'pick mode exposes only reachable stations and marks the chosen stop',
     (
@@ -268,6 +274,59 @@ void main() {
       // The old bucket has no mounted holder left, so it goes: one live
       // bitmap, not one per width the app has ever been laid out at.
       expect(MetroSvgMap.rasterCacheSize, 1);
+    },
+  );
+
+  Widget host({Brightness brightness = Brightness.light}) => MaterialApp(
+    theme: ThemeData(brightness: brightness),
+    home: Scaffold(body: MetroSvgMap(animate: false, onStationTap: (_) {})),
+  );
+
+  for (final brightness in Brightness.values) {
+    testWidgets('precache rasterizes the ${brightness.name} map', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(brightness: brightness),
+          home: Builder(
+            builder: (context) {
+              MetroSvgMap.precache(context);
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      await tester.runAsync(pumpEventQueue);
+
+      expect(MetroSvgMap.rasterCacheKeys.last, contains('_${brightness.name}'));
+    });
+  }
+
+  testWidgets('a map the router replaced is rasterized again', (tester) async {
+    await tester.pumpWidget(host());
+    await tester.runAsync(pumpEventQueue);
+    await tester.pump();
+    final first = tester.widget<RawImage>(find.byType(RawImage)).image;
+
+    seedRemoteAssets(version: '2');
+    await tester.pump();
+    await tester.runAsync(pumpEventQueue);
+    await tester.pump();
+
+    final second = tester.widget<RawImage>(find.byType(RawImage)).image;
+    expect(identical(second, first), isFalse);
+  });
+
+  testWidgets(
+    'without the map file nothing is drawn and nothing throws',
+    (
+      tester,
+    ) async {
+      RemoteAssets.instance.debugSeed(Directory.systemTemp, const {});
+      await tester.pumpWidget(host());
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(RawImage), findsNothing);
     },
   );
 }

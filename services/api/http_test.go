@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -759,4 +760,43 @@ func (nopLiveSource) Touch(context.Context, string, time.Duration) {}
 func (nopLiveSource) Subscribe(context.Context, string) (<-chan []byte, func(), error) {
 	ch := make(chan []byte)
 	return ch, func() { close(ch) }, nil
+}
+
+func TestHTTPServerConfigReadsAssetsDirFromEnv(t *testing.T) {
+	t.Setenv(_metricsCredentialEnv, strings.Repeat("s", 32))
+	t.Setenv(_assetsDirEnv, "  /srv/assets \n")
+
+	config, err := httpServerConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.AssetsDir != "/srv/assets" {
+		t.Fatalf("assets dir = %q, want /srv/assets", config.AssetsDir)
+	}
+}
+
+func TestAssetsRouteFollowsConfiguredDir(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, dir string
+		want      int
+	}{
+		{"unset", "", http.StatusNotFound},
+		{"set", dir, http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := httpServerConfig{MetricsCredential: strings.Repeat("m", 32), AssetsDir: test.dir}
+			router := gin.New()
+			registerHTTPRoutes(router, nil, nil, testKey(t), config)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/assets/manifest.json", nil))
+			if recorder.Code != test.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.want)
+			}
+		})
+	}
 }

@@ -143,8 +143,9 @@ void main() {
     tester,
   ) async {
     await failedStartup(tester);
-    // Counts every storage lookup of a failed launch; the post-frame legacy
-    // migration is the one that keeps retrying after the bootstrap gave up.
-    expect(storageLookups, 3);
+    // Counts every storage lookup of a failed launch: the remote-asset mirror
+    // takes one, and the post-frame legacy migration is the one that keeps
+    // retrying after the bootstrap gave up.
+    expect(storageLookups, 4);
   });
 }

@@ -38,6 +38,7 @@ import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 import '../../support/helpers/i18n.dart';
+import '../../support/helpers/remote_assets.dart';
 
 class _Location extends GeolocatorPlatform {
   Position? fix;
@@ -179,6 +180,8 @@ Future<void> pumpState(WidgetTester tester) async {
 }
 
 void main() {
+  setUp(seedRemoteAssets);
+
   late GeolocatorPlatform originalLocation;
   late _Location location;
   setUp(() {
