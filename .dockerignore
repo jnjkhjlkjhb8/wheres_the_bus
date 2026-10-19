@@ -22,6 +22,7 @@
 !services/rider/**
 !services/pipeline/
 !services/pipeline/**
+# docker/migrate/Dockerfile copies the migrations and the runner script.
 !migrations/
 !migrations/**
 !scripts/
