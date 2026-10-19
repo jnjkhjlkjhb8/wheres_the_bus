@@ -1,0 +1,31 @@
+-- 2026-07-30-drop-bus-eta-history.sql
+-- Hand-applied to Azure: psql "$DATABASE_URL" -f migrations/2026-07-30-drop-bus-eta-history.sql
+--
+-- bus_eta_history moved off PostgreSQL entirely to the MySQL history host (see
+-- migrations/mysql/2026-07-30-history-archive.sql). It was the largest table on
+-- the 2 GB B1ms server at ~2.7 GB / ~197k rows a day, and every byte of it was
+-- append-only observation data that nothing on the request path reads.
+--
+-- Its two consumers were rewired first, neither of which needed a cross-database
+-- join to begin with:
+--   * computeTravelAvg — the crossing scan was already self-contained (it never
+--     joined bus_eta_history to anything); departures and the bus_travel_avg
+--     upsert still run here.
+--   * measurePredictionError — the correlated UPDATE that joined
+--     bus_eta_prediction_error to bus_eta_history was replaced by
+--     matchPredictionActual, the pure matcher that already encoded the same rule.
+--
+-- bus_eta_prediction_error, bus_travel_avg, and bus_schedule all stay on
+-- PostgreSQL: they are small, and the first two are read on the live ETA path.
+--
+-- ORDER OF OPERATIONS. Apply this only after the MySQL table exists and the
+-- deployed functions image is writing to it — confirm with
+--   mysql bus -e "SELECT COUNT(*), MIN(recorded_at), MAX(recorded_at) FROM bus_eta_history"
+-- and check that MAX(recorded_at) is within the last minute. Dropping first
+-- leaves a gap in the training data that cannot be backfilled: TDX serves only
+-- the current instant, so an unobserved ETA is gone for good.
+--
+-- Not reversible in any meaningful sense. The table can be recreated from
+-- migrations/004_bus_eta_tables.sql, but its contents cannot.
+
+DROP TABLE IF EXISTS bus_eta_history;

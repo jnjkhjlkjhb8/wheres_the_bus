@@ -1,0 +1,26 @@
+-- 2026-07-31-drop-bus-travel-avg.sql
+-- Hand-applied to Azure: psql "$DATABASE_URL" -f migrations/2026-07-31-drop-bus-travel-avg.sql
+--
+-- Retires bus_travel_avg. ETA prediction now reads bus_segment_time, the
+-- observed running time between consecutive stops, and accumulates it along the
+-- stop sequence — the same statement the GTFS export lays a trip out with.
+--
+-- Why it goes rather than stays as a second opinion. bus_travel_avg records
+-- seconds from a subroute's departure to a stop, so every observation has to be
+-- matched against a bus_schedule departure and is discarded when none lines up.
+-- Over the same seven days of history that left 239 rows across 34 subroutes,
+-- against 2,395 subroutes for segments. The gap is the departure match, not the
+-- sample size, so more history does not close it.
+--
+-- The hour x day_of_week key made it worse rather than better: 168 buckets per
+-- stop, roughly one arrival each per week, which is why the sample threshold had
+-- already been cut from 10 to 3 and the table still stayed near-empty. Losing
+-- time-of-day is losing a column that never carried data. If a peak/off-peak
+-- distinction is wanted later it belongs on bus_segment_time, which needs no
+-- departure match and would fill such buckets far sooner.
+--
+-- Dropping rather than keeping the rows: nothing reads the table after this
+-- change, computeTravelAvg no longer exists to write it, and the 239 surviving
+-- rows are not a dataset worth carrying.
+
+DROP TABLE IF EXISTS bus_travel_avg;
