@@ -162,12 +162,12 @@ spec:
           emptyDir:
             sizeLimit: 64Mi
         # Agency icons and hand-drawn maps, kept out of the public repo and the
-        # image; rsync'd onto the single node. DirectoryOrCreate so a fresh
-        # node still starts, serving 404s until the first upload.
+        # image. The claim is operator-applied (k8s/infra); it starts empty and
+        # api serves 404s until the files are copied in.
         - name: assets
-          hostPath:
-            path: /srv/bus-assets
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: assets
+            readOnly: true
 ---
 apiVersion: apps/v1
 kind: Deployment

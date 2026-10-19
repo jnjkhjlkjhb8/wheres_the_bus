@@ -216,6 +216,19 @@ spec:
     requests:
       storage: 64Gi
 ---
+# Agency icons and hand-drawn maps api serves from /srv/assets.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: assets
+  namespace: bus
+spec:
+  storageClassName: local-path-retain
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
 # The OSM extract MOTIS imports, cached between nights.
 apiVersion: v1
 kind: PersistentVolumeClaim
