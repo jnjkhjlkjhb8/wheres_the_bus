@@ -11,7 +11,7 @@ const (
 // the form the statements below can splice.
 var (
 	railShapeSnapMetersSQL        = strconv.Itoa(railShapeSnapMeters)
-	railShapeSimplifyToleranceSQL = strconv.FormatFloat(railShapeSimplifyTolerance, 'f', -1, 64)
+	railShapeSimplifyToleranceSQL = buildRailShapeSimplifyToleranceSQL()
 )
 
 // The rail branch's working tables, named here in the same form as the GTFS
@@ -22,7 +22,18 @@ const (
 	_gtfsRailTripShapeTable = "gtfs_rail_trip_shape"
 )
 
-var _gtfsRailSegSQL = `
+var _gtfsRailSegSQL = buildGTFSRailSegSQL()
+
+var _gtfsRailTripShapeSQL = buildGTFSRailTripShapeSQL()
+
+var _gtfsRailShapePointsSQL = buildGTFSRailShapePointsSQL()
+
+func buildRailShapeSimplifyToleranceSQL() string {
+	return strconv.FormatFloat(railShapeSimplifyTolerance, 'f', -1, 64)
+}
+
+func buildGTFSRailSegSQL() string {
+	return `
 WITH rail_stop AS (
   SELECT s.stop_id,
          CASE WHEN s.stop_id LIKE 'TRA:%' THEN 'tra' ELSE 'thsr' END AS mode,
@@ -74,8 +85,10 @@ FROM matched
 -- Two stops that locate onto the same point of a line would clip to a single
 -- point, which is not a segment. The stitch falls back to a straight line.
 WHERE f1 <> f2`
+}
 
-var _gtfsRailTripShapeSQL = `
+func buildGTFSRailTripShapeSQL() string {
+	return `
 SELECT
   st.trip_id,
   'R:' || split_part(st.trip_id, ':', 1) || ':' ||
@@ -85,8 +98,10 @@ LEFT JOIN ` + _gtfsStopTable + ` s ON s.stop_id = st.stop_id
 WHERE st.trip_id LIKE 'TRA:%' OR st.trip_id LIKE 'THSR:%'
 GROUP BY st.trip_id
 HAVING count(*) > 1 AND count(*) = count(s.stop_id)`
+}
 
-var _gtfsRailShapePointsSQL = `
+func buildGTFSRailShapePointsSQL() string {
+	return `
 SELECT
   leg.shape_id,
   ST_Y(p.geom)::numeric(9,6) AS shape_pt_lat,
@@ -121,3 +136,4 @@ CROSS JOIN LATERAL ST_DumpPoints(leg.geom) p
 WHERE (leg.leg_no = 1 OR p.path[1] > 1)
   AND ST_Y(p.geom) BETWEEN 21 AND 26.5
   AND ST_X(p.geom) BETWEEN 118 AND 122.5`
+}

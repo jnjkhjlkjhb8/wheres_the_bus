@@ -54,6 +54,12 @@ func TestManifestRoundTripAndRunMismatch(t *testing.T) {
 	if _, err := ReadManifest(root, "run-b"); err == nil {
 		t.Fatal("ReadManifest accepted a manifest naming another run")
 	}
+	if err := os.WriteFile(filepath.Join(other, _runManifest), []byte("{invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadManifest(root, "run-b"); err == nil {
+		t.Fatal("malformed manifest accepted")
+	}
 	if _, err := ReadManifest(root, "run-missing"); err == nil {
 		t.Fatal("ReadManifest accepted a run that never exported")
 	}

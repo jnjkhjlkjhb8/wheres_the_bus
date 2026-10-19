@@ -6,11 +6,75 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 )
 
 type fakeNearbyStore struct {
 	rows map[NearbyMode][]NearbyCandidate
 	err  map[NearbyMode]error
+}
+
+func TestNearbyResponseModeAssignments(t *testing.T) {
+	byMode := make(map[NearbyMode][]NearbyCandidate)
+	for _, mode := range AllNearbyModes {
+		byMode[mode] = []NearbyCandidate{candidate(mode, "station", "Station", 160)}
+	}
+	response, err := nearbyResponse(byMode, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := [][]*pb.NearStation{response.NearBusStations["station"].NearStations,
+		response.NearBikeStations, response.NearMrtStations, response.NearTraStations, response.NearThsrStations}
+	for i, stations := range groups {
+		if len(stations) != 1 || stations[0].Type != int32(AllNearbyModes[i]) ||
+			stations[0].StationID != "station" || stations[0].Walk != 2 || stations[0].Routed {
+			t.Fatalf("mode %d stations = %v", AllNearbyModes[i], stations)
+		}
+	}
+	if err := appendNearbyResult(response, NearbyMode(999), nil); err == nil {
+		t.Fatal("unsupported mode accepted")
+	}
+}
+
+func TestNearbyCacheHonorsCapacity(t *testing.T) {
+	discovery := NewNearbyDiscovery(fakeNearbyStore{}, nil)
+	response := &pb.RespNear{NearBikeStations: []*pb.NearStation{{StationID: "station"}}}
+	discovery.cacheResponse("first", response)
+	for i := 1; i < _nearbyCacheMaxEntries; i++ {
+		discovery.cacheResponse(string(rune(i)), response)
+	}
+	if _, ok := discovery.cachedResponse("first"); !ok {
+		t.Fatal("cache was cleared before reaching its capacity")
+	}
+	discovery.cacheResponse("last", response)
+	if _, ok := discovery.cachedResponse("first"); ok {
+		t.Fatal("overflow retained an old entry")
+	}
+	if got, ok := discovery.cachedResponse("last"); !ok || got.NearBikeStations[0].StationID != "station" {
+		t.Fatalf("overflow lost the new response: %v, present %v", got, ok)
+	}
+}
+
+func TestNearbyCacheRejectsCorruptResponses(t *testing.T) {
+	discovery := NewNearbyDiscovery(fakeNearbyStore{}, nil)
+	discovery.cache.Set("corrupt", []byte{0xff}, time.Minute)
+	if _, ok := discovery.cachedResponse("corrupt"); ok {
+		t.Fatal("corrupt cache bytes were returned")
+	}
+	discovery.cacheResponse("invalid", &pb.RespNear{NearBikeStations: []*pb.NearStation{{StationName: string([]byte{0xff})}}})
+	if _, ok := discovery.cachedResponse("invalid"); ok {
+		t.Fatal("response with invalid UTF-8 entered the cache")
+	}
+}
+
+func TestNearbyCacheCanBeDisabled(t *testing.T) {
+	discovery := NewNearbyDiscovery(fakeNearbyStore{}, nil)
+	discovery.cache = nil
+	discovery.cacheResponse("key", &pb.RespNear{})
+	if _, ok := discovery.cachedResponse("key"); ok {
+		t.Fatal("disabled cache returned an entry")
+	}
 }
 
 type failFastNearbyStore struct {

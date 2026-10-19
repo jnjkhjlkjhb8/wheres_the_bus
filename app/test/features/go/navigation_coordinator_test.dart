@@ -51,6 +51,60 @@ void main() {
     onAutopilotStatus: onAutopilotStatus,
   );
 
+  test(
+    'position fixes advance walk instructions without advancing the leg',
+    () async {
+      const first = PlanPoint(lat: 25, lng: 121);
+      const next = PlanPoint(lat: 25.001, lng: 121);
+      const last = PlanPoint(lat: 25.002, lng: 121);
+      final route = _route([
+        _walkSection(
+          25,
+          walkSteps: [
+            _walkStep('depart', first),
+            _walkStep('turn', next),
+            _walkStep('arrive', last),
+          ],
+        ),
+      ]);
+      final plan = PlanBloc(repository: _FakeMaasRepository(routes: [route]));
+      addTearDown(plan.close);
+      plan.add(
+        const PlanSearchRequested(
+          fromLat: 0,
+          fromLon: 0,
+          toLat: 0,
+          toLon: 0,
+          date: '2026-07-10',
+          time: '12:00',
+        ),
+      );
+      await plan.stream.firstWhere((state) => state.result != null);
+      final positions = StreamController<Position>();
+      addTearDown(positions.close);
+      final navigation = NavigationCoordinator(
+        planBloc: plan,
+        journeySessionBloc: journeyBloc,
+        liveActivityEnabled: () => false,
+        positions: () => positions.stream,
+      );
+      addTearDown(navigation.dispose);
+      await navigation.start(route: route, routeIndex: 0);
+      await _waitForPlanLeg(plan, 0);
+      positions.add(_posAt(first));
+      await Future<void>.delayed(Duration.zero);
+      expect(plan.state.activeWalkStepIndex, 0);
+      positions.add(_posAt(next));
+      await plan.stream.firstWhere((state) => state.activeWalkStepIndex == 1);
+      positions.add(_posAt(last));
+      await plan.stream.firstWhere((state) => state.activeWalkStepIndex == 2);
+      positions.add(_posAt(first));
+      await Future<void>.delayed(Duration.zero);
+      expect(plan.state.activeWalkStepIndex, 2);
+      expect(plan.state.activeLegIndex, 0);
+    },
+  );
+
   test('enabled start begins the plan and the transit journey', () async {
     final route = _route([_walkSection(25), _transitSection(25.1)]);
     final planReady = expectLater(
@@ -144,6 +198,13 @@ void main() {
     await _waitForPlanLeg(planBloc, null);
   });
 
+  test('inactive reconciliation leaves the plan stopped', () async {
+    final navigation = coordinator(liveActivityEnabled: true);
+    expect(await navigation.reconcileJourneyDone(), isFalse);
+    expect(planBloc.state.activeLegIndex, isNull);
+    expect(journeyBloc.state.phase, JourneyPhase.idle);
+  });
+
   test('self-completed journey reconciliation ends the active plan', () async {
     planBloc.add(const NavigationStarted());
     await _waitForPlanLeg(planBloc, 0);
@@ -170,6 +231,60 @@ void main() {
     await planReady;
     expect(journeyBloc.state.phase, JourneyPhase.idle);
   });
+
+  group('radius boundaries', () {
+    late GeolocatorPlatform original;
+    setUp(() => original = GeolocatorPlatform.instance);
+    tearDown(() => GeolocatorPlatform.instance = original);
+
+    const spot = PlanPoint(lat: 25, lng: 121.5);
+    PlanSection section(String type) =>
+        _autopilotSection(type: type, departure: spot, arrival: spot);
+
+    NavAction decideAt(String type, double meters, {required bool boarded}) {
+      GeolocatorPlatform.instance = _FixedDistance(meters);
+      return decideNavAction(
+        section: section(type),
+        boarded: boarded,
+        lat: spot.lat,
+        lon: spot.lng,
+      );
+    }
+
+    test('a walk fix exactly 40m from arrival advances', () {
+      expect(decideAt('walk', 40, boarded: false), NavAction.advance);
+      expect(decideAt('walk', 40.01, boarded: false), NavAction.none);
+    });
+
+    test('a boarded fix exactly 60m from arrival alights', () {
+      expect(decideAt('transit', 60, boarded: true), NavAction.alight);
+      expect(decideAt('transit', 60.01, boarded: true), NavAction.none);
+    });
+
+    test('a walk step advances exactly at 20m and not beyond', () {
+      final steps = [_walkStep('a', spot), _walkStep('b', spot)];
+      GeolocatorPlatform.instance = _FixedDistance(20);
+      expect(advanceWalkStep(steps: steps, current: 0, lat: 0, lon: 0), 1);
+      GeolocatorPlatform.instance = _FixedDistance(20.01);
+      expect(advanceWalkStep(steps: steps, current: 0, lat: 0, lon: 0), 0);
+    });
+
+    test('an index past the last step is returned unchanged', () {
+      final steps = [_walkStep('a', spot), _walkStep('b', spot)];
+      expect(advanceWalkStep(steps: steps, current: 5, lat: 0, lon: 0), 5);
+    });
+  });
+
+  test(
+    'advancing from a leg beyond the route end arrives and ends it',
+    () async {
+      final route = _route([_walkSection(25), _transitSection(25.1)]);
+      final navigation = coordinator(liveActivityEnabled: false);
+      final result = await navigation.advance(route: route, activeLeg: 9);
+      expect(result.arrived, isTrue);
+      expect(result.nextCameraPoint, isNull);
+    },
+  );
 
   group('decideNavAction', () {
     const base = PlanPoint(lat: 25, lng: 121.5);
@@ -224,10 +339,7 @@ void main() {
 
     test('walk well outside 40m of arrival is none', () {
       final section = walk(arrival: base);
-      expect(
-        decide(section: section, boarded: false, at: far),
-        NavAction.none,
-      );
+      expect(decide(section: section, boarded: false, at: far), NavAction.none);
     });
 
     test('walk ignores boarded and still advances within 40m', () {
@@ -298,10 +410,7 @@ void main() {
 
     test('transit boarded well outside 60m of arrival is none', () {
       final section = transit(departure: far, arrival: base);
-      expect(
-        decide(section: section, boarded: true, at: far),
-        NavAction.none,
-      );
+      expect(decide(section: section, boarded: true, at: far), NavAction.none);
     });
   });
 
@@ -468,10 +577,11 @@ void main() {
       await _waitForJourneyPhase(journeyBloc, JourneyPhase.done);
       await _waitForPlanLeg(autopilotPlanBloc, null);
 
-      expect(
-        autoActions.map((e) => e.$1),
-        [NavAction.advance, NavAction.board, NavAction.alight],
-      );
+      expect(autoActions.map((e) => e.$1), [
+        NavAction.advance,
+        NavAction.board,
+        NavAction.alight,
+      ]);
       expect(autoActions[0].$2, route.firstPoint(leg: 1));
       expect(autoActions[1].$2, isNull);
       expect(autoActions[2].$2, isNull);
@@ -482,232 +592,208 @@ void main() {
       expect(autoActions[2].$3, isTrue);
     });
 
-    test(
-      'dispose cancels the position subscription so no further autopilot '
-      'transitions fire',
-      () async {
-        final route = _route([_transitSection(25)]);
-        final autoActions = <NavAction>[];
-        final controller = StreamController<Position>();
-        addTearDown(controller.close);
+    test('dispose cancels the position subscription so no further autopilot '
+        'transitions fire', () async {
+      final route = _route([_transitSection(25)]);
+      final autoActions = <NavAction>[];
+      final controller = StreamController<Position>();
+      addTearDown(controller.close);
 
-        final autopilotPlanBloc = PlanBloc(
-          repository: _FakeMaasRepository(routes: [route]),
-        );
-        addTearDown(autopilotPlanBloc.close);
-        autopilotPlanBloc.add(
-          const PlanSearchRequested(
-            fromLat: 0,
-            fromLon: 0,
-            toLat: 0,
-            toLon: 0,
-            date: '2026-07-10',
-            time: '12:00',
-          ),
-        );
-        await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
+      final autopilotPlanBloc = PlanBloc(
+        repository: _FakeMaasRepository(routes: [route]),
+      );
+      addTearDown(autopilotPlanBloc.close);
+      autopilotPlanBloc.add(
+        const PlanSearchRequested(
+          fromLat: 0,
+          fromLon: 0,
+          toLat: 0,
+          toLon: 0,
+          date: '2026-07-10',
+          time: '12:00',
+        ),
+      );
+      await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
 
-        final coordinator = NavigationCoordinator(
-          planBloc: autopilotPlanBloc,
-          journeySessionBloc: journeyBloc,
-          liveActivityEnabled: () => true,
-          positions: () => controller.stream,
-          onAutoAction: (action, target, arrived) => autoActions.add(action),
-        );
+      final coordinator = NavigationCoordinator(
+        planBloc: autopilotPlanBloc,
+        journeySessionBloc: journeyBloc,
+        liveActivityEnabled: () => true,
+        positions: () => controller.stream,
+        onAutoAction: (action, target, arrived) => autoActions.add(action),
+      );
 
-        await coordinator.start(route: route, routeIndex: 0);
-        await _waitForPlanLeg(autopilotPlanBloc, 0);
-        await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
+      await coordinator.start(route: route, routeIndex: 0);
+      await _waitForPlanLeg(autopilotPlanBloc, 0);
+      await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
 
-        coordinator.dispose();
+      coordinator.dispose();
 
-        // Well outside the 80m board radius: if the subscription were still
-        // live this would immediately dispatch BoardConfirmed and fire the
-        // board haptic via onAutoAction.
-        controller.add(
-          _posAt(_northOf(const PlanPoint(lat: 25, lng: 121), 500)),
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Well outside the 80m board radius: if the subscription were still
+      // live this would immediately dispatch BoardConfirmed and fire the
+      // board haptic via onAutoAction.
+      controller.add(_posAt(_northOf(const PlanPoint(lat: 25, lng: 121), 500)));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        expect(autoActions, isEmpty);
-        expect(journeyBloc.state.phase, JourneyPhase.waiting);
-        expect(autopilotPlanBloc.state.activeLegIndex, 0);
-      },
-    );
+      expect(autoActions, isEmpty);
+      expect(journeyBloc.state.phase, JourneyPhase.waiting);
+      expect(autopilotPlanBloc.state.activeLegIndex, 0);
+    });
 
-    test(
-      'repeated waiting-phase positions past the board radius fire the '
-      'board action exactly once',
-      () async {
-        final route = _route([_transitSection(25)]);
-        final autoActions = <NavAction>[];
-        final controller = StreamController<Position>();
-        addTearDown(controller.close);
+    test('repeated waiting-phase positions past the board radius fire the '
+        'board action exactly once', () async {
+      final route = _route([_transitSection(25)]);
+      final autoActions = <NavAction>[];
+      final controller = StreamController<Position>();
+      addTearDown(controller.close);
 
-        final autopilotPlanBloc = PlanBloc(
-          repository: _FakeMaasRepository(routes: [route]),
-        );
-        addTearDown(autopilotPlanBloc.close);
-        autopilotPlanBloc.add(
-          const PlanSearchRequested(
-            fromLat: 0,
-            fromLon: 0,
-            toLat: 0,
-            toLon: 0,
-            date: '2026-07-10',
-            time: '12:00',
-          ),
-        );
-        await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
+      final autopilotPlanBloc = PlanBloc(
+        repository: _FakeMaasRepository(routes: [route]),
+      );
+      addTearDown(autopilotPlanBloc.close);
+      autopilotPlanBloc.add(
+        const PlanSearchRequested(
+          fromLat: 0,
+          fromLon: 0,
+          toLat: 0,
+          toLon: 0,
+          date: '2026-07-10',
+          time: '12:00',
+        ),
+      );
+      await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
 
-        await NavigationCoordinator(
-          planBloc: autopilotPlanBloc,
-          journeySessionBloc: journeyBloc,
-          liveActivityEnabled: () => true,
-          positions: () => controller.stream,
-          onAutoAction: (action, target, arrived) => autoActions.add(action),
-        ).start(route: route, routeIndex: 0);
+      await NavigationCoordinator(
+        planBloc: autopilotPlanBloc,
+        journeySessionBloc: journeyBloc,
+        liveActivityEnabled: () => true,
+        positions: () => controller.stream,
+        onAutoAction: (action, target, arrived) => autoActions.add(action),
+      ).start(route: route, routeIndex: 0);
 
-        await _waitForPlanLeg(autopilotPlanBloc, 0);
-        await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
+      await _waitForPlanLeg(autopilotPlanBloc, 0);
+      await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
 
-        final farPos = _posAt(
-          _northOf(const PlanPoint(lat: 25, lng: 121), 500),
-        );
-        controller
-          ..add(farPos)
-          ..add(farPos)
-          ..add(farPos);
+      final farPos = _posAt(_northOf(const PlanPoint(lat: 25, lng: 121), 500));
+      controller
+        ..add(farPos)
+        ..add(farPos)
+        ..add(farPos);
 
-        await _waitForJourneyPhase(journeyBloc, JourneyPhase.riding);
+      await _waitForJourneyPhase(journeyBloc, JourneyPhase.riding);
 
-        expect(autoActions.where((a) => a == NavAction.board), hasLength(1));
-      },
-    );
+      expect(autoActions.where((a) => a == NavAction.board), hasLength(1));
+    });
 
-    test(
-      'boards and alights a transit leg from GPS alone when Live Activity '
-      'is off, without JourneySession ever being started',
-      () async {
-        const pointB = PlanPoint(lat: 25, lng: 121.5);
-        final pointC = _northOf(pointB, 5000);
-        final route = _route([
-          _autopilotSection(
-            type: 'transit',
-            departure: pointB,
-            arrival: pointC,
-          ),
-        ]);
-        final autoActions = <NavAction>[];
-        final controller = StreamController<Position>();
-        addTearDown(controller.close);
+    test('boards and alights a transit leg from GPS alone when Live Activity '
+        'is off, without JourneySession ever being started', () async {
+      const pointB = PlanPoint(lat: 25, lng: 121.5);
+      final pointC = _northOf(pointB, 5000);
+      final route = _route([
+        _autopilotSection(type: 'transit', departure: pointB, arrival: pointC),
+      ]);
+      final autoActions = <NavAction>[];
+      final controller = StreamController<Position>();
+      addTearDown(controller.close);
 
-        final autopilotPlanBloc = PlanBloc(
-          repository: _FakeMaasRepository(routes: [route]),
-        );
-        addTearDown(autopilotPlanBloc.close);
-        autopilotPlanBloc.add(
-          const PlanSearchRequested(
-            fromLat: 0,
-            fromLon: 0,
-            toLat: 0,
-            toLon: 0,
-            date: '2026-07-10',
-            time: '12:00',
-          ),
-        );
-        await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
+      final autopilotPlanBloc = PlanBloc(
+        repository: _FakeMaasRepository(routes: [route]),
+      );
+      addTearDown(autopilotPlanBloc.close);
+      autopilotPlanBloc.add(
+        const PlanSearchRequested(
+          fromLat: 0,
+          fromLon: 0,
+          toLat: 0,
+          toLon: 0,
+          date: '2026-07-10',
+          time: '12:00',
+        ),
+      );
+      await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
 
-        await NavigationCoordinator(
-          planBloc: autopilotPlanBloc,
-          journeySessionBloc: journeyBloc,
-          liveActivityEnabled: () => false,
-          positions: () => controller.stream,
-          onAutoAction: (action, target, arrived) => autoActions.add(action),
-        ).start(route: route, routeIndex: 0);
+      await NavigationCoordinator(
+        planBloc: autopilotPlanBloc,
+        journeySessionBloc: journeyBloc,
+        liveActivityEnabled: () => false,
+        positions: () => controller.stream,
+        onAutoAction: (action, target, arrived) => autoActions.add(action),
+      ).start(route: route, routeIndex: 0);
 
-        await _waitForPlanLeg(autopilotPlanBloc, 0);
-        // liveActivityEnabled is false, so start() never dispatched
-        // JourneyStarted: JourneySession stays idle for the whole test.
-        expect(journeyBloc.state.phase, JourneyPhase.idle);
+      await _waitForPlanLeg(autopilotPlanBloc, 0);
+      // liveActivityEnabled is false, so start() never dispatched
+      // JourneyStarted: JourneySession stays idle for the whole test.
+      expect(journeyBloc.state.phase, JourneyPhase.idle);
 
-        controller.add(_posAt(_northOf(pointB, 500)));
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        expect(autoActions, [NavAction.board]);
-        expect(journeyBloc.state.phase, JourneyPhase.idle);
+      controller.add(_posAt(_northOf(pointB, 500)));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(autoActions, [NavAction.board]);
+      expect(journeyBloc.state.phase, JourneyPhase.idle);
 
-        // Arriving near the transit leg's endpoint alights and, since this
-        // is the route's only/final section, ends the whole navigation.
-        controller.add(_posAt(_northOf(pointC, 10)));
-        await _waitForPlanLeg(autopilotPlanBloc, null);
+      // Arriving near the transit leg's endpoint alights and, since this
+      // is the route's only/final section, ends the whole navigation.
+      controller.add(_posAt(_northOf(pointC, 10)));
+      await _waitForPlanLeg(autopilotPlanBloc, null);
 
-        expect(autoActions, [NavAction.board, NavAction.alight]);
-        expect(journeyBloc.state.phase, JourneyPhase.idle);
-      },
-    );
+      expect(autoActions, [NavAction.board, NavAction.alight]);
+      expect(journeyBloc.state.phase, JourneyPhase.idle);
+    });
 
-    test(
-      'a manual board via JourneySession suppresses the phantom auto-board '
-      'and still alights normally',
-      () async {
-        const pointB = PlanPoint(lat: 25, lng: 121.5);
-        final pointC = _northOf(pointB, 5000);
-        final route = _route([
-          _autopilotSection(
-            type: 'transit',
-            departure: pointB,
-            arrival: pointC,
-          ),
-        ]);
-        final autoActions = <NavAction>[];
-        final controller = StreamController<Position>();
-        addTearDown(controller.close);
+    test('a manual board via JourneySession suppresses the phantom auto-board '
+        'and still alights normally', () async {
+      const pointB = PlanPoint(lat: 25, lng: 121.5);
+      final pointC = _northOf(pointB, 5000);
+      final route = _route([
+        _autopilotSection(type: 'transit', departure: pointB, arrival: pointC),
+      ]);
+      final autoActions = <NavAction>[];
+      final controller = StreamController<Position>();
+      addTearDown(controller.close);
 
-        final autopilotPlanBloc = PlanBloc(
-          repository: _FakeMaasRepository(routes: [route]),
-        );
-        addTearDown(autopilotPlanBloc.close);
-        autopilotPlanBloc.add(
-          const PlanSearchRequested(
-            fromLat: 0,
-            fromLon: 0,
-            toLat: 0,
-            toLon: 0,
-            date: '2026-07-10',
-            time: '12:00',
-          ),
-        );
-        await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
+      final autopilotPlanBloc = PlanBloc(
+        repository: _FakeMaasRepository(routes: [route]),
+      );
+      addTearDown(autopilotPlanBloc.close);
+      autopilotPlanBloc.add(
+        const PlanSearchRequested(
+          fromLat: 0,
+          fromLon: 0,
+          toLat: 0,
+          toLon: 0,
+          date: '2026-07-10',
+          time: '12:00',
+        ),
+      );
+      await autopilotPlanBloc.stream.firstWhere((s) => s.result != null);
 
-        await NavigationCoordinator(
-          planBloc: autopilotPlanBloc,
-          journeySessionBloc: journeyBloc,
-          liveActivityEnabled: () => true,
-          positions: () => controller.stream,
-          onAutoAction: (action, target, arrived) => autoActions.add(action),
-        ).start(route: route, routeIndex: 0);
+      await NavigationCoordinator(
+        planBloc: autopilotPlanBloc,
+        journeySessionBloc: journeyBloc,
+        liveActivityEnabled: () => true,
+        positions: () => controller.stream,
+        onAutoAction: (action, target, arrived) => autoActions.add(action),
+      ).start(route: route, routeIndex: 0);
 
-        await _waitForPlanLeg(autopilotPlanBloc, 0);
-        await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
+      await _waitForPlanLeg(autopilotPlanBloc, 0);
+      await _waitForJourneyPhase(journeyBloc, JourneyPhase.waiting);
 
-        // Mirrors the manual 我上車了 button: BoardConfirmed dispatched
-        // straight to JourneySessionBloc, bypassing the coordinator, so
-        // `_lastAutoBoardedLeg` never learns about this board.
-        journeyBloc.add(const BoardConfirmed());
-        await _waitForJourneyPhase(journeyBloc, JourneyPhase.riding);
+      // Mirrors the manual 我上車了 button: BoardConfirmed dispatched
+      // straight to JourneySessionBloc, bypassing the coordinator, so
+      // `_lastAutoBoardedLeg` never learns about this board.
+      journeyBloc.add(const BoardConfirmed());
+      await _waitForJourneyPhase(journeyBloc, JourneyPhase.riding);
 
-        controller.add(_posAt(_northOf(pointB, 500)));
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        expect(autoActions, isEmpty);
+      controller.add(_posAt(_northOf(pointB, 500)));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(autoActions, isEmpty);
 
-        // Arriving near the transit leg's endpoint still alights normally.
-        controller.add(_posAt(_northOf(pointC, 10)));
-        await _waitForJourneyPhase(journeyBloc, JourneyPhase.done);
-        await _waitForPlanLeg(autopilotPlanBloc, null);
+      // Arriving near the transit leg's endpoint still alights normally.
+      controller.add(_posAt(_northOf(pointC, 10)));
+      await _waitForJourneyPhase(journeyBloc, JourneyPhase.done);
+      await _waitForPlanLeg(autopilotPlanBloc, null);
 
-        expect(autoActions, [NavAction.alight]);
-      },
-    );
+      expect(autoActions, [NavAction.alight]);
+    });
 
     test(
       'start() optimistically emits driving=true before any GPS fix',
@@ -766,30 +852,27 @@ void main() {
       },
     );
 
-    test(
-      'two consecutive positions do not emit driving=true twice in a row '
-      '(dedupe on unchanged value)',
-      () async {
-        final route = _route([_transitSection(25)]);
-        final controller = StreamController<Position>();
-        addTearDown(controller.close);
-        final driving = <bool>[];
+    test('two consecutive positions do not emit driving=true twice in a row '
+        '(dedupe on unchanged value)', () async {
+      final route = _route([_transitSection(25)]);
+      final controller = StreamController<Position>();
+      addTearDown(controller.close);
+      final driving = <bool>[];
 
-        await coordinator(
-          liveActivityEnabled: true,
-          positions: () => controller.stream,
-          onAutopilotStatus: driving.add,
-        ).start(route: route, routeIndex: 0);
-        controller
-          ..add(_posAt(const PlanPoint(lat: 25, lng: 121)))
-          ..add(_posAt(const PlanPoint(lat: 25.001, lng: 121)));
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+      await coordinator(
+        liveActivityEnabled: true,
+        positions: () => controller.stream,
+        onAutopilotStatus: driving.add,
+      ).start(route: route, routeIndex: 0);
+      controller
+        ..add(_posAt(const PlanPoint(lat: 25, lng: 121)))
+        ..add(_posAt(const PlanPoint(lat: 25.001, lng: 121)));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
 
-        // Only the optimistic emission from start() fires; both positions
-        // land on the already-`true` value, so neither re-emits.
-        expect(driving, [true]);
-      },
-    );
+      // Only the optimistic emission from start() fires; both positions
+      // land on the already-`true` value, so neither re-emits.
+      expect(driving, [true]);
+    });
   });
 
   group('reconcileJourneyDone', () {
@@ -967,9 +1050,13 @@ PlanRoute _route(List<PlanSection> sections) => PlanRoute(
   sections: sections,
 );
 
-PlanSection _walkSection(double lat) => _section(
+PlanSection _walkSection(
+  double lat, {
+  List<PlanWalkStep> walkSteps = const [],
+}) => _section(
   type: 'walk',
   lat: lat,
+  walkSteps: walkSteps,
   transport: const PlanTransport(
     mode: 'walk',
     name: '步行',
@@ -999,6 +1086,7 @@ PlanSection _section({
   required String type,
   required double lat,
   required PlanTransport transport,
+  List<PlanWalkStep> walkSteps = const [],
 }) => PlanSection(
   type: type,
   travelSummary: const PlanTravelSummary(duration: 300, length: 1000),
@@ -1016,6 +1104,7 @@ PlanSection _section({
   ),
   transport: transport,
   intermediateStops: const [],
+  walkSteps: walkSteps,
   identity: const PlanIdentity(
     routeType: 'bus',
     routeKey: '307',
@@ -1053,4 +1142,18 @@ class _FakeMaasRepository implements MaasRepository {
     String pageCursor = '',
     int legAlternatives = 0,
   }) => Stream.value((result: PlanResult(routes: routes), complete: true));
+}
+
+class _FixedDistance extends GeolocatorPlatform {
+  _FixedDistance(this.meters);
+
+  final double meters;
+
+  @override
+  double distanceBetween(
+    double startLatitude,
+    double startLongitude,
+    double endLatitude,
+    double endLongitude,
+  ) => meters;
 }

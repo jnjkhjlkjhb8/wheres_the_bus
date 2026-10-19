@@ -2,9 +2,10 @@ package rail
 
 import (
 	"context"
+	"github.com/jackc/pgx/v5"
+	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -74,62 +75,33 @@ func buildTraTicketTypes() []string {
 }
 
 func TRAFarePayload(ctx context.Context, db railDB, start, end string) ([]byte, error) {
-	start, err := resolveRailStationID(ctx, db, "tra_stations", start)
-	if err != nil {
-		return nil, err
-	}
-	end, err = resolveRailStationID(ctx, db, "tra_stations", end)
+	start, end, err := resolveRailJourney(ctx, db, "tra_stations", start, end)
 	if err != nil {
 		return nil, err
 	}
 	const q = `SELECT ticket_type,price FROM tra_fares WHERE origin_station_id = $1 AND destination_station_id = $2 AND ticket_type = ANY($3) AND price > 0 ORDER BY price DESC, ticket_type;`
-	rows, err := db.Query(ctx, q, start, end, _traTicketTypes)
+	row, err := queryRailRows[traFareRow](ctx, db, q, start, end, _traTicketTypes)
 	if err != nil {
 		return nil, err
 	}
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[traFareRow])
-	if err != nil {
-		return nil, err
-	}
+	return marshalTRAFares(row)
+}
+
+func marshalTRAFares(row []*traFareRow) ([]byte, error) {
 	if len(row) == 0 {
 		return nil, nil
 	}
-	arr := make([]*models.TraFareItem, 0, len(row))
-	for _, temp := range row {
-		arr = append(arr, &models.TraFareItem{
-			TicketType: temp.TicketType,
-			Price:      temp.Price,
-		})
-	}
-	return proto.Marshal(&models.TraFareItems{Items: arr})
+	return proto.Marshal(&models.TraFareItems{Items: traFareItems(row)})
 }
 
 func TRAStoptimesPayload(ctx context.Context, db railDB, trainno, dateStr string) ([]byte, int, error) {
 	const q = `SELECT stopsequence, stationid,stationname,arrivaltime,departuretime,mask FROM tra_timetable WHERE trainno = $1 AND train_date = $2 ORDER BY stopsequence;`
-	rows, err := db.Query(ctx, q, trainno, dateStr)
+	row, err := queryRailRows[traStopsRow](ctx, db, q, trainno, dateStr)
 	if err != nil {
 		return nil, 0, err
 	}
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[traStopsRow])
-	if err != nil {
-		return nil, 0, err
-	}
-	arr := make([]*models.TraStoptime, 0, len(row))
-	for _, temp := range row {
-		arr = append(arr, &models.TraStoptime{
-			StopSequence:  int32(temp.Stopsequence),
-			StationId:     temp.Stationid,
-			StationName:   temp.Stationname,
-			ArrivalTime:   temp.Arrivaltime,
-			DepartureTime: temp.Departuretime,
-			SuspendedFlag: (temp.Mask & (1 << 7)) != 0,
-		})
-	}
-	b, err := proto.Marshal(&models.TraStoptimes{Items: arr})
-	if err != nil {
-		return nil, 0, err
-	}
-	return b, len(row), nil
+	arr := traStops(row)
+	return marshalRailPayload(&models.TraStoptimes{Items: arr}, len(row))
 }
 
 func TRAStationBoardPayload(ctx context.Context, db railDB, station string, date time.Time, direction int32) ([]*models.TraStationDeparture, error) {
@@ -138,53 +110,33 @@ func TRAStationBoardPayload(ctx context.Context, db railDB, station string, date
 		return nil, err
 	}
 	const q = `SELECT train_date,trainno,train_type_code,train_type_name,ending_station_name,departuretime,direction,mask,note FROM tra_timetable WHERE stationid = $1 AND train_date = $2 AND direction = $3 AND stationid <> ending_station_id ORDER BY departuretime;`
-	rows, err := db.Query(ctx, q, station, date.Format(time.DateOnly), direction)
+	row, err := queryRailRows[traStationBoardRow](ctx, db, q, station, date.Format(time.DateOnly), direction)
 	if err != nil {
 		return nil, err
 	}
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[traStationBoardRow])
-	if err != nil {
-		return nil, err
-	}
-	arr := make([]*models.TraStationDeparture, 0, len(row))
-	for _, temp := range row {
-		arr = append(arr, &models.TraStationDeparture{
-			TrainDate:                temp.TrainDate.Format(time.DateOnly),
-			TrainNo:                  temp.Trainno,
-			TrainTypeCode:            temp.TrainTypeCode,
-			TrainTypeName:            temp.TrainTypeName,
-			Destination_Station_Name: temp.EndingStationName,
-			DepartureTime:            temp.Departuretime.Format(time.TimeOnly),
-			Direction:                temp.Direction,
-			Mask:                     temp.Mask,
-			Note:                     temp.Note,
-		})
-	}
+	arr := traStationDepartures(row)
 	return arr, nil
 }
 
 func TRATimetablePayload(ctx context.Context, db railDB, start, end string, date time.Time) ([]byte, int, error) {
-	start, err := resolveRailStationID(ctx, db, "tra_stations", start)
-	if err != nil {
-		return nil, 0, err
-	}
-	end, err = resolveRailStationID(ctx, db, "tra_stations", end)
+	start, end, err := resolveRailJourney(ctx, db, "tra_stations", start, end)
 	if err != nil {
 		return nil, 0, err
 	}
 	const combined = `SELECT train_date,trainno, starting_station_id,starting_station_name,ending_station_id,ending_station_name, stopsequence,train_type_id,train_type_code,train_type_name,tripline,stationid,arrivaltime,stationname,mask,note,departuretime FROM tra_timetable WHERE stationid = ANY($1) AND train_date = $2 AND (stationid <> $3 OR departuretime >= $4) ORDER BY trainno, stopsequence, stationid;`
 	stations := []string{start, end}
-	rows, err := db.Query(ctx, combined, stations, date.Format(time.DateOnly), start, date.Format(time.TimeOnly))
+	row, err := queryRailRows[traTimetableRow](ctx, db, combined, stations, date.Format(time.DateOnly), start, date.Format(time.TimeOnly))
 	if err != nil {
 		return nil, 0, err
 	}
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[traTimetableRow])
-	if err != nil {
-		return nil, 0, err
-	}
+	mp, startSeq := traTimetableSeeds(row, start, date)
+	arr := matchingTRATimetables(row, mp, startSeq, end)
+	return marshalRailPayload(&models.TraTimetables{Items: arr}, len(arr))
+}
+
+func traTimetableSeeds(row []*traTimetableRow, start string, date time.Time) (map[string]*models.TraTimetable, map[string]int) {
 	mp := make(map[string]*models.TraTimetable)
 	startSeq := make(map[string]int)
-	arr := make([]*models.TraTimetable, 0, len(row))
 	for _, temp := range row {
 		if temp.Stationid == start {
 			startSeq[temp.Trainno] = temp.Stopsequence
@@ -205,51 +157,31 @@ func TRATimetablePayload(ctx context.Context, db railDB, start, end string, date
 			}
 		}
 	}
+	return mp, startSeq
+}
+
+func matchingTRATimetables(row []*traTimetableRow, mp map[string]*models.TraTimetable, startSeq map[string]int, end string) []*models.TraTimetable {
+	arr := make([]*models.TraTimetable, 0, len(row))
 	for _, temp := range row {
-		if temp.Stationid != end {
-			continue
-		}
 		seed, ok := mp[temp.Trainno]
-		if !ok {
+		if !forwardRailTrip(temp.Stationid, end, temp.Stopsequence, startSeq[temp.Trainno], ok) {
 			continue
 		}
-		if temp.Stopsequence <= startSeq[temp.Trainno] {
+		if !completeTRATimetable(seed, temp) {
 			continue
 		}
-		w, err := time.Parse(time.RFC3339, seed.Starting_Time)
-		if err != nil {
-			zap.S().Errorw("parse time error", "err", err)
-			continue
-		}
-		t := temp.Arrivaltime
-		duration := t.Sub(w)
-		if duration < 0 {
-			duration += 24 * time.Hour
-		}
-		seed.Ending_Time = t.Format(time.RFC3339)
-		seed.Travel_Time = duration.String()
 		arr = append(arr, seed)
 	}
-	b, err := proto.Marshal(&models.TraTimetables{Items: arr})
-	if err != nil {
-		return nil, 0, err
-	}
-	return b, len(arr), nil
+	return arr
 }
 
 // isNumericStationID reports whether s is already a numeric station code (TRA
 // and THSR ids are digit strings) rather than a station name needing resolution.
 func isNumericStationID(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	return s != "" && strings.IndexFunc(s, nonNumericStationRune) == -1
 }
+
+func nonNumericStationRune(r rune) bool { return r < '0' || r > '9' }
 
 func resolveRailStationID(ctx context.Context, db railDB, table, s string) (string, error) {
 	if isNumericStationID(s) {
@@ -262,6 +194,10 @@ func resolveRailStationID(ctx context.Context, db railDB, table, s string) (stri
 		return "", err
 	}
 	defer rows.Close()
+	return resolvedRailStation(rows, s)
+}
+
+func resolvedRailStation(rows pgx.Rows, fallback string) (string, error) {
 	if rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
@@ -272,5 +208,65 @@ func resolveRailStationID(ctx context.Context, db railDB, table, s string) (stri
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	return s, nil
+	return fallback, nil
+}
+
+func traFareItems(row []*traFareRow) []*models.TraFareItem {
+	arr := make([]*models.TraFareItem, 0, len(row))
+	for _, temp := range row {
+		arr = append(arr, &models.TraFareItem{
+			TicketType: temp.TicketType,
+			Price:      temp.Price,
+		})
+	}
+	return arr
+}
+
+func traStops(row []*traStopsRow) []*models.TraStoptime {
+	arr := make([]*models.TraStoptime, 0, len(row))
+	for _, temp := range row {
+		arr = append(arr, &models.TraStoptime{
+			StopSequence:  int32(temp.Stopsequence),
+			StationId:     temp.Stationid,
+			StationName:   temp.Stationname,
+			ArrivalTime:   temp.Arrivaltime,
+			DepartureTime: temp.Departuretime,
+			SuspendedFlag: (temp.Mask & (1 << 7)) != 0,
+		})
+	}
+	return arr
+}
+
+func traStationDepartures(row []*traStationBoardRow) []*models.TraStationDeparture {
+	arr := make([]*models.TraStationDeparture, 0, len(row))
+	for _, temp := range row {
+		arr = append(arr, &models.TraStationDeparture{
+			TrainDate:                temp.TrainDate.Format(time.DateOnly),
+			TrainNo:                  temp.Trainno,
+			TrainTypeCode:            temp.TrainTypeCode,
+			TrainTypeName:            temp.TrainTypeName,
+			Destination_Station_Name: temp.EndingStationName,
+			DepartureTime:            temp.Departuretime.Format(time.TimeOnly),
+			Direction:                temp.Direction,
+			Mask:                     temp.Mask,
+			Note:                     temp.Note,
+		})
+	}
+	return arr
+}
+
+func completeTRATimetable(seed *models.TraTimetable, temp *traTimetableRow) bool {
+	w, err := time.Parse(time.RFC3339, seed.Starting_Time)
+	if err != nil {
+		zap.S().Errorw("parse time error", "err", err)
+		return false
+	}
+	t := temp.Arrivaltime
+	duration := t.Sub(w)
+	if duration < 0 {
+		duration += 24 * time.Hour
+	}
+	seed.Ending_Time = t.Format(time.RFC3339)
+	seed.Travel_Time = duration.String()
+	return true
 }

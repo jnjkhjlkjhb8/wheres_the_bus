@@ -39,12 +39,11 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
 
   List<String> get _regions => TraStations.data[_hemisphere]!.keys.toList();
 
-  String get _region => _regions[_regionIndex.clamp(0, _regions.length - 1)];
+  String get _region => _regions[_regionIndex];
 
   List<String> get _stations => TraStations.data[_hemisphere]![_region]!;
 
-  String get _station =>
-      _stations[_stationIndex.clamp(0, _stations.length - 1)];
+  String get _station => _stations[_stationIndex];
 
   List<String> get _activeItems => _stationTile ? _stations : _regions;
 
@@ -178,6 +177,9 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
     );
   }
 
+  Duration _hemisphereDuration(bool motion) =>
+      motion ? AppMotion.micro : Duration.zero;
+
   Widget _hemisphereToggle(ColorScheme cs, bool motion) {
     return Container(
       decoration: BoxDecoration(
@@ -191,7 +193,7 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
           final h = e.value;
           final active = h == _hemisphere;
           return AnimatedContainer(
-            duration: motion ? AppMotion.micro : Duration.zero,
+            duration: _hemisphereDuration(motion),
             curve: AppMotion.easeOut,
             decoration: BoxDecoration(
               color: active ? cs.tertiaryContainer : null,

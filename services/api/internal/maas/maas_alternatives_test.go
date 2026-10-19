@@ -18,18 +18,19 @@ func TestConvertResolvesIdentitiesForAlternativesInTheSameBatch(t *testing.T) {
 		WithArgs(
 			// The metro alternative never reaches the query: the batch is
 			// bus-only, which is also why it can never become tappable.
-			[]int32{0, 1},
-			[]string{"A", "A"},
-			[]string{"B", "B"},
-			[]string{"307", "310"},
-			[]string{"307", "310"},
-			[]string{"", ""},
+			[]int32{0, 1, 2},
+			[]string{"A", "A", "A"},
+			[]string{"B", "B", "B"},
+			[]string{"307", "310", "312"},
+			[]string{"307", "310", "312"},
+			[]string{"", "", ""},
 		).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"section_index", "sub_route_uid", "direction", "departure_stop_uid", "arrival_stop_uid", "match_count",
 		}).
 			AddRow(int32(0), "BUS-307", int32(0), "STOP-A", "STOP-B", int64(1)).
-			AddRow(int32(1), "BUS-310", int32(0), "STOP-A", "STOP-B", int64(1)))
+			AddRow(int32(1), "BUS-310", int32(0), "STOP-A", "STOP-B", int64(1)).
+			AddRow(int32(2), "BUS-312", int32(0), "STOP-A", "STOP-B", int64(1)))
 	// No fare query: the only priced section here is the bus leg, and buses are
 	// not part of the rail fare batch.
 
@@ -42,7 +43,7 @@ func TestConvertResolvesIdentitiesForAlternativesInTheSameBatch(t *testing.T) {
 		}
 	}
 	main := leg("BUS", "307")
-	main.Alternatives = []tdxSection{leg("BUS", "310"), leg("MRT", "藍線")}
+	main.Alternatives = []tdxSection{leg("BUS", "310"), leg("BUS", "312"), leg("MRT", "藍線")}
 	api := &tdxAPIResponse{}
 	api.Data.Routes = []tdxRoute{{Sections: []tdxSection{main}}}
 
@@ -51,15 +52,18 @@ func TestConvertResolvesIdentitiesForAlternativesInTheSameBatch(t *testing.T) {
 		t.Fatalf("alternatives were not folded into the existing batch: %v", err)
 	}
 	alternatives := out.GetRoutes()[0].GetSections()[0].GetAlternatives()
-	if got := len(alternatives); got != 2 {
-		t.Fatalf("alternatives = %d, want 2", got)
+	if got := len(alternatives); got != 3 {
+		t.Fatalf("alternatives = %d, want 3", got)
 	}
 	if got := alternatives[0].GetNotificationIdentity().GetRouteKey(); got != "BUS-310" {
 		t.Errorf("bus alternative route key = %q, want BUS-310", got)
 	}
 	// The metro alternative has no identity to resolve, so it stays a plain
 	// row in the app rather than a tap that goes nowhere.
-	if alternatives[1].GetNotificationIdentity().GetSupported() {
+	if got := alternatives[1].GetNotificationIdentity().GetRouteKey(); got != "BUS-312" {
+		t.Errorf("second bus alternative route key = %q, want BUS-312", got)
+	}
+	if alternatives[2].GetNotificationIdentity().GetSupported() {
 		t.Errorf("metro alternative must not claim a route to tap through to")
 	}
 	// Four fields and no more: an alternative names a service and its two

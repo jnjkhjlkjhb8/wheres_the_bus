@@ -31,10 +31,7 @@ func batchDeleteOlderThan(ctx context.Context, db retentionDB, table, cutoffColu
 
 	var total int64
 	for {
-		if err := ctx.Err(); err != nil {
-			return total, err
-		}
-		tag, err := db.Exec(ctx, sql, _cleanupBatchSize)
+		tag, err := deleteRetentionBatch(ctx, db, sql)
 		if err != nil {
 			return total, err
 		}
@@ -43,6 +40,13 @@ func batchDeleteOlderThan(ctx context.Context, db retentionDB, table, cutoffColu
 			return total, nil
 		}
 	}
+}
+
+func deleteRetentionBatch(ctx context.Context, db retentionDB, sql string) (pgconn.CommandTag, error) {
+	if err := ctx.Err(); err != nil {
+		return pgconn.CommandTag{}, err
+	}
+	return db.Exec(ctx, sql, _cleanupBatchSize)
 }
 
 func PredictionErrors(ctx context.Context, db retentionDB) error {

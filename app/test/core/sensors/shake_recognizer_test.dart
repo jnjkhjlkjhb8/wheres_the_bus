@@ -18,7 +18,103 @@ bool _feed(
   return fired;
 }
 
+/// Feeds full (x, y, z) peaks, 80 ms apart, to exercise each axis.
+bool _feedVectors(
+  ShakeRecognizer recognizer,
+  List<(double, double, double)> peaks,
+) {
+  var fired = false;
+  var at = Duration.zero;
+  for (final (x, y, z) in peaks) {
+    if (recognizer.add(x: x, y: y, z: z, at: at)) fired = true;
+    at += const Duration(milliseconds: 80);
+  }
+  return fired;
+}
+
 void main() {
+  test('a peak exactly at the threshold counts', () {
+    expect(_feed(ShakeRecognizer(), [15, -15, 15, -15]), isTrue);
+  });
+
+  test('a projection exactly at half the threshold reverses the axis', () {
+    final recognizer = ShakeRecognizer(requiredReversals: 1);
+    expect(recognizer.add(x: 20, y: 0, z: 0, at: Duration.zero), isFalse);
+    expect(
+      recognizer.add(
+        x: -7.49,
+        y: 20,
+        z: 0,
+        at: const Duration(milliseconds: 80),
+      ),
+      isFalse,
+    );
+    expect(
+      recognizer.add(
+        x: -7.5,
+        y: 20,
+        z: 0,
+        at: const Duration(milliseconds: 160),
+      ),
+      isTrue,
+    );
+  });
+
+  test('the attempt includes a reversal exactly on the window boundary', () {
+    final recognizer = ShakeRecognizer(requiredReversals: 1);
+    expect(recognizer.add(x: 20, y: 0, z: 0, at: Duration.zero), isFalse);
+    expect(
+      recognizer.add(x: -20, y: 0, z: 0, at: const Duration(milliseconds: 700)),
+      isTrue,
+    );
+  });
+
+  test('reset clears a partial attempt while preserving the cooldown', () {
+    final recognizer = ShakeRecognizer(requiredReversals: 1)
+      ..add(x: 20, y: 0, z: 0, at: Duration.zero)
+      ..reset();
+    expect(
+      recognizer.add(x: -20, y: 0, z: 0, at: const Duration(milliseconds: 40)),
+      isFalse,
+    );
+    expect(
+      recognizer.add(x: 20, y: 0, z: 0, at: const Duration(milliseconds: 80)),
+      isTrue,
+    );
+    recognizer.reset();
+    expect(
+      _feed(recognizer, [20, -20], from: const Duration(milliseconds: 100)),
+      isFalse,
+    );
+    expect(
+      _feed(recognizer, [20, -20], from: const Duration(milliseconds: 3080)),
+      isTrue,
+    );
+  });
+
+  test('a tilted three-dimensional axis counts opposing peaks', () {
+    final recognizer = ShakeRecognizer(requiredReversals: 1);
+    expect(recognizer.add(x: -10, y: 10, z: -10, at: Duration.zero), isFalse);
+    expect(
+      recognizer.add(
+        x: -10,
+        y: 10,
+        z: -10,
+        at: const Duration(milliseconds: 40),
+      ),
+      isFalse,
+    );
+    expect(
+      recognizer.add(
+        x: 10,
+        y: -10,
+        z: 10,
+        at: const Duration(milliseconds: 80),
+      ),
+      isTrue,
+    );
+  });
+
   test('a back-and-forth shake fires', () {
     expect(_feed(ShakeRecognizer(), [20, -20, 20, -20]), isTrue);
   });
@@ -91,5 +187,60 @@ void main() {
       at += const Duration(milliseconds: 80);
     }
     expect(fired, isFalse);
+  });
+
+  test('a shake along the y axis fires', () {
+    expect(
+      _feedVectors(ShakeRecognizer(), [
+        (0.0, 20.0, 0.0),
+        (0.0, -20.0, 0.0),
+        (0.0, 20.0, 0.0),
+        (0.0, -20.0, 0.0),
+      ]),
+      isTrue,
+    );
+  });
+
+  test('a shake along the z axis fires', () {
+    expect(
+      _feedVectors(ShakeRecognizer(), [
+        (0.0, 0.0, 20.0),
+        (0.0, 0.0, -20.0),
+        (0.0, 0.0, 20.0),
+        (0.0, 0.0, -20.0),
+      ]),
+      isTrue,
+    );
+  });
+
+  test('a same-side peak between reversals keeps the attempt alive', () {
+    final recognizer = ShakeRecognizer(requiredReversals: 2);
+    expect(_feed(recognizer, [20, -20, -20, 20]), isTrue);
+  });
+
+  test('a shake starting exactly when the cooldown ends fires', () {
+    final recognizer = ShakeRecognizer();
+    expect(_feed(recognizer, [20, -20, 20, -20]), isTrue);
+    expect(
+      _feed(
+        recognizer,
+        [20, -20, 20, -20],
+        from: const Duration(milliseconds: 3240),
+      ),
+      isTrue,
+    );
+  });
+
+  test('samples inside the cooldown never fire', () {
+    final recognizer = ShakeRecognizer();
+    expect(_feed(recognizer, [20, -20, 20, -20]), isTrue);
+    expect(
+      _feed(
+        recognizer,
+        [20, -20, 20, -20],
+        from: const Duration(milliseconds: 2900),
+      ),
+      isFalse,
+    );
   });
 }

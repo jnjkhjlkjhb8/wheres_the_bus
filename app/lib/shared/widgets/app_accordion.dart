@@ -26,9 +26,8 @@ class _AppAccordionState extends State<AppAccordion> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final duration = AppMotion.reduced(context)
-        ? Duration.zero
-        : AppMotion.medium;
+    final reduced = AppMotion.reduced(context);
+    final duration = reduced ? Duration.zero : AppMotion.medium;
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppTheme.radiusCard),
       child: ColoredBox(
@@ -70,25 +69,34 @@ class _AppAccordionState extends State<AppAccordion> {
                 ),
               ),
             ),
-            AnimatedSize(
-              duration: duration,
-              curve: AppMotion.easeInOut,
-              alignment: Alignment.topCenter,
-              child: _expanded
-                  ? Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppTheme.space16,
-                        0,
-                        AppTheme.space16,
-                        AppTheme.space16,
-                      ),
-                      child: widget.child,
-                    )
-                  : const SizedBox(width: double.infinity),
-            ),
+            _content(reduced, duration),
           ],
         ),
       ),
+    );
+  }
+
+  Widget get _expandedContent => _expanded
+      ? Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space16,
+            0,
+            AppTheme.space16,
+            AppTheme.space16,
+          ),
+          child: widget.child,
+        )
+      : const SizedBox(width: double.infinity);
+
+  Widget _content(bool reduced, Duration duration) {
+    // A zero-duration AnimatedSize notifies its layout while that layout is
+    // running. Direct content also avoids unnecessary animation machinery.
+    if (reduced) return _expandedContent;
+    return AnimatedSize(
+      duration: duration,
+      curve: AppMotion.easeInOut,
+      alignment: Alignment.topCenter,
+      child: _expandedContent,
     );
   }
 }

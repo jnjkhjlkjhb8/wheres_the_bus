@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
@@ -29,13 +31,17 @@ int walkMinutes(PlanRoute route) {
 }
 
 int waitMinutesBefore(List<PlanSection> sections, int i) {
-  if (i <= 0 || i >= sections.length) return 0;
+  if (!_hasPrevious(sections, i)) return 0;
   final arrival = DateTime.tryParse(sections[i - 1].arrival.time);
   final departure = DateTime.tryParse(sections[i].departure.time);
   if (arrival == null || departure == null) return 0;
-  final seconds = departure.difference(arrival).inSeconds;
-  return seconds <= 0 ? 0 : (seconds / 60).round();
+  return _positiveMinutes(departure.difference(arrival).inSeconds);
 }
+
+bool _hasPrevious(List<PlanSection> sections, int i) =>
+    i > 0 && i < sections.length;
+
+int _positiveMinutes(int seconds) => math.max(0, (seconds / 60).round());
 
 /// Total scheduled waiting across all of a route's transfers.
 int waitMinutes(PlanRoute route) {
@@ -66,6 +72,25 @@ class RouteOptionCard extends StatelessWidget {
   /// Tapping the bookmark toggles save state; hidden when null.
   final VoidCallback? onToggleSave;
 
+  String get _origin =>
+      route.sections.isEmpty ? '' : route.sections.first.departure.name;
+
+  String get _destination =>
+      route.sections.isEmpty ? '' : route.sections.last.arrival.name;
+
+  bool _showEndpoints(String origin, String destination) =>
+      highlighted && (origin.isNotEmpty || destination.isNotEmpty);
+
+  String _transferLabel(AppI18n i18n) => route.transfers == 0
+      ? i18n.goDirect
+      : i18n.transfersCount(route.transfers);
+
+  BoxDecoration _decoration(ColorScheme cs) => BoxDecoration(
+    color: highlighted ? cs.primaryContainer : cs.surface,
+    borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+    border: highlighted ? null : Border.all(color: cs.outlineVariant),
+  );
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -73,8 +98,8 @@ class RouteOptionCard extends StatelessWidget {
     final departure = formatClock(route.startTime);
     final arrival = formatClock(route.endTime);
     final sections = route.sections;
-    final origin = sections.isNotEmpty ? sections.first.departure.name : '';
-    final dest = sections.isNotEmpty ? sections.last.arrival.name : '';
+    final origin = _origin;
+    final dest = _destination;
 
     final header = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -128,7 +153,7 @@ class RouteOptionCard extends StatelessWidget {
         header,
         const SizedBox(height: AppTheme.space10),
         LegStrip(sections: sections),
-        if (highlighted && (origin.isNotEmpty || dest.isNotEmpty)) ...[
+        if (_showEndpoints(origin, dest)) ...[
           const SizedBox(height: AppTheme.space8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -168,9 +193,7 @@ class RouteOptionCard extends StatelessWidget {
             ),
             const SizedBox(width: AppTheme.space4),
             Text(
-              route.transfers == 0
-                  ? AppI18n.of(context).goDirect
-                  : AppI18n.of(context).transfersCount(route.transfers),
+              _transferLabel(AppI18n.of(context)),
               style: AppTextStyles.bodySmall.copyWith(
                 color: cs.onSurfaceVariant,
               ),
@@ -191,11 +214,7 @@ class RouteOptionCard extends StatelessWidget {
       ).routeSummarySemantics(minutes, arrival, dest),
       child: Container(
         padding: const EdgeInsets.all(AppTheme.space14),
-        decoration: BoxDecoration(
-          color: highlighted ? cs.primaryContainer : cs.surface,
-          borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-          border: highlighted ? null : Border.all(color: cs.outlineVariant),
-        ),
+        decoration: _decoration(cs),
         child: content,
       ),
     );
@@ -208,24 +227,29 @@ class _SaveButton extends StatelessWidget {
   final bool saved;
   final VoidCallback onTap;
 
+  String _label(AppI18n i18n) => saved ? i18n.goUnsaveRoute : i18n.goSaveRoute;
+
+  IconData get _icon =>
+      saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded;
+
+  Color _color(ColorScheme cs) => saved ? cs.onSurface : cs.onSurfaceVariant;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Pressable(
       onTap: onTap,
-      semanticLabel: saved
-          ? AppI18n.of(context).goUnsaveRoute
-          : AppI18n.of(context).goSaveRoute,
+      semanticLabel: _label(AppI18n.of(context)),
       child: Padding(
         padding: const EdgeInsets.all(AppTheme.space2),
         child: AnimatedSwitcher(
           duration: AppMotion.short,
           child: Icon(
-            saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+            _icon,
             key: ValueKey(saved),
             size: 20,
             // Saved: solid Ink black. Unsaved: hollow, muted outline.
-            color: saved ? cs.onSurface : cs.onSurfaceVariant,
+            color: _color(cs),
           ),
         ),
       ),
@@ -237,6 +261,23 @@ class LegStrip extends StatelessWidget {
   const LegStrip({required this.sections, super.key});
 
   final List<PlanSection> sections;
+
+  Widget _sectionChip(PlanSection section, ColorScheme cs, AppI18n i18n) {
+    final minutes = sectionMinutes(section);
+    if (isWalk(section)) {
+      return _GapChip(
+        icon: Icons.directions_walk_rounded,
+        minutes: minutes,
+        semanticLabel: i18n.goWalkLegSemantics(minutes),
+      );
+    }
+    return _LegPill(
+      icon: transitIcon(section.transport.mode),
+      label: sectionLabel(i18n, section),
+      minutes: minutes,
+      lineColor: transitColor(section.transport, cs),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -260,25 +301,7 @@ class LegStrip extends StatelessWidget {
         );
         chevron();
       }
-      if (isWalk(s)) {
-        final minutes = sectionMinutes(s);
-        children.add(
-          _GapChip(
-            icon: Icons.directions_walk_rounded,
-            minutes: minutes,
-            semanticLabel: i18n.goWalkLegSemantics(minutes),
-          ),
-        );
-      } else {
-        children.add(
-          _LegPill(
-            icon: transitIcon(s.transport.mode),
-            label: sectionLabel(i18n, s),
-            minutes: sectionMinutes(s),
-            lineColor: transitColor(s.transport, cs),
-          ),
-        );
-      }
+      children.add(_sectionChip(s, cs, i18n));
       if (i < sections.length - 1) chevron();
     }
     return Wrap(
@@ -403,11 +426,19 @@ class _DepartArriveWindow extends StatelessWidget {
   final String departure;
   final String arrival;
 
+  bool get _isEmpty => departure.isEmpty && arrival.isEmpty;
+  bool get _hasSingleTime => departure.isEmpty || arrival.isEmpty;
+  String get _singleTime => departure.isEmpty ? arrival : departure;
+
+  String _singleLabel(AppI18n i18n) => departure.isEmpty
+      ? '${i18n.goArriveLabel}$arrival'
+      : '$departure${i18n.goDepartSuffix}';
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final i18n = AppI18n.of(context);
-    if (departure.isEmpty && arrival.isEmpty) return const SizedBox.shrink();
+    if (_isEmpty) return const SizedBox.shrink();
     final clock = AppTextStyles.timeValue(
       size: AppTextStyles.bodySmall.fontSize,
       color: cs.onSurfaceVariant,
@@ -415,13 +446,11 @@ class _DepartArriveWindow extends StatelessWidget {
     // An arrow rather than the words 出發 / 抵達. It is four characters
     // shorter, which is the difference between fitting and ellipsising on a
     // 320pt screen, and the direction is not something a rider has to read.
-    if (departure.isEmpty || arrival.isEmpty) {
+    if (_hasSingleTime) {
       return Text(
-        departure.isEmpty ? arrival : departure,
+        _singleTime,
         style: clock,
-        semanticsLabel: departure.isEmpty
-            ? '${i18n.goArriveLabel}$arrival'
-            : '$departure${i18n.goDepartSuffix}',
+        semanticsLabel: _singleLabel(i18n),
       );
     }
     return Row(

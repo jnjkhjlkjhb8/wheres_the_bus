@@ -88,16 +88,7 @@ type rawTraTimetable struct {
 			ZhTw string `json:"Zh_tw"`
 		} `json:"Note"`
 	} `json:"DailyTrainInfo"`
-	StopTimes []struct {
-		StopSequence uint8  `json:"StopSequence"`
-		StationID    string `json:"StationID"`
-		StationName  struct {
-			ZhTw string `json:"Zh_tw"`
-		} `json:"StationName"`
-		ArrivalTime   string `json:"ArrivalTime"`
-		DepartureTime string `json:"DepartureTime"`
-		SuspendedFlag *uint8 `json:"SuspendedFlag"`
-	} `json:"StopTimes"`
+	StopTimes []railStopTime `json:"StopTimes"`
 }
 
 // rawThsrTimetable decodes a TDX THSR/DailyTimetable element: one high-speed
@@ -121,15 +112,18 @@ type rawThsrTimetable struct {
 		} `json:"Note"`
 		Overnight *bool `json:"Overnight"`
 	} `json:"DailyTrainInfo"`
-	StopTimes []struct {
-		StopSequence uint8  `json:"StopSequence"`
-		StationID    string `json:"StationID"`
-		StationName  struct {
-			ZhTw string `json:"Zh_tw"`
-		} `json:"StationName"`
-		ArrivalTime   string `json:"ArrivalTime"`
-		DepartureTime string `json:"DepartureTime"`
-	} `json:"StopTimes"`
+	StopTimes []railStopTime `json:"StopTimes"`
+}
+
+type railStopTime struct {
+	StopSequence uint8  `json:"StopSequence"`
+	StationID    string `json:"StationID"`
+	StationName  struct {
+		ZhTw string `json:"Zh_tw"`
+	} `json:"StationName"`
+	ArrivalTime   string `json:"ArrivalTime"`
+	DepartureTime string `json:"DepartureTime"`
+	SuspendedFlag *uint8 `json:"SuspendedFlag"`
 }
 
 // railTrainFlags holds a TRA train's amenity/service boolean flags (1 = set)
@@ -175,33 +169,153 @@ func requiredBinaryFlag(field string, value *uint8) (uint8, error) {
 	return *value, nil
 }
 
-func validateTraTimetable(timetable rawTraTimetable, partitionDate string) error {
-	trainDate := timetable.TrainDate
-	if trainDate == "" {
-		trainDate = partitionDate
-	}
+func validateRailTimetableDate(trainDate, partitionDate string) error {
 	if _, err := time.Parse(time.DateOnly, trainDate); err != nil {
 		return _oops.With("train_date", trainDate).Wrapf(err, "TrainDate")
 	}
 	if trainDate != partitionDate {
 		return _oops.With("train_date", trainDate).With("partition_date", partitionDate).Errorf("TrainDate does not match partition date")
 	}
+	return nil
+}
+
+func traTrainDate(trainDate, partitionDate string) string {
+	if trainDate == "" {
+		return partitionDate
+	}
+	return trainDate
+}
+
+func validateTraTimetableHeader(timetable rawTraTimetable, partitionDate string) error {
+	trainDate := traTrainDate(timetable.TrainDate, partitionDate)
+	if err := validateRailTimetableDate(trainDate, partitionDate); err != nil {
+		return err
+	}
 	info := timetable.DailyTrainInfo
-	if strings.TrimSpace(info.TrainNo) == "" {
-		return errors.New("TrainNo is required")
+	if err := validateRailTrainInfo(info.TrainNo, info.StartingStationID, info.EndingStationID, info.Direction); err != nil {
+		return err
 	}
-	if strings.TrimSpace(info.StartingStationID) == "" {
-		return errors.New("StartingStationID is required")
+	return nil
+}
+
+func validateTraTimetable(timetable rawTraTimetable, partitionDate string) error {
+	if err := validateTraTimetableHeader(timetable, partitionDate); err != nil {
+		return err
 	}
-	if strings.TrimSpace(info.EndingStationID) == "" {
-		return errors.New("EndingStationID is required")
+	if err := validateTraTrainFlags(timetable); err != nil {
+		return err
 	}
-	if info.Direction == nil {
+	return validateTraStopTimes(timetable)
+
+}
+
+func requireRailStops(count int) error {
+	if count == 0 {
+		return errors.New("StopTimes must not be empty")
+	}
+	return nil
+}
+
+func validateTraStopTimes(timetable rawTraTimetable) error {
+	if err := requireRailStops(len(timetable.StopTimes)); err != nil {
+		return err
+	}
+
+	return validateTraStops(timetable.StopTimes)
+}
+
+func validateTraStops(stops []railStopTime) error {
+	for index, stop := range stops {
+		if err := validateRailStop(index, stop.StopSequence, stop.StationID, stop.ArrivalTime, stop.DepartureTime); err != nil {
+			return err
+		}
+		if _, err := requiredBinaryFlag("SuspendedFlag", stop.SuspendedFlag); err != nil {
+			return _oops.With("index", index).Wrapf(err, "StopTimes element")
+		}
+	}
+	return nil
+}
+
+func validateThsrTimetable(timetable rawThsrTimetable, partitionDate string) error {
+	if err := validateRailTimetableDate(timetable.TrainDate, partitionDate); err != nil {
+		return err
+	}
+	info := timetable.DailyTrainInfo
+	if err := validateRailTrainInfo(info.TrainNo, info.StartingStationID, info.EndingStationID, info.Direction); err != nil {
+		return err
+	}
+	if info.Overnight == nil {
+		return errors.New("missing Overnight")
+	}
+	return validateThsrStopTimes(timetable)
+}
+
+func validateThsrStopTimes(timetable rawThsrTimetable) error {
+	if err := requireRailStops(len(timetable.StopTimes)); err != nil {
+		return err
+	}
+
+	for index, stop := range timetable.StopTimes {
+		if err := validateRailStop(index, stop.StopSequence, stop.StationID, stop.ArrivalTime, stop.DepartureTime); err != nil {
+			return err
+		}
+
+	}
+	return nil
+}
+
+func requireRailFields(fields ...struct{ name, value string }) error {
+	for _, field := range fields {
+		if strings.TrimSpace(field.value) == "" {
+			return errors.New(field.name + " is required")
+		}
+	}
+	return nil
+}
+
+func railField(name, value string) struct{ name, value string } {
+	return struct{ name, value string }{name, value}
+}
+
+func validateRailTrainInfo(trainNo, startStation, endStation string, direction *uint8) error {
+	if err := requireRailFields(railField("TrainNo", trainNo), railField("StartingStationID", startStation), railField("EndingStationID", endStation)); err != nil {
+		return err
+	}
+	return validateRailDirection(direction)
+}
+
+func validateRailDirection(direction *uint8) error {
+	if direction == nil {
 		return errors.New("missing Direction")
 	}
-	if *info.Direction > 1 {
-		return _oops.With("direction", *info.Direction).Errorf("invalid Direction, want 0 or 1")
+	if *direction > 1 {
+		return _oops.With("direction", *direction).Errorf("invalid Direction, want 0 or 1")
 	}
+	return nil
+}
+
+func validateRailStop(index int, sequence uint8, station, arrival, departure string) error {
+	if sequence == 0 {
+		return _oops.With("index", index).Errorf("StopTimes element StopSequence must be positive")
+	}
+	if strings.TrimSpace(station) == "" {
+		return _oops.With("index", index).Errorf("StopTimes element StationID is required")
+	}
+	return validateRailStopClocks(index, arrival, departure)
+}
+
+func validateRailStopClocks(index int, arrival, departure string) error {
+	if !pipeline.ValidClock(arrival) {
+		return _oops.With("index", index).With("arrival_time", arrival).Errorf("StopTimes element ArrivalTime is invalid")
+	}
+	if !pipeline.ValidClock(departure) {
+		return _oops.With("index", index).With("departure_time", departure).Errorf("StopTimes element DepartureTime is invalid")
+	}
+	return nil
+}
+
+func validateTraTrainFlags(timetable rawTraTimetable) error {
+	info := timetable.DailyTrainInfo
 	for _, flag := range []struct {
 		name  string
 		value *uint8
@@ -219,72 +333,6 @@ func validateTraTimetable(timetable rawTraTimetable, partitionDate string) error
 			return err
 		}
 	}
-	if len(timetable.StopTimes) == 0 {
-		return errors.New("StopTimes must not be empty")
-	}
-	for index, stop := range timetable.StopTimes {
-		if stop.StopSequence == 0 {
-			return _oops.With("index", index).Errorf("StopTimes element StopSequence must be positive")
-		}
-		if strings.TrimSpace(stop.StationID) == "" {
-			return _oops.With("index", index).Errorf("StopTimes element StationID is required")
-		}
-		if !pipeline.ValidClock(stop.ArrivalTime) {
-			return _oops.With("index", index).With("arrival_time", stop.ArrivalTime).Errorf("StopTimes element ArrivalTime is invalid")
-		}
-		if !pipeline.ValidClock(stop.DepartureTime) {
-			return _oops.With("index", index).With("departure_time", stop.DepartureTime).Errorf("StopTimes element DepartureTime is invalid")
-		}
-		if _, err := requiredBinaryFlag("SuspendedFlag", stop.SuspendedFlag); err != nil {
-			return _oops.With("index", index).Wrapf(err, "StopTimes element")
-		}
-	}
-	return nil
-}
-
-func validateThsrTimetable(timetable rawThsrTimetable, partitionDate string) error {
-	if _, err := time.Parse(time.DateOnly, timetable.TrainDate); err != nil {
-		return _oops.With("train_date", timetable.TrainDate).Wrapf(err, "TrainDate")
-	}
-	if timetable.TrainDate != partitionDate {
-		return _oops.With("train_date", timetable.TrainDate).With("partition_date", partitionDate).Errorf("TrainDate does not match partition date")
-	}
-	info := timetable.DailyTrainInfo
-	if strings.TrimSpace(info.TrainNo) == "" {
-		return errors.New("TrainNo is required")
-	}
-	if strings.TrimSpace(info.StartingStationID) == "" {
-		return errors.New("StartingStationID is required")
-	}
-	if strings.TrimSpace(info.EndingStationID) == "" {
-		return errors.New("EndingStationID is required")
-	}
-	if info.Direction == nil {
-		return errors.New("missing Direction")
-	}
-	if *info.Direction > 1 {
-		return _oops.With("direction", *info.Direction).Errorf("invalid Direction, want 0 or 1")
-	}
-	if info.Overnight == nil {
-		return errors.New("missing Overnight")
-	}
-	if len(timetable.StopTimes) == 0 {
-		return errors.New("StopTimes must not be empty")
-	}
-	for index, stop := range timetable.StopTimes {
-		if stop.StopSequence == 0 {
-			return _oops.With("index", index).Errorf("StopTimes element StopSequence must be positive")
-		}
-		if strings.TrimSpace(stop.StationID) == "" {
-			return _oops.With("index", index).Errorf("StopTimes element StationID is required")
-		}
-		if !pipeline.ValidClock(stop.ArrivalTime) {
-			return _oops.With("index", index).With("arrival_time", stop.ArrivalTime).Errorf("StopTimes element ArrivalTime is invalid")
-		}
-		if !pipeline.ValidClock(stop.DepartureTime) {
-			return _oops.With("index", index).With("departure_time", stop.DepartureTime).Errorf("StopTimes element DepartureTime is invalid")
-		}
-	}
 	return nil
 }
 
@@ -298,55 +346,9 @@ func LoadTraTimetable(ctx context.Context, dec *json.Decoder, sink pipeline.Copy
 	if err != nil {
 		return err
 	}
-	row := [][]any{}
-	seen := make(map[string][]any)
-	for _, temp := range timetables {
-		if temp.TrainDate == "" {
-			temp.TrainDate = date
-		}
-		for _, stop := range temp.StopTimes {
-			at, err := time.Parse("15:04", stop.ArrivalTime)
-			if err != nil {
-				return _oops.With("date", date).With("train_no", temp.DailyTrainInfo.TrainNo).With("station_id", stop.StationID).With("arrival_time", stop.ArrivalTime).Wrapf(err, "TRA timetable train station ArrivalTime")
-			}
-			dt, err := time.Parse("15:04", stop.DepartureTime)
-			if err != nil {
-				return _oops.With("date", date).With("train_no", temp.DailyTrainInfo.TrainNo).With("station_id", stop.StationID).With("departure_time", stop.DepartureTime).Wrapf(err, "TRA timetable train station DepartureTime")
-			}
-			candidate := []any{
-				temp.TrainDate,
-				temp.DailyTrainInfo.TrainNo,
-				*temp.DailyTrainInfo.Direction,
-				temp.DailyTrainInfo.StartingStationID,
-				temp.DailyTrainInfo.StartingStationName.ZhTw,
-				temp.DailyTrainInfo.EndingStationID,
-				temp.DailyTrainInfo.EndingStationName.ZhTw,
-				temp.DailyTrainInfo.TrainTypeID,
-				temp.DailyTrainInfo.TrainTypeCode,
-				temp.DailyTrainInfo.TrainTypeName.ZhTw,
-				temp.DailyTrainInfo.TripLine,
-				stop.StopSequence,
-				stop.StationID,
-				stop.StationName.ZhTw,
-				at,
-				dt,
-				railMask(railTrainFlags{
-					wheel:     *temp.DailyTrainInfo.WheelchairFlag,
-					pack:      *temp.DailyTrainInfo.PackageServiceFlag,
-					dining:    *temp.DailyTrainInfo.DiningFlag,
-					bike:      *temp.DailyTrainInfo.BikeFlag,
-					breast:    *temp.DailyTrainInfo.BreastFeedingFlag,
-					daily:     *temp.DailyTrainInfo.DailyFlag,
-					service:   *temp.DailyTrainInfo.ServiceAddedFlag,
-					suspended: *temp.DailyTrainInfo.SuspendedFlag | *stop.SuspendedFlag,
-				}),
-				temp.DailyTrainInfo.Note.ZhTw,
-			}
-			key := temp.TrainDate + "\x00" + temp.DailyTrainInfo.TrainNo + "\x00" + stop.StationID
-			if err := pipeline.AppendUniqueLoadRow(&row, seen, key, "timetable", candidate); err != nil {
-				return _oops.With("date", date).Wrapf(err, "TRA timetable")
-			}
-		}
+	row, err := traTimetableRows(timetables, date)
+	if err != nil {
+		return err
 	}
 	return sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 		Key:     "tra_timetable",
@@ -408,39 +410,9 @@ func LoadThsrTimetable(ctx context.Context, dec *json.Decoder, sink pipeline.Cop
 	if err != nil {
 		return err
 	}
-	row := [][]any{}
-	seen := make(map[string][]any)
-	for _, temp := range timetables {
-		for _, stop := range temp.StopTimes {
-			at, err := time.Parse("15:04", stop.ArrivalTime)
-			if err != nil {
-				return _oops.With("date", date).With("train_no", temp.DailyTrainInfo.TrainNo).With("station_id", stop.StationID).With("arrival_time", stop.ArrivalTime).Wrapf(err, "THSR timetable train station ArrivalTime")
-			}
-			dt, err := time.Parse("15:04", stop.DepartureTime)
-			if err != nil {
-				return _oops.With("date", date).With("train_no", temp.DailyTrainInfo.TrainNo).With("station_id", stop.StationID).With("departure_time", stop.DepartureTime).Wrapf(err, "THSR timetable train station DepartureTime")
-			}
-			candidate := []any{
-				temp.TrainDate,
-				temp.DailyTrainInfo.TrainNo,
-				*temp.DailyTrainInfo.Direction,
-				temp.DailyTrainInfo.StartingStationID,
-				temp.DailyTrainInfo.StartingStationName.ZhTw,
-				temp.DailyTrainInfo.EndingStationID,
-				temp.DailyTrainInfo.EndingStationName.ZhTw,
-				stop.StopSequence,
-				stop.StationID,
-				stop.StationName.ZhTw,
-				at,
-				dt,
-				temp.DailyTrainInfo.Note.ZhTw,
-				*temp.DailyTrainInfo.Overnight,
-			}
-			key := temp.TrainDate + "\x00" + temp.DailyTrainInfo.TrainNo + "\x00" + stop.StationID
-			if err := pipeline.AppendUniqueLoadRow(&row, seen, key, "timetable", candidate); err != nil {
-				return _oops.With("date", date).Wrapf(err, "THSR timetable")
-			}
-		}
+	row, err := thsrTimetableRows(timetables)
+	if err != nil {
+		return err
 	}
 	return sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 		Key:     "thsr_timetable",
@@ -486,13 +458,7 @@ func LoadThsrTimetable(ctx context.Context, dec *json.Decoder, sink pipeline.Cop
 	}, row)
 }
 
-func LoadTraStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
-	stations, err := pipeline.DecodeLoadArray[railStation](dec, "TRA stations", func(_ int, station railStation) error {
-		return validateRailStation(station, false /* requireStationCode */)
-	})
-	if err != nil {
-		return err
-	}
+func traStationRows(stations []railStation) ([][]any, error) {
 	row := [][]any{}
 	seen := make(map[string][]any, len(stations))
 	for _, temp := range stations {
@@ -504,9 +470,27 @@ func LoadTraStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUp
 			g,
 		}
 		if err := pipeline.AppendUniqueLoadRow(&row, seen, temp.StationID, "station", candidate); err != nil {
-			return _oops.Wrapf(err, "TRA stations")
+			return nil, _oops.Wrapf(err, "TRA stations")
 		}
 	}
+	return row, nil
+}
+
+func LoadTraStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
+	stations, err := pipeline.DecodeLoadArray[railStation](dec, "TRA stations", func(_ int, station railStation) error {
+		return validateRailStation(station, false /* requireStationCode */)
+	})
+	if err != nil {
+		return err
+	}
+	row, err := traStationRows(stations)
+	if err != nil {
+		return err
+	}
+	return writeTraStations(ctx, sink, row)
+}
+
+func writeTraStations(ctx context.Context, sink pipeline.CopyUpsertSink, row [][]any) error {
 	if len(row) > 0 {
 		if err := sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 			Key: "tra_station",
@@ -546,16 +530,7 @@ func LoadTraStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUp
 // LoadThsrStation upserts THSR stations into thsr_stations via one temp-table
 // COPY transaction. It consumes an already-opened decoder and rejects an
 // invalid or ambiguous payload before opening the transaction.
-func LoadThsrStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
-	stations, err := pipeline.DecodeLoadArray[railStation](dec, "THSR stations", func(_ int, station railStation) error {
-		return validateRailStation(station, true /* requireStationCode */)
-	})
-	if err != nil {
-		return err
-	}
-	if len(stations) == 0 {
-		return nil
-	}
+func thsrStationRows(stations []railStation) ([][]any, error) {
 	rows := make([][]any, 0, len(stations))
 	seen := make(map[string][]any, len(stations))
 	for _, station := range stations {
@@ -568,8 +543,25 @@ func LoadThsrStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyU
 			station.StationCode,
 		}
 		if err := pipeline.AppendUniqueLoadRow(&rows, seen, station.StationID, "station", candidate); err != nil {
-			return _oops.Wrapf(err, "THSR stations")
+			return nil, _oops.Wrapf(err, "THSR stations")
 		}
+	}
+	return rows, nil
+}
+
+func LoadThsrStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
+	stations, err := pipeline.DecodeLoadArray[railStation](dec, "THSR stations", func(_ int, station railStation) error {
+		return validateRailStation(station, true /* requireStationCode */)
+	})
+	if err != nil {
+		return err
+	}
+	if len(stations) == 0 {
+		return nil
+	}
+	rows, err := thsrStationRows(stations)
+	if err != nil {
+		return err
 	}
 	return sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 		Key: "thsr_station",
@@ -590,17 +582,25 @@ func LoadThsrStation(ctx context.Context, dec *json.Decoder, sink pipeline.CopyU
 }
 
 func validateRailStation(station railStation, requireStationCode bool) error {
-	if strings.TrimSpace(station.StationID) == "" {
-		return errors.New("StationID is required")
-	}
-	if strings.TrimSpace(station.LocationCityCode) == "" {
-		return errors.New("LocationCityCode is required")
+	if err := requireRailFields(railField("StationID", station.StationID), railField("LocationCityCode", station.LocationCityCode)); err != nil {
+		return err
 	}
 	if _, ok := busmodel.CityToCode[station.LocationCityCode]; !ok {
 		return _oops.With("location_city_code", station.LocationCityCode).Errorf("LocationCityCode is unknown")
 	}
-	if requireStationCode && strings.TrimSpace(station.StationCode) == "" {
+	return validateRailStationPosition(station, requireStationCode)
+}
+
+func validateRailStationCode(code string, required bool) error {
+	if required && strings.TrimSpace(code) == "" {
 		return errors.New("StationCode is required")
+	}
+	return nil
+}
+
+func validateRailStationPosition(station railStation, requireStationCode bool) error {
+	if err := validateRailStationCode(station.StationCode, requireStationCode); err != nil {
+		return err
 	}
 	if !pipeline.ValidPosition(station.StationPosition.PositionLon, station.StationPosition.PositionLat) {
 		return _oops.With("position_lon", station.StationPosition.PositionLon).With("position_lat", station.StationPosition.PositionLat).Errorf("position is invalid: lon= lat=")
@@ -608,33 +608,60 @@ func validateRailStation(station railStation, requireStationCode bool) error {
 	return nil
 }
 
-func LoadTraFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
-	fares, err := pipeline.DecodeLoadArray[traFare](dec, "TRA fares", func(_ int, fare traFare) error {
-		if strings.TrimSpace(fare.OriginStationID) == "" {
-			return errors.New("OriginStationID is required")
-		}
-		if strings.TrimSpace(fare.DestinationStationID) == "" {
-			return errors.New("DestinationStationID is required")
-		}
-		if len(fare.Fares) == 0 {
-			return errors.New("missing Fares")
-		}
-		for index, item := range fare.Fares {
-			if strings.TrimSpace(item.TicketType) == "" {
-				return _oops.With("index", index).Errorf("fares element missing TicketType")
-			}
-			if item.Price < 0 {
-				return _oops.With("index", index).Errorf("fares element Price must be non-negative")
-			}
-		}
-		return nil
-	})
+func parseRailStopClocks(mode, date, train string, stop railStopTime) (time.Time, time.Time, error) {
+	at, err := time.Parse("15:04", stop.ArrivalTime)
 	if err != nil {
-		return err
+		return time.Time{}, time.Time{}, _oops.With("date", date).With("train_no", train).With("station_id", stop.StationID).With("arrival_time", stop.ArrivalTime).Wrapf(err, "%s timetable train station ArrivalTime", mode)
 	}
-	if len(fares) == 0 {
-		return nil
+	dt, err := time.Parse("15:04", stop.DepartureTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, _oops.With("date", date).With("train_no", train).With("station_id", stop.StationID).With("departure_time", stop.DepartureTime).Wrapf(err, "%s timetable train station DepartureTime", mode)
 	}
+	return at, dt, nil
+}
+
+func appendThsrTrainRows(row *[][]any, seen map[string][]any, temp rawThsrTimetable) error {
+	for _, stop := range temp.StopTimes {
+		at, dt, err := parseRailStopClocks("THSR", temp.TrainDate, temp.DailyTrainInfo.TrainNo, stop)
+		if err != nil {
+			return err
+		}
+		candidate := []any{
+			temp.TrainDate,
+			temp.DailyTrainInfo.TrainNo,
+			*temp.DailyTrainInfo.Direction,
+			temp.DailyTrainInfo.StartingStationID,
+			temp.DailyTrainInfo.StartingStationName.ZhTw,
+			temp.DailyTrainInfo.EndingStationID,
+			temp.DailyTrainInfo.EndingStationName.ZhTw,
+			stop.StopSequence,
+			stop.StationID,
+			stop.StationName.ZhTw,
+			at,
+			dt,
+			temp.DailyTrainInfo.Note.ZhTw,
+			*temp.DailyTrainInfo.Overnight,
+		}
+		key := temp.TrainDate + "\x00" + temp.DailyTrainInfo.TrainNo + "\x00" + stop.StationID
+		if err := pipeline.AppendUniqueLoadRow(row, seen, key, "timetable", candidate); err != nil {
+			return _oops.With("date", temp.TrainDate).Wrapf(err, "THSR timetable")
+		}
+	}
+	return nil
+}
+
+func thsrTimetableRows(timetables []rawThsrTimetable) ([][]any, error) {
+	row := [][]any{}
+	seen := make(map[string][]any)
+	for _, temp := range timetables {
+		if err := appendThsrTrainRows(&row, seen, temp); err != nil {
+			return nil, err
+		}
+	}
+	return row, nil
+}
+
+func traFareRows(fares []traFare) ([][]any, error) {
 	row := [][]any{}
 	seen := make(map[string][]any)
 	for _, temp := range fares {
@@ -642,9 +669,24 @@ func LoadTraFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpser
 			candidate := []any{temp.OriginStationID, temp.DestinationStationID, t1.TicketType, t1.Price}
 			key := temp.OriginStationID + "\x00" + temp.DestinationStationID + "\x00" + t1.TicketType
 			if err := pipeline.AppendUniqueLoadRow(&row, seen, key, "fare", candidate); err != nil {
-				return _oops.Wrapf(err, "TRA fares")
+				return nil, _oops.Wrapf(err, "TRA fares")
 			}
 		}
+	}
+	return row, nil
+}
+
+func LoadTraFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
+	fares, err := pipeline.DecodeLoadArray[traFare](dec, "TRA fares", validateTraFare)
+	if err != nil {
+		return err
+	}
+	if len(fares) == 0 {
+		return nil
+	}
+	row, err := traFareRows(fares)
+	if err != nil {
+		return err
 	}
 	return sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 		Key: "tra_fare",
@@ -669,36 +711,7 @@ func LoadTraFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpser
 	}, row)
 }
 
-func LoadThsrFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
-	fares, err := pipeline.DecodeLoadArray[thsrFare](dec, "THSR fares", func(_ int, fare thsrFare) error {
-		if strings.TrimSpace(fare.OriginStationID) == "" {
-			return errors.New("OriginStationID is required")
-		}
-		if strings.TrimSpace(fare.DestinationStationID) == "" {
-			return errors.New("DestinationStationID is required")
-		}
-		if len(fare.Fares) == 0 {
-			return errors.New("missing Fares")
-		}
-		for index, item := range fare.Fares {
-			if item.TicketType == 0 {
-				return _oops.With("index", index).Errorf("fares element missing TicketType")
-			}
-			if item.FareClass == 0 {
-				return _oops.With("index", index).Errorf("fares element missing FareClass")
-			}
-			if item.CabinClass == 0 {
-				return _oops.With("index", index).Errorf("fares element missing CabinClass")
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if len(fares) == 0 {
-		return nil
-	}
+func thsrFareRows(fares []thsrFare) ([][]any, error) {
 	row := [][]any{}
 	seen := make(map[string][]any)
 	for _, temp := range fares {
@@ -706,9 +719,24 @@ func LoadThsrFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 			candidate := []any{temp.OriginStationID, temp.DestinationStationID, t1.TicketType, t1.FareClass, t1.CabinClass, t1.Price}
 			key := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d", temp.OriginStationID, temp.DestinationStationID, t1.TicketType, t1.FareClass, t1.CabinClass)
 			if err := pipeline.AppendUniqueLoadRow(&row, seen, key, "fare", candidate); err != nil {
-				return _oops.Wrapf(err, "THSR fares")
+				return nil, _oops.Wrapf(err, "THSR fares")
 			}
 		}
+	}
+	return row, nil
+}
+
+func LoadThsrFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, _ string) error {
+	fares, err := pipeline.DecodeLoadArray[thsrFare](dec, "THSR fares", validateThsrFare)
+	if err != nil {
+		return err
+	}
+	if len(fares) == 0 {
+		return nil
+	}
+	row, err := thsrFareRows(fares)
+	if err != nil {
+		return err
 	}
 	return sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 		Key: "thsr_fare",
@@ -742,3 +770,125 @@ func LoadThsrFare(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 // 3-minute TTL so stale data expires.
 
 // On a 304, pipeline.BoundFetch has already re-armed the delay keys' TTL.
+
+func validateTraFare(_ int, fare traFare) error {
+	if err := validateRailFareHeader(fare.OriginStationID, fare.DestinationStationID, len(fare.Fares)); err != nil {
+		return err
+	}
+	return validateTraFareItems(fare)
+}
+
+func validateTraFareItems(fare traFare) error {
+	for index, item := range fare.Fares {
+		if err := validateTraFareItem(index, item.TicketType, item.Price); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTraFareItem(index int, ticketType string, price int32) error {
+	if strings.TrimSpace(ticketType) == "" {
+		return _oops.With("index", index).Errorf("fares element missing TicketType")
+	}
+	if price < 0 {
+		return _oops.With("index", index).Errorf("fares element Price must be non-negative")
+	}
+	return nil
+}
+
+func validateThsrFare(_ int, fare thsrFare) error {
+	if err := validateRailFareHeader(fare.OriginStationID, fare.DestinationStationID, len(fare.Fares)); err != nil {
+		return err
+	}
+	return validateThsrFareItems(fare)
+}
+
+func validateThsrFareItems(fare thsrFare) error {
+	for index, item := range fare.Fares {
+		if err := validateThsrFareItem(index, item.TicketType, item.FareClass, item.CabinClass); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRailFareHeader(origin, destination string, count int) error {
+	if err := requireRailFields(railField("OriginStationID", origin), railField("DestinationStationID", destination)); err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("missing Fares")
+	}
+	return nil
+}
+
+func validateThsrFareItem(index int, ticketType, fareClass, cabinClass uint8) error {
+	if ticketType == 0 {
+		return _oops.With("index", index).Errorf("fares element missing TicketType")
+	}
+	if fareClass == 0 {
+		return _oops.With("index", index).Errorf("fares element missing FareClass")
+	}
+	if cabinClass == 0 {
+		return _oops.With("index", index).Errorf("fares element missing CabinClass")
+	}
+	return nil
+}
+
+func appendTraTrainRows(row *[][]any, seen map[string][]any, temp rawTraTimetable, date string) error {
+	for _, stop := range temp.StopTimes {
+		at, dt, err := parseRailStopClocks("TRA", date, temp.DailyTrainInfo.TrainNo, stop)
+		if err != nil {
+			return err
+		}
+		candidate := []any{
+			temp.TrainDate,
+			temp.DailyTrainInfo.TrainNo,
+			*temp.DailyTrainInfo.Direction,
+			temp.DailyTrainInfo.StartingStationID,
+			temp.DailyTrainInfo.StartingStationName.ZhTw,
+			temp.DailyTrainInfo.EndingStationID,
+			temp.DailyTrainInfo.EndingStationName.ZhTw,
+			temp.DailyTrainInfo.TrainTypeID,
+			temp.DailyTrainInfo.TrainTypeCode,
+			temp.DailyTrainInfo.TrainTypeName.ZhTw,
+			temp.DailyTrainInfo.TripLine,
+			stop.StopSequence,
+			stop.StationID,
+			stop.StationName.ZhTw,
+			at,
+			dt,
+			railMask(railTrainFlags{
+				wheel:     *temp.DailyTrainInfo.WheelchairFlag,
+				pack:      *temp.DailyTrainInfo.PackageServiceFlag,
+				dining:    *temp.DailyTrainInfo.DiningFlag,
+				bike:      *temp.DailyTrainInfo.BikeFlag,
+				breast:    *temp.DailyTrainInfo.BreastFeedingFlag,
+				daily:     *temp.DailyTrainInfo.DailyFlag,
+				service:   *temp.DailyTrainInfo.ServiceAddedFlag,
+				suspended: *temp.DailyTrainInfo.SuspendedFlag | *stop.SuspendedFlag,
+			}),
+			temp.DailyTrainInfo.Note.ZhTw,
+		}
+		key := temp.TrainDate + "\x00" + temp.DailyTrainInfo.TrainNo + "\x00" + stop.StationID
+		if err := pipeline.AppendUniqueLoadRow(row, seen, key, "timetable", candidate); err != nil {
+			return _oops.With("date", date).Wrapf(err, "TRA timetable")
+		}
+	}
+	return nil
+}
+
+func traTimetableRows(timetables []rawTraTimetable, date string) ([][]any, error) {
+	row := [][]any{}
+	seen := make(map[string][]any)
+	for _, temp := range timetables {
+		if temp.TrainDate == "" {
+			temp.TrainDate = date
+		}
+		if err := appendTraTrainRows(&row, seen, temp, date); err != nil {
+			return nil, err
+		}
+	}
+	return row, nil
+}

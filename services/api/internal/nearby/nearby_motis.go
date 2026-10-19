@@ -54,26 +54,16 @@ func (r *motisWalkingRouter) RouteMany(
 	if r == nil || r.client == nil {
 		return nil, errors.New("MOTIS client unavailable")
 	}
+	return r.routeDestinations(ctx, origin, destinations)
+}
 
-	many := make([]string, 0, len(destinations))
-	for _, point := range destinations {
-		many = append(many, formatMotisCoordinate(point))
-	}
-
+func (r *motisWalkingRouter) routeDestinations(ctx context.Context, origin GeoPoint, destinations []GeoPoint) ([]WalkingMetric, error) {
+	request := motisWalkingRequest(origin, destinations)
 	var result []motisDuration
 	response, err := r.client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
-		SetBody(motisOneToManyRequest{
-			One:                 formatMotisCoordinate(origin),
-			Many:                many,
-			Mode:                "WALK",
-			Max:                 _motisWalkMaxSeconds,
-			MaxMatchingDistance: _motisWalkMatchingMeters,
-			// One rider walking out to many stops, not many walking in.
-			ArriveBy:     false,
-			WithDistance: true,
-		}).
+		SetBody(request).
 		SetResult(&result).
 		Post(r.baseURL + _motisOneToManyPath)
 	if err != nil {
@@ -85,17 +75,39 @@ func (r *motisWalkingRouter) RouteMany(
 			With("destinations", len(destinations)).
 			Errorf("MOTIS one-to-many HTTP")
 	}
+	return motisWalkingMetrics(result, len(destinations))
+}
+
+func motisWalkingRequest(origin GeoPoint, destinations []GeoPoint) motisOneToManyRequest {
+	many := make([]string, 0, len(destinations))
+	for _, point := range destinations {
+		many = append(many, formatMotisCoordinate(point))
+	}
+
+	return motisOneToManyRequest{
+		One:                 formatMotisCoordinate(origin),
+		Many:                many,
+		Mode:                "WALK",
+		Max:                 _motisWalkMaxSeconds,
+		MaxMatchingDistance: _motisWalkMatchingMeters,
+		// One rider walking out to many stops, not many walking in.
+		ArriveBy:     false,
+		WithDistance: true,
+	}
+}
+
+func motisWalkingMetrics(result []motisDuration, destinations int) ([]WalkingMetric, error) {
 	// A short array would silently pair a stop with another stop's walking
 	// time. Length is the only thing tying the two lists together, so it is
 	// checked rather than assumed.
-	if len(result) != len(destinations) {
+	if len(result) != destinations {
 		return nil, _oops.
-			With("destinations", len(destinations)).
+			With("destinations", destinations).
 			With("durations", len(result)).
 			Errorf("MOTIS one-to-many length mismatch")
 	}
 
-	metrics := make([]WalkingMetric, len(destinations))
+	metrics := make([]WalkingMetric, destinations)
 	for i, entry := range result {
 		metrics[i].DurationSeconds = entry.Duration
 		metrics[i].DistanceMeters = entry.Distance

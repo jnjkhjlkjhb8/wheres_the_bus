@@ -18,6 +18,7 @@ Future<void> eventually(
 }
 
 void main() {
+  _resilientPublicContracts();
   test('resubscribes with backoff after error', () async {
     var subscribeCount = 0;
     final sub = ResilientSubscription<int>(
@@ -503,4 +504,325 @@ void main() {
       await sub.cancel();
     });
   });
+}
+
+class _OwnedBoolSignal extends ValueNotifier<bool> {
+  _OwnedBoolSignal() : super(true);
+
+  final listeners = <VoidCallback>{};
+
+  @override
+  void addListener(VoidCallback listener) {
+    super.addListener(listener);
+    listeners.add(listener);
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    super.removeListener(listener);
+    listeners.remove(listener);
+  }
+}
+
+class _OwnedFeedProbe {
+  final foreground = _OwnedBoolSignal();
+  final online = _OwnedBoolSignal();
+  final controllers = <StreamController<int>>[];
+  final failures = <AppError>[];
+  final reports = <({Object error, StackTrace stack})>[];
+  final delays = <Duration>[];
+  final events = <String>[];
+  ResilientSubscription<int>? subscription;
+
+  void start({
+    int maxFailures = 5,
+    Duration maxDelay = const Duration(seconds: 1000),
+    Duration recoveryGrace = const Duration(seconds: 10),
+  }) {
+    subscription = ResilientSubscription<int>(
+      source: () {
+        final controller = StreamController<int>.broadcast(sync: true);
+        controllers.add(controller);
+        return controller.stream;
+      },
+      onData: (value) => events.add('data:$value'),
+      onFailure: failures.add,
+      onRecovered: () => events.add('recovered'),
+      reportError: (error, stack) => reports.add((error: error, stack: stack)),
+      retryDelay: (delay) {
+        delays.add(delay);
+        return delay;
+      },
+      baseDelay: const Duration(seconds: 1),
+      maxDelay: maxDelay,
+      recoveryGrace: recoveryGrace,
+      maxFailures: maxFailures,
+      foreground: foreground,
+      online: online,
+    );
+  }
+
+  Future<void> dispose() async {
+    try {
+      await subscription?.cancel();
+    } finally {
+      try {
+        await Future.wait(controllers.map((controller) => controller.close()));
+      } finally {
+        try {
+          foreground.dispose();
+        } finally {
+          online.dispose();
+        }
+      }
+    }
+  }
+}
+
+Future<void> _completeOwned(
+  WidgetTester tester,
+  Future<void> Function() operation,
+) async {
+  // Create cleanup futures in the real-async zone after shared cancel futures.
+  final completed = await tester.runAsync(() async {
+    await operation();
+    return true;
+  });
+  expect(completed, isTrue);
+}
+
+void _resilientPublicContracts() {
+  testWidgets('initial background and offline edges do not open a feed', (
+    tester,
+  ) async {
+    final probe = _OwnedFeedProbe();
+    try {
+      probe.foreground.value = false;
+      probe.start();
+      expect(probe.controllers, isEmpty);
+      probe.online
+        ..value = false
+        ..value = true;
+      await tester.pump(const Duration(seconds: 50));
+      expect(probe.controllers, isEmpty);
+      probe.foreground.value = true;
+      expect(probe.controllers, hasLength(1));
+      expect(probe.controllers.single.hasListener, isTrue);
+      expect(probe.failures, isEmpty);
+      expect(probe.events, isEmpty);
+    } finally {
+      await _completeOwned(tester, probe.dispose);
+    }
+  });
+
+  testWidgets(
+    'transient failures use capped backoff and notify at exact limit',
+    (
+      tester,
+    ) async {
+      final probe = _OwnedFeedProbe();
+      try {
+        probe.start(maxFailures: 8);
+        for (var attempt = 0; attempt < 9; attempt++) {
+          final error = StateError('transient-$attempt');
+          final stack = StackTrace.fromString('source-$attempt');
+          expect(probe.controllers, hasLength(attempt + 1));
+          probe.controllers.last.addError(error, stack);
+          expect(probe.reports, hasLength(attempt + 1));
+          expect(probe.reports.last.error, same(error));
+          expect(probe.reports.last.stack, same(stack));
+          expect(probe.failures, hasLength(attempt < 7 ? 0 : 1));
+          await tester.pump(probe.delays.last);
+        }
+        expect(probe.delays, [
+          for (final seconds in [1, 2, 4, 8, 16, 32, 32, 32, 32])
+            Duration(seconds: seconds),
+        ]);
+        expect(probe.failures.single, isA<UnknownError>());
+        expect(probe.events, isEmpty);
+      } finally {
+        await _completeOwned(tester, probe.dispose);
+      }
+    },
+  );
+
+  testWidgets('clean closure backoff stops doubling after six closes', (
+    tester,
+  ) async {
+    final probe = _OwnedFeedProbe();
+    try {
+      probe.start();
+      for (var attempt = 0; attempt < 8; attempt++) {
+        expect(probe.controllers, hasLength(attempt + 1));
+        await _completeOwned(tester, probe.controllers.last.close);
+        await tester.pump(probe.delays.last);
+      }
+      expect(probe.delays, [
+        for (final seconds in [1, 2, 4, 8, 16, 32, 32, 32])
+          Duration(seconds: seconds),
+      ]);
+      expect(probe.failures, isEmpty);
+      expect(probe.reports, isEmpty);
+      expect(probe.events, isEmpty);
+    } finally {
+      await _completeOwned(tester, probe.dispose);
+    }
+  });
+
+  testWidgets(
+    'received data resets clean-close backoff without recovery notice',
+    (
+      tester,
+    ) async {
+      final probe = _OwnedFeedProbe();
+      try {
+        probe.start();
+        for (var attempt = 0; attempt < 2; attempt++) {
+          await _completeOwned(tester, probe.controllers.last.close);
+          await tester.pump(probe.delays.last);
+        }
+        probe.controllers.last.add(42);
+        expect(probe.events, ['data:42']);
+        await _completeOwned(tester, probe.controllers.last.close);
+        expect(probe.delays, [
+          const Duration(seconds: 1),
+          const Duration(seconds: 2),
+          const Duration(seconds: 1),
+        ]);
+        expect(probe.failures, isEmpty);
+        expect(probe.reports, isEmpty);
+      } finally {
+        await _completeOwned(tester, probe.dispose);
+      }
+    },
+  );
+
+  testWidgets('one failure recovers silently at the exact grace boundary', (
+    tester,
+  ) async {
+    final probe = _OwnedFeedProbe();
+    try {
+      probe.start(maxFailures: 3);
+      probe.controllers.last.addError(const GrpcError.unavailable());
+      await tester.pump(const Duration(seconds: 1));
+      expect(probe.controllers, hasLength(2));
+      await tester.pump(const Duration(seconds: 9));
+      expect(probe.events, isEmpty);
+      await tester.pump(const Duration(seconds: 1));
+      expect(probe.events, ['recovered']);
+      probe.controllers.last
+        ..add(7)
+        ..add(8);
+      await tester.pump(const Duration(seconds: 10));
+      expect(probe.events, ['recovered', 'data:7', 'data:8']);
+      expect(probe.failures, isEmpty);
+    } finally {
+      await _completeOwned(tester, probe.dispose);
+    }
+  });
+
+  testWidgets(
+    'recovery precedes its first data and resets the failure threshold',
+    (
+      tester,
+    ) async {
+      final probe = _OwnedFeedProbe();
+      try {
+        probe.start(maxFailures: 2);
+        for (var attempt = 0; attempt < 2; attempt++) {
+          probe.controllers.last.addError(const GrpcError.unavailable());
+          await tester.pump(probe.delays.last);
+        }
+        expect(probe.failures, hasLength(1));
+        probe.controllers.last
+          ..add(7)
+          ..add(8);
+        expect(probe.events, ['recovered', 'data:7', 'data:8']);
+        probe.controllers.last.addError(const GrpcError.unavailable());
+        expect(probe.failures, hasLength(1));
+        expect(probe.delays.last, const Duration(seconds: 1));
+        await tester.pump(probe.delays.last);
+        probe.controllers.last.addError(const GrpcError.unavailable());
+        expect(probe.failures, hasLength(2));
+        expect(probe.delays.last, const Duration(seconds: 2));
+      } finally {
+        await _completeOwned(tester, probe.dispose);
+      }
+    },
+  );
+
+  testWidgets(
+    'background cancels retry and resume starts a fresh failure streak',
+    (
+      tester,
+    ) async {
+      final probe = _OwnedFeedProbe();
+      try {
+        probe.start(maxFailures: 2);
+        probe.controllers.last.addError(const GrpcError.unavailable());
+        probe.foreground.value = false;
+        probe.online
+          ..value = false
+          ..value = true;
+        await tester.pump(const Duration(seconds: 100));
+        expect(probe.controllers, hasLength(1));
+        probe.foreground.value = true;
+        expect(probe.controllers, hasLength(2));
+        probe.controllers.last.addError(const GrpcError.unavailable());
+        expect(probe.failures, isEmpty);
+        expect(probe.delays.last, const Duration(seconds: 1));
+        await _completeOwned(tester, probe.subscription!.cancel);
+        expect(probe.foreground.listeners, isEmpty);
+        expect(probe.online.listeners, isEmpty);
+        probe.foreground
+          ..value = false
+          ..value = true;
+        probe.online
+          ..value = false
+          ..value = true;
+        await tester.pump(const Duration(seconds: 100));
+        expect(probe.controllers, hasLength(2));
+        expect(probe.events, isEmpty);
+      } finally {
+        await _completeOwned(tester, probe.dispose);
+      }
+    },
+  );
+
+  for (final error in [
+    const GrpcError.unauthenticated(),
+    const GrpcError.permissionDenied(),
+    const GrpcError.unimplemented(),
+  ]) {
+    testWidgets(
+      'terminal ${error.code} immediately notifies and waits for resume',
+      (
+        tester,
+      ) async {
+        final probe = _OwnedFeedProbe();
+        try {
+          probe.start();
+          final stack = StackTrace.fromString('terminal-source');
+          probe.controllers.last.addError(error, stack);
+          expect(probe.reports.single.error, same(error));
+          expect(probe.reports.single.stack, same(stack));
+          expect(probe.failures, hasLength(1));
+          expect(probe.failures.single, isA<ServerError>());
+          expect((probe.failures.single as ServerError).code, error.code);
+          expect(probe.delays, isEmpty);
+          await tester.pump(const Duration(seconds: 100));
+          expect(probe.controllers, hasLength(1));
+          probe.foreground
+            ..value = false
+            ..value = true;
+          expect(probe.controllers, hasLength(2));
+          probe.controllers.last.add(9);
+          expect(probe.events, ['recovered', 'data:9']);
+          expect(probe.failures, hasLength(1));
+        } finally {
+          await _completeOwned(tester, probe.dispose);
+        }
+      },
+    );
+  }
 }

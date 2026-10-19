@@ -107,6 +107,10 @@ func railRead(
 	if b, err := rc.Get(ctx, key).Bytes(); err == nil && len(b) > 0 {
 		return b, nil
 	}
+	return loadRailRead(ctx, rc, action, key, ttl, load)
+}
+
+func loadRailRead(ctx context.Context, rc *redis.Client, action, key string, ttl time.Duration, load func(context.Context) ([]byte, int, error)) ([]byte, error) {
 	b, n, err := load(ctx)
 	if err != nil {
 		return nil, err
@@ -114,32 +118,26 @@ func railRead(
 	if n == 0 || len(b) == 0 {
 		return nil, nil
 	}
-	if err := rc.Set(ctx, key, b, ttl).Err(); err != nil {
+	cacheRailRead(ctx, rc, action, key, b, ttl)
+	return b, nil
+}
+
+func cacheRailRead(ctx context.Context, rc *redis.Client, action, key string, data []byte, ttl time.Duration) {
+	if err := rc.Set(ctx, key, data, ttl).Err(); err != nil {
 		zap.S().Errorw("cache error", "component", "grpc", "action", action, "event", "cache_error", "err", err)
 	}
-	return b, nil
 }
 
 func (s *TraTimetableServer) traStationBoardDay(ctx context.Context, station string, day time.Time, direction int32) ([]*pb.TraStationDeparture, error) {
 	key := fmt.Sprintf("TRA_StationBoard:%s:%s:%d", day.Format(time.DateOnly), railCacheStation(station), direction)
 	b, err := railRead(ctx, s.rc, "tra_station_board", key, _railDayTTL, func(ctx context.Context) ([]byte, int, error) {
-		items, err := TRAStationBoardPayload(ctx, s.db, station, day, direction)
-		if err != nil || len(items) == 0 {
-			return nil, 0, err
-		}
-		payload, err := proto.Marshal(&pb.TraStationBoard{Items: items})
-		return payload, len(items), err
+		return s.loadTraStationBoardDay(ctx, station, day, direction)
 	})
-	if err != nil || b == nil {
+	if err != nil {
 		return nil, err
 	}
-	board := &pb.TraStationBoard{}
-	if err := proto.Unmarshal(b, board); err != nil {
-		return nil, err
-	}
-	return board.Items, nil
+	return decodeTraStationBoard(b)
 }
-
 func (s *TraTimetableServer) StationBoard(ctx context.Context, in *pb.AskStationBoard) (*pb.TraStationBoard, error) {
 	zap.S().Infow("call",
 		"component", "grpc",
@@ -148,12 +146,9 @@ func (s *TraTimetableServer) StationBoard(ctx context.Context, in *pb.AskStation
 		"station", in.StationId,
 		"direction", in.Direction,
 	)
-	if in.StationId == "" {
-		return nil, status.Error(codes.InvalidArgument, "station is required")
-	}
-	day := parseRailDate(in.Date)
-	if day.IsZero() {
-		return nil, status.Error(codes.InvalidArgument, "date is required")
+	day, err := stationBoardRequest(in.StationId, in.Date)
+	if err != nil {
+		return nil, err
 	}
 	limit := stationBoardLimit(in.Limit)
 	today, err := s.traStationBoardDay(ctx, in.StationId, day, in.Direction)
@@ -169,18 +164,11 @@ func (s *TraTimetableServer) StationBoard(ctx context.Context, in *pb.AskStation
 	items, topUpErr := stationBoardWindow(today, in.After, limit, func() ([]*pb.TraStationDeparture, error) {
 		return s.traStationBoardDay(ctx, in.StationId, day.AddDate(0, 0, 1), in.Direction)
 	})
-	if topUpErr != nil {
-		zap.S().Errorw("topup failed",
-			"component", "grpc",
-			"action", "tra_station_board",
-			"event", "topup_failed",
-			"err", topUpErr,
-		)
-	}
+	logBoardTopUp("tra_station_board", topUpErr)
 	// NotFound means the day is not landed, not "no trains left": a landed day
 	// whose remaining departures have all gone is a real answer of zero, and
 	// the app tells the rider the day is over rather than that it is broken.
-	if len(today) == 0 && len(items) == 0 {
+	if stationBoardMissing(len(today), len(items)) {
 		return nil, status.Error(codes.NotFound, "station board not found")
 	}
 	return &pb.TraStationBoard{Items: items}, nil
@@ -191,25 +179,13 @@ func (s *TraTimetableServer) StationBoard(ctx context.Context, in *pb.AskStation
 func (s *ThsrServer) thsrStationBoardDay(ctx context.Context, station string, day time.Time, direction int32) ([]*pb.ThsrStationDeparture, error) {
 	key := fmt.Sprintf("THSR_StationBoard:%s:%s:%d", day.Format(time.DateOnly), railCacheStation(station), direction)
 	b, err := railRead(ctx, s.rc, "thsr_station_board", key, _railDayTTL, func(ctx context.Context) ([]byte, int, error) {
-		items, err := THSRStationBoardPayload(ctx, s.db, station, day, direction)
-		if err != nil || len(items) == 0 {
-			return nil, 0, err
-		}
-		payload, err := proto.Marshal(&pb.ThsrStationBoard{Items: items})
-		return payload, len(items), err
+		return s.loadThsrStationBoardDay(ctx, station, day, direction)
 	})
-	if err != nil || b == nil {
+	if err != nil {
 		return nil, err
 	}
-	board := &pb.ThsrStationBoard{}
-	if err := proto.Unmarshal(b, board); err != nil {
-		return nil, err
-	}
-	return board.Items, nil
+	return decodeThsrStationBoard(b)
 }
-
-// StationBoard returns the next departures from one THSR station in one
-// direction, with the same next-day top-up as the TRA board.
 func (s *ThsrServer) StationBoard(ctx context.Context, in *pb.ThsrAskStationBoard) (*pb.ThsrStationBoard, error) {
 	zap.S().Infow("call",
 		"component", "grpc",
@@ -218,12 +194,9 @@ func (s *ThsrServer) StationBoard(ctx context.Context, in *pb.ThsrAskStationBoar
 		"station", in.StationId,
 		"direction", in.Direction,
 	)
-	if in.StationId == "" {
-		return nil, status.Error(codes.InvalidArgument, "station is required")
-	}
-	day := parseRailDate(in.Date)
-	if day.IsZero() {
-		return nil, status.Error(codes.InvalidArgument, "date is required")
+	day, err := stationBoardRequest(in.StationId, in.Date)
+	if err != nil {
+		return nil, err
 	}
 	limit := stationBoardLimit(in.Limit)
 	today, err := s.thsrStationBoardDay(ctx, in.StationId, day, in.Direction)
@@ -239,17 +212,10 @@ func (s *ThsrServer) StationBoard(ctx context.Context, in *pb.ThsrAskStationBoar
 	items, topUpErr := stationBoardWindow(today, in.After, limit, func() ([]*pb.ThsrStationDeparture, error) {
 		return s.thsrStationBoardDay(ctx, in.StationId, day.AddDate(0, 0, 1), in.Direction)
 	})
-	if topUpErr != nil {
-		zap.S().Errorw("topup failed",
-			"component", "grpc",
-			"action", "thsr_station_board",
-			"event", "topup_failed",
-			"err", topUpErr,
-		)
-	}
+	logBoardTopUp("thsr_station_board", topUpErr)
 	// See the TRA board: NotFound is "not landed", an empty board is "the day
 	// is over".
-	if len(today) == 0 && len(items) == 0 {
+	if stationBoardMissing(len(today), len(items)) {
 		return nil, status.Error(codes.NotFound, "station board not found")
 	}
 	return &pb.ThsrStationBoard{Items: items}, nil
@@ -292,12 +258,7 @@ func (s *ThsrServer) thsrFare(ctx context.Context, in *pb.AskRoute) (*pb.Resp_Da
 	// carries every fare class and cabin class, not just the standard adult seat.
 	key := fmt.Sprintf("THSR_Fare:v2:%s:%s", railCacheStation(in.OriginStationId), railCacheStation(in.DestinationStationId))
 	b, err := railRead(ctx, s.rc, "thsr_fare", key, _railFareTTL, func(ctx context.Context) ([]byte, int, error) {
-		items, err := QueryTHSRFares(ctx, s.db, in.OriginStationId, in.DestinationStationId)
-		if err != nil || len(items) == 0 {
-			return nil, 0, err
-		}
-		payload, err := proto.Marshal(&pb.ThsaFares{Items: items})
-		return payload, len(items), err
+		return s.thsrFarePayload(ctx, in)
 	})
 	if err != nil {
 		zap.S().Errorw("query failed",
@@ -412,4 +373,72 @@ func (s *ThsrDetainServer) thsrStops(ctx context.Context, in *pb.ThsrAskDetain) 
 		return nil, status.Error(codes.NotFound, "stops not found")
 	}
 	return &pb.Resp_Data{Data: b}, nil
+}
+
+func (s *TraTimetableServer) loadTraStationBoardDay(ctx context.Context, station string, day time.Time, direction int32) ([]byte, int, error) {
+	items, err := TRAStationBoardPayload(ctx, s.db, station, day, direction)
+	if err != nil || len(items) == 0 {
+		return nil, 0, err
+	}
+	payload, err := proto.Marshal(&pb.TraStationBoard{Items: items})
+	return payload, len(items), err
+}
+
+func decodeTraStationBoard(b []byte) ([]*pb.TraStationDeparture, error) {
+	if b == nil {
+		return nil, nil
+	}
+	board := &pb.TraStationBoard{}
+	if err := proto.Unmarshal(b, board); err != nil {
+		return nil, err
+	}
+	return board.Items, nil
+}
+
+func (s *ThsrServer) loadThsrStationBoardDay(ctx context.Context, station string, day time.Time, direction int32) ([]byte, int, error) {
+	items, err := THSRStationBoardPayload(ctx, s.db, station, day, direction)
+	if err != nil || len(items) == 0 {
+		return nil, 0, err
+	}
+	payload, err := proto.Marshal(&pb.ThsrStationBoard{Items: items})
+	return payload, len(items), err
+}
+
+func decodeThsrStationBoard(b []byte) ([]*pb.ThsrStationDeparture, error) {
+	if b == nil {
+		return nil, nil
+	}
+	board := &pb.ThsrStationBoard{}
+	if err := proto.Unmarshal(b, board); err != nil {
+		return nil, err
+	}
+	return board.Items, nil
+}
+
+func stationBoardRequest(station, date string) (time.Time, error) {
+	if station == "" {
+		return time.Time{}, status.Error(codes.InvalidArgument, "station is required")
+	}
+	day := parseRailDate(date)
+	if day.IsZero() {
+		return time.Time{}, status.Error(codes.InvalidArgument, "date is required")
+	}
+	return day, nil
+}
+
+func stationBoardMissing(today, window int) bool { return today == 0 && window == 0 }
+
+func logBoardTopUp(action string, err error) {
+	if err != nil {
+		zap.S().Errorw("topup failed", "component", "grpc", "action", action, "event", "topup_failed", "err", err)
+	}
+}
+
+func (s *ThsrServer) thsrFarePayload(ctx context.Context, in *pb.AskRoute) ([]byte, int, error) {
+	items, err := QueryTHSRFares(ctx, s.db, in.OriginStationId, in.DestinationStationId)
+	if err != nil || len(items) == 0 {
+		return nil, 0, err
+	}
+	payload, err := proto.Marshal(&pb.ThsaFares{Items: items})
+	return payload, len(items), err
 }

@@ -116,17 +116,16 @@ class _AnimatedValueState extends State<_AnimatedValue>
       // from zero, which would hard-reset the roll on every rapid tap.
       return;
     }
-    unawaited(
-      _controller.forward(from: 0).then((_) {
-        if (mounted) {
-          setState(() {
-            _displayValue = widget.value;
-            _pendingDirection = 0;
-          });
-          unawaited(_controller.reverse());
-        }
-      }),
-    );
+    unawaited(_controller.forward(from: 0).then((_) => _finishRoll()));
+  }
+
+  void _finishRoll() {
+    if (!mounted) return;
+    setState(() {
+      _displayValue = widget.value;
+      _pendingDirection = 0;
+    });
+    unawaited(_controller.reverse());
   }
 
   @override
@@ -195,6 +194,12 @@ class _QuantityButtonState extends State<_QuantityButton> {
     setState(() => _pressed = false);
   }
 
+  VoidCallback? get _tap => widget.enabled ? widget.onTap : null;
+  double get _opacity => widget.enabled ? 1 : 0.38;
+  double get _scale => _pressed ? 0.90 : 1;
+  Duration _scaleDuration(bool reduced) =>
+      reduced ? Duration.zero : Duration(milliseconds: _pressed ? 100 : 80);
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -203,20 +208,16 @@ class _QuantityButtonState extends State<_QuantityButton> {
       onTapDown: _onTapDown,
       onTapUp: _onTapUp,
       onTapCancel: _onTapCancel,
-      onTap: widget.enabled ? widget.onTap : null,
+      onTap: _tap,
       child: AnimatedOpacity(
-        opacity: widget.enabled ? 1.0 : 0.38,
+        opacity: _opacity,
         duration: reduceMotion
             ? Duration.zero
             : const Duration(milliseconds: 100),
         curve: AppMotion.easeOut,
         child: AnimatedScale(
-          scale: _pressed ? 0.90 : 1.0,
-          duration: reduceMotion
-              ? Duration.zero
-              : (_pressed
-                    ? const Duration(milliseconds: 100)
-                    : const Duration(milliseconds: 80)),
+          scale: _scale,
+          duration: _scaleDuration(reduceMotion),
           curve: AppMotion.easeOut,
           child: SizedBox(
             width: 36,

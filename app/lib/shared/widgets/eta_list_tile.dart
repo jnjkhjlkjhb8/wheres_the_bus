@@ -128,85 +128,10 @@ class EtaListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // The coming-soon highlight is achromatic: same Ink text as every other
-    // row, emphasis carried by the surface-highlight background alone.
-    final routeColor = muted
-        ? AppTheme.inkTertiary(cs.brightness)
-        : cs.onSurface;
-    final destColor = muted
-        ? AppTheme.inkTertiary(cs.brightness)
-        : cs.onSurfaceVariant;
-
-    final row = Row(
-      children: [
-        leading ??
-            Text(
-              routeNo,
-              style: AppTextStyles.bodyLarge.copyWith(
-                fontWeight: FontWeight.w700,
-                color: routeColor,
-              ),
-            ),
-        const SizedBox(width: AppTheme.space12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                AppI18n.of(context).towardsSpaced(destination),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                // A custom destination style (metro's heading2) is used
-                // verbatim, keeping its own colour; the default path carries
-                // the muted destination colour.
-                style:
-                    destinationStyle ??
-                    AppTextStyles.bodyRegular.copyWith(color: destColor),
-              ),
-              if (direction != null)
-                Text(
-                  direction!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyles.bodySmall.copyWith(color: destColor),
-                ),
-              if (isLastBus)
-                Text(
-                  AppI18n.of(context).etaLastBusTag,
-                  maxLines: 1,
-                  style: AppTextStyles.bodySmall.copyWith(color: destColor),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(width: AppTheme.space12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            EtaValue(status: status, muted: muted),
-            if (!muted && CrowdMeter.filledFor(crowdLevel) > 0) ...[
-              const SizedBox(height: AppTheme.space4),
-              CrowdMeter(level: crowdLevel),
-            ],
-          ],
-        ),
-      ],
-    );
+    final row = _row(context, cs);
 
     // Bare mode: just the row (plus any track), so the caller owns list chrome.
-    if (bare) {
-      if (track == null) return row;
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          row,
-          const SizedBox(height: AppTheme.space6),
-          track!,
-        ],
-      );
-    }
+    if (bare) return _bareRow(row);
 
     final content = Column(
       mainAxisSize: MainAxisSize.min,
@@ -227,12 +152,7 @@ class EtaListTile extends StatelessWidget {
       child: Container(
         // Margin + padding sum to 16 on each side either way, so the highlight
         // tint insets without shifting the row's content off the 16px column.
-        margin: highlighted
-            ? const EdgeInsets.symmetric(
-                horizontal: AppTheme.space8,
-                vertical: AppTheme.space6,
-              )
-            : EdgeInsets.zero,
+        margin: _highlightMargin,
         decoration: highlighted
             ? BoxDecoration(
                 color: AppTheme.surfaceHighlight(cs.brightness),
@@ -240,11 +160,102 @@ class EtaListTile extends StatelessWidget {
               )
             : null,
         padding: EdgeInsets.symmetric(
-          horizontal: highlighted ? AppTheme.space8 : AppTheme.space16,
+          horizontal: _horizontalPadding,
           vertical: AppTheme.space10,
         ),
         child: content,
       ),
+    );
+  }
+
+  EdgeInsets get _highlightMargin => highlighted
+      ? const EdgeInsets.symmetric(
+          horizontal: AppTheme.space8,
+          vertical: AppTheme.space6,
+        )
+      : EdgeInsets.zero;
+  double get _horizontalPadding =>
+      highlighted ? AppTheme.space8 : AppTheme.space16;
+
+  Widget _bareRow(Widget row) {
+    final detail = track;
+    if (detail == null) return row;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        row,
+        const SizedBox(height: AppTheme.space6),
+        detail,
+      ],
+    );
+  }
+
+  (Color, Color) _rowColors(ColorScheme colors) => muted
+      ? (
+          AppTheme.inkTertiary(colors.brightness),
+          AppTheme.inkTertiary(colors.brightness),
+        )
+      : (colors.onSurface, colors.onSurfaceVariant);
+
+  Widget _row(BuildContext context, ColorScheme cs) {
+    // Achromatic highlights carry emphasis in the surrounding surface only.
+    final colors = _rowColors(cs);
+    return Row(
+      children: [
+        leading ??
+            Text(
+              routeNo,
+              style: AppTextStyles.bodyLarge.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colors.$1,
+              ),
+            ),
+        const SizedBox(width: AppTheme.space12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                AppI18n.of(context).towardsSpaced(destination),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                // A custom destination style (metro's heading2) is used
+                // verbatim, keeping its own colour; the default path carries
+                // the muted destination colour.
+                style:
+                    destinationStyle ??
+                    AppTextStyles.bodyRegular.copyWith(color: colors.$2),
+              ),
+              if (direction != null)
+                Text(
+                  direction!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.bodySmall.copyWith(color: colors.$2),
+                ),
+              if (isLastBus)
+                Text(
+                  AppI18n.of(context).etaLastBusTag,
+                  maxLines: 1,
+                  style: AppTextStyles.bodySmall.copyWith(color: colors.$2),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(width: AppTheme.space12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            EtaValue(status: status, muted: muted),
+            if (!muted && CrowdMeter.filledFor(crowdLevel) > 0) ...[
+              const SizedBox(height: AppTheme.space4),
+              CrowdMeter(level: crowdLevel),
+            ],
+          ],
+        ),
+      ],
     );
   }
 }
@@ -317,23 +328,11 @@ class EtaValue extends StatelessWidget {
       ),
       EtaLabel(:final text) when _isClock(text) => Text(
         text,
-        style: AppTextStyles.timeValue(
-          size: muted
-              ? AppTextStyles.bodyRegular.fontSize
-              : AppTextStyles.heading1.fontSize,
-          weight: muted ? FontWeight.w400 : AppTextStyles.heading1.fontWeight,
-          color: muted ? AppTheme.inkTertiary(cs.brightness) : cs.onSurface,
-        ),
+        style: _clockStyle(cs),
       ),
       EtaLabel(:final text) => Text(
         text,
-        style: AppTextStyles.bodyLarge.copyWith(
-          fontWeight: muted ? FontWeight.w400 : FontWeight.w600,
-          fontSize: muted ? AppTextStyles.bodyRegular.fontSize : null,
-          color: muted
-              ? AppTheme.inkTertiary(cs.brightness)
-              : cs.onSurfaceVariant,
-        ),
+        style: _labelStyle(cs),
       ),
       EtaUnknown() => Text(
         '—',
@@ -344,6 +343,19 @@ class EtaValue extends StatelessWidget {
       ),
     };
   }
+
+  TextStyle _clockStyle(ColorScheme cs) => AppTextStyles.timeValue(
+    size: muted
+        ? AppTextStyles.bodyRegular.fontSize
+        : AppTextStyles.heading1.fontSize,
+    weight: muted ? FontWeight.w400 : AppTextStyles.heading1.fontWeight,
+    color: muted ? AppTheme.inkTertiary(cs.brightness) : cs.onSurface,
+  );
+  TextStyle _labelStyle(ColorScheme cs) => AppTextStyles.bodyLarge.copyWith(
+    fontWeight: muted ? FontWeight.w400 : FontWeight.w600,
+    fontSize: muted ? AppTextStyles.bodyRegular.fontSize : null,
+    color: muted ? AppTheme.inkTertiary(cs.brightness) : cs.onSurfaceVariant,
+  );
 }
 
 final _clockPattern = RegExp(r'^\d{2}:\d{2}$');

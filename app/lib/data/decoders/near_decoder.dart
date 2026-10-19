@@ -9,22 +9,17 @@ class NearDecoder {
   /// station with its transit mode. Covers bus, MRT, YouBike, TRA, and THSR.
   List<NearStationViewModel> decode(resp_near resp) {
     final out = <NearStationViewModel>[];
-    for (final group in resp.nearBusStations.values) {
-      for (final s in group.nearStations) {
-        out.add(_vm(s, NearStationType.bus));
-      }
-    }
-    for (final s in resp.nearMrtStations) {
-      out.add(_vm(s, NearStationType.mrt));
-    }
-    for (final s in resp.nearBikeStations) {
-      out.add(_vm(s, NearStationType.bike));
-    }
-    for (final s in resp.nearTraStations) {
-      out.add(_vm(s, NearStationType.tra));
-    }
-    for (final s in resp.nearThsrStations) {
-      out.add(_vm(s, NearStationType.thsr));
+    final stationsByType = {
+      NearStationType.bus: resp.nearBusStations.values.expand(
+        (group) => group.nearStations,
+      ),
+      NearStationType.mrt: resp.nearMrtStations,
+      NearStationType.bike: resp.nearBikeStations,
+      NearStationType.tra: resp.nearTraStations,
+      NearStationType.thsr: resp.nearThsrStations,
+    };
+    for (final entry in stationsByType.entries) {
+      out.addAll(entry.value.map((station) => _vm(station, entry.key)));
     }
     return out;
   }

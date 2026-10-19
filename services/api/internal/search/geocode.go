@@ -65,37 +65,13 @@ func RegisterGeocodeRoutes(r gin.IRoutes, baseURL string, mounted bool, limit gi
 func handleGeocode(client *resty.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		text := strings.TrimSpace(c.Query("text"))
-		if text == "" || len([]rune(text)) > _geocodeMaxQueryRunes {
+		if !geocodeTextUsable(text) {
 			c.AbortWithStatus(http.StatusBadRequest)
 			return
 		}
 
-		request := client.R().
-			SetContext(c.Request.Context()).
-			SetQueryParam("text", text).
-			SetQueryParam("language", _geocodeLanguage).
-			SetQueryParam("numResults", strconv.Itoa(_geocodeMaxResults))
-		// Biasing towards where the rider is, when the app knows. A planner
-		// query is almost always local, and without this "車站" matches the
-		// whole island by score alone.
-		if place, ok := geocodeBias(c.Query("lat"), c.Query("lon")); ok {
-			request.SetQueryParam("place", place)
-		}
-
-		var matches []motisMatch
-		resp, err := request.SetResult(&matches).Get(_motisGeocodePath)
-		if err != nil || !resp.IsSuccess() {
-			status := 0
-			if resp != nil {
-				status = resp.StatusCode()
-			}
-			zap.S().Warnw("geocode upstream failed",
-				"component", "geocode",
-				"action", "suggest",
-				"event", "upstream_failed",
-				"status_code", status,
-				"err", err,
-			)
+		matches, ok := requestGeocode(c, client, text)
+		if !ok {
 			c.AbortWithStatus(http.StatusServiceUnavailable)
 			return
 		}
@@ -104,16 +80,53 @@ func handleGeocode(client *resty.Client) gin.HandlerFunc {
 	}
 }
 
+func geocodeTextUsable(text string) bool {
+	return text != "" && len([]rune(text)) <= _geocodeMaxQueryRunes
+}
+
+func geocodeResponseStatus(response *resty.Response) int {
+	if response != nil {
+		return response.StatusCode()
+	}
+	return 0
+}
+
+func requestGeocode(c *gin.Context, client *resty.Client, text string) ([]motisMatch, bool) {
+	request := client.R().
+		SetContext(c.Request.Context()).
+		SetQueryParam("text", text).
+		SetQueryParam("language", _geocodeLanguage).
+		SetQueryParam("numResults", strconv.Itoa(_geocodeMaxResults))
+	// Biasing towards where the rider is, when the app knows. A planner
+	// query is almost always local, and without this "車站" matches the
+	// whole island by score alone.
+	if place, ok := geocodeBias(c.Query("lat"), c.Query("lon")); ok {
+		request.SetQueryParam("place", place)
+	}
+
+	var matches []motisMatch
+	resp, err := request.SetResult(&matches).Get(_motisGeocodePath)
+	if err != nil || !resp.IsSuccess() {
+		status := geocodeResponseStatus(resp)
+		zap.S().Warnw("geocode upstream failed",
+			"component", "geocode",
+			"action", "suggest",
+			"event", "upstream_failed",
+			"status_code", status,
+			"err", err,
+		)
+		return nil, false
+	}
+	return matches, true
+}
+
 func geocodeBias(latText, lonText string) (string, bool) {
 	lat, latErr := strconv.ParseFloat(strings.TrimSpace(latText), 64)
 	lon, lonErr := strconv.ParseFloat(strings.TrimSpace(lonText), 64)
 	if latErr != nil || lonErr != nil {
 		return "", false
 	}
-	if lat == 0 && lon == 0 {
-		return "", false
-	}
-	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+	if !geocodeCoordinatesUsable(lat, lon) {
 		return "", false
 	}
 	return strconv.FormatFloat(lat, 'f', 6, 64) + "," + strconv.FormatFloat(lon, 'f', 6, 64), true
@@ -122,10 +135,18 @@ func geocodeBias(latText, lonText string) (string, bool) {
 // geocodeSuggestions maps matches onto the app's shape, dropping any that
 // cannot be navigated to. A match with no coordinates is a row the rider can
 // tap and get nothing from.
+func geocodeCoordinatesUsable(lat, lon float64) bool {
+	return (lat != 0 || lon != 0) && !geocodeCoordinateOutside(lat, 90) && !geocodeCoordinateOutside(lon, 180)
+}
+
+func geocodeMatchUsable(match motisMatch) bool {
+	return match.Name != "" && (match.Lat != 0 || match.Lon != 0)
+}
+
 func geocodeSuggestions(matches []motisMatch) []geocodeSuggestion {
 	out := make([]geocodeSuggestion, 0, len(matches))
 	for _, match := range matches {
-		if match.Name == "" || (match.Lat == 0 && match.Lon == 0) {
+		if !geocodeMatchUsable(match) {
 			continue
 		}
 		out = append(out, geocodeSuggestion{
@@ -143,12 +164,15 @@ func geocodeSuggestions(matches []motisMatch) []geocodeSuggestion {
 // house number after the street, which is the opposite of the Western order
 // most geocoding clients assume.
 func geocodeAddress(match motisMatch) string {
-	switch {
-	case match.Street != "" && match.HouseNumber != "":
-		return match.Street + match.HouseNumber + "號"
-	case match.Street != "":
-		return match.Street
-	default:
+	if match.Street == "" {
 		return ""
 	}
+	if match.HouseNumber != "" {
+		return match.Street + match.HouseNumber + "號"
+	}
+	return match.Street
+}
+
+func geocodeCoordinateOutside(value, limit float64) bool {
+	return value < -limit || value > limit
 }

@@ -58,13 +58,9 @@ class GenUiRenderer extends StatelessWidget {
     var liveBudget = _kLiveEtaCards;
     final children = <Widget>[];
     for (final (i, node) in nodes.indexed) {
-      final ref = switch (node) {
-        GenUiRoute(:final refUid) => _refOf(refUid),
-        GenUiChip(:final refUid) => _refOf(refUid),
-        _ => null,
-      };
+      final ref = _nodeRef(node);
       var live = false;
-      if (node is GenUiRoute && ref?.type == SearchResultType.busStation) {
+      if (_allowsLive(node, ref)) {
         live = liveBudget > 0;
         if (live) liveBudget--;
       }
@@ -90,77 +86,92 @@ class GenUiRenderer extends StatelessWidget {
     SearchResult? ref, {
     required bool live,
   }) {
+    if (node is GenUiRoute) return _routeNode(node, ref, live);
+    if (node is GenUiChip) return _chipNode(context, node, ref);
+    if (node is GenUiStep) return _StepRow(node: node);
+    return _staticNode(context, node);
+  }
+
+  SearchResult? _nodeRef(GenUiNode node) => switch (node) {
+    GenUiRoute(:final refUid) => _refOf(refUid),
+    GenUiChip(:final refUid) => _refOf(refUid),
+    _ => null,
+  };
+
+  bool _allowsLive(GenUiNode node, SearchResult? ref) =>
+      node is GenUiRoute && ref?.type == SearchResultType.busStation;
+
+  Widget _staticNode(BuildContext context, GenUiNode node) {
     final cs = Theme.of(context).colorScheme;
-    switch (node) {
-      case GenUiHeading():
-        return Text(
-          node.text,
-          style: AppTextStyles.bodySmall.copyWith(
-            fontWeight: FontWeight.w600,
-            color: cs.onSurfaceVariant,
-          ),
-        );
-      case GenUiText():
-        return Text(
-          node.text,
-          style: AppTextStyles.bodyRegular.copyWith(color: cs.onSurface),
-        );
-      case GenUiRoute():
-        final card = _RouteCard(
-          node: node,
-          ref: ref,
-          live: live,
-          etaSource: etaSource,
-        );
-        if (ref == null) return card;
-        return Pressable(
-          onTap: () => onOpen(ref),
-          // The real stop name, not the model's title: the label a screen
-          // reader announces has to match the page the tap opens.
-          semanticLabel: ref.name,
-          child: card,
-        );
-      case GenUiStep():
-        return _StepRow(node: node);
-      case GenUiChip():
-        return Pressable(
-          onTap: () => ref != null ? onOpen(ref) : onAsk(node.query),
-          semanticLabel: ref?.name ?? node.label,
-          minTapSize: 44,
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppTheme.space14,
-              vertical: 9,
-            ),
-            decoration: BoxDecoration(
-              color: cs.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(AppTheme.radiusStadium),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  ref != null
-                      ? Icons.arrow_outward_rounded
-                      : Icons.search_rounded,
-                  size: 15,
-                  color: cs.onSurfaceVariant,
-                ),
-                const SizedBox(width: AppTheme.space6),
-                Text(
-                  node.label,
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: cs.onSurface,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      case GenUiDivider():
-        return Divider(height: 1, thickness: 0.5, color: cs.outlineVariant);
+    if (node is GenUiHeading) {
+      return Text(
+        node.text,
+        style: AppTextStyles.bodySmall.copyWith(
+          fontWeight: FontWeight.w600,
+          color: cs.onSurfaceVariant,
+        ),
+      );
     }
+    if (node is GenUiText) {
+      return Text(
+        node.text,
+        style: AppTextStyles.bodyRegular.copyWith(color: cs.onSurface),
+      );
+    }
+    return Divider(height: 1, thickness: 0.5, color: cs.outlineVariant);
+  }
+
+  Widget _routeNode(GenUiRoute node, SearchResult? ref, bool live) {
+    final card = _RouteCard(
+      node: node,
+      ref: ref,
+      live: live,
+      etaSource: etaSource,
+    );
+    if (ref == null) return card;
+    return Pressable(
+      onTap: () => onOpen(ref),
+      // The announced name must match the real board opened by the tap.
+      semanticLabel: ref.name,
+      child: card,
+    );
+  }
+
+  Widget _chipNode(BuildContext context, GenUiChip node, SearchResult? ref) {
+    final cs = Theme.of(context).colorScheme;
+    return Pressable(
+      onTap: () => ref != null ? onOpen(ref) : onAsk(node.query),
+      semanticLabel: ref?.name ?? node.label,
+      minTapSize: 44,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space14,
+          vertical: 9,
+        ),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(AppTheme.radiusStadium),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              ref != null ? Icons.arrow_outward_rounded : Icons.search_rounded,
+              size: 15,
+              color: cs.onSurfaceVariant,
+            ),
+            const SizedBox(width: AppTheme.space6),
+            Text(
+              node.label,
+              style: AppTextStyles.bodySmall.copyWith(
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

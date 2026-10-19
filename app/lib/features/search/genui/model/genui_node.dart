@@ -3,36 +3,30 @@ sealed class GenUiNode {
 
   static GenUiNode? fromJson(Map<String, Object?> json) {
     final type = json['type'] as String?;
-    switch (type) {
-      case 'heading':
-        return GenUiHeading(json['text'] as String? ?? '');
-      case 'text':
-        return GenUiText(json['text'] as String? ?? '');
-      case 'route':
-        return GenUiRoute(
-          title: json['title'] as String? ?? '',
-          badges: ((json['badges'] as List?) ?? const [])
-              .map((e) => e.toString())
-              .toList(),
-          refUid: _refUid(json),
-        );
-      case 'step':
-        return GenUiStep(
-          kind: GenUiStepKind.from(json['kind'] as String?),
-          text: json['text'] as String? ?? '',
-        );
-      case 'chip':
-        return GenUiChip(
-          label: json['label'] as String? ?? '',
-          query: json['query'] as String? ?? '',
-          refUid: _refUid(json),
-        );
-      case 'divider':
-        return const GenUiDivider();
-      default:
-        return null;
-    }
+    return _factories[type]?.call(json);
   }
+
+  static final _factories = <String, GenUiNode Function(Map<String, Object?>)>{
+    'heading': (json) => GenUiHeading(json['text'] as String? ?? ''),
+    'text': (json) => GenUiText(json['text'] as String? ?? ''),
+    'route': (json) => GenUiRoute(
+      title: json['title'] as String? ?? '',
+      badges: ((json['badges'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      refUid: _refUid(json),
+    ),
+    'step': (json) => GenUiStep(
+      kind: GenUiStepKind.from(json['kind'] as String?),
+      text: json['text'] as String? ?? '',
+    ),
+    'chip': (json) => GenUiChip(
+      label: json['label'] as String? ?? '',
+      query: json['query'] as String? ?? '',
+      refUid: _refUid(json),
+    ),
+    'divider': (_) => const GenUiDivider(),
+  };
 
   static List<GenUiNode> listFrom(Object? nodes) {
     if (nodes is! List) return const [];

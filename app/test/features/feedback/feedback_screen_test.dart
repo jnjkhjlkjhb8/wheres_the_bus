@@ -99,6 +99,28 @@ void main() {
     expect(_submitEnabled(tester), isFalse);
   });
 
+  testWidgets('the counter appears near the ceiling and marks the limit', (
+    tester,
+  ) async {
+    await _pumpPage(tester, _FakeRepo());
+    await tester.enterText(
+      find.byType(TextField),
+      'a' * (feedbackBodyLimit - 199),
+    );
+    await tester.pump();
+    expect(find.text('199 / 200'), findsOneWidget);
+    expect(_submitEnabled(tester), true);
+    await tester.enterText(find.byType(TextField), 'a' * feedbackBodyLimit);
+    await tester.pump();
+    final counter = tester.widget<Text>(find.text('0 / 200'));
+    expect(
+      counter.style!.color,
+      Theme.of(tester.element(find.text('0 / 200'))).colorScheme.error,
+    );
+    expect(_submitEnabled(tester), true);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the disclosure names what will be attached', (tester) async {
     await _pumpPage(tester, _FakeRepo());
 

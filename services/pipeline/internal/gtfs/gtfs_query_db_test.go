@@ -47,10 +47,38 @@ func gtfsTestTx(t *testing.T, pool *pgxpool.Pool, withData bool) pgx.Tx {
 		t.Fatalf("begin: %v", err)
 	}
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	if withData {
+		seedGTFSContractData(t, ctx, tx)
+	}
 	if err := createGTFSTempTables(ctx, tx, withData); err != nil {
 		t.Fatalf("temp tables: %v", err)
 	}
 	return tx
+}
+
+func seedGTFSContractData(t *testing.T, ctx context.Context, tx pgx.Tx) {
+	t.Helper()
+	// The consistency checks need a served, priced journey with English names;
+	// leftovers from another package's tests need not form a complete feed.
+	statements := []string{
+		`INSERT INTO raw_tdx.rail_operator (providerid, operatorcode, operatorname)
+		VALUES ('ZZ_GTFS_CONTRACT', 'ZZ_GTFS_CONTRACT', '{"Zh_tw":"測試營運者","En":"Test operator"}')`,
+		`INSERT INTO raw_tdx.thsr_station (stationid, stationname, stationposition)
+		VALUES ('ZZ_GTFS_FROM', '{"Zh_tw":"測試起站","En":"Test origin"}', '{"PositionLon":121.5,"PositionLat":25.0}'),
+		       ('ZZ_GTFS_TO', '{"Zh_tw":"測試迄站","En":"Test destination"}', '{"PositionLon":121.4,"PositionLat":24.9}')`,
+		`INSERT INTO raw_tdx.thsr_dailytimetable (traindate, dailytraininfo, stoptimes)
+		VALUES (date_trunc('day', now() AT TIME ZONE 'Asia/Taipei') AT TIME ZONE 'Asia/Taipei',
+		        '{"TrainNo":"ZZ_GTFS_CONTRACT","Direction":0,"EndingStationName":{"Zh_tw":"測試迄站","En":"Test destination"}}',
+		        '[{"StationID":"ZZ_GTFS_FROM","StopSequence":1,"ArrivalTime":"08:00","DepartureTime":"08:00"},
+		          {"StationID":"ZZ_GTFS_TO","StopSequence":2,"ArrivalTime":"08:10","DepartureTime":"08:10"}]')`,
+		`INSERT INTO raw_tdx.thsr_odfare (originstationid, destinationstationid, fares)
+		VALUES ('ZZ_GTFS_FROM', 'ZZ_GTFS_TO', '[{"TicketType":1,"FareClass":1,"CabinClass":1,"Price":50}]')`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			t.Fatalf("seed GTFS contract data: %v", err)
+		}
+	}
 }
 
 func TestGTFSStatementsPlan(t *testing.T) {
@@ -68,7 +96,7 @@ func TestGTFSStatementsPlan(t *testing.T) {
 }
 
 func TestGTFSCalendarWindow(t *testing.T) {
-	pool := gtfsTestPool(t)
+	tx := gtfsTestTx(t, gtfsTestPool(t), true)
 	ctx := context.Background()
 
 	var (
@@ -78,7 +106,7 @@ func TestGTFSCalendarWindow(t *testing.T) {
 	// min and max are COALESCEd rather than scanned into pointers: an empty
 	// calendar makes them null, and the only thing this reads them for is the
 	// failure message.
-	err := pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		WITH rail AS (SELECT DISTINCT service_date FROM (`+_railTripSource+`) r),
 		     cal AS (SELECT DISTINCT to_date(date, 'YYYYMMDD') AS service_date
 		             FROM (`+_gtfsCalendarDatesSQL+`) c)
@@ -94,10 +122,10 @@ func TestGTFSCalendarWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read calendar window: %v", err)
 	}
-	// A database with no landed rail timetable states no dates, and there is
-	// nothing to check about a window that is empty for want of data.
+	// The transaction owns its timetable fixture, so an empty result would
+	// hide a broken source filter rather than indicate missing external data.
 	if railDays == 0 {
-		t.Skip("no rail timetable landed; skipping calendar window check")
+		t.Fatal("seeded rail timetable produced no service dates")
 	}
 	if calendarDays > _gtfsCalendarDays {
 		t.Errorf("calendar_dates covers %d days (%s..%s), want at most %d",
@@ -109,7 +137,7 @@ func TestGTFSCalendarWindow(t *testing.T) {
 	}
 
 	var past, future int
-	if err := pool.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE service_date < (now() AT TIME ZONE 'Asia/Taipei')::date),
 		       count(*) FILTER (WHERE service_date >= (now() AT TIME ZONE 'Asia/Taipei')::date + $1::int)
 		FROM (SELECT DISTINCT service_date FROM (`+_railTripSource+`) r) d`,

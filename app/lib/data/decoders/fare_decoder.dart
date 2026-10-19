@@ -1,29 +1,34 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 import 'package:wheres_the_bus/data/models/fare_type.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 Set<int> decodeBufferSequences(BusFareInfo? fare) {
-  if (fare == null || fare.sectionFaresJson.isEmpty) return const {};
-  try {
-    final parsed = jsonDecode(utf8.decode(fare.sectionFaresJson));
-    if (parsed is! List) return const {};
-    final out = <int>{};
-    for (final section in parsed) {
-      if (section is! Map) continue;
-      final zones = section['BufferZones'];
-      if (zones is! List) continue;
-      for (final zone in zones) {
-        if (zone is Map && zone['StopSequence'] is num) {
-          out.add((zone['StopSequence'] as num).toInt());
-        }
-      }
-    }
-    return out;
-  } on Object catch (_) {
-    return const {};
+  if (fare == null) return const {};
+  return {
+    for (final section in _decodeList(fare.sectionFaresJson))
+      ..._bufferSequences(section),
+  };
+}
+
+Iterable<int> _bufferSequences(Object? section) sync* {
+  if (section is! Map) return;
+  yield* _bufferZoneSequences(section['BufferZones']);
+}
+
+Iterable<int> _bufferZoneSequences(Object? zones) sync* {
+  if (zones is! List) return;
+  for (final zone in zones) {
+    yield* _bufferSequence(zone);
   }
+}
+
+Iterable<int> _bufferSequence(Object? zone) {
+  if (zone is! Map) return const [];
+  final sequence = zone['StopSequence'];
+  return sequence is num ? [sequence.toInt()] : const [];
 }
 
 /// A price row within a fare group: fare-class label + `NT$15`, plus the TDX
@@ -55,28 +60,50 @@ List<OdOrigin> decodeOdFares(AppI18n i18n, BusFareInfo? fare) {
   if (fare == null) return const [];
   final byOrigin = <String, List<OdDestination>>{};
   final order = <String>[];
-  void collect(List<int> payload) {
-    for (final entry in _decodeList(payload)) {
-      if (entry is! Map) continue;
-      final rows = _fareRows(i18n, entry['Fares']);
-      if (rows.isEmpty) continue;
-      final o = _stopName(entry['OriginStage'] ?? entry['OriginStop']);
-      final d = _stopName(
-        entry['DestinationStage'] ?? entry['DestinationStop'],
-      );
-      if (o == null || d == null) continue;
-      byOrigin
-          .putIfAbsent(o, () {
-            order.add(o);
-            return [];
-          })
-          .add((destination: d, rows: rows));
-    }
+  for (final payload in [fare.stageFaresJson, fare.odFaresJson]) {
+    _collectOdFares(i18n, payload, byOrigin, order);
   }
-
-  collect(fare.stageFaresJson);
-  collect(fare.odFaresJson);
   return [for (final o in order) (origin: o, destinations: byOrigin[o]!)];
+}
+
+void _collectOdFares(
+  AppI18n i18n,
+  List<int> payload,
+  Map<String, List<OdDestination>> byOrigin,
+  List<String> order,
+) {
+  for (final entry in _decodeList(payload)) {
+    final decoded = _odFareEntry(i18n, entry);
+    if (decoded == null) continue;
+    byOrigin
+        .putIfAbsent(decoded.origin, () {
+          order.add(decoded.origin);
+          return [];
+        })
+        .add(decoded.destination);
+  }
+}
+
+({String origin, OdDestination destination})? _odFareEntry(
+  AppI18n i18n,
+  Object? entry,
+) {
+  if (entry is! Map) return null;
+  final rows = _fareRows(i18n, entry['Fares']);
+  if (rows.isEmpty) return null;
+  return _namedOdFareEntry(entry, rows);
+}
+
+({String origin, OdDestination destination})? _namedOdFareEntry(
+  Map<Object?, Object?> entry,
+  List<FareRow> rows,
+) {
+  final origin = _stopName(entry['OriginStage'] ?? entry['OriginStop']);
+  final destination = _stopName(
+    entry['DestinationStage'] ?? entry['DestinationStop'],
+  );
+  if (origin == null || destination == null) return null;
+  return (origin: origin, destination: (destination: destination, rows: rows));
 }
 
 ({FareRow row, FareType matched})? pickFareRow(
@@ -84,62 +111,88 @@ List<OdOrigin> decodeOdFares(AppI18n i18n, BusFareInfo? fare) {
   FareType type,
 ) {
   for (final fareClass in type.busFareClasses) {
-    for (final row in rows) {
-      if (row.fareClass == fareClass) {
-        return (
-          row: row,
-          matched: type.matchedWhen(isFullFare: fareClass == 1),
-        );
-      }
+    final row = _fareRowForClass(rows, fareClass);
+    if (row != null) {
+      return (row: row, matched: type.matchedWhen(isFullFare: fareClass == 1));
     }
   }
   // A route whose classes are all unmapped codes still has a price to show;
   // quoting its first row beats quoting nothing.
-  return rows.isEmpty ? null : (row: rows.first, matched: type);
+  return _fallbackFareRow(rows, type);
 }
+
+FareRow? _fareRowForClass(List<FareRow> rows, int fareClass) {
+  for (final row in rows) {
+    if (row.fareClass == fareClass) return row;
+  }
+  return null;
+}
+
+({FareRow row, FareType matched})? _fallbackFareRow(
+  List<FareRow> rows,
+  FareType type,
+) => rows.isEmpty ? null : (row: rows.first, matched: type);
 
 ({int min, int max})? odFareRange(List<OdOrigin> origins, FareType type) {
   var min = -1;
   var max = -1;
-  for (final origin in origins) {
-    for (final dest in origin.destinations) {
-      final picked = pickFareRow(dest.rows, type);
-      if (picked == null) continue;
-      final n = int.tryParse(
-        picked.row.price.replaceAll(RegExp('[^0-9]'), ''),
-      );
-      if (n == null) continue;
-      if (min < 0 || n < min) min = n;
-      if (n > max) max = n;
-    }
+  for (final value in origins.expand((origin) => _farePrices(origin, type))) {
+    min = _minimumFare(min, value);
+    max = math.max(max, value);
   }
-  return min < 0 ? null : (min: min, max: max);
+  return _fareRangeOrNull(min, max);
+}
+
+int _minimumFare(int current, int next) =>
+    current < 0 ? next : math.min(current, next);
+({int min, int max})? _fareRangeOrNull(int min, int max) =>
+    min < 0 ? null : (min: min, max: max);
+
+Iterable<int> _farePrices(OdOrigin origin, FareType type) sync* {
+  for (final dest in origin.destinations) {
+    final picked = pickFareRow(dest.rows, type);
+    if (picked == null) continue;
+    final n = int.tryParse(picked.row.price.replaceAll(RegExp('[^0-9]'), ''));
+    if (n != null) yield n;
+  }
 }
 
 void _addSectionGroups(AppI18n i18n, List<int> payload, List<FareGroup> out) {
-  final parsed = _decodeList(payload);
-  final sections = [
-    for (final s in parsed)
-      if (s is Map) s,
-  ];
-  for (final (i, s) in sections.indexed) {
-    final rows = _fareRows(i18n, s['Fares']);
-    if (rows.isEmpty) continue;
-    // A single section is the whole fare — no segment label needed.
-    out.add((
-      segment: sections.length > 1 ? i18n.fareSectionNumbered(i + 1) : null,
-      rows: rows,
-    ));
+  final sections = _decodeList(
+    payload,
+  ).whereType<Map<Object?, Object?>>().toList();
+  for (final (index, section) in sections.indexed) {
+    final group = _sectionGroup(i18n, section, index, sections.length > 1);
+    if (group != null) out.add(group);
   }
+}
+
+FareGroup? _sectionGroup(
+  AppI18n i18n,
+  Map<Object?, Object?> section,
+  int index,
+  bool numbered,
+) {
+  final rows = _fareRows(i18n, section['Fares']);
+  if (rows.isEmpty) return null;
+  return (
+    segment: numbered ? i18n.fareSectionNumbered(index + 1) : null,
+    rows: rows,
+  );
 }
 
 void _addSegmentGroups(AppI18n i18n, List<int> payload, List<FareGroup> out) {
   for (final entry in _decodeList(payload)) {
-    if (entry is! Map) continue;
-    final rows = _fareRows(i18n, entry['Fares']);
-    if (rows.isEmpty) continue;
-    out.add((segment: _segmentLabel(entry), rows: rows));
+    final group = _segmentGroup(i18n, entry);
+    if (group != null) out.add(group);
   }
+}
+
+FareGroup? _segmentGroup(AppI18n i18n, Object? entry) {
+  if (entry is! Map) return null;
+  final rows = _fareRows(i18n, entry['Fares']);
+  if (rows.isEmpty) return null;
+  return (segment: _segmentLabel(entry), rows: rows);
 }
 
 List<Object?> _decodeList(List<int> payload) {
@@ -165,58 +218,99 @@ String? _segmentLabel(Map<Object?, Object?> entry) {
 String? _stopName(Object? stop) {
   if (stop is! Map) return null;
   final name = stop['StopName'];
-  if (name is String && name.isNotEmpty) return name;
-  if (name is Map) {
-    final zh = name['Zh_tw'];
-    if (zh is String && zh.isNotEmpty) return zh;
-  }
-  return null;
+  return _fareName(name) ?? _localizedStopName(name);
 }
 
+String? _localizedStopName(Object? name) =>
+    name is Map ? _fareName(name['Zh_tw']) : null;
+
+typedef _FareVariant = ({String? name, int ticket, int price});
+
 List<FareRow> _fareRows(AppI18n i18n, Object? faresRaw) {
-  if (faresRaw is! List) return const [];
-  final byClass = <int, List<({String? name, int ticket, int price})>>{};
-  for (final f in faresRaw) {
-    if (f is! Map) continue;
-    final cls = f['FareClass'];
-    final price = f['Price'];
-    if (cls is! num || price is! num || price <= 0) continue;
-    final name = f['FareName'];
-    final ticket = f['TicketType'];
-    byClass.putIfAbsent(cls.toInt(), () => []).add((
-      name: name is String && name.isNotEmpty ? name : null,
-      ticket: ticket is num ? ticket.toInt() : 0,
-      price: price.toInt(),
-    ));
-  }
-  final rows = <FareRow>[];
-  for (final cls in _fareClassOrder(byClass.keys)) {
-    final entries = byClass[cls]!;
-    final distinctPrices = {for (final e in entries) e.price};
-    if (distinctPrices.length == 1) {
-      final label = _fareClassLabel(i18n, cls);
-      rows.add((
-        label: label,
-        price: _money(entries.first.price),
-        fareClass: cls,
-      ));
-      continue;
-    }
-    // Prices split within the class (現金 vs 電子票證, or seat class): one row
-    // per entry, deduped, labelled by TDX's FareName when it provides one.
-    final seen = <String>{};
-    for (final e in entries) {
-      final label = e.name != null
-          ? e.name!.replaceAll('_', ' ')
-          : '${_fareClassLabel(i18n, cls)}'
-                '${e.ticket == 3 ? i18n.fareSmartCard : ''}';
-      if (seen.add('$label|${e.price}')) {
-        rows.add((label: label, price: _money(e.price), fareClass: cls));
-      }
-    }
-  }
-  return rows;
+  final byClass = _groupFares(faresRaw);
+  return [
+    for (final cls in _fareClassOrder(byClass.keys))
+      ..._classRows(i18n, cls, byClass[cls]!),
+  ];
 }
+
+Map<int, List<_FareVariant>> _groupFares(Object? faresRaw) {
+  if (faresRaw is! List) return const {};
+  final byClass = <int, List<_FareVariant>>{};
+  for (final raw in faresRaw) {
+    final entry = _fareEntry(raw);
+    if (entry == null) continue;
+    byClass.putIfAbsent(entry.fareClass, () => []).add(entry.variant);
+  }
+  return byClass;
+}
+
+({int fareClass, _FareVariant variant})? _fareEntry(Object? raw) {
+  if (raw is! Map) return null;
+  return _mappedFareEntry(raw);
+}
+
+({int fareClass, _FareVariant variant})? _mappedFareEntry(
+  Map<Object?, Object?> raw,
+) {
+  final cls = raw['FareClass'];
+  final price = _positiveFarePrice(raw['Price']);
+  if (cls is! num || price == null) return null;
+  return (
+    fareClass: cls.toInt(),
+    variant: (
+      name: _fareName(raw['FareName']),
+      ticket: _ticketType(raw['TicketType']),
+      price: price.toInt(),
+    ),
+  );
+}
+
+num? _positiveFarePrice(Object? price) =>
+    price is num && price > 0 ? price : null;
+int _ticketType(Object? ticket) => ticket is num ? ticket.toInt() : 0;
+
+String? _fareName(Object? name) =>
+    name is String && name.isNotEmpty ? name : null;
+
+Iterable<FareRow> _classRows(
+  AppI18n i18n,
+  int cls,
+  List<_FareVariant> entries,
+) sync* {
+  final distinctPrices = {for (final e in entries) e.price};
+  if (distinctPrices.length == 1) {
+    yield (
+      label: _fareClassLabel(i18n, cls),
+      price: _money(entries.first.price),
+      fareClass: cls,
+    );
+    return;
+  }
+  yield* _variantRows(i18n, cls, entries);
+}
+
+Iterable<FareRow> _variantRows(
+  AppI18n i18n,
+  int cls,
+  List<_FareVariant> entries,
+) sync* {
+  // Prices split within the class (現金 vs 電子票證, or seat class): one row
+  // per entry, deduped, labelled by TDX's FareName when it provides one.
+  final seen = <String>{};
+  for (final e in entries) {
+    final label = _variantLabel(i18n, cls, e);
+    if (seen.add('$label|${e.price}')) {
+      yield (label: label, price: _money(e.price), fareClass: cls);
+    }
+  }
+}
+
+String _variantLabel(AppI18n i18n, int cls, _FareVariant entry) =>
+    entry.name != null
+    ? entry.name!.replaceAll('_', ' ')
+    : '${_fareClassLabel(i18n, cls)}'
+          '${entry.ticket == 3 ? i18n.fareSmartCard : ''}';
 
 // TDX Bus FareClass enum (PTX). 1/10 confirmed against sample FareNames
 // (全票/半票); the rest follow the documented enum. Unknown codes fall back to

@@ -42,6 +42,32 @@ void main() {
       expect(s.tone, BusStatusTone.notice);
     });
 
+    test('every TDX driving code maps to its own label and tone', () {
+      final expected = <int, (String, BusStatusTone)>{
+        0: (zhStrings.busStatusOperating, BusStatusTone.normal),
+        1: (zhStrings.busStatusAccident, BusStatusTone.warning),
+        2: (zhStrings.busStatusBreakdown, BusStatusTone.warning),
+        3: (zhStrings.busStatusTraffic, BusStatusTone.notice),
+        4: (zhStrings.busStatusEmergency, BusStatusTone.warning),
+        5: (zhStrings.busStatusRefuelling, BusStatusTone.muted),
+        98: (zhStrings.busStatusOffRoute, BusStatusTone.notice),
+        99: (zhStrings.busStatusNotInService, BusStatusTone.muted),
+        100: (zhStrings.busStatusFull, BusStatusTone.notice),
+        101: (zhStrings.busStatusChartered, BusStatusTone.muted),
+      };
+      for (final MapEntry(key: code, value: want) in expected.entries) {
+        final s = busVehicleStatus(zhStrings, _v(bus: code));
+        expect((s.label, s.tone), want, reason: 'busStatus $code');
+      }
+      expect(expected.values.map((e) => e.$1).toSet(), hasLength(10));
+    });
+
+    test('only duty status 2 overrides; 1 keeps the driving state', () {
+      final s = busVehicleStatus(zhStrings, _v(duty: 1, bus: 3));
+      expect(s.label, zhStrings.busStatusTraffic);
+      expect(s.tone, BusStatusTone.notice);
+    });
+
     test('unknown code falls back to operating', () {
       expect(busVehicleStatus(zhStrings, _v(bus: 255)).label, '營運中');
     });
@@ -79,6 +105,23 @@ void main() {
       expect(busGpsAge(zhStrings, at(90), now).text, '1分前');
       expect(busGpsAge(zhStrings, at(120), now).text, '2分前');
       expect(busGpsAge(zhStrings, at(179), now).text, '2分前');
+    });
+
+    test('stale starts exactly at 180 seconds', () {
+      expect(busGpsAge(zhStrings, at(179), now).stale, isFalse);
+      expect(busGpsAge(zhStrings, at(180), now).text, '定位延遲');
+      expect(busGpsAge(zhStrings, at(180), now).stale, isTrue);
+    });
+
+    test('a negative fix time counts as no fix', () {
+      final a = busGpsAge(zhStrings, -1, now);
+      expect(a.text, '無定位');
+      expect(a.stale, isTrue);
+    });
+
+    test('fresh fixes are not stale', () {
+      expect(busGpsAge(zhStrings, at(59), now).stale, isFalse);
+      expect(busGpsAge(zhStrings, at(60), now).stale, isFalse);
     });
 
     test('past 3 minutes is stale', () {

@@ -66,18 +66,22 @@ func handleStaticVersion(cache *cache.TTLCache, read func(context.Context) (stri
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "static version unavailable"})
 			return
 		}
-		body, err := json.Marshal(staticVersionResponse{Version: version})
-		if err != nil {
-			zap.S().Errorw("encode failed",
-				"component", "http",
-				"action", "static_version",
-				"event", "encode_failed",
-				"err", err,
-			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "static version unavailable"})
-			return
-		}
-		cache.Set(_staticVersionCacheKey, body, _staticVersionCacheTTL)
-		c.Data(http.StatusOK, gin.MIMEJSON, body)
+		cacheStaticVersion(c, cache, version)
 	}
+}
+
+func cacheStaticVersion(c *gin.Context, cache *cache.TTLCache, version string) {
+	body, err := json.Marshal(staticVersionResponse{Version: version})
+	if err != nil {
+		zap.S().Errorw("encode failed",
+			"component", "http",
+			"action", "static_version",
+			"event", "encode_failed",
+			"err", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "static version unavailable"})
+		return
+	}
+	cache.Set(_staticVersionCacheKey, body, _staticVersionCacheTTL)
+	c.Data(http.StatusOK, gin.MIMEJSON, body)
 }

@@ -73,17 +73,8 @@ Page<T> _settingsOptionPage<T>(
   required List<String> options,
   required String selected,
 }) {
-  var effectiveOptions = options;
-  var effectiveSelected = selected;
-  if (extra is Map) {
-    final cachedOptions = extra['options'];
-    final cachedSelected = extra['selected'];
-    if (cachedOptions is List) {
-      final parsed = cachedOptions.whereType<String>().toList();
-      if (parsed.isNotEmpty) effectiveOptions = parsed;
-    }
-    if (cachedSelected is String) effectiveSelected = cachedSelected;
-  }
+  final effectiveOptions = _settingsOptions(extra, options);
+  final effectiveSelected = _settingsSelected(extra, selected);
   return _page(
     SettingsOptionScreen(
       title: title,
@@ -91,6 +82,20 @@ Page<T> _settingsOptionPage<T>(
       initialSelected: effectiveSelected,
     ),
   );
+}
+
+List<String> _settingsOptions(Object? extra, List<String> fallback) {
+  if (extra is! Map) return fallback;
+  final cached = extra['options'];
+  if (cached is! List) return fallback;
+  final parsed = cached.whereType<String>().toList();
+  return parsed.isEmpty ? fallback : parsed;
+}
+
+String _settingsSelected(Object? extra, String fallback) {
+  if (extra is! Map) return fallback;
+  final cached = extra['selected'];
+  return cached is String ? cached : fallback;
 }
 
 class _DeferredAnalyticsObserver extends NavigatorObserver {
@@ -134,15 +139,7 @@ List<RouteBase> buildAppRoutes({
           ),
           GoRoute(
             path: AppRoutes.nearStationPattern,
-            pageBuilder: (_, state) {
-              // A station kind the app does not have is a broken link, not a
-              // request for the bare map: opening home anyway would answer it
-              // with something that looks like it worked.
-              if (NearStationRouteArgs.fromUri(state.uri) == null) {
-                return _page(RouteErrorScreen(uri: state.uri));
-              }
-              return _homePage(state);
-            },
+            pageBuilder: (_, state) => _nearStationPage(state),
           ),
           GoRoute(
             path: AppRoutes.railQueryPattern,
@@ -227,48 +224,15 @@ List<RouteBase> buildAppRoutes({
           ),
           GoRoute(
             path: AppRoutes.busStop,
-            pageBuilder: (_, state) {
-              final args = BusStopRouteArgs.from(
-                state.uri.queryParameters,
-                state.extra,
-              );
-              if (args == null) return _page(RouteErrorScreen(uri: state.uri));
-              return _page(
-                BusStopScreen(
-                  stopName: args.stopName,
-                  stopId: args.stopId,
-                  city: args.city,
-                  lat: args.lat,
-                  lon: args.lon,
-                ),
-              );
-            },
+            pageBuilder: (_, state) => _busStopPage(state),
           ),
           GoRoute(
             path: AppRoutes.bikeStation,
-            pageBuilder: (_, state) {
-              final args = BikeStationRouteArgs.from(
-                state.uri.queryParameters,
-                state.extra,
-              );
-              if (args == null) return _page(RouteErrorScreen(uri: state.uri));
-              return _page(
-                BikeStationScreen(
-                  stationUid: args.stationUid,
-                  name: args.name,
-                  lat: args.lat,
-                  lon: args.lon,
-                ),
-              );
-            },
+            pageBuilder: (_, state) => _bikeStationPage(state),
           ),
           GoRoute(
             path: AppRoutes.busRoutePattern,
-            pageBuilder: (_, state) {
-              final uid = state.pathParameters['subRouteUid'] ?? '';
-              if (uid.isEmpty) return _page(RouteErrorScreen(uri: state.uri));
-              return _page(BusRouteScreen(subRouteUid: uid));
-            },
+            pageBuilder: (_, state) => _busRoutePage(state),
           ),
           GoRoute(
             path: AppRoutes.rail,
@@ -295,19 +259,7 @@ List<RouteBase> buildAppRoutes({
           ),
           GoRoute(
             path: AppRoutes.go,
-            pageBuilder: (_, state) {
-              final args = GoRouteArgs.from(state.uri.queryParameters);
-              return _page(
-                GoScreen(
-                  initialDestination: args == null
-                      ? null
-                      : PlannedPlace(
-                          name: args.name,
-                          latLng: LatLng(args.lat, args.lon),
-                        ),
-                ),
-              );
-            },
+            pageBuilder: (_, state) => _goPage(state),
           ),
         ],
       ),
@@ -318,29 +270,94 @@ List<RouteBase> buildAppRoutes({
   // the banners and must not stack a rail screen underneath.
   GoRoute(
     path: AppRoutes.railTrainPattern,
-    pageBuilder: (_, state) {
-      final args = RailTrainRouteArgs.from(
-        state.pathParameters,
-        state.uri.queryParameters,
-      );
-      if (args == null) return _page(RouteErrorScreen(uri: state.uri));
-      final extra = state.extra;
-      final warm = extra is RailTrainExtra ? extra : const RailTrainExtra();
-      return _page(
-        RailTrainScreen(
-          type: warm.typeLabel ?? railSystemLabel(args.system),
-          trainNo: args.trainNo,
-          date: _railDate(args.date),
-          userOrigin: warm.userOrigin,
-          userDest: warm.userDest,
-          delayMinutes: warm.delayMinutes,
-          marks: warm.marks,
-          remark: warm.remark,
-        ),
-      );
-    },
+    pageBuilder: (_, state) => _railTrainPage(state),
   ),
 ];
+
+Page<void> _nearStationPage(GoRouterState state) {
+  // A station kind the app does not have is a broken link, not a
+  // request for the bare map: opening home anyway would answer it
+  // with something that looks like it worked.
+  if (NearStationRouteArgs.fromUri(state.uri) == null) {
+    return _page(RouteErrorScreen(uri: state.uri));
+  }
+  return _homePage(state);
+}
+
+Page<void> _busStopPage(GoRouterState state) {
+  final args = BusStopRouteArgs.from(
+    state.uri.queryParameters,
+    state.extra,
+  );
+  if (args == null) return _page(RouteErrorScreen(uri: state.uri));
+  return _page(
+    BusStopScreen(
+      stopName: args.stopName,
+      stopId: args.stopId,
+      city: args.city,
+      lat: args.lat,
+      lon: args.lon,
+    ),
+  );
+}
+
+Page<void> _bikeStationPage(GoRouterState state) {
+  final args = BikeStationRouteArgs.from(
+    state.uri.queryParameters,
+    state.extra,
+  );
+  if (args == null) return _page(RouteErrorScreen(uri: state.uri));
+  return _page(
+    BikeStationScreen(
+      stationUid: args.stationUid,
+      name: args.name,
+      lat: args.lat,
+      lon: args.lon,
+    ),
+  );
+}
+
+Page<void> _busRoutePage(GoRouterState state) {
+  final uid = state.pathParameters['subRouteUid'] ?? '';
+  if (uid.isEmpty) return _page(RouteErrorScreen(uri: state.uri));
+  return _page(BusRouteScreen(subRouteUid: uid));
+}
+
+Page<void> _goPage(GoRouterState state) {
+  final args = GoRouteArgs.from(state.uri.queryParameters);
+  return _page(
+    GoScreen(
+      initialDestination: args == null
+          ? null
+          : PlannedPlace(
+              name: args.name,
+              latLng: LatLng(args.lat, args.lon),
+            ),
+    ),
+  );
+}
+
+Page<void> _railTrainPage(GoRouterState state) {
+  final args = RailTrainRouteArgs.from(
+    state.pathParameters,
+    state.uri.queryParameters,
+  );
+  if (args == null) return _page(RouteErrorScreen(uri: state.uri));
+  final extra = state.extra;
+  final warm = extra is RailTrainExtra ? extra : const RailTrainExtra();
+  return _page(
+    RailTrainScreen(
+      type: warm.typeLabel ?? railSystemLabel(args.system),
+      trainNo: args.trainNo,
+      date: _railDate(args.date),
+      userOrigin: warm.userOrigin,
+      userDest: warm.userDest,
+      delayMinutes: warm.delayMinutes,
+      marks: warm.marks,
+      remark: warm.remark,
+    ),
+  );
+}
 
 class AppRouter {
   AppRouter._();

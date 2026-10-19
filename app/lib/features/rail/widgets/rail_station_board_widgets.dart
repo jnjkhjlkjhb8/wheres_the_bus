@@ -209,6 +209,60 @@ class _DepartureRow extends StatelessWidget {
     );
   }
 
+  EdgeInsets get _margin => highlighted
+      ? const EdgeInsets.symmetric(
+          horizontal: AppTheme.space8,
+          vertical: AppTheme.space4,
+        )
+      : EdgeInsets.zero;
+
+  BoxDecoration? _decoration(ColorScheme cs) => highlighted
+      ? BoxDecoration(
+          color: AppTheme.surfaceHighlight(cs.brightness),
+          borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+        )
+      : null;
+
+  double get _horizontalPadding =>
+      highlighted ? AppTheme.space8 : AppTheme.space16;
+
+  bool get _showCountdown => highlighted && !departure.isSuspended;
+
+  Color _textColor(ColorScheme cs) => departure.isSuspended
+      ? AppTheme.inkTertiary(cs.brightness)
+      : cs.onSurface;
+
+  TextStyle _timeStyle(ColorScheme cs) => AppTextStyles.timeValue(
+    size: 19,
+    weight: highlighted ? FontWeight.w600 : FontWeight.w400,
+    color: _textColor(cs),
+    decoration: departure.isSuspended ? TextDecoration.lineThrough : null,
+  );
+
+  Widget _status(AppI18n i18n) {
+    if (departure.isSuspended) {
+      return Text(
+        i18n.railSuspendedShort,
+        style: AppTextStyles.bodySmall.copyWith(
+          color: AppTheme.trainDelay,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+    if (delayMinutes <= 0) return const SizedBox.shrink();
+    return Text(
+      i18n.railDelayMinutes(delayMinutes),
+      style: AppTextStyles.timeValue(
+        size: 12.5,
+        weight: FontWeight.w600,
+        color: AppTheme.trainDelay,
+      ),
+    );
+  }
+
+  VoidCallback? _onTap(BuildContext context) =>
+      departure.isSuspended ? null : () => _open(context);
+
   @override
   Widget build(BuildContext context) {
     final i18n = AppI18n.of(context);
@@ -217,26 +271,16 @@ class _DepartureRow extends StatelessWidget {
     final suspended = departure.isSuspended;
 
     return Pressable(
-      onTap: suspended ? null : () => _open(context),
+      onTap: _onTap(context),
       semanticLabel: i18n.towards(departure.destination),
       child: Container(
         // Margin + padding sum to 16 either side highlighted or not, so the
         // tint insets without shifting the row off the content column — the
         // same arithmetic EtaListTile's coming-soon highlight uses.
-        margin: highlighted
-            ? const EdgeInsets.symmetric(
-                horizontal: AppTheme.space8,
-                vertical: AppTheme.space4,
-              )
-            : EdgeInsets.zero,
-        decoration: highlighted
-            ? BoxDecoration(
-                color: AppTheme.surfaceHighlight(cs.brightness),
-                borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-              )
-            : null,
+        margin: _margin,
+        decoration: _decoration(cs),
         padding: EdgeInsets.symmetric(
-          horizontal: highlighted ? AppTheme.space8 : AppTheme.space16,
+          horizontal: _horizontalPadding,
           vertical: AppTheme.space10,
         ),
         constraints: BoxConstraints(minHeight: scaler.scale(56)),
@@ -250,17 +294,9 @@ class _DepartureRow extends StatelessWidget {
                 children: [
                   Text(
                     _hhmm(departure.departureTime),
-                    style: AppTextStyles.timeValue(
-                      size: 19,
-                      weight: highlighted ? FontWeight.w600 : FontWeight.w400,
-                      color: suspended
-                          ? AppTheme.inkTertiary(cs.brightness)
-                          : cs.onSurface,
-                      decoration: suspended ? TextDecoration.lineThrough : null,
-                    ),
+                    style: _timeStyle(cs),
                   ),
-                  if (highlighted && !suspended)
-                    _Countdown(departure: departure),
+                  if (_showCountdown) _Countdown(departure: departure),
                 ],
               ),
             ),
@@ -277,9 +313,7 @@ class _DepartureRow extends StatelessWidget {
                     style: AppTextStyles.bodyRegular.copyWith(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
-                      color: suspended
-                          ? AppTheme.inkTertiary(cs.brightness)
-                          : cs.onSurface,
+                      color: _textColor(cs),
                     ),
                   ),
                   const SizedBox(height: 3),
@@ -305,23 +339,7 @@ class _DepartureRow extends StatelessWidget {
                 ],
               ),
             ),
-            if (suspended)
-              Text(
-                i18n.railSuspendedShort,
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppTheme.trainDelay,
-                  fontWeight: FontWeight.w600,
-                ),
-              )
-            else if (delayMinutes > 0)
-              Text(
-                i18n.railDelayMinutes(delayMinutes),
-                style: AppTextStyles.timeValue(
-                  size: 12.5,
-                  weight: FontWeight.w600,
-                  color: AppTheme.trainDelay,
-                ),
-              ),
+            _status(i18n),
             if (!suspended) ...[
               const SizedBox(width: AppTheme.space4),
               Icon(
@@ -437,16 +455,20 @@ class _DayOverView extends StatelessWidget {
   final RailSystem system;
   final RailBoardDirection direction;
 
+  String _traDirection(AppI18n i18n) => direction == RailBoardDirection.forward
+      ? i18n.railDirectionForward
+      : i18n.railDirectionReverse;
+
+  String _thsrDirection(AppI18n i18n) => direction == RailBoardDirection.forward
+      ? i18n.railDirectionSouthbound
+      : i18n.railDirectionNorthbound;
+
   @override
   Widget build(BuildContext context) {
     final i18n = AppI18n.of(context);
     final label = system == RailSystem.tra
-        ? (direction == RailBoardDirection.forward
-              ? i18n.railDirectionForward
-              : i18n.railDirectionReverse)
-        : (direction == RailBoardDirection.forward
-              ? i18n.railDirectionSouthbound
-              : i18n.railDirectionNorthbound);
+        ? _traDirection(i18n)
+        : _thsrDirection(i18n);
     return _BoardNotice(
       title: i18n.railBoardDayOver(label),
       body: i18n.railBoardDayOverHint,

@@ -3,22 +3,31 @@ package installid
 import "strings"
 
 func ParseBearerCredential(header string) string {
-	if header == "" || header != strings.TrimSpace(header) {
+	if !trimmedBearerHeader(header) {
 		return ""
 	}
+	separator, ok := bearerSeparator(header)
+	if !ok {
+		return ""
+	}
+	return bearerValue(header[separator:])
+}
+
+func trimmedBearerHeader(header string) bool {
+	return header != "" && header == strings.TrimSpace(header)
+}
+
+func bearerSeparator(header string) (int, bool) {
 	separator := strings.IndexAny(header, " \t")
-	if separator <= 0 || !strings.EqualFold(header[:separator], "Bearer") {
-		return ""
+	if separator == -1 || !strings.EqualFold(header[:separator], "Bearer") {
+		return 0, false
 	}
-	credentialStart := separator
-	for credentialStart < len(header) && (header[credentialStart] == ' ' || header[credentialStart] == '\t') {
-		credentialStart++
-	}
-	if credentialStart == len(header) {
-		return ""
-	}
-	credential := header[credentialStart:]
-	if strings.ContainsAny(credential, " \t\r\n") {
+	return separator, true
+}
+
+func bearerValue(value string) string {
+	credential := strings.TrimLeft(value, " \t")
+	if credential == "" || strings.ContainsAny(credential, " \t\r\n") {
 		return ""
 	}
 	return credential

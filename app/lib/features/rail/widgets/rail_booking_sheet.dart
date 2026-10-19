@@ -116,19 +116,31 @@ class _RailBookingSheetState extends State<_RailBookingSheet> {
   Future<void> _book({bool useApp = false}) async {
     // The app variant takes no ticket parameters, so its URL is never the one
     // prefetched for the web variant.
-    var url = useApp ? null : (_hasFreshUrl ? _url : null);
+    final url = await _requestedUrl(useApp);
+    if (!mounted || url == null) return;
+    await _openRequestedUrl(url);
+  }
+
+  String? _cachedUrl(bool useApp) => useApp ? null : _freshWebUrl;
+  String? get _freshWebUrl => _hasFreshUrl ? _url : null;
+
+  Future<String?> _requestedUrl(bool useApp) async {
+    final cached = _cachedUrl(useApp);
+    if (cached != null) return cached;
+    setState(() => _loading = true);
+    final url = await fetchRailBookingUrl(_request, useApp: useApp);
+    if (!mounted) return null;
+    setState(() => _loading = false);
     if (url == null) {
-      setState(() => _loading = true);
-      url = await fetchRailBookingUrl(_request, useApp: useApp);
-      if (!mounted) return;
-      setState(() => _loading = false);
-      if (url == null) {
-        // Opening an unfilled booking page without saying so is what made this
-        // look broken; surface it and let the user decide.
-        setState(() => _exchangeFailed = true);
-        return;
-      }
+      // Opening an unfilled booking page without saying so is what made this
+      // look broken; surface it and let the user decide.
+      setState(() => _exchangeFailed = true);
+      return null;
     }
+    return url;
+  }
+
+  Future<void> _openRequestedUrl(String url) async {
     final result = await openRailBooking(url: url, isThsr: _request.isThsr);
     if (!mounted) return;
     if (result == BookingLaunchResult.failed) {
@@ -164,22 +176,12 @@ class _RailBookingSheetState extends State<_RailBookingSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_request.isThsr) ..._thsrOptions() else ..._traOptions(),
+                  ..._operatorOptions(),
                   const SizedBox(height: 18),
                   _SheetSection(
                     title: AppI18n.of(context).railBookingNotes,
                     child: _Notes(
-                      lines: _request.isThsr
-                          ? [
-                              AppI18n.of(context).railBookingPayNote,
-                              AppI18n.of(context).railBookingIdNote,
-                              AppI18n.of(context).railBookingThsrFareNote,
-                            ]
-                          : [
-                              AppI18n.of(context).railBookingTraCategoryNote,
-                              AppI18n.of(context).railBookingPayNote,
-                              AppI18n.of(context).railBookingTraFareNote,
-                            ],
+                      lines: _operatorNotes(AppI18n.of(context)),
                     ),
                   ),
                   if (_appInstalled) ...[
@@ -193,7 +195,7 @@ class _RailBookingSheetState extends State<_RailBookingSheet> {
                             label: AppI18n.of(
                               context,
                             ).railOpenOperatorApp(operator),
-                            onTap: _loading ? null : () => _book(useApp: true),
+                            onTap: _operatorAppAction,
                           ),
                           const SizedBox(height: AppTheme.space6),
                           Text(
@@ -218,12 +220,30 @@ class _RailBookingSheetState extends State<_RailBookingSheet> {
             request: _request,
             loading: _loading,
             operator: operator,
-            onBook: _request.ticketTotal > 0 && !_loading ? _book : null,
+            onBook: _bookingAction,
           ),
         ],
       ),
     );
   }
+
+  List<Widget> _operatorOptions() =>
+      _request.isThsr ? _thsrOptions() : _traOptions();
+  List<String> _operatorNotes(AppI18n i18n) => _request.isThsr
+      ? [
+          i18n.railBookingPayNote,
+          i18n.railBookingIdNote,
+          i18n.railBookingThsrFareNote,
+        ]
+      : [
+          i18n.railBookingTraCategoryNote,
+          i18n.railBookingPayNote,
+          i18n.railBookingTraFareNote,
+        ];
+  VoidCallback? get _operatorAppAction =>
+      _loading ? null : () => _book(useApp: true);
+  VoidCallback? get _bookingAction =>
+      _request.ticketTotal > 0 && !_loading ? _book : null;
 
   List<Widget> _thsrOptions() => [
     _SheetSection(
@@ -372,11 +392,7 @@ class _StepperRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 9),
-      decoration: showDivider
-          ? BoxDecoration(
-              border: Border(bottom: BorderSide(color: cs.outlineVariant)),
-            )
-          : null,
+      decoration: _rowDivider(cs, showDivider),
       child: Row(
         children: [
           Expanded(
@@ -403,7 +419,7 @@ class _StepperRow extends StatelessWidget {
           _StepButton(
             icon: Icons.remove_rounded,
             semanticLabel: AppI18n.of(context).stepperDecrease(name),
-            onTap: value > min ? () => onChanged(value - 1) : null,
+            onTap: _decreaseAction,
           ),
           SizedBox(
             width: 34,
@@ -412,23 +428,35 @@ class _StepperRow extends StatelessWidget {
               textAlign: TextAlign.center,
               // A zero count recedes; it is an untouched default, not a number
               // the user chose.
-              style: AppTextStyles.timeValue(
-                size: 15,
-                weight: value == 0 ? FontWeight.w400 : FontWeight.w600,
-                color: value == 0 ? cs.outline : cs.onSurface,
-              ),
+              style: _valueStyle(cs),
             ),
           ),
           _StepButton(
             icon: Icons.add_rounded,
             semanticLabel: AppI18n.of(context).stepperIncrease(name),
-            onTap: value < max ? () => onChanged(value + 1) : null,
+            onTap: _increaseAction,
           ),
         ],
       ),
     );
   }
+
+  VoidCallback? get _decreaseAction =>
+      value > min ? () => onChanged(value - 1) : null;
+  VoidCallback? get _increaseAction =>
+      value < max ? () => onChanged(value + 1) : null;
+  TextStyle _valueStyle(ColorScheme cs) => AppTextStyles.timeValue(
+    size: 15,
+    weight: value == 0 ? FontWeight.w400 : FontWeight.w600,
+    color: value == 0 ? cs.outline : cs.onSurface,
+  );
 }
+
+BoxDecoration? _rowDivider(ColorScheme cs, bool visible) => visible
+    ? BoxDecoration(
+        border: Border(bottom: BorderSide(color: cs.outlineVariant)),
+      )
+    : null;
 
 class _StepButton extends StatelessWidget {
   const _StepButton({
@@ -497,25 +525,13 @@ class _ChoiceRow extends StatelessWidget {
         semanticLabel: name,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 11),
-          decoration: showDivider
-              ? BoxDecoration(
-                  border: Border(bottom: BorderSide(color: cs.outlineVariant)),
-                )
-              : null,
+          decoration: _rowDivider(cs, showDivider),
           child: Row(
             children: [
               Container(
                 width: 18,
                 height: 18,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: selected ? cs.primary : cs.outline,
-                    // A thick ring reads as filled without a second element to
-                    // centre inside it.
-                    width: selected ? 5 : 1.5,
-                  ),
-                ),
+                decoration: _selectionIndicator(cs),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -547,6 +563,15 @@ class _ChoiceRow extends StatelessWidget {
       ),
     );
   }
+
+  BoxDecoration _selectionIndicator(ColorScheme cs) => BoxDecoration(
+    shape: BoxShape.circle,
+    // The thick ring reads as filled without a second centred element.
+    border: Border.all(
+      color: selected ? cs.primary : cs.outline,
+      width: selected ? 5 : 1.5,
+    ),
+  );
 }
 
 class _Notes extends StatelessWidget {
@@ -681,6 +706,12 @@ class _Footer extends StatelessWidget {
   final String operator;
   final VoidCallback? onBook;
 
+  Color _buttonColor(ColorScheme cs) =>
+      onBook != null ? cs.primary : cs.outlineVariant;
+
+  Color _labelColor(ColorScheme cs) =>
+      onBook != null ? cs.onPrimary : cs.onSurfaceVariant;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -729,7 +760,7 @@ class _Footer extends StatelessWidget {
             child: Container(
               height: 48,
               decoration: BoxDecoration(
-                color: enabled ? cs.primary : cs.outlineVariant,
+                color: _buttonColor(cs),
                 borderRadius: BorderRadius.circular(AppTheme.radiusButton),
               ),
               alignment: Alignment.center,
@@ -758,7 +789,7 @@ class _Footer extends StatelessWidget {
                   : Text(
                       AppI18n.of(context).railBookingGoSemantics,
                       style: AppTextStyles.bodyRegular.copyWith(
-                        color: enabled ? cs.onPrimary : cs.onSurfaceVariant,
+                        color: _labelColor(cs),
                         fontWeight: FontWeight.w600,
                       ),
                     ),

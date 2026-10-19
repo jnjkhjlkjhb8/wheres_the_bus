@@ -17,7 +17,19 @@ const _busStopBoardingSQL = `
     AND (c->>'StopBoarding') ~ '^[12]$'
   GROUP BY 1, 2, 3`
 
-var _busOriginTripSource = `
+var _busOriginTripSource = buildBusOriginTripSource()
+
+// _busPatternTripsSQL is the trips.txt branch: an origin departure only becomes a
+// trip when its route direction has a complete pattern to hang on.
+var _busPatternTripsSQL = buildBusPatternTripsSQL()
+
+// busPatternStopTimesSQL is the stop_times.txt branch: the origin departure plus
+// each stop's cumulative offset. Arrival and departure are the same instant —
+// the running times carry no dwell, so claiming one would be inventing it.
+var _busPatternStopTimesSQL = buildBusPatternStopTimesSQL()
+
+func buildBusOriginTripSource() string {
+	return `
   SELECT
     s.routeuid,
     s.subrouteuid,
@@ -63,10 +75,10 @@ var _busOriginTripSource = `
           WHERE COALESCE(c->>'StopUID', '') <> ''
         ) > 1
     )`
+}
 
-// _busPatternTripsSQL is the trips.txt branch: an origin departure only becomes a
-// trip when its route direction has a complete pattern to hang on.
-var _busPatternTripsSQL = `
+func buildBusPatternTripsSQL() string {
+	return `
   SELECT
     b.routeuid AS route_id,
     b.service_id,
@@ -87,11 +99,10 @@ var _busPatternTripsSQL = `
     SELECT 1 FROM (` + busmodel.PatternSQL + `) p
     WHERE p.sub_route_uid = b.subrouteuid AND p.direction = b.direction_id AND p.complete
   )`
+}
 
-// busPatternStopTimesSQL is the stop_times.txt branch: the origin departure plus
-// each stop's cumulative offset. Arrival and departure are the same instant —
-// the running times carry no dwell, so claiming one would be inventing it.
-var _busPatternStopTimesSQL = `
+func buildBusPatternStopTimesSQL() string {
+	return `
   SELECT
     b.trip_id,
     p.stop_sequence,
@@ -108,3 +119,4 @@ var _busPatternStopTimesSQL = `
    AND sb.direction     = p.direction
    AND sb.stop_uid      = p.stop_uid
   WHERE p.complete`
+}

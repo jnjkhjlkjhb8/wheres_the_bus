@@ -1,7 +1,7 @@
 package shared
 
 func CanonicalSubroute(city, subRouteUID string, direction uint8) (string, uint8) {
-	if city != "InterCity" || len(subRouteUID) < 2 {
+	if !intercitySuffixPossible(city, subRouteUID) {
 		return subRouteUID, direction
 	}
 	suffixDir, ok := subrouteSuffixDirection(subRouteUID)
@@ -19,7 +19,7 @@ func CanonicalSubroute(city, subRouteUID string, direction uint8) (string, uint8
 // a direction and so carries no suffix to strip.
 func subrouteSuffixDirection(uid string) (uint8, bool) {
 	marker := uid[len(uid)-2]
-	if marker != '0' && (marker < 'A' || marker > 'Z') {
+	if !subrouteSuffixMarker(marker) {
 		return 0, false
 	}
 	switch uid[len(uid)-1] {
@@ -29,4 +29,12 @@ func subrouteSuffixDirection(uid string) (uint8, bool) {
 		return 1, true
 	}
 	return 0, false
+}
+
+func intercitySuffixPossible(city, uid string) bool { return city == "InterCity" && len(uid) >= 2 }
+func subrouteSuffixMarker(marker byte) bool {
+	if marker == '0' {
+		return true
+	}
+	return marker >= 'A' && marker <= 'Z'
 }

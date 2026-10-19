@@ -64,3 +64,39 @@ func TestBoundedTTLCacheCountsDistinctKeys(t *testing.T) {
 		t.Fatal("repeated writes to one key flushed the cache")
 	}
 }
+
+func TestBoundedTTLCacheDeletionReleasesCapacityOnce(t *testing.T) {
+	c := NewBoundedTTLCache(2)
+	c.Set("a", []byte("1"), time.Minute)
+	c.Set("b", []byte("2"), time.Minute)
+	c.Delete("a")
+	c.Delete("a")
+	c.Set("c", []byte("3"), time.Minute)
+	for _, key := range []string{"b", "c"} {
+		if _, ok := c.Get(key); !ok {
+			t.Fatalf("deleting a key did not release exactly one slot: missing %s", key)
+		}
+	}
+	if got := c.entries.Load(); got != 2 {
+		t.Fatalf("live bounded entries = %d, want 2", got)
+	}
+}
+
+func TestUnboundedTTLCacheDoesNotMaintainBoundedEntryCount(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		c := NewBoundedTTLCache(limit)
+		c.Set("key", []byte("value"), time.Minute)
+		c.Delete("key")
+		if got := c.entries.Load(); got != 0 {
+			t.Fatalf("limit %d retained bounded counter %d", limit, got)
+		}
+	}
+}
+
+func TestTTLCacheRejectsMalformedEntries(t *testing.T) {
+	c := NewTTLCache()
+	c.m.Store("malformed", "value")
+	if got, ok := c.Get("malformed"); ok || got != nil {
+		t.Fatalf("malformed cache value = %q, found %v", got, ok)
+	}
+}

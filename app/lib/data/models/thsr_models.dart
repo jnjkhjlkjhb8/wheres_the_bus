@@ -65,19 +65,27 @@ class ThsrFare extends Equatable {
 
 ResolvedFare? thsrFareFor(List<ThsrFare> fares, FareType type) {
   for (final fareClass in type.thsrFareClasses) {
-    for (final fare in fares) {
-      if (fare.fareClass == fareClass &&
-          fare.cabinClass == ThsrFare._standardCabin &&
-          fare.price > 0) {
-        return (
-          price: fare.price,
-          matched: type.matchedWhen(isFullFare: fareClass == 1),
-        );
-      }
+    final fare = _standardCabinFare(fares, fareClass);
+    if (fare != null) {
+      return (
+        price: fare.price,
+        matched: type.matchedWhen(isFullFare: fareClass == 1),
+      );
     }
   }
   return null;
 }
+
+ThsrFare? _standardCabinFare(List<ThsrFare> fares, int fareClass) {
+  for (final fare in fares) {
+    if (fare.fareClass != fareClass) continue;
+    if (_isAvailableStandardCabinFare(fare)) return fare;
+  }
+  return null;
+}
+
+bool _isAvailableStandardCabinFare(ThsrFare fare) =>
+    fare.cabinClass == ThsrFare._standardCabin && fare.price > 0;
 
 class ThsrStopTime extends Equatable {
   const ThsrStopTime({

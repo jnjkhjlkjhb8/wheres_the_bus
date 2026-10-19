@@ -18,8 +18,8 @@ class RemindersRepository {
     DateTime expiresAt,
   ) => _store.put(routeUid, stopUid, reminderId, expiresAt);
 
-  Future<void> remove(String routeUid, String stopUid) =>
-      _store.remove(routeUid, stopUid);
+  Future<void> remove({required String routeUid, required String stopUid}) =>
+      _store.remove(routeUid: routeUid, stopUid: stopUid);
 }
 
 /// Persistence seam for [RemindersRepository]. The real store is Hive-backed;
@@ -32,7 +32,7 @@ abstract interface class RemindersStore {
     String reminderId,
     DateTime expiresAt,
   );
-  Future<void> remove(String routeUid, String stopUid);
+  Future<void> remove({required String routeUid, required String stopUid});
 }
 
 /// Hive-backed [RemindersStore] delegating to the existing box helpers.
@@ -52,6 +52,6 @@ class _HiveRemindersStore implements RemindersStore {
   ) => HiveStore.putReminder(routeUid, stopUid, reminderId, expiresAt);
 
   @override
-  Future<void> remove(String routeUid, String stopUid) =>
+  Future<void> remove({required String routeUid, required String stopUid}) =>
       HiveStore.removeReminder(routeUid, stopUid);
 }

@@ -3,9 +3,6 @@ import 'package:wheres_the_bus/data/models/feedback_models.dart';
 
 sealed class FeedbackEvent extends Equatable {
   const FeedbackEvent();
-
-  @override
-  List<Object?> get props => [];
 }
 
 /// Fired once when the sheet opens. [screen] and [locale] are read from the

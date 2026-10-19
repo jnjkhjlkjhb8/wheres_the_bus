@@ -2,33 +2,64 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
-	table := flag.String("table", "", "raw_tdx table name")
-	partCol := flag.String("partcol", "", "partition column (city|system|traindate), empty for unpartitioned")
-	part := flag.String("part", "", "partition value")
-	out := flag.String("out", "", "output JSON file")
-	flag.Parse()
-	if *table == "" || *out == "" {
-		fmt.Fprintln(os.Stderr, "table and out are required")
-		os.Exit(2)
-	}
+	os.Exit(runCLI(os.Args[1:], os.Getenv("DATABASE_URL"), os.Stderr))
+}
 
-	dsn := os.Getenv("DATABASE_URL")
+type exportOptions struct{ table, partCol, part, out string }
+
+func parseExportOptions(args []string, stderr io.Writer) (exportOptions, error) {
+	flags := flag.NewFlagSet("export-fixtures", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var options exportOptions
+	flags.StringVar(&options.table, "table", "", "raw_tdx table name")
+	flags.StringVar(&options.partCol, "partcol", "", "partition column (city|system|traindate), empty for unpartitioned")
+	flags.StringVar(&options.part, "part", "", "partition value")
+	flags.StringVar(&options.out, "out", "", "output JSON file")
+	err := flags.Parse(args)
+	return options, err
+}
+
+func runCLI(args []string, dsn string, stderr io.Writer) int {
+	options, err := parseExportOptions(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err != nil {
+		return 2
+	}
+	if err := validateExportOptions(options, dsn); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 2
+	}
+	return executeExport(options, dsn, stderr)
+}
+
+func validateExportOptions(options exportOptions, dsn string) error {
+	if options.table == "" || options.out == "" {
+		return errors.New("table and out are required")
+	}
 	if dsn == "" {
-		fmt.Fprintln(os.Stderr, "DATABASE_URL not set")
-		os.Exit(2)
+		return errors.New("DATABASE_URL not set")
 	}
-	if err := export(dsn, *table, *partCol, *part, *out); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	return nil
+}
+
+func executeExport(options exportOptions, dsn string, stderr io.Writer) int {
+	if err := export(dsn, options.table, options.partCol, options.part, options.out); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 1
 	}
+	return 0
 }
 
 func export(dsn, table, partCol, part, out string) error {

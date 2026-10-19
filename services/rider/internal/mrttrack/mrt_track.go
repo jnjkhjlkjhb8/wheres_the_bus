@@ -92,110 +92,70 @@ func (t *mrtTracker) Tick(ctx context.Context, now time.Time) {
 		return
 	}
 	zap.S().Infow("start", "component", "mrt_track", "action", "tick", "event", "start", "sessions", len(tracks))
-	for _, track := range tracks {
-		if ctx.Err() != nil {
-			return
-		}
-		t.advanceSession(ctx, track, now)
-	}
+	t.advanceDueTracks(ctx, tracks, now)
 }
 
 // advanceSession processes one session: read its Redis state, skip it unless a
 // poll is due, acquire a reading, apply the pure advance decision, fire the lead
 // vibration once, and persist + publish the new state.
 func (t *mrtTracker) advanceSession(ctx context.Context, track notify.MrtTrackReminder, now time.Time) {
-	raw, err := t.rc.Get(ctx, shared.MrtTrackKey(track.ID)).Bytes()
+	state, ok := t.readTrackState(ctx, track.ID)
+	if !ok || mrtIsTerminal(state.Status) || now.Unix() < state.NextPollAtUnix {
+		return
+	}
+	reading := t.readPosition(ctx, state)
+	newState, fire := advanceMrtTrack(state, reading, now)
+
+	t.fireTrackVibration(ctx, track, newState, fire)
+
+	t.publishState(ctx, newState)
+	t.pushCard(ctx, state, newState, track, fire, now)
+	t.endTrack(ctx, track.ID, newState)
+}
+
+func (t *mrtTracker) readTrackState(ctx context.Context, trackID string) (*models.MrtTrackState, bool) {
+	raw, err := t.rc.Get(ctx, shared.MrtTrackKey(trackID)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		// The session's state has ended and its key expired (or was never
 		// written). Drop a never-fired row so the active query stops returning it;
 		// a fired row ages out on expires_at (its status cannot move — CHECK).
-		if expireErr := t.store.ExpireMrtTrack(ctx, track.ID); expireErr != nil {
-			zap.S().Warnw("expire error",
-				"component", "mrt_track",
-				"action", "advance",
-				"event", "expire_error",
-				"track", track.ID,
-				"err", expireErr,
-			)
-		}
-		return
+		t.expireMissingTrack(ctx, trackID)
+		return nil, false
 	}
 	if err != nil {
 		zap.S().Warnw("state read error",
 			"component", "mrt_track",
 			"action", "advance",
 			"event", "state_read_error",
-			"track", track.ID,
+			"track", trackID,
 			"err", err,
 		)
-		return
+		return nil, false
 	}
-	var state models.MrtTrackState
-	if err := proto.Unmarshal(raw, &state); err != nil {
-		zap.S().Warnw("state decode error",
-			"component", "mrt_track",
-			"action", "advance",
-			"event", "state_decode_error",
-			"track", track.ID,
-			"err", err,
-		)
-		return
-	}
-	if mrtIsTerminal(state.Status) {
-		return
-	}
-	if now.Unix() < state.NextPollAtUnix {
-		return
-	}
+	return decodeMrtTrackState(raw, trackID)
+}
 
-	reading := t.readPosition(ctx, &state)
-	newState, fire := advanceMrtTrack(&state, reading, now)
-
+func (t *mrtTracker) fireTrackVibration(ctx context.Context, track notify.MrtTrackReminder, newState *models.MrtTrackState, fire string) {
 	if fire != "" && track.Token != "" {
-		// Each event owns its own reminder row, so each claims and fires once.
-		reminderID := track.ID
-		if fire == _mrtAlightEventLead {
-			reminderID = track.ID + ":lead"
-		}
-		fired, fireErr := t.vibrator.FireMrtVibrate(ctx, notify.MrtVibrateEvent{
-			ReminderID: reminderID, Token: track.Token, TrackID: track.ID, AlightEvent: fire,
-		})
-		if fireErr != nil {
-			zap.S().Warnw("vibrate error",
-				"component", "mrt_track",
-				"action", "advance",
-				"event", "vibrate_error",
-				"track", track.ID,
-				"err", fireErr,
-			)
-		} else if fired {
-			zap.S().Infow("vibrate fired",
-				"component", "mrt_track",
-				"action", "advance",
-				"event", "vibrate_fired",
-				"track", track.ID,
-				"buzz", fire,
-				"remaining", newState.RemainingStops,
-			)
-		}
+		t.vibrateTrack(ctx, track, newState, fire)
 	}
+}
 
-	t.publishState(ctx, newState)
-	t.pushCard(ctx, &state, newState, track, fire, now)
+func (t *mrtTracker) endTrack(ctx context.Context, trackID string, newState *models.MrtTrackState) {
 	if mrtIsTerminal(newState.Status) {
 		zap.S().Infow("ended",
 			"component", "mrt_track",
 			"action", "advance",
 			"event", "ended",
-			"track", track.ID,
+			"track", trackID,
 			"status", newState.Status,
 		)
-		if expireErr := t.store.ExpireMrtTrack(ctx, track.ID); expireErr != nil {
+		if expireErr := t.store.ExpireMrtTrack(ctx, trackID); expireErr != nil {
 			zap.S().Warnw("expire error",
 				"component", "mrt_track",
 				"action", "advance",
 				"event", "expire_error",
-				"track", track.ID,
+				"track", trackID,
 				"err", expireErr,
 			)
 		}
@@ -214,44 +174,11 @@ func (t *mrtTracker) pushCard(
 	if t.pusher == nil || !mrtCardMoved(previous, next) {
 		return
 	}
-	target := notify.CardTarget{FCMToken: track.Token}
-	// Absent on Android, and on an iOS app that never got a card: the key is
-	// written only once ActivityKit hands the app a token for a live activity.
-	if token, err := t.rc.Get(ctx, shared.MrtTrackPushTokenKey(track.ID)).Result(); err == nil {
-		target.ActivityToken = token
-	} else if !errors.Is(err, redis.Nil) {
-		zap.S().Warnw("push token read error",
-			"component", "mrt_track",
-			"action", "push",
-			"event", "push_token_read_error",
-			"track", track.ID,
-			"err", err,
-		)
-	}
-	if target.FCMToken == "" && target.ActivityToken == "" {
+	target := t.cardTarget(ctx, track)
+	if !mrtCardTargetConfigured(target) {
 		return
 	}
-
-	card := mrtCard(next, now)
-	alert := mrtCardAlert(fire, card)
-	if err := t.pusher.PushCard(ctx, card, target, alert); err != nil {
-		zap.S().Warnw("push error",
-			"component", "mrt_track",
-			"action", "push",
-			"event", "push_error",
-			"track", track.ID,
-			"err", err,
-		)
-		return
-	}
-	zap.S().Infow("pushed",
-		"component", "mrt_track",
-		"action", "push",
-		"event", "pushed",
-		"track", track.ID,
-		"phase", card.Phase,
-		"remaining", card.RemainingStops,
-	)
+	t.sendMrtCard(ctx, next, track, target, fire, now)
 }
 
 // mrtCardMoved reports whether anything the card shows actually changed. The
@@ -339,30 +266,7 @@ func (t *mrtTracker) publishState(ctx context.Context, state *models.MrtTrackSta
 		)
 		return
 	}
-	ttl := _mrtTrackActiveTTL
-	if mrtIsTerminal(state.Status) {
-		ttl = _mrtTrackEndedTTL
-	}
-	rc := t.rc
-	if err := rc.Set(ctx, shared.MrtTrackKey(state.TrackId), pb, ttl).Err(); err != nil {
-		zap.S().Warnw("set error",
-			"component", "mrt_track",
-			"action", "publish",
-			"event", "set_error",
-			"track", state.TrackId,
-			"err", err,
-		)
-		return
-	}
-	if err := rc.Publish(ctx, shared.MrtTrackChannel(state.TrackId), pb).Err(); err != nil {
-		zap.S().Warnw("publish error",
-			"component", "mrt_track",
-			"action", "publish",
-			"event", "publish_error",
-			"track", state.TrackId,
-			"err", err,
-		)
-	}
+	t.writeTrackState(ctx, state, pb)
 }
 
 func (t *mrtTracker) readPosition(ctx context.Context, state *models.MrtTrackState) mrtReading {
@@ -378,70 +282,21 @@ func (t *mrtTracker) readPosition(ctx context.Context, state *models.MrtTrackSta
 		return mrtReading{}
 	}
 	if ok {
-		if info.TripID != state.TripId {
-			// The carID now reports a different trip — the train re-tripped or
-			// turned around, so the binding no longer follows this rider's ride.
-			return mrtReading{lost: true}
-		}
-		idx := mrtResolvePathIndex(state.PathStationNames, info.StnName)
-		countdown, hasCountdown := parseTrtcTrainCountdown(info.CountdownTime)
-		if idx < 0 {
-			// An empty StnName is a transient mid-run gap (retry); a non-empty name
-			// that is not on the stored path means the train left the path.
-			if strings.TrimSpace(strings.TrimSuffix(info.StnName, "站")) == "" {
-				return mrtReading{gotInfo: true}
-			}
-			return mrtReading{lost: true}
-		}
-		return mrtReading{nextIndex: idx, countdown: countdown, hasCountdown: hasCountdown, gotInfo: true, resolved: true}
+		return mrtReadingFromTrainInfo(state, info)
 	}
-	// GetTrainInfo empty: advance from mrt_live by TripId until it recovers.
-	if idx, found := t.fallbackFromLive(ctx, state); found {
-		return mrtReading{nextIndex: idx, resolved: true}
-	}
-	return mrtReading{}
+	return t.liveFallbackReading(ctx, state)
 }
 
 func (t *mrtTracker) fallbackFromLive(ctx context.Context, state *models.MrtTrackState) (int, bool) {
 	if len(state.PathStationIds) == 0 {
 		return 0, false
 	}
-	rc := t.rc
 	// The terminal is the last station on the board→terminal path; it is part of
 	// the mrt_live key identity (a station has simultaneous arrivals per direction).
 	terminal := state.PathStationIds[len(state.PathStationIds)-1]
 	start := int(state.CurrentIndex) + 1
 	for idx := start; idx < len(state.PathStationIds); idx++ {
-		station := state.PathStationIds[idx]
-		line := shared.TrtcLinePrefix(station)
-		raw, err := rc.Get(ctx, shared.MrtLiveKey("TRTC", station, line, terminal)).Bytes()
-		if err != nil {
-			// A miss is the normal case: most stations on the path have no live
-			// arrival for this terminal. Anything else is a real Redis fault and
-			// would otherwise vanish, since the fallback reports only found/not.
-			if !errors.Is(err, redis.Nil) {
-				zap.S().Warnw("redis error",
-					"component", "mrt_track",
-					"action", "fallback_live",
-					"event", "redis_error",
-					"station", station,
-					"err", err,
-				)
-			}
-			continue
-		}
-		var live models.MrtLive
-		if err := proto.Unmarshal(raw, &live); err != nil {
-			zap.S().Warnw("decode error",
-				"component", "mrt_track",
-				"action", "fallback_live",
-				"event", "decode_error",
-				"station", station,
-				"err", err,
-			)
-			continue
-		}
-		if live.TrainNumber == state.TripId {
+		if t.liveTrainAtStation(ctx, state.PathStationIds[idx], terminal, state.TripId) {
 			return idx, true
 		}
 	}
@@ -463,10 +318,10 @@ const (
 )
 
 func mrtFireEvent(remaining, lead int32) string {
-	switch {
-	case remaining <= 1:
+	if remaining <= 1 {
 		return _mrtAlightEventAlight
-	case lead > 0 && remaining <= lead+1:
+	}
+	if lead > 0 && remaining <= lead+1 {
 		return _mrtAlightEventLead
 	}
 	return ""
@@ -479,18 +334,10 @@ func advanceMrtTrack(state *models.MrtTrackState, reading mrtReading, now time.T
 			"component", "mrt_track", "action", "advance", "event", "clone_failed")
 		return state, ""
 	}
-	target := next.TargetIndex
+	return advancePreparedMrtTrack(state, next, reading, now)
+}
 
-	finishing := state.CurrentIndex >= target-1
-	if reading.lost {
-		if !finishing {
-			next.Status = _mrtStatusLost
-			next.NextPollAtUnix = 0
-			return next, ""
-		}
-		reading = mrtReading{nextIndex: int(target) + 1, resolved: true}
-	}
-
+func advanceMrtPosition(next *models.MrtTrackState, reading mrtReading, now time.Time) bool {
 	advanced := false
 	if reading.resolved {
 		// The reading is the train's next station; the last passed station is one
@@ -503,55 +350,33 @@ func advanceMrtTrack(state *models.MrtTrackState, reading mrtReading, now time.T
 		}
 	}
 
+	return advanced
+}
+
+func resolveMrtProgress(next *models.MrtTrackState, target int32) {
 	if next.CurrentIndex >= target {
 		next.CurrentIndex = target
 	}
-	next.RemainingStops = target - next.CurrentIndex
-	if next.RemainingStops < 0 {
-		next.RemainingStops = 0
-	}
+	next.RemainingStops = max(target-next.CurrentIndex, 0)
 	next.NextStationId, next.NextStationName = mrtNextStation(next)
 	next.Progress = 1
 	if target > 0 {
 		next.Progress = float64(next.CurrentIndex) / float64(target)
 	}
 
-	fire := mrtFireEvent(next.RemainingStops, next.LeadStops)
+}
 
-	switch {
-	case next.CurrentIndex >= target:
+func finishMrtProgress(next, state *models.MrtTrackState, advanced, finishing bool, fire string, now time.Time) (bool, string) {
+	if next.CurrentIndex >= next.TargetIndex {
 		next.Status = _mrtStatusArrived
 		next.NextPollAtUnix = 0
-		return next, fire
-	case !advanced && mrtStale(state.LastProgressAtUnix, now):
-		if finishing {
-			// Stalled within one stop of the target (typically a persistently empty
-			// GetTrainInfo at the end of a run): report the ride completed.
-			next.CurrentIndex = target
-			next.RemainingStops = 0
-			next.Progress = 1
-			next.NextStationId, next.NextStationName = mrtNextStation(next)
-			next.Status = _mrtStatusArrived
-			next.NextPollAtUnix = 0
-			return next, fire
-		}
-		next.Status = _mrtStatusStale
-		next.NextPollAtUnix = 0
-		return next, ""
-	case fire != "":
-		// The status is the card's "we are inside the warning window" reading,
-		// so it follows whichever buzz is owed rather than the lead alone —
-		// otherwise a default session (提前站數 0) would never show it.
-		next.Status = _mrtStatusLeadFired
-	default:
-		next.Status = _mrtStatusTracking
+		return true, fire
 	}
-
-	next.NextPollAtUnix = now.Add(_mrtTrackFallbackRetry).Unix()
-	if reading.gotInfo && reading.hasCountdown && reading.countdown > 0 {
-		next.NextPollAtUnix = now.Add(reading.countdown + _mrtTrackPollBuffer).Unix()
+	if mrtProgressStalled(advanced, state.LastProgressAtUnix, now) {
+		return finishStalledMrtTrack(next, finishing, fire)
 	}
-	return next, fire
+	next.Status = mrtOngoingStatus(fire)
+	return false, fire
 }
 
 // mrtNextStation returns the station the train is heading toward: the one after
@@ -598,12 +423,7 @@ func mrtResolvePathIndex(names []string, stnName string) int {
 	if strings.TrimSpace(trimmed) == "" {
 		return -1
 	}
-	for i, name := range names {
-		if name == trimmed || name == stnName {
-			return i
-		}
-	}
-	return -1
+	return matchingMrtPathIndex(names, trimmed, stnName)
 }
 
 // parseTrtcTrainCountdown parses GetTrainInfo's "mm:ss" CountdownTime to the next
@@ -622,4 +442,289 @@ func parseTrtcTrainCountdown(s string) (time.Duration, bool) {
 // rider is told to get off.
 func NewTracker(trtc trainInfoClient, rc *redis.Client, store mrtTrackStore, vibrator mrtVibrator, pusher mrtCardPusher) *mrtTracker {
 	return &mrtTracker{trtc: trtc, rc: rc, store: store, vibrator: vibrator, pusher: pusher}
+}
+
+func nextMrtPoll(reading mrtReading, now time.Time) int64 {
+	var poll int64
+	poll = now.Add(_mrtTrackFallbackRetry).Unix()
+	if reading.gotInfo && reading.hasCountdown && reading.countdown > 0 {
+		poll = now.Add(reading.countdown + _mrtTrackPollBuffer).Unix()
+	}
+	return poll
+}
+
+func (t *mrtTracker) advanceDueTracks(ctx context.Context, tracks []notify.MrtTrackReminder, now time.Time) {
+	for _, track := range tracks {
+		if ctx.Err() != nil {
+			return
+		}
+		t.advanceSession(ctx, track, now)
+	}
+}
+
+func (t *mrtTracker) expireMissingTrack(ctx context.Context, trackID string) {
+	if expireErr := t.store.ExpireMrtTrack(ctx, trackID); expireErr != nil {
+		zap.S().Warnw("expire error",
+			"component", "mrt_track",
+			"action", "advance",
+			"event", "expire_error",
+			"track", trackID,
+			"err", expireErr,
+		)
+	}
+
+}
+
+func decodeMrtTrackState(raw []byte, trackID string) (*models.MrtTrackState, bool) {
+	var state models.MrtTrackState
+	if err := proto.Unmarshal(raw, &state); err != nil {
+		zap.S().Warnw("state decode error",
+			"component", "mrt_track",
+			"action", "advance",
+			"event", "state_decode_error",
+			"track", trackID,
+			"err", err,
+		)
+		return nil, false
+	}
+	return &state, true
+}
+
+func (t *mrtTracker) vibrateTrack(ctx context.Context, track notify.MrtTrackReminder, newState *models.MrtTrackState, fire string) {
+	reminderID := mrtVibrationReminderID(track.ID, fire)
+	fired, fireErr := t.vibrator.FireMrtVibrate(ctx, notify.MrtVibrateEvent{
+		ReminderID: reminderID, Token: track.Token, TrackID: track.ID, AlightEvent: fire,
+	})
+	if fireErr != nil {
+		zap.S().Warnw("vibrate error",
+			"component", "mrt_track",
+			"action", "advance",
+			"event", "vibrate_error",
+			"track", track.ID,
+			"err", fireErr,
+		)
+	} else if fired {
+		zap.S().Infow("vibrate fired",
+			"component", "mrt_track",
+			"action", "advance",
+			"event", "vibrate_fired",
+			"track", track.ID,
+			"buzz", fire,
+			"remaining", newState.RemainingStops,
+		)
+	}
+}
+
+// Each event owns a separate reminder row so lead and alight can each fire once.
+func mrtVibrationReminderID(trackID, fire string) string {
+	if fire == _mrtAlightEventLead {
+		return trackID + ":lead"
+	}
+	return trackID
+}
+
+func (t *mrtTracker) cardTarget(ctx context.Context, track notify.MrtTrackReminder) notify.CardTarget {
+	target := notify.CardTarget{FCMToken: track.Token}
+	// Absent on Android, and on an iOS app that never got a card: the key is
+	// written only once ActivityKit hands the app a token for a live activity.
+	if token, err := t.rc.Get(ctx, shared.MrtTrackPushTokenKey(track.ID)).Result(); err == nil {
+		target.ActivityToken = token
+	} else if !errors.Is(err, redis.Nil) {
+		zap.S().Warnw("push token read error",
+			"component", "mrt_track",
+			"action", "push",
+			"event", "push_token_read_error",
+			"track", track.ID,
+			"err", err,
+		)
+	}
+
+	return target
+}
+
+func (t *mrtTracker) sendMrtCard(ctx context.Context, next *models.MrtTrackState, track notify.MrtTrackReminder, target notify.CardTarget, fire string, now time.Time) {
+	card := mrtCard(next, now)
+	alert := mrtCardAlert(fire, card)
+	if err := t.pusher.PushCard(ctx, card, target, alert); err != nil {
+		zap.S().Warnw("push error",
+			"component", "mrt_track",
+			"action", "push",
+			"event", "push_error",
+			"track", track.ID,
+			"err", err,
+		)
+		return
+	}
+	zap.S().Infow("pushed",
+		"component", "mrt_track",
+		"action", "push",
+		"event", "pushed",
+		"track", track.ID,
+		"phase", card.Phase,
+		"remaining", card.RemainingStops,
+	)
+}
+
+func mrtCardTargetConfigured(target notify.CardTarget) bool {
+	return target.FCMToken != "" || target.ActivityToken != ""
+}
+
+func mrtTrackStateTTL(state *models.MrtTrackState) time.Duration {
+	ttl := _mrtTrackActiveTTL
+	if mrtIsTerminal(state.Status) {
+		ttl = _mrtTrackEndedTTL
+	}
+
+	return ttl
+}
+
+func (t *mrtTracker) writeTrackState(ctx context.Context, state *models.MrtTrackState, pb []byte) {
+	ttl := mrtTrackStateTTL(state)
+	rc := t.rc
+	if err := rc.Set(ctx, shared.MrtTrackKey(state.TrackId), pb, ttl).Err(); err != nil {
+		zap.S().Warnw("set error",
+			"component", "mrt_track",
+			"action", "publish",
+			"event", "set_error",
+			"track", state.TrackId,
+			"err", err,
+		)
+		return
+	}
+	if err := rc.Publish(ctx, shared.MrtTrackChannel(state.TrackId), pb).Err(); err != nil {
+		zap.S().Warnw("publish error",
+			"component", "mrt_track",
+			"action", "publish",
+			"event", "publish_error",
+			"track", state.TrackId,
+			"err", err,
+		)
+	}
+}
+
+func (t *mrtTracker) liveFallbackReading(ctx context.Context, state *models.MrtTrackState) mrtReading {
+	// GetTrainInfo empty: advance from mrt_live by TripId until it recovers.
+	if idx, found := t.fallbackFromLive(ctx, state); found {
+		return mrtReading{nextIndex: idx, resolved: true}
+	}
+	return mrtReading{}
+}
+
+func mrtReadingFromTrainInfo(state *models.MrtTrackState, info *shared.TRTCTrainInfo) mrtReading {
+	// A car reporting a different trip has turned around or re-tripped.
+	if info.TripID != state.TripId {
+		return mrtReading{lost: true}
+	}
+	idx := mrtResolvePathIndex(state.PathStationNames, info.StnName)
+	countdown, hasCountdown := parseTrtcTrainCountdown(info.CountdownTime)
+	if idx < 0 {
+		return unresolvedMrtTrainReading(info.StnName)
+	}
+	return mrtReading{nextIndex: idx, countdown: countdown, hasCountdown: hasCountdown, gotInfo: true, resolved: true}
+}
+
+func unresolvedMrtTrainReading(stationName string) mrtReading {
+	// An empty station is a transient feed gap; an off-path name loses the binding.
+	if strings.TrimSpace(strings.TrimSuffix(stationName, "站")) == "" {
+		return mrtReading{gotInfo: true}
+	}
+	return mrtReading{lost: true}
+}
+
+func (t *mrtTracker) liveTrainAtStation(ctx context.Context, station, terminal, tripID string) bool {
+	line := shared.TrtcLinePrefix(station)
+	raw, err := t.rc.Get(ctx, shared.MrtLiveKey("TRTC", station, line, terminal)).Bytes()
+	if err != nil {
+		logMrtLiveReadError(station, err)
+		return false
+	}
+	var live models.MrtLive
+	if err := proto.Unmarshal(raw, &live); err != nil {
+		zap.S().Warnw("decode error", "component", "mrt_track", "action", "fallback_live", "event", "decode_error", "station", station, "err", err)
+		return false
+	}
+	return live.TrainNumber == tripID
+}
+
+func logMrtLiveReadError(station string, err error) {
+	// Most path stations have no board for this terminal, but a Redis fault must remain visible.
+	if !errors.Is(err, redis.Nil) {
+		zap.S().Warnw("redis error", "component", "mrt_track", "action", "fallback_live", "event", "redis_error", "station", station, "err", err)
+	}
+}
+
+func advancePreparedMrtTrack(state, next *models.MrtTrackState, reading mrtReading, now time.Time) (*models.MrtTrackState, string) {
+	target := next.TargetIndex
+
+	finishing := state.CurrentIndex >= target-1
+	var endedLost bool
+	reading, endedLost = resolveLostMrtReading(next, reading, finishing, target)
+	if endedLost {
+		return next, ""
+	}
+
+	advanced := advanceMrtPosition(next, reading, now)
+	resolveMrtProgress(next, target)
+
+	fire := mrtFireEvent(next.RemainingStops, next.LeadStops)
+
+	if ended, endFire := finishMrtProgress(next, state, advanced, finishing, fire, now); ended {
+		return next, endFire
+	}
+
+	next.NextPollAtUnix = nextMrtPoll(reading, now)
+	return next, fire
+}
+
+func resolveLostMrtReading(next *models.MrtTrackState, reading mrtReading, finishing bool, target int32) (mrtReading, bool) {
+	if !reading.lost {
+		return reading, false
+	}
+	if !finishing {
+		next.Status = _mrtStatusLost
+		next.NextPollAtUnix = 0
+		return reading, true
+	}
+	return mrtReading{nextIndex: int(target) + 1, resolved: true}, false
+}
+
+func mrtProgressStalled(advanced bool, lastProgress int64, now time.Time) bool {
+	return !advanced && mrtStale(lastProgress, now)
+}
+
+func finishStalledMrtTrack(next *models.MrtTrackState, finishing bool, fire string) (bool, string) {
+	if finishing {
+		// A persistent gap within one stop of the target completes the ride.
+		next.CurrentIndex = next.TargetIndex
+		next.RemainingStops = 0
+		next.Progress = 1
+		next.NextStationId, next.NextStationName = mrtNextStation(next)
+		next.Status = _mrtStatusArrived
+		next.NextPollAtUnix = 0
+		return true, fire
+	}
+	next.Status = _mrtStatusStale
+	next.NextPollAtUnix = 0
+	return true, ""
+}
+
+func mrtOngoingStatus(fire string) string {
+	// The card follows either buzz, including sessions without a lead warning.
+	if fire != "" {
+		return _mrtStatusLeadFired
+	}
+	return _mrtStatusTracking
+}
+
+func matchingMrtPathIndex(names []string, trimmed, stnName string) int {
+	for i, name := range names {
+		if mrtStationNameMatches(name, trimmed, stnName) {
+			return i
+		}
+	}
+	return -1
+}
+
+func mrtStationNameMatches(name, trimmed, stationName string) bool {
+	return name == trimmed || name == stationName
 }

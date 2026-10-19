@@ -8,21 +8,26 @@ const railSystemWideKey = '*';
 Set<String> subscriptionScope(Iterable<Favorite> favorites) {
   final scope = <String>{};
   for (final favorite in favorites) {
-    switch (favorite.type) {
-      case FavoriteType.busRoute:
-        scope.add('bus:${favorite.refId}');
-      case FavoriteType.metroStation:
-        scope.addAll(metroStationLines(favorite.refId).map((l) => 'mrt:$l'));
-      case FavoriteType.railTrain:
-        scope.addAll(['tra:${favorite.refId}', 'thsr:${favorite.refId}']);
-      case FavoriteType.railStation:
-        scope.addAll(['tra:$railSystemWideKey', 'thsr:$railSystemWideKey']);
-      case FavoriteType.busStop:
-      case FavoriteType.bikeStation:
-        break;
-    }
+    scope.addAll(_favoriteScope(favorite));
   }
   return scope;
+}
+
+Iterable<String> _favoriteScope(Favorite favorite) {
+  if (favorite.type == FavoriteType.metroStation) {
+    return metroStationLines(favorite.refId).map((line) => 'mrt:$line');
+  }
+  const prefixes = {
+    FavoriteType.busRoute: ['bus'],
+    FavoriteType.railTrain: ['tra', 'thsr'],
+    FavoriteType.railStation: ['tra', 'thsr'],
+  };
+  final key = favorite.type == FavoriteType.railStation
+      ? railSystemWideKey
+      : favorite.refId;
+  return (prefixes[favorite.type] ?? const <String>[]).map(
+    (prefix) => '$prefix:$key',
+  );
 }
 
 Iterable<String> metroStationLines(String stationId) sync* {

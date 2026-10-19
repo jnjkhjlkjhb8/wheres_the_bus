@@ -100,16 +100,26 @@ class ThsrDecoder {
     // available < limited < soldOut in declaration order, so the worst status
     // over the journey is the highest index; unknown returns before the
     // comparison.
+    return _worstSeatStatus(seats.segments.sublist(from, end), business);
+  }
+
+  ThsrSeatStatus _worstSeatStatus(
+    Iterable<thsr_seat_segment> segments,
+    bool business,
+  ) {
     var worst = ThsrSeatStatus.available;
-    for (final segment in seats.segments.sublist(from, end)) {
-      final status = _seatStatusOf(
-        business ? segment.businessSeatStatus : segment.standardSeatStatus,
-      );
+    for (final segment in segments) {
+      final status = _segmentSeatStatus(segment, business);
       if (status == ThsrSeatStatus.unknown) return ThsrSeatStatus.unknown;
       if (status.index > worst.index) worst = status;
     }
     return worst;
   }
+
+  ThsrSeatStatus _segmentSeatStatus(thsr_seat_segment segment, bool business) =>
+      _seatStatusOf(
+        business ? segment.businessSeatStatus : segment.standardSeatStatus,
+      );
 
   /// O = 尚有座位, L = 即將售完, X = 已售完. Anything else is a letter this app
   /// does not know, which is not the same as a seat.

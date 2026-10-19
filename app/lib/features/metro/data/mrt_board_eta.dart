@@ -13,10 +13,11 @@ Stream<int> defaultBoardEtaStream({
   required String system,
   required String stationId,
   required String trainNumber,
+  MrtRepository? repository,
 }) {
   if (trainNumber.isEmpty) return const Stream<int>.empty();
   return resilientStream(
-    () => MrtRepository.instance.eta(system, stationId),
+    () => (repository ?? MrtRepository.instance).eta(system, stationId),
     foreground: alwaysForeground,
   ).where((a) => a.trainNumber == trainNumber).map((a) => a.estimateSeconds);
 }

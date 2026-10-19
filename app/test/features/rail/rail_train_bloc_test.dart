@@ -3,15 +3,14 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grpc/grpc.dart';
 import 'package:wheres_the_bus/core/errors/app_error.dart';
+import 'package:wheres_the_bus/data/models/fare_type.dart';
+import 'package:wheres_the_bus/data/models/thsr_models.dart';
 import 'package:wheres_the_bus/data/models/tra_models.dart';
+import 'package:wheres_the_bus/data/repositories/thsr_repository.dart';
 import 'package:wheres_the_bus/data/repositories/tra_repository.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_train_bloc.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_train_event.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_train_state.dart';
-
-// Fare resolution hits PowerSync, which is uninitialized under `flutter test`;
-// that throws and _loadFare swallows it, so fullFare is always null here. These
-// tests therefore cover stops mapping and status transitions only.
 
 void main() {
   RailTrainBloc bloc(TraRepository tra) => RailTrainBloc(
@@ -220,13 +219,118 @@ void main() {
 
     expect(uncaught, isNull);
   });
+  const fareStops = [
+    TraStopTime(
+      stationName: '台北',
+      arrivalTime: '',
+      departureTime: '08:00',
+      sequence: 1,
+    ),
+    TraStopTime(
+      stationName: '板橋',
+      arrivalTime: '08:10',
+      departureTime: '08:11',
+      sequence: 2,
+    ),
+    TraStopTime(
+      stationName: '台中',
+      arrivalTime: '09:00',
+      departureTime: '',
+      sequence: 3,
+    ),
+  ];
+
+  test('a partial TRA segment resolves both labelled fares', () async {
+    final repo = _FakeTraRepository(
+      stopsResult: fareStops,
+      fareResult: const [TraFare(ticketType: '成自', price: 300)],
+    );
+    final b = RailTrainBloc(
+      type: '自強',
+      trainNo: '123',
+      date: '2030-01-02',
+      userOrigin: '板橋',
+      userDest: '台中',
+      tra: repo,
+    );
+    addTearDown(b.close);
+    b.add(const RailTrainStarted());
+    final loaded = await b.stream.firstWhere(
+      (s) => s.status == RailTrainStatus.loaded,
+    );
+    expect(repo.fareCalls, [('台北', '台中'), ('板橋', '台中')]);
+    expect(loaded.fullFare!.resolve(FareType.full)?.price, 300);
+    expect(loaded.userFare!.resolve(FareType.full)?.price, 300);
+  });
+
+  test(
+    'a full-run segment reuses one quote and live delay defaults to zero',
+    () async {
+      final repo = _FakeTraRepository(
+        stopsResult: fareStops,
+        fareResult: const [TraFare(ticketType: '成自', price: 300)],
+      )..delayStream = Stream.value(const {'another-train': 7});
+      final b = RailTrainBloc(
+        type: '自強',
+        trainNo: '123',
+        date: '2030-01-02',
+        userOrigin: '台北',
+        userDest: '台中',
+        tra: repo,
+      );
+      addTearDown(b.close);
+      b.add(const RailTrainDelayUpdated(99));
+      await pumpEventQueue();
+      expect(b.state.liveDelayMinutes, isNull);
+      b.add(const RailTrainStarted());
+      final loaded = await b.stream.firstWhere((s) => s.liveDelayMinutes == 0);
+      expect(repo.fareCalls, [('台北', '台中')]);
+      expect(loaded.fullFare, same(loaded.userFare));
+      expect(loaded.delayUpdatedAt, isNotNull);
+    },
+  );
+
+  test(
+    'THSR stops and fares resolve without subscribing to TRA delays',
+    () async {
+      final repo = _FareThsr();
+      final b = RailTrainBloc(
+        type: '高鐵',
+        trainNo: '101',
+        date: '2030-01-02',
+        thsr: repo,
+      );
+      addTearDown(b.close);
+      b.add(const RailTrainStarted());
+      final loaded = await b.stream.firstWhere(
+        (s) => s.status == RailTrainStatus.loaded,
+      );
+      expect(loaded.stops.map((s) => s.name), ['南港', '左營']);
+      expect(loaded.fullFare!.resolve(FareType.full)?.price, 1490);
+      expect(loaded.userFare, isNull);
+      expect(loaded.liveDelayMinutes, isNull);
+      expect(repo.fareCalls, [('2030-01-02', '南港', '左營')]);
+    },
+  );
 }
 
 class _FakeTraRepository implements TraRepository {
-  _FakeTraRepository({this.stopsResult = const [], this.error});
+  _FakeTraRepository({
+    this.stopsResult = const [],
+    this.error,
+    this.fareResult,
+  });
 
   final List<TraStopTime> stopsResult;
   final Exception? error;
+  final List<TraFare>? fareResult;
+  final fareCalls = <(String, String)>[];
+
+  @override
+  Future<List<TraFare>> fares(String origin, String destination) async {
+    fareCalls.add((origin, destination));
+    return fareResult ?? (throw StateError('fare unavailable'));
+  }
 
   /// Live delay frames the bloc subscribes after stops load (TRA only).
   Stream<Map<String, int>> delayStream = const Stream.empty();
@@ -240,6 +344,38 @@ class _FakeTraRepository implements TraRepository {
   @override
   Stream<Map<String, int>> delay(String date, String origin, String dest) =>
       delayStream;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName} not faked');
+}
+
+class _FareThsr implements ThsrRepository {
+  final fareCalls = <(String, String, String)>[];
+  @override
+  Future<List<ThsrStopTime>> stops(String date, String trainNo) async => const [
+    ThsrStopTime(
+      stationName: '南港',
+      arrivalTime: '',
+      departureTime: '08:00',
+      sequence: 1,
+    ),
+    ThsrStopTime(
+      stationName: '左營',
+      arrivalTime: '09:30',
+      departureTime: '',
+      sequence: 2,
+    ),
+  ];
+  @override
+  Future<List<ThsrFare>> fares(
+    String date,
+    String origin,
+    String destination,
+  ) async {
+    fareCalls.add((date, origin, destination));
+    return const [ThsrFare(fareClass: 1, price: 1490)];
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

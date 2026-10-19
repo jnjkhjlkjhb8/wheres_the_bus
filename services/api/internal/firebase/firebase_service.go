@@ -66,11 +66,11 @@ func FirebaseAppCheckFromEnv(ctx context.Context) (AppCheckVerifier, bool, error
 	if !enabled {
 		return nil, false, nil
 	}
-	var config *firebase.Config
-	if projectID := os.Getenv("FIREBASE_PROJECT_ID"); projectID != "" {
-		config = &firebase.Config{ProjectID: projectID}
-	}
-	app, err := firebase.NewApp(ctx, config)
+	return loadFirebaseAppCheck(ctx)
+}
+
+func loadFirebaseAppCheck(ctx context.Context) (AppCheckVerifier, bool, error) {
+	app, err := firebase.NewApp(ctx, firebaseConfigFromEnv())
 	if err != nil {
 		return nil, false, _oops.Wrapf(err, "initialize Firebase Admin")
 	}
@@ -79,6 +79,13 @@ func FirebaseAppCheckFromEnv(ctx context.Context) (AppCheckVerifier, bool, error
 		return nil, false, _oops.Wrapf(err, "initialize Firebase App Check")
 	}
 	return firebaseAppCheckVerifier{client: client}, true, nil
+}
+
+func firebaseConfigFromEnv() *firebase.Config {
+	if projectID := os.Getenv("FIREBASE_PROJECT_ID"); projectID != "" {
+		return &firebase.Config{ProjectID: projectID}
+	}
+	return nil
 }
 
 func firebaseEnabledFromEnv() bool {
@@ -96,7 +103,10 @@ func GRPCTLSCredentialsFromEnv() (credentials.TransportCredentials, error) {
 	if !grpcTLSEnabledFromEnv() {
 		return nil, nil
 	}
-	certFile, keyFile := os.Getenv("GRPC_TLS_CERT_FILE"), os.Getenv("GRPC_TLS_KEY_FILE")
+	return loadGRPCTLSCertificate(os.Getenv("GRPC_TLS_CERT_FILE"), os.Getenv("GRPC_TLS_KEY_FILE"))
+}
+
+func loadGRPCTLSCertificate(certFile, keyFile string) (credentials.TransportCredentials, error) {
 	if certFile == "" || keyFile == "" {
 		return nil, errors.New("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE are required when GRPC_TLS is enabled")
 	}
@@ -112,7 +122,7 @@ func GRPCTLSCredentialsFromEnv() (credentials.TransportCredentials, error) {
 
 func AppCheckUnaryInterceptor(verifier AppCheckVerifier, enabled bool) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if !enabled || !strings.HasPrefix(info.FullMethod, "/Firebase_Service/") {
+		if !requiresAppCheck(enabled, info.FullMethod) {
 			return handler(ctx, request)
 		}
 		if err := verifyAppCheck(ctx, verifier, info.FullMethod); err != nil {
@@ -124,7 +134,7 @@ func AppCheckUnaryInterceptor(verifier AppCheckVerifier, enabled bool) grpc.Unar
 
 func AppCheckStreamInterceptor(verifier AppCheckVerifier, enabled bool) grpc.StreamServerInterceptor {
 	return func(server any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if !enabled || !strings.HasPrefix(info.FullMethod, "/Firebase_Service/") {
+		if !requiresAppCheck(enabled, info.FullMethod) {
 			return handler(server, stream)
 		}
 		if err := verifyAppCheck(stream.Context(), verifier, info.FullMethod); err != nil {
@@ -134,9 +144,17 @@ func AppCheckStreamInterceptor(verifier AppCheckVerifier, enabled bool) grpc.Str
 	}
 }
 
+func requiresAppCheck(enabled bool, method string) bool {
+	return enabled && strings.HasPrefix(method, "/Firebase_Service/")
+}
+
+func validAppCheckMetadata(values []string, verifier AppCheckVerifier) bool {
+	return len(values) == 1 && values[0] != "" && verifier != nil
+}
+
 func verifyAppCheck(ctx context.Context, verifier AppCheckVerifier, method string) error {
 	values := metadata.ValueFromIncomingContext(ctx, AppCheckMetadataKey)
-	if len(values) != 1 || values[0] == "" || verifier == nil {
+	if !validAppCheckMetadata(values, verifier) {
 		zap.S().Warnw("app check rejected",
 			"component", "firebase",
 			"action", "app_check",

@@ -12,11 +12,11 @@ import (
 // _gtfsMidnightGap is the longest wait between two consecutive calls that a
 // midnight rollover may imply. Beyond it a time that moves backwards is read as
 // bad data rather than as a new day (gtfsStopTimesSQL).
-const _gtfsMidnightGap = 3 * time.Hour
+var _gtfsMidnightGap = buildGTFSMidnightGap()
 
 // _gtfsMidnightGapSecs is gtfsMidnightGap in the units the calls are compared in,
 // which is what the statement can splice.
-var _gtfsMidnightGapSecs = strconv.Itoa(int(_gtfsMidnightGap / time.Second))
+var _gtfsMidnightGapSecs = buildGTFSMidnightGapSecs()
 
 const _gtfsCalendarDays = 15
 
@@ -48,13 +48,126 @@ const _railTripRows = `
   FROM raw_tdx.thsr_dailytimetable
   WHERE COALESCE(dailytraininfo->>'TrainNo', '') <> ''`
 
-var _railTripSource = `
+var _railTripSource = buildRailTripSource()
+
+var _gtfsCalendarDatesSQL = buildGTFSCalendarDatesSQL()
+
+var _gtfsTripsSQL = buildGTFSTripsSQL()
+
+var _gtfsStopTimesSQL = buildGTFSStopTimesSQL()
+
+var _gtfsFrequenciesSQL = buildGTFSFrequenciesSQL()
+
+const _metroPatternSQL = `
+  WITH system_size AS (
+    -- The longest route each system runs, in hops. Used to reject segment rows
+    -- that cannot describe that system's network.
+    SELECT system, MAX(jsonb_array_length(stations)) - 1 AS max_hops
+    FROM raw_tdx.metro_stationofroute
+    WHERE jsonb_typeof(stations) = 'array'
+    GROUP BY 1
+  ), seg AS (
+    -- Structural guard, not just a NULL check. Kaohsiung's light rail lands 742
+    -- segments for a 38-station loop and Taoyuan lands 462 for a 22-station line
+    -- with an empty routeid; both summed to hundreds of hours. Because the
+    -- lookup matches on (system, from, to) alone, every hop still resolved and a
+    -- nullness-based completeness test passed them.
+    --
+    -- Three times the longest route's hop count leaves room for a system whose
+    -- rows legitimately cover both directions and several service patterns,
+    -- while rejecting a row that is an order of magnitude too large. The bound
+    -- is deliberately not derived from Route.TravelTime: that field is itself
+    -- wrong on Taichung, where it claims 71 minutes for a 35-minute line.
+    SELECT s.system,
+           tt->>'FromStationID' AS from_id,
+           tt->>'ToStationID' AS to_id,
+           MAX((tt->>'RunTime')::int + COALESCE((tt->>'StopTime')::int, 0)) AS secs
+    FROM raw_tdx.metro_s2straveltime s
+    JOIN system_size z ON z.system = s.system
+    CROSS JOIN LATERAL jsonb_array_elements(s.traveltimes) tt
+    WHERE jsonb_typeof(s.traveltimes) = 'array'
+      AND jsonb_array_length(s.traveltimes) <= GREATEST(z.max_hops, 1) * 3
+      AND COALESCE(tt->>'FromStationID', '') <> ''
+      AND COALESCE(tt->>'ToStationID', '') <> ''
+      AND (tt->>'RunTime') ~ '^[0-9]+$'
+    GROUP BY 1, 2, 3
+  ), station AS (
+    SELECT r.system, r.routeid, r.direction,
+           st.ordinality::int AS stop_sequence,
+           st.value->>'StationID' AS station_id
+    FROM raw_tdx.metro_stationofroute r
+    CROSS JOIN LATERAL jsonb_array_elements(r.stations) WITH ORDINALITY st(value, ordinality)
+    WHERE jsonb_typeof(r.stations) = 'array'
+      AND COALESCE(st.value->>'StationID', '') <> ''
+  ), linked AS (
+    SELECT s.*,
+           LAG(s.station_id) OVER (PARTITION BY s.system, s.routeid, s.direction
+                                   ORDER BY s.stop_sequence) AS prev_station
+    FROM station s
+  )
+  SELECT l.system, l.routeid, l.direction, l.stop_sequence, l.station_id,
+         SUM(COALESCE(g.secs, 0)) OVER (PARTITION BY l.system, l.routeid, l.direction
+                                        ORDER BY l.stop_sequence
+                                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS offset_secs,
+         -- A route direction is only usable when every one of its hops has a
+         -- known running time; one missing segment would silently compress the
+         -- whole downstream journey.
+         BOOL_AND(l.prev_station IS NULL OR g.secs IS NOT NULL)
+           OVER (PARTITION BY l.system, l.routeid, l.direction) AS complete
+  FROM linked l
+  LEFT JOIN seg g ON g.system = l.system
+                 AND g.from_id = l.prev_station
+                 AND g.to_id = l.station_id`
+
+func gtfsWeekMaskSQL(col string) string {
+	return `'W:' || (` + col + `->>'Monday')::boolean::int::text
+	     || (` + col + `->>'Tuesday')::boolean::int::text
+	     || (` + col + `->>'Wednesday')::boolean::int::text
+	     || (` + col + `->>'Thursday')::boolean::int::text
+	     || (` + col + `->>'Friday')::boolean::int::text
+	     || (` + col + `->>'Saturday')::boolean::int::text
+	     || (` + col + `->>'Sunday')::boolean::int::text`
+}
+
+func gtfsWeekArraySQL(col string) string {
+	return `ARRAY[
+		(` + col + `->>'Sunday')::boolean, (` + col + `->>'Monday')::boolean,
+		(` + col + `->>'Tuesday')::boolean, (` + col + `->>'Wednesday')::boolean,
+		(` + col + `->>'Thursday')::boolean, (` + col + `->>'Friday')::boolean,
+		(` + col + `->>'Saturday')::boolean]`
+}
+
+var _busScheduleSource = buildBusScheduleSource()
+
+// _busScheduleServiceSQL is the weekday-mask service set the bus schedule needs,
+// in the same shape metroServiceSQL produces so calendar_dates expands both the
+// same way.
+var _busScheduleServiceSQL = buildBusScheduleServiceSQL()
+
+var _metroServiceSQL = buildMetroServiceSQL()
+
+var _gtfsTransfersSQL = buildGTFSTransfersSQL()
+
+var _gtfsShapesSQL = buildGTFSShapesSQL()
+
+func buildGTFSMidnightGap() time.Duration {
+	return 3 * time.Hour
+}
+
+func buildGTFSMidnightGapSecs() string {
+	return strconv.Itoa(int(_gtfsMidnightGap / time.Second))
+}
+
+func buildRailTripSource() string {
+	return `
   SELECT * FROM (` + _railTripRows + `) w
   WHERE w.service_date >= (now() AT TIME ZONE 'Asia/Taipei')::date
     AND w.service_date < (now() AT TIME ZONE 'Asia/Taipei')::date + ` +
-	strconv.Itoa(_gtfsCalendarDays)
+		strconv.Itoa(_gtfsCalendarDays)
+}
 
-var _gtfsCalendarDatesSQL = `
+func buildGTFSCalendarDatesSQL() string {
+	return `
 WITH day AS (
   -- The feed's calendar range: every date any timetable covers. Only rail
   -- carries dates — every bus trip now runs on a weekday mask — so rail alone
@@ -87,8 +200,10 @@ SELECT svc.service_id, to_char(day.service_date, 'YYYYMMDD'), 1
 FROM day CROSS JOIN svc
 WHERE svc.week[EXTRACT(DOW FROM day.service_date)::int + 1]
 ORDER BY 1, 2`
+}
 
-var _gtfsTripsSQL = `
+func buildGTFSTripsSQL() string {
+	return `
 -- DISTINCT ON collapses the handful of subroutes that run two departures in the
 -- same minute, which would otherwise share a trip_id. Merging them loses one
 -- departure; emitting both would make the file invalid and interleave their
@@ -171,8 +286,10 @@ WHERE trip_id <> ''
   -- than deriving them again is what makes this affordable.
   AND trip_id IN (SELECT trip_id FROM ` + _gtfsStopTimeTable + `)
 ORDER BY trip_id`
+}
 
-var _gtfsStopTimesSQL = `
+func buildGTFSStopTimesSQL() string {
+	return `
 WITH calls AS (
   -- Rail and bus share a shape: a per-call list with wall-clock HH:MM.
   SELECT
@@ -302,8 +419,10 @@ SELECT DISTINCT
   drop_off AS drop_off_type
 FROM timed
 ORDER BY trip_id, stop_sequence`
+}
 
-var _gtfsFrequenciesSQL = `
+func buildGTFSFrequenciesSQL() string {
+	return `
 SELECT DISTINCT ON (trip_id, start_time, end_time)
   trip_id, start_time, end_time, headway_secs, exact_times
 FROM (
@@ -332,87 +451,10 @@ WHERE jsonb_typeof(f.headways) = 'array'
 -- same reason MinHeadwayMins is used at all: a rider's wait is bounded by the
 -- best service on offer.
 ORDER BY trip_id, start_time, end_time, headway_secs`
-
-const _metroPatternSQL = `
-  WITH system_size AS (
-    -- The longest route each system runs, in hops. Used to reject segment rows
-    -- that cannot describe that system's network.
-    SELECT system, MAX(jsonb_array_length(stations)) - 1 AS max_hops
-    FROM raw_tdx.metro_stationofroute
-    WHERE jsonb_typeof(stations) = 'array'
-    GROUP BY 1
-  ), seg AS (
-    -- Structural guard, not just a NULL check. Kaohsiung's light rail lands 742
-    -- segments for a 38-station loop and Taoyuan lands 462 for a 22-station line
-    -- with an empty routeid; both summed to hundreds of hours. Because the
-    -- lookup matches on (system, from, to) alone, every hop still resolved and a
-    -- nullness-based completeness test passed them.
-    --
-    -- Three times the longest route's hop count leaves room for a system whose
-    -- rows legitimately cover both directions and several service patterns,
-    -- while rejecting a row that is an order of magnitude too large. The bound
-    -- is deliberately not derived from Route.TravelTime: that field is itself
-    -- wrong on Taichung, where it claims 71 minutes for a 35-minute line.
-    SELECT s.system,
-           tt->>'FromStationID' AS from_id,
-           tt->>'ToStationID' AS to_id,
-           MAX((tt->>'RunTime')::int + COALESCE((tt->>'StopTime')::int, 0)) AS secs
-    FROM raw_tdx.metro_s2straveltime s
-    JOIN system_size z ON z.system = s.system
-    CROSS JOIN LATERAL jsonb_array_elements(s.traveltimes) tt
-    WHERE jsonb_typeof(s.traveltimes) = 'array'
-      AND jsonb_array_length(s.traveltimes) <= GREATEST(z.max_hops, 1) * 3
-      AND COALESCE(tt->>'FromStationID', '') <> ''
-      AND COALESCE(tt->>'ToStationID', '') <> ''
-      AND (tt->>'RunTime') ~ '^[0-9]+$'
-    GROUP BY 1, 2, 3
-  ), station AS (
-    SELECT r.system, r.routeid, r.direction,
-           st.ordinality::int AS stop_sequence,
-           st.value->>'StationID' AS station_id
-    FROM raw_tdx.metro_stationofroute r
-    CROSS JOIN LATERAL jsonb_array_elements(r.stations) WITH ORDINALITY st(value, ordinality)
-    WHERE jsonb_typeof(r.stations) = 'array'
-      AND COALESCE(st.value->>'StationID', '') <> ''
-  ), linked AS (
-    SELECT s.*,
-           LAG(s.station_id) OVER (PARTITION BY s.system, s.routeid, s.direction
-                                   ORDER BY s.stop_sequence) AS prev_station
-    FROM station s
-  )
-  SELECT l.system, l.routeid, l.direction, l.stop_sequence, l.station_id,
-         SUM(COALESCE(g.secs, 0)) OVER (PARTITION BY l.system, l.routeid, l.direction
-                                        ORDER BY l.stop_sequence
-                                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS offset_secs,
-         -- A route direction is only usable when every one of its hops has a
-         -- known running time; one missing segment would silently compress the
-         -- whole downstream journey.
-         BOOL_AND(l.prev_station IS NULL OR g.secs IS NOT NULL)
-           OVER (PARTITION BY l.system, l.routeid, l.direction) AS complete
-  FROM linked l
-  LEFT JOIN seg g ON g.system = l.system
-                 AND g.from_id = l.prev_station
-                 AND g.to_id = l.station_id`
-
-func gtfsWeekMaskSQL(col string) string {
-	return `'W:' || (` + col + `->>'Monday')::boolean::int::text
-	     || (` + col + `->>'Tuesday')::boolean::int::text
-	     || (` + col + `->>'Wednesday')::boolean::int::text
-	     || (` + col + `->>'Thursday')::boolean::int::text
-	     || (` + col + `->>'Friday')::boolean::int::text
-	     || (` + col + `->>'Saturday')::boolean::int::text
-	     || (` + col + `->>'Sunday')::boolean::int::text`
 }
 
-func gtfsWeekArraySQL(col string) string {
-	return `ARRAY[
-		(` + col + `->>'Sunday')::boolean, (` + col + `->>'Monday')::boolean,
-		(` + col + `->>'Tuesday')::boolean, (` + col + `->>'Wednesday')::boolean,
-		(` + col + `->>'Thursday')::boolean, (` + col + `->>'Friday')::boolean,
-		(` + col + `->>'Saturday')::boolean]`
-}
-
-var _busScheduleSource = `
+func buildBusScheduleSource() string {
+	return `
   SELECT
     s.routeuid,
     s.subrouteuid || ':' || COALESCE(s.direction, 0)::text || ':'
@@ -441,11 +483,10 @@ var _busScheduleSource = `
       SELECT count(*) = count(DISTINCT c->>'StopSequence')
       FROM jsonb_array_elements(t.value->'StopTimes') c
     )`
+}
 
-// _busScheduleServiceSQL is the weekday-mask service set the bus schedule needs,
-// in the same shape metroServiceSQL produces so calendar_dates expands both the
-// same way.
-var _busScheduleServiceSQL = `
+func buildBusScheduleServiceSQL() string {
+	return `
   SELECT DISTINCT
     ` + gtfsWeekMaskSQL("t.value->'ServiceDay'") + ` AS service_id,
     ` + gtfsWeekArraySQL("t.value->'ServiceDay'") + ` AS week
@@ -453,16 +494,20 @@ var _busScheduleServiceSQL = `
   CROSS JOIN LATERAL jsonb_array_elements(s.timetables) t
   WHERE jsonb_typeof(s.timetables) = 'array'
     AND jsonb_typeof(t.value->'ServiceDay') = 'object'`
+}
 
-var _metroServiceSQL = `
+func buildMetroServiceSQL() string {
+	return `
   SELECT DISTINCT
     ` + gtfsWeekMaskSQL("serviceday") + ` AS service_id,
     ` + gtfsWeekArraySQL("serviceday") + ` AS week
   FROM raw_tdx.metro_frequency
   WHERE jsonb_typeof(serviceday) = 'object'
     AND system IN (SELECT DISTINCT system FROM raw_tdx.metro_s2straveltime)`
+}
 
-var _gtfsTransfersSQL = `
+func buildGTFSTransfersSQL() string {
+	return `
 SELECT
   t.system || ':' || t.fromstationid AS from_stop_id,
   t.system || ':' || t.tostationid AS to_stop_id,
@@ -477,8 +522,10 @@ WHERE t.transfertime > 0
   AND EXISTS (SELECT 1 FROM (` + _metroPatternSQL + `) p
               WHERE p.complete AND p.system = t.system AND p.station_id = t.tostationid)
 ORDER BY from_stop_id, to_stop_id`
+}
 
-var _gtfsShapesSQL = `
+func buildGTFSShapesSQL() string {
+	return `
 WITH shape AS (
   SELECT
     'B:' || s.subrouteuid || ':' || COALESCE(s.direction, 0)::text AS shape_id,
@@ -520,3 +567,4 @@ FROM (
   ` + _gtfsRailShapePointsSQL + `
 ) s
 ORDER BY shape_id, shape_pt_sequence`
+}

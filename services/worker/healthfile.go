@@ -40,6 +40,10 @@ func (h *healthFile) touch() {
 	if err := os.Chtimes(h.path, now, now); err == nil {
 		return
 	}
+	h.create()
+}
+
+func (h *healthFile) create() {
 	f, err := os.Create(h.path)
 	if err != nil {
 		zap.S().Warnw("failed",

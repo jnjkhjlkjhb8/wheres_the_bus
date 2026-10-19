@@ -220,22 +220,30 @@ const appLinkPathPrefix = '/app';
 /// Returns null when [uri] is already one — the redirect then leaves it alone.
 String? normalizeDeepLink(Uri uri) {
   if (!uri.hasScheme) return null;
-  // A custom-scheme link can carry its first path segment as the authority,
-  // which iOS preserves and Android drops; an https link's authority is the
-  // domain, which goes away either way.
-  var path = uri.scheme == appLinkScheme && uri.host.isNotEmpty
-      ? '/${uri.host}${uri.path}'
-      : uri.path;
-  if (path == appLinkPathPrefix) {
-    path = AppRoutes.home;
-  } else if (path.startsWith('$appLinkPathPrefix/')) {
-    path = path.substring(appLinkPathPrefix.length);
-  }
+  final path = _deepLinkPath(uri);
   return Uri(
     path: path.isEmpty ? AppRoutes.home : path,
     queryParameters: uri.queryParameters.isEmpty ? null : uri.queryParameters,
   ).toString();
 }
+
+String _deepLinkPath(Uri uri) {
+  // iOS can preserve a custom link's first segment in the authority.
+  final path = _customLinkPath(uri);
+  if (path == appLinkPathPrefix) return AppRoutes.home;
+  return path.startsWith('$appLinkPathPrefix/')
+      ? path.substring(appLinkPathPrefix.length)
+      : path;
+}
+
+String _customLinkPath(Uri uri) =>
+    uri.scheme == appLinkScheme && uri.host.isNotEmpty
+    ? '/${uri.host}${uri.path}'
+    : uri.path;
+
+String? _nonEmptyString(Object? value) =>
+    value is String && value.isNotEmpty ? value : null;
+String? _optionalString(Object? value) => value is String ? value : null;
 
 /// Destination seed for [AppRoutes.go]. Absent or malformed parameters mean
 /// the planner opens empty, exactly as it does from the nav bar.
@@ -247,10 +255,10 @@ class GoRouteArgs {
   final double lon;
 
   static GoRouteArgs? from(Map<String, String> query) {
-    final name = query['destName'];
+    final name = _nonEmptyString(query['destName']);
     final lat = double.tryParse(query['destLat'] ?? '');
     final lon = double.tryParse(query['destLon'] ?? '');
-    if (name == null || name.isEmpty || lat == null || lon == null) return null;
+    if (name == null || lat == null || lon == null) return null;
     return GoRouteArgs(name: name, lat: lat, lon: lon);
   }
 }
@@ -278,8 +286,8 @@ class BusStopRouteArgs {
   static BusStopRouteArgs? from(Map<String, String> query, Object? extra) {
     final lat = double.tryParse(query['lat'] ?? '');
     final lon = double.tryParse(query['lon'] ?? '');
-    final name = query['name'];
-    if (name != null && name.isNotEmpty) {
+    final name = _nonEmptyString(query['name']);
+    if (name != null) {
       return BusStopRouteArgs(
         stopName: name,
         stopId: query['id'],
@@ -288,21 +296,24 @@ class BusStopRouteArgs {
         lon: lon,
       );
     }
-    if (extra is Map) {
-      final cachedName = extra['stopName'];
-      final cachedId = extra['stopId'];
-      final cachedCity = extra['city'];
-      if (cachedName is String && cachedName.isNotEmpty) {
-        return BusStopRouteArgs(
-          stopName: cachedName,
-          stopId: cachedId is String ? cachedId : null,
-          city: cachedCity is String ? cachedCity : null,
-          lat: lat,
-          lon: lon,
-        );
-      }
-    }
-    return null;
+    return _cachedStop(extra, lat, lon);
+  }
+
+  static BusStopRouteArgs? _cachedStop(
+    Object? extra,
+    double? lat,
+    double? lon,
+  ) {
+    if (extra is! Map) return null;
+    final cachedName = _nonEmptyString(extra['stopName']);
+    if (cachedName == null) return null;
+    return BusStopRouteArgs(
+      stopName: cachedName,
+      stopId: _optionalString(extra['stopId']),
+      city: _optionalString(extra['city']),
+      lat: lat,
+      lon: lon,
+    );
   }
 }
 
@@ -328,8 +339,8 @@ class BikeStationRouteArgs {
     final name = query['name'];
     final lat = double.tryParse(query['lat'] ?? '');
     final lon = double.tryParse(query['lon'] ?? '');
-    final uid = query['uid'];
-    if (uid != null && uid.isNotEmpty) {
+    final uid = _nonEmptyString(query['uid']);
+    if (uid != null) {
       return BikeStationRouteArgs(
         stationUid: uid,
         name: name,
@@ -338,8 +349,8 @@ class BikeStationRouteArgs {
       );
     }
     if (extra is Map) {
-      final cached = extra['stationUid'];
-      if (cached is String && cached.isNotEmpty) {
+      final cached = _nonEmptyString(extra['stationUid']);
+      if (cached != null) {
         return BikeStationRouteArgs(
           stationUid: cached,
           name: name,
@@ -373,23 +384,28 @@ class NearStationRouteArgs {
   final String? back;
 
   static NearStationRouteArgs? fromUri(Uri uri) {
-    final segments = uri.pathSegments;
-    if (segments.length != 3 || segments.first != 'near') return null;
+    final segments = _nearSegments(uri);
+    if (segments == null) return null;
     final id = segments[2];
     if (id.isEmpty) return null;
-    for (final type in NearStationType.values) {
-      if (type.name != segments[1]) continue;
-      final query = uri.queryParameters;
-      return NearStationRouteArgs(
-        type: type,
-        id: id,
-        name: query['name'],
-        lat: double.tryParse(query['lat'] ?? ''),
-        lon: double.tryParse(query['lon'] ?? ''),
-        back: query['back'],
-      );
-    }
-    return null;
+    final type = NearStationType.values
+        .where((type) => type.name == segments[1])
+        .firstOrNull;
+    if (type == null) return null;
+    final query = uri.queryParameters;
+    return NearStationRouteArgs(
+      type: type,
+      id: id,
+      name: query['name'],
+      lat: double.tryParse(query['lat'] ?? ''),
+      lon: double.tryParse(query['lon'] ?? ''),
+      back: query['back'],
+    );
+  }
+
+  static List<String>? _nearSegments(Uri uri) {
+    final segments = uri.pathSegments;
+    return segments.length == 3 && segments.first == 'near' ? segments : null;
   }
 }
 

@@ -40,9 +40,13 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     if (!HiveStore.savedPlansReady) {
       throw StateError('saved_plans must be ready before reading routes');
     }
+    return _decodeSavedEntries();
+  }
+
+  List<PlanRoute> _decodeSavedEntries() {
     final routes = <PlanRoute>[];
-    for (final e in HiveStore.savedPlanEntries) {
-      final bytes = e['bytes'];
+    for (final entry in HiveStore.savedPlanEntries) {
+      final bytes = entry['bytes'];
       if (bytes is! List) continue;
       routes.add(PlanRoute.fromBytes(bytes.cast<int>()));
     }
@@ -77,12 +81,7 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
       emit(state.copyWith(savedRoutesReady: false, savedRoutesLoadError: true));
       return;
     }
-    final key = event.route.savedKey;
-    if (state.savedKeys.contains(key)) {
-      await _removeSavedByContent(key);
-    } else if (event.route.raw != null) {
-      await HiveStore.putSavedPlan(key, event.route.raw!);
-    }
+    await _toggleSavedRoute(event.route);
     emit(
       state.copyWith(
         savedRoutes: _readSavedRoutes(),
@@ -90,6 +89,15 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
         savedRoutesLoadError: false,
       ),
     );
+  }
+
+  Future<void> _toggleSavedRoute(PlanRoute route) async {
+    final key = route.savedKey;
+    if (state.savedKeys.contains(key)) {
+      await _removeSavedByContent(key);
+    } else if (route.raw != null) {
+      await HiveStore.putSavedPlan(key, route.raw!);
+    }
   }
 
   Future<void> _removeSavedByContent(String savedKey) async {
@@ -135,9 +143,7 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     );
     _stopPlanStream();
     final done = Completer<void>();
-    void finish() {
-      if (!done.isCompleted) done.complete();
-    }
+    void finish() => _completeSearch(done);
 
     _planFinish = finish;
     _planSub = _repository
@@ -154,30 +160,9 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
           legAlternatives: event.legAlternatives,
         )
         .listen(
-          (update) {
-            if (gen != _searchGeneration || emit.isDone) return;
-            emit(
-              state.copyWith(
-                status: PlanStatus.success,
-                result: update.result,
-                selectedRouteIndex: 0,
-                previewing: false,
-                previewFromSaved: false,
-                geometryPending: !update.complete,
-              ),
-            );
-          },
-          onError: (Object e) {
-            if (gen == _searchGeneration && !emit.isDone) {
-              emit(
-                state.copyWith(
-                  status: PlanStatus.failure,
-                  error: e.toString(),
-                  failure: e is PlanFailure ? e.kind : PlanFailureKind.unknown,
-                  geometryPending: false,
-                ),
-              );
-            }
+          (update) => _planUpdated(update, gen, emit),
+          onError: (Object error) {
+            _planErrored(error, gen, emit);
             finish();
           },
           onDone: finish,
@@ -185,6 +170,43 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
         );
     await done.future;
   }
+
+  void _completeSearch(Completer<void> done) {
+    if (!done.isCompleted) done.complete();
+  }
+
+  void _planUpdated(
+    PlanUpdate update,
+    int generation,
+    Emitter<PlanState> emit,
+  ) {
+    if (generation != _searchGeneration) return;
+    emit(
+      state.copyWith(
+        status: PlanStatus.success,
+        result: update.result,
+        selectedRouteIndex: 0,
+        previewing: false,
+        previewFromSaved: false,
+        geometryPending: !update.complete,
+      ),
+    );
+  }
+
+  void _planErrored(Object error, int generation, Emitter<PlanState> emit) {
+    if (generation != _searchGeneration) return;
+    emit(
+      state.copyWith(
+        status: PlanStatus.failure,
+        error: error.toString(),
+        failure: _failureKind(error),
+        geometryPending: false,
+      ),
+    );
+  }
+
+  PlanFailureKind _failureKind(Object error) =>
+      error is PlanFailure ? error.kind : PlanFailureKind.unknown;
 
   // Cancelling drops the in-flight RPC and rewinds to the pre-search planner,
   // keeping the saved snapshots so the entry surface still has its 路線箱.

@@ -87,26 +87,36 @@ func (f *dataTaipeiFeed) getEnvelope(ctx context.Context, name string, out any) 
 	if err != nil {
 		return false, err
 	}
+	return f.decodeEnvelope(name, out, resp)
+}
+
+func (f *dataTaipeiFeed) decodeEnvelope(name string, out any, resp *resty.Response) (bool, error) {
 	if resp.StatusCode() == http.StatusNotModified {
 		return false, nil
 	}
 	if resp.StatusCode() != http.StatusOK {
 		return false, _oops.With("name", name).With("status_code", resp.StatusCode()).Errorf("HTTP")
 	}
+	return f.decodeEnvelopeBody(name, out, resp)
+}
+
+func (f *dataTaipeiFeed) decodeEnvelopeBody(name string, out any, resp *resty.Response) (bool, error) {
 	body, err := gunzipIfCompressed(resp.Body())
 	if err != nil {
 		return false, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
 	}
-	if history.IsLiveDataTaipeiBlob(name) {
-		history.ArchiveLivePayload(history.DatasetBusFast, f.city+"/"+name, time.Now(), body)
-	}
+	f.archiveEnvelope(name, body)
 	if err := json.Unmarshal(body, out); err != nil {
 		return false, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
 	}
-	f.mu.Lock()
-	f.etag[name] = resp.Header().Get("ETag")
-	f.mu.Unlock()
+	f.commitEnvelopeMarker(name, resp.Header().Get("ETag"))
 	return true, nil
+}
+
+func (f *dataTaipeiFeed) commitEnvelopeMarker(name, marker string) {
+	f.mu.Lock()
+	f.etag[name] = marker
+	f.mu.Unlock()
 }
 
 // getRows fetches one of the blobs that wrap their rows in
@@ -114,7 +124,7 @@ func (f *dataTaipeiFeed) getEnvelope(ctx context.Context, name string, out any) 
 // timetable blobs use their own envelope and go through getEnvelope instead.
 
 func gunzipIfCompressed(body []byte) ([]byte, error) {
-	if len(body) < 2 || body[0] != 0x1f || body[1] != 0x8b {
+	if !isGzipBody(body) {
 		return body, nil
 	}
 	zr, err := gzip.NewReader(bytes.NewReader(body))
@@ -134,14 +144,8 @@ func gunzipIfCompressed(body []byte) ([]byte, error) {
 // dataTaipeiDirection maps GoBack onto the TDX Direction. "2" is the feed's
 // 未知, which no canonical subroute can be derived from.
 func dataTaipeiDirection(goBack string) (uint8, bool) {
-	switch goBack {
-	case "0":
-		return 0, true
-	case "1":
-		return 1, true
-	default:
-		return 0, false
-	}
+	direction, ok := map[string]uint8{"0": 0, "1": 1}[goBack]
+	return direction, ok
 }
 
 // etaSource is a live ETA feed that replaces TDX's for a city rather than
@@ -153,3 +157,11 @@ func dataTaipeiDirection(goBack string) (uint8, bool) {
 // dataTaipeiRawEstimates converts the feed onto the TDX ETA shape the ETA job
 // already consumes. A row whose EstimateTime does not parse as one of the
 // documented values is dropped rather than guessed at.
+
+func isGzipBody(body []byte) bool { return len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b }
+
+func (f *dataTaipeiFeed) archiveEnvelope(name string, body []byte) {
+	if history.IsLiveDataTaipeiBlob(name) {
+		history.ArchiveLivePayload(history.DatasetBusFast, f.city+"/"+name, time.Now(), body)
+	}
+}

@@ -110,6 +110,12 @@ class JourneySessionBloc
         leadStops: event.leadStops,
       ),
     );
+    _subscribeJourney(event, generation);
+    final lease = await _channel?.start(_content(state));
+    _acceptStartedLease(lease, generation);
+  }
+
+  void _subscribeJourney(JourneyStarted event, int generation) {
     if (state.isRailTrack) {
       _subscribeRailTracking(event.legs.first, generation);
     } else {
@@ -121,7 +127,9 @@ class JourneySessionBloc
         generation,
       );
     }
-    final lease = await _channel?.start(_content(state));
+  }
+
+  void _acceptStartedLease(int? lease, int generation) {
     if (generation == _generation) {
       _lease = lease;
       // Ticks that landed while start was in flight (the permission dialog
@@ -180,7 +188,7 @@ class JourneySessionBloc
   void _onEta(EtaTicked event, Emitter<JourneySessionState> emit) {
     if (event.generation != _generation) return; // stale journey
     if (state.phase != JourneyPhase.waiting) return;
-    final arrived = event.eta != null && event.eta! <= Duration.zero;
+    final arrived = _hasArrived(event.eta);
     // trackOnly never rides, so 進站中 is the terminal display, not a
     // boarding prompt.
     emit(
@@ -190,17 +198,29 @@ class JourneySessionBloc
       ),
     );
     _pushUpdate();
+    _updateTrackedArrival(event.eta, arrived);
+  }
+
+  bool _hasArrived(Duration? eta) => eta != null && eta <= Duration.zero;
+
+  void _updateTrackedArrival(Duration? eta, bool arrived) {
     if (!state.trackOnly) return;
-    if (arrived && !_trackedArrived) {
-      _trackedArrived = true;
-      _linger = Timer(trackOnlyLinger, () => add(const JourneyCancelled()));
-    } else if (_trackedArrived &&
-        event.eta != null &&
-        event.eta! > const Duration(minutes: 1)) {
-      // The ETA jumped back up after arrival: the tracked bus has left and
-      // the stream now counts down the following one — end the session.
+    if (_firstArrival(arrived)) {
+      _startArrivalLinger();
+    } else if (_trackedVehicleLeft(eta)) {
+      // A later ETA after arrival describes the next vehicle, not this ride.
       add(const JourneyCancelled());
     }
+  }
+
+  bool _firstArrival(bool arrived) => arrived && !_trackedArrived;
+
+  bool _trackedVehicleLeft(Duration? eta) =>
+      _trackedArrived && eta != null && eta > const Duration(minutes: 1);
+
+  void _startArrivalLinger() {
+    _trackedArrived = true;
+    _linger = Timer(trackOnlyLinger, () => add(const JourneyCancelled()));
   }
 
   void _onProgress(ProgressTicked event, Emitter<JourneySessionState> emit) {
@@ -325,24 +345,43 @@ class JourneySessionBloc
         ? etas
         : etas.where((e) => '${e.direction}' == direction);
 
-    BusStopEtaViewModel? target;
-    BusStopEtaViewModel? plateStop;
-    // e.plate is server-normalized (trimmed + upper-cased); the tracked
-    // plate comes from the raw position feed and isn't. Normalize only for
-    // this comparison — state/Live Activity keep the plate as tracked.
-    final normalizedPlate = plate.trim().toUpperCase();
-    for (final e in inDirection) {
-      if (e.stopUid == leg.identity.departureStopKey) target = e;
-      if (e.plate.isNotEmpty && e.plate == normalizedPlate) {
-        if (plateStop == null || e.sequence < plateStop.sequence) {
-          plateStop = e;
-        }
-      }
-    }
+    final target = _lastTargetStop(inDirection, leg.identity.departureStopKey);
+    final plateStop = _earliestPlateStop(inDirection, plate);
     if (target == null || plateStop == null) return null;
-    final diff = target.sequence - plateStop.sequence;
-    return diff < 0 ? 0 : diff;
+    final gap = target.sequence - plateStop.sequence;
+    return gap.clamp(0, gap.abs());
   }
+
+  BusStopEtaViewModel? _lastTargetStop(
+    Iterable<BusStopEtaViewModel> etas,
+    String stopUid,
+  ) {
+    BusStopEtaViewModel? target;
+    for (final entry in etas) {
+      if (entry.stopUid == stopUid) target = entry;
+    }
+    return target;
+  }
+
+  BusStopEtaViewModel? _earliestPlateStop(
+    Iterable<BusStopEtaViewModel> etas,
+    String plate,
+  ) {
+    // Position-feed plates need normalization before matching ETA plates.
+    final normalized = plate.trim().toUpperCase();
+    BusStopEtaViewModel? earliest;
+    for (final entry in etas.where(
+      (entry) => entry.plate.isNotEmpty && entry.plate == normalized,
+    )) {
+      if (_earlierPlateStop(entry, earliest)) earliest = entry;
+    }
+    return earliest;
+  }
+
+  bool _earlierPlateStop(
+    BusStopEtaViewModel entry,
+    BusStopEtaViewModel? earliest,
+  ) => earliest == null || entry.sequence < earliest.sequence;
 
   /// A rail trackOnly session derives its live 還剩 N 站 / progress / ETA from
   /// the leg's carried timetable + live TRA delay (see
@@ -385,10 +424,11 @@ class JourneySessionBloc
     _pushUpdate();
     // Arrived at the alight: linger briefly, then end (mirrors _onEta's
     // trackOnly arrival handling — a train that reaches the alight is done).
-    if (arrived && !_trackedArrived) {
-      _trackedArrived = true;
-      _linger = Timer(trackOnlyLinger, () => add(const JourneyCancelled()));
-    }
+    _lingerAtRailArrival(arrived);
+  }
+
+  void _lingerAtRailArrival(bool arrived) {
+    if (_firstArrival(arrived)) _startArrivalLinger();
   }
 
   void _subscribePositions() {
@@ -403,6 +443,13 @@ class JourneySessionBloc
   void _onPosition(Position pos) {
     final leg = state.currentLeg;
     if (leg == null || state.phase != JourneyPhase.riding) return;
+    final best = _nearestUpcomingStop(leg, pos);
+    if (best != state.nextStopIndex) {
+      add(ProgressTicked(best, generation: _generation));
+    }
+  }
+
+  int _nearestUpcomingStop(JourneyLeg leg, Position pos) {
     // Nearest upcoming stop wins; never move backwards (index is monotonic).
     var best = state.nextStopIndex;
     var bestDist = double.infinity;
@@ -419,24 +466,70 @@ class JourneySessionBloc
         best = i;
       }
     }
-    if (best != state.nextStopIndex) {
-      add(ProgressTicked(best, generation: _generation));
-    }
+    return best;
   }
 
   AlightTrackContent _content(JourneySessionState s) {
     final leg = s.currentLeg!;
-    final rail = s.isRailTrack;
-    final aboard =
-        s.phase == JourneyPhase.riding ||
-        (rail && s.railAboard) ||
-        (!rail && s.plate != null);
+    final aboard = _aboard(s);
+    final waitingRail = s.isRailTrack && !aboard;
 
+    final progress = _contentProgress(s, leg);
+
+    return AlightTrackContent(
+      mode: switch (leg.kind) {
+        JourneyLegKind.metro => AlightTrackMode.metro,
+        JourneyLegKind.tra => AlightTrackMode.tra,
+        JourneyLegKind.thsr => AlightTrackMode.thsr,
+        JourneyLegKind.bus || JourneyLegKind.other => AlightTrackMode.bus,
+      },
+      phase: _contentPhase(s, aboard, progress.remaining),
+      vehicleLabel: leg.routeLabel.split(' 往').first.trim(),
+      vehicleId: s.plate,
+      boardStation: leg.boardStop,
+      targetStation: leg.alightStop,
+      nextStation: _contentNextStation(s, leg, progress.nextName),
+      hopCount: progress.hops,
+      currentIndex: progress.travelled,
+      remainingStops: progress.remaining,
+      leadStops: s.leadStops,
+      etaMs: _etaEpoch(s.eta),
+      etaMinutes: _etaMinutes(s.eta),
+      walkMinutes: aboard ? 0 : leg.leadingWalkMinutes,
+      // Only while the train is still to come: a rider on the platform reads
+      // the timetable and the slip against it, not a stop count. Both drop
+      // away the moment they are aboard.
+      scheduledDepartureMs: _waitingDepartureMs(waitingRail, leg),
+      delayMinutes: waitingRail ? s.railDelay.inMinutes : 0,
+      trackId: _trackId,
+    );
+  }
+
+  String _contentNextStation(
+    JourneySessionState session,
+    JourneyLeg leg,
+    String nextName,
+  ) => session.isRailTrack ? (session.railNextStop ?? leg.boardStop) : nextName;
+
+  int? _waitingDepartureMs(bool waitingRail, JourneyLeg leg) => waitingRail
+      ? leg.railSchedule.first.scheduledArrival.millisecondsSinceEpoch
+      : null;
+
+  int? _etaEpoch(Duration? eta) =>
+      eta == null ? null : DateTime.now().add(eta).millisecondsSinceEpoch;
+
+  int? _etaMinutes(Duration? eta) =>
+      eta == null ? null : max(0, (eta.inSeconds / 60).ceil());
+
+  ({int remaining, int hops, int travelled, String nextName}) _contentProgress(
+    JourneySessionState s,
+    JourneyLeg leg,
+  ) {
     final names = [...leg.stopNames, leg.alightStop];
 
     // One segment per hop, board→alight. A rail leg carries its geometry as
     // railSchedule; a bus leg as stopLocations.
-    final geometryHops = rail
+    final geometryHops = s.isRailTrack
         ? leg.railSchedule.length - 1
         : leg.stopLocations.length;
     final remaining = max(
@@ -455,51 +548,35 @@ class JourneySessionBloc
     // Falls back to the stop the session opened at: a leg whose stop list
     // never landed has no name to advance through, and naming the target
     // there would read as "you are already there".
-    final nextName = nextIndex < names.length
-        ? names[nextIndex]
-        : leg.boardStop;
+    final nextName = _nextStationName(nextIndex, names, leg.boardStop);
 
-    return AlightTrackContent(
-      mode: switch (leg.kind) {
-        JourneyLegKind.metro => AlightTrackMode.metro,
-        JourneyLegKind.tra => AlightTrackMode.tra,
-        JourneyLegKind.thsr => AlightTrackMode.thsr,
-        JourneyLegKind.bus || JourneyLegKind.other => AlightTrackMode.bus,
-      },
-      phase: switch (s.phase) {
-        JourneyPhase.done => AlightTrackPhase.arrived,
-        _ when !aboard => AlightTrackPhase.waiting,
-        // `lead + 1` rather than `lead`: the card turns warm on the frame the
-        // rider is buzzed, and at the default lead of 0 that is "your stop is
-        // next" — on `<= lead` a default session would never warm at all.
-        _ when clampedRemaining <= s.leadStops + 1 =>
-          AlightTrackPhase.approaching,
-        _ => AlightTrackPhase.riding,
-      },
-      vehicleLabel: leg.routeLabel.split(' 往').first.trim(),
-      vehicleId: s.plate,
-      boardStation: leg.boardStop,
-      targetStation: leg.alightStop,
-      nextStation: rail ? (s.railNextStop ?? leg.boardStop) : nextName,
-      hopCount: hopCount,
-      currentIndex: travelled,
-      remainingStops: clampedRemaining,
-      leadStops: s.leadStops,
-      etaMs: s.eta == null
-          ? null
-          : DateTime.now().add(s.eta!).millisecondsSinceEpoch,
-      etaMinutes: s.eta == null ? null : max(0, (s.eta!.inSeconds / 60).ceil()),
-      walkMinutes: aboard ? 0 : leg.leadingWalkMinutes,
-      // Only while the train is still to come: a rider on the platform reads
-      // the timetable and the slip against it, not a stop count. Both drop
-      // away the moment they are aboard.
-      scheduledDepartureMs: rail && !aboard
-          ? leg.railSchedule.first.scheduledArrival.millisecondsSinceEpoch
-          : null,
-      delayMinutes: rail && !aboard ? s.railDelay.inMinutes : 0,
-      trackId: _trackId,
+    return (
+      remaining: clampedRemaining,
+      hops: hopCount,
+      travelled: travelled,
+      nextName: nextName,
     );
   }
+
+  String _nextStationName(int index, List<String> names, String fallback) =>
+      index < names.length ? names[index] : fallback;
+
+  bool _aboard(JourneySessionState session) {
+    if (session.phase == JourneyPhase.riding) return true;
+    return session.isRailTrack ? session.railAboard : session.plate != null;
+  }
+
+  AlightTrackPhase _contentPhase(
+    JourneySessionState session,
+    bool aboard,
+    int remaining,
+  ) => switch (session.phase) {
+    JourneyPhase.done => AlightTrackPhase.arrived,
+    _ when !aboard => AlightTrackPhase.waiting,
+    // Boarding reminders warm the card at the same lead-plus-one boundary.
+    _ when remaining <= session.leadStops + 1 => AlightTrackPhase.approaching,
+    _ => AlightTrackPhase.riding,
+  };
 
   @override
   Future<void> close() {

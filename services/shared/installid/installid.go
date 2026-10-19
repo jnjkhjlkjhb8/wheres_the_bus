@@ -26,7 +26,7 @@ type Authorizer interface {
 func SecretHash(ctx context.Context, installID string) ([]byte, error) {
 	metadataInstallID, ok := CallerID(ctx)
 	secrets := metadata.ValueFromIncomingContext(ctx, SecretMetadataKey)
-	if !ok || metadataInstallID != installID || len(secrets) != 1 || !ValidText(secrets[0], 256) || len(secrets[0]) < 32 {
+	if !matchingInstallIdentity(ok, metadataInstallID, installID) || !validSecretHeader(secrets) {
 		zap.S().Warnw("credential rejected",
 			"component", "firebase",
 			"action", "installation_secret",
@@ -86,4 +86,12 @@ func Authorize(ctx context.Context, devices Authorizer, installID string) error 
 		return status.Error(codes.PermissionDenied, "installation credential does not match")
 	}
 	return nil
+}
+
+func matchingInstallIdentity(present bool, actual, expected string) bool {
+	return present && actual == expected
+}
+
+func validSecretHeader(values []string) bool {
+	return len(values) == 1 && ValidText(values[0], 256) && len(values[0]) >= 32
 }

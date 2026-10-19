@@ -30,10 +30,6 @@ import 'package:wheres_the_bus/features/metro/bloc/mrt_track_event.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 
-// the floor must never double as a ceiling — it must not silently roll
-// back a larger system-level accessibility preference. Keep this
-// clamp-min-only; any max clamp lives in a separate step (see
-
 class App extends StatefulWidget {
   const App({required this.bootstrap, this.debugRouter, super.key});
 
@@ -78,21 +74,18 @@ class _AppState extends State<App> {
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: widget.bootstrap,
-      builder: (context, _) {
-        switch (widget.bootstrap.state) {
-          case AppBootstrapState.initializing:
-            return const _BootstrapGateApp(child: _BootstrapSplash());
-          case AppBootstrapState.failed:
-            return _BootstrapGateApp(
-              child: _BootstrapFailedView(
-                phase: widget.bootstrap.lastErrorPhase,
-                onRetry: widget.bootstrap.retry,
-              ),
-            );
-          case AppBootstrapState.ready:
-          case AppBootstrapState.degraded:
-            return _AppShell(router: widget.debugRouter);
-        }
+      builder: (context, _) => switch (widget.bootstrap.state) {
+        AppBootstrapState.initializing => const _BootstrapGateApp(
+          child: _BootstrapSplash(),
+        ),
+        AppBootstrapState.failed => _BootstrapGateApp(
+          child: _BootstrapFailedView(
+            phase: widget.bootstrap.lastErrorPhase,
+            onRetry: widget.bootstrap.retry,
+          ),
+        ),
+        AppBootstrapState.ready ||
+        AppBootstrapState.degraded => _AppShell(router: widget.debugRouter),
       },
     );
   }

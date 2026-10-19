@@ -38,7 +38,8 @@ typedef _SpreadPart = ({
   bool flip,
 });
 
-Offset _projectToScreen({
+@visibleForTesting
+Offset projectToScreen({
   required LatLng point,
   required LatLng center,
   required double zoom,
@@ -91,44 +92,57 @@ extension _HomeScreenMemberCapsules on _HomeScreenState {
       _memberMarkers.value = const {};
       return;
     }
-    final built = <Marker>[];
-    for (final part in _spreadParts) {
-      final capsule = part.labelled
-          ? await MapMarkers.stationCapsule(
-              asset: 'assets/marker/Bus.svg',
-              label: part.label,
-              selected: part.selected,
-              flip: part.flip,
-            )
-          : (
-              icon: await MapMarkers.svgAsset(
-                'assets/marker/Bus.svg',
-                size: _kIconMarkerSize,
-              ),
-              anchor: const Offset(0.5, 0.5),
-            );
-      built.add(
-        Marker(
-          markerId: MarkerId('member:${part.member.stationUid}'),
-          position: LatLng(part.member.lat, part.member.lon),
-          icon: capsule.icon,
-          anchor: capsule.anchor,
-          zIndexInt: part.selected ? 1 : 0,
-          onTap: () =>
-              _selectMember(part.selected ? null : part.member.stationUid),
-        ),
-      );
-    }
-    if (!mounted || revision != _memberRevision) return;
+    final built = await _buildMemberMarkers();
+    if (!_currentMemberRevision(revision)) return;
     _memberMarkers.value = built.toSet();
   }
+
+  Future<List<Marker>> _buildMemberMarkers() async {
+    final built = <Marker>[];
+    for (final part in _spreadParts) {
+      built.add(await _memberMarker(part));
+    }
+    return built;
+  }
+
+  bool _currentMemberRevision(int revision) =>
+      mounted && revision == _memberRevision;
+
+  Future<Marker> _memberMarker(_SpreadPart part) async {
+    final capsule = await _memberCapsule(part);
+    return Marker(
+      markerId: MarkerId('member:${part.member.stationUid}'),
+      position: LatLng(part.member.lat, part.member.lon),
+      icon: capsule.icon,
+      anchor: capsule.anchor,
+      zIndexInt: part.selected ? 1 : 0,
+      onTap: () => _selectMember(part.selected ? null : part.member.stationUid),
+    );
+  }
+
+  Future<({BitmapDescriptor icon, Offset anchor})> _memberCapsule(
+    _SpreadPart part,
+  ) async => part.labelled
+      ? await MapMarkers.stationCapsule(
+          asset: 'assets/marker/Bus.svg',
+          label: part.label,
+          selected: part.selected,
+          flip: part.flip,
+        )
+      : (
+          icon: await MapMarkers.svgAsset(
+            'assets/marker/Bus.svg',
+            size: kIconMarkerSize,
+          ),
+          anchor: const Offset(0.5, 0.5),
+        );
 
   /// Stand-in for the tapped group while its poles are being fetched. It moves
   /// out of the nearby set and into this one the moment the group is opened,
   /// so nothing blinks where the user just tapped.
   Future<void> _holdGroupPin(NearStationViewModel station) async {
     final revision = _memberRevision;
-    final icon = await _markerIcon(station, _markerStyle(_zoom));
+    final icon = await markerIcon(station, markerStyleForZoom(_zoom));
     if (!mounted ||
         revision != _memberRevision ||
         _spreadPhase.value != _SpreadPhase.holding) {

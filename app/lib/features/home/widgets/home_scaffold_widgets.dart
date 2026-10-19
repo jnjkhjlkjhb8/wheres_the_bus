@@ -49,37 +49,85 @@ extension _HomeScreenScaffold on _HomeScreenState {
   Widget _buildScaffold(BuildContext context, ColorScheme cs) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        final sheetNavigator = _sheetNavigatorKey.currentState;
-        final metrics = _sheetController.metrics;
-        switch (homeBackStep(
-          sheetPagePushed: sheetNavigator?.canPop() ?? false,
-          // minOffset rather than the peek fraction: peek is the lowest detent
-          // of the home grid, and reading it off the metrics keeps this honest
-          // if that grid ever changes.
-          sheetAbovePeek:
-              metrics != null && metrics.offset > metrics.minOffset + 1,
-          routeCanPop: context.canPop(),
-        )) {
-          case HomeBackStep.popSheetPage:
-            sheetNavigator!.pop();
-          case HomeBackStep.collapseSheet:
-            unawaited(
-              _sheetController.animateToDetent(
-                AppSheetSnap.peek,
-                reduced: AppMotion.reduced(context),
-              ),
-            );
-          case HomeBackStep.popRoute:
-            context.pop();
-          // The exit the platform would have run itself, now that nothing on
-          // this page has a use for the gesture.
-          case HomeBackStep.exitApp:
-            unawaited(SystemNavigator.pop());
-        }
-      },
+      onPopInvokedWithResult: (didPop, _) => _onHomePop(context, didPop),
       child: _buildScaffoldBody(context, cs),
+    );
+  }
+
+  void _onHomePop(BuildContext context, bool didPop) {
+    if (didPop) return;
+    final navigator = _sheetNavigatorKey.currentState;
+    final metrics = _sheetController.metrics;
+    final step = homeBackStep(
+      sheetPagePushed: navigator?.canPop() ?? false,
+      // minOffset follows the actual lowest detent of the current sheet grid.
+      sheetAbovePeek: metrics != null && metrics.offset > metrics.minOffset + 1,
+      routeCanPop: context.canPop(),
+    );
+    final action = switch (step) {
+      HomeBackStep.popSheetPage => () => navigator!.pop(),
+      HomeBackStep.collapseSheet => () => unawaited(
+        _sheetController.animateToDetent(
+          AppSheetSnap.peek,
+          reduced: AppMotion.reduced(context),
+        ),
+      ),
+      HomeBackStep.popRoute => () => context.pop(),
+      // The platform exit runs only after the page has handled its own layers.
+      HomeBackStep.exitApp => () => unawaited(SystemNavigator.pop()),
+    };
+    action();
+  }
+
+  Widget _scanOverlay(ColorScheme cs, _ScanRing ring) => ring.radiusPx <= 0
+      ? const SizedBox.shrink()
+      : RepaintBoundary(
+          child: CustomPaint(
+            painter: _ScanRingPainter(
+              progress: _scanController,
+              center: ring.center,
+              radius: ring.radiusPx,
+              color: cs.onSurface,
+              still: ring.still,
+            ),
+          ),
+        );
+
+  IconData _notificationGlyph(int unread) => unread > 0
+      ? Icons.notifications_rounded
+      : Icons.notifications_none_rounded;
+
+  Widget _notificationButton(BuildContext context, int unread) {
+    final cs = Theme.of(context).colorScheme;
+    return Pressable(
+      onTap: () => unawaited(showNotificationSheet(context)),
+      semanticLabel: unread > 0
+          ? AppI18n.of(context).unreadNotifications(unread)
+          : AppI18n.of(context).commonNotifications,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: AppTheme.floatingControl(
+              cs,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              _notificationGlyph(unread),
+              size: 20,
+              color: cs.onSurface,
+            ),
+          ),
+          if (unread > 0)
+            Positioned(
+              top: -4,
+              right: -4,
+              child: UnreadBadge(count: unread),
+            ),
+        ],
+      ),
     );
   }
 
@@ -96,19 +144,7 @@ extension _HomeScreenScaffold on _HomeScreenState {
             child: IgnorePointer(
               child: ValueListenableBuilder<_ScanRing>(
                 valueListenable: _scanRing,
-                builder: (context, ring, _) => ring.radiusPx <= 0
-                    ? const SizedBox.shrink()
-                    : RepaintBoundary(
-                        child: CustomPaint(
-                          painter: _ScanRingPainter(
-                            progress: _scanController,
-                            center: ring.center,
-                            radius: ring.radiusPx,
-                            color: cs.onSurface,
-                            still: ring.still,
-                          ),
-                        ),
-                      ),
+                builder: (context, ring, _) => _scanOverlay(cs, ring),
               ),
             ),
           ),
@@ -156,41 +192,8 @@ extension _HomeScreenScaffold on _HomeScreenState {
                 children: [
                   BlocBuilder<AlertBloc, AlertState>(
                     buildWhen: (p, c) => p.unreadCount != c.unreadCount,
-                    builder: (context, state) {
-                      final unread = state.unreadCount;
-                      return Pressable(
-                        onTap: () => unawaited(showNotificationSheet(context)),
-                        semanticLabel: unread > 0
-                            ? AppI18n.of(context).unreadNotifications(unread)
-                            : AppI18n.of(context).commonNotifications,
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Container(
-                              width: 44,
-                              height: 44,
-                              decoration: AppTheme.floatingControl(
-                                cs,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Icon(
-                                unread > 0
-                                    ? Icons.notifications_rounded
-                                    : Icons.notifications_none_rounded,
-                                size: 20,
-                                color: cs.onSurface,
-                              ),
-                            ),
-                            if (unread > 0)
-                              Positioned(
-                                top: -4,
-                                right: -4,
-                                child: UnreadBadge(count: unread),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
+                    builder: (context, state) =>
+                        _notificationButton(context, state.unreadCount),
                   ),
                   Pressable(
                     onTap: () {
@@ -417,6 +420,14 @@ const double _kScanFadeInFraction = 0.1;
   return (_kScanSeedRadius + (radius - _kScanSeedRadius) * eased, alpha);
 }
 
+RadialGradient _scanWash(Color color, double alpha) => RadialGradient(
+  colors: [
+    color.withValues(alpha: alpha * _kScanFillAlpha),
+    color.withValues(alpha: 0),
+  ],
+  stops: const [0, 0.72],
+);
+
 class _ScanRingPainter extends CustomPainter {
   _ScanRingPainter({
     required this.progress,
@@ -443,14 +454,7 @@ class _ScanRingPainter extends CustomPainter {
     );
 
     final bounds = Rect.fromCircle(center: center, radius: ringRadius);
-    final wash = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          color.withValues(alpha: alpha * _kScanFillAlpha),
-          color.withValues(alpha: 0),
-        ],
-        stops: const [0, 0.72],
-      ).createShader(bounds);
+    final wash = Paint()..shader = _scanWash(color, alpha).createShader(bounds);
     final stroke = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = _kScanStrokeWidth

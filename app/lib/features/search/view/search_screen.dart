@@ -62,57 +62,52 @@ void _navigateToResult(BuildContext context, SearchResult result) {
   // SearchBloc) so every entry point — result rows, recents, and AI — records
   // history in one place instead of writing storage directly.
   context.read<SearchBloc>().add(SearchResultSelected(result));
-  switch (result.type) {
-    case SearchResultType.busRoute:
-      unawaited(context.push(AppRoutes.busRoute(result.uid)));
-    case SearchResultType.busStation:
-      context.go(
-        AppRoutes.nearStation(
-          type: NearStationType.bus,
-          id: result.uid,
-          name: result.name,
-          lat: result.lat,
-          lon: result.lon,
-          back: _backHere(context),
-        ),
-      );
-    case SearchResultType.bikeStation:
-      context.go(
-        AppRoutes.nearStation(
-          type: NearStationType.bike,
-          id: result.uid,
-          name: result.name,
-          lat: result.lat,
-          lon: result.lon,
-          back: _backHere(context),
-        ),
-      );
-    case SearchResultType.mrtStation:
-      final stationId = metroStationIdForName(result.name);
-      unawaited(
-        context.push(
-          stationId == null
-              ? AppRoutes.metro
-              : AppRoutes.metroStation(stationId),
-        ),
-      );
-    case SearchResultType.traTrain:
-    case SearchResultType.thsrTrain:
-      unawaited(
-        context.push(
-          AppRoutes.railTrain(
-            result.uid,
-            system: result.type == SearchResultType.traTrain
-                ? RailSystem.tra
-                : RailSystem.thsr,
-          ),
-        ),
-      );
+  if (const {
+    SearchResultType.busStation,
+    SearchResultType.bikeStation,
+  }.contains(result.type)) {
+    context.go(_nearResultLocation(context, result));
+    return;
   }
+  unawaited(context.push(_resultLocation(result)));
+}
+
+String _nearResultLocation(BuildContext context, SearchResult result) =>
+    AppRoutes.nearStation(
+      type: result.type == SearchResultType.busStation
+          ? NearStationType.bus
+          : NearStationType.bike,
+      id: result.uid,
+      name: result.name,
+      lat: result.lat,
+      lon: result.lon,
+      back: _backHere(context),
+    );
+
+String _resultLocation(SearchResult result) {
+  if (result.type == SearchResultType.busRoute) {
+    return AppRoutes.busRoute(result.uid);
+  }
+  if (result.type == SearchResultType.mrtStation) {
+    return _metroResultLocation(result.name);
+  }
+  return AppRoutes.railTrain(
+    result.uid,
+    system: result.type == SearchResultType.traTrain
+        ? RailSystem.tra
+        : RailSystem.thsr,
+  );
+}
+
+String _metroResultLocation(String name) {
+  final stationId = metroStationIdForName(name);
+  return stationId == null
+      ? AppRoutes.metro
+      : AppRoutes.metroStation(stationId);
 }
 
 class SearchScreen extends StatelessWidget {
-  const SearchScreen({super.key, this.bloc, this.initialQuery});
+  const SearchScreen({super.key, this.bloc, this.initialQuery, this.genUiBloc});
 
   /// Text to open the field with, from `/search?q=`. The query runs on the
   /// first frame, so a location that names one lands on its results rather
@@ -120,6 +115,7 @@ class SearchScreen extends StatelessWidget {
   final String? initialQuery;
 
   final SearchBloc? bloc;
+  final GenUiBloc? genUiBloc;
 
   @override
   Widget build(BuildContext context) {
@@ -132,7 +128,10 @@ class SearchScreen extends StatelessWidget {
           BlocProvider.value(value: bloc),
         // Lives with the screen, not with a sheet: opening a result and
         // coming back has to land on the answer that sent you there.
-        BlocProvider(create: (_) => GenUiBloc()),
+        if (genUiBloc case final existing?)
+          BlocProvider.value(value: existing)
+        else
+          BlocProvider(create: (_) => GenUiBloc()),
       ],
       child: _SearchView(initialQuery: initialQuery),
     );
@@ -156,18 +155,25 @@ class _SearchViewState extends State<_SearchView> {
   void initState() {
     super.initState();
     final query = widget.initialQuery;
-    if (query != null && query.isNotEmpty) {
-      _controller.text = query;
-      _controller.selection = TextSelection.collapsed(offset: query.length);
-    }
+    _populateInitialQuery(query);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
       // After the provider is in place: the bloc this dispatches to is
       // installed by the [SearchScreen] above this widget.
-      if (query != null && query.isNotEmpty && mounted) {
-        context.read<SearchBloc>().add(SearchQueryChanged(query));
-      }
+      _submitInitialQuery(query);
     });
+  }
+
+  void _populateInitialQuery(String? query) {
+    if (query == null || query.isEmpty) return;
+    _controller.text = query;
+    _controller.selection = TextSelection.collapsed(offset: query.length);
+  }
+
+  void _submitInitialQuery(String? query) {
+    if (!mounted) return;
+    if (query == null || query.isEmpty) return;
+    context.read<SearchBloc>().add(SearchQueryChanged(query));
   }
 
   @override
@@ -399,21 +405,24 @@ class _SearchViewState extends State<_SearchView> {
     );
   }
 
+  bool _showInitialSkeleton(SearchState state) =>
+      state.loading && state.results.isEmpty && state.cityOptions.length < 2;
+
   String _bodyKey(SearchState state) {
-    if (state.loading &&
-        state.results.isEmpty &&
-        state.cityOptions.length < 2) {
-      return 'loading';
-    }
+    if (_showInitialSkeleton(state)) return 'loading';
     if (state.query.isEmpty) return 'recents';
-    // With a chip row on screen the chrome is identical across loading,
-    // empty, and results, so those share a key: the switcher swaps the list
-    // underneath instead of crossfading the chips against themselves.
-    if (state.cityOptions.length >= 2 && state.error == null) return 'results';
-    if (state.error != null) return 'error';
-    if (state.results.isEmpty) return 'empty';
-    return 'results';
+    return _resultBodyKey(state);
   }
+
+  String _resultBodyKey(SearchState state) {
+    // Sharing a key keeps the city-filter rail in place while only rows change.
+    if (_keepCityRail(state)) return 'results';
+    if (state.error != null) return 'error';
+    return state.results.isEmpty ? 'empty' : 'results';
+  }
+
+  bool _keepCityRail(SearchState state) =>
+      state.cityOptions.length >= 2 && state.error == null;
 
   Widget _buildBody(
     BuildContext context,
@@ -421,9 +430,7 @@ class _SearchViewState extends State<_SearchView> {
     ColorScheme cs,
     double bottomPad,
   ) {
-    if (state.loading &&
-        state.results.isEmpty &&
-        state.cityOptions.length < 2) {
+    if (_showInitialSkeleton(state)) {
       return const _ResultsSkeleton();
     }
 
@@ -454,46 +461,67 @@ class _SearchViewState extends State<_SearchView> {
             ),
           ),
         Expanded(
-          child: state.error != null
-              ? ErrorStateView(
-                  error: state.error!,
-                  onRetry: () => context.read<SearchBloc>().add(
-                    SearchQueryChanged(state.query),
-                  ),
-                )
-              : state.loading && state.results.isEmpty
-              // Reloading under a new city filter: "no match" is not the
-              // answer yet, so the rows stay skeletal until it is.
-              ? const _SkeletonRows()
-              : state.results.isEmpty
-              ? _NoResults(query: state.query)
-              : ListView.separated(
-                  // Results sit behind the keyboard on a phone; dragging the
-                  // list is the reflex for getting it out of the way.
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: EdgeInsets.only(
-                    bottom: bottomPad + AppTheme.space16,
-                  ),
-                  itemCount: state.results.length,
-                  separatorBuilder: (_, _) => Divider(
-                    height: 1,
-                    thickness: 0.5,
-                    color: cs.outlineVariant,
-                  ),
-                  itemBuilder: (context, index) {
-                    final result = state.results[index];
-                    return _SearchResultRow(
-                      result: result,
-                      transportType: _transportType(result.type),
-                      onTap: () => _navigateToResult(context, result),
-                    );
-                  },
-                ),
+          child: _resultRows(context, state, cs, bottomPad),
         ),
       ],
     );
   }
+
+  Widget _resultRows(
+    BuildContext context,
+    SearchState state,
+    ColorScheme cs,
+    double bottomPad,
+  ) {
+    final error = state.error;
+    if (error != null) {
+      return ErrorStateView(
+        error: error,
+        onRetry: () =>
+            context.read<SearchBloc>().add(SearchQueryChanged(state.query)),
+      );
+    }
+    // A filtered request still in flight has not answered "no matches" yet.
+    if (state.loading && state.results.isEmpty) return const _SkeletonRows();
+    return _completedResultRows(context, state, cs, bottomPad);
+  }
+
+  Widget _completedResultRows(
+    BuildContext context,
+    SearchState state,
+    ColorScheme cs,
+    double bottomPad,
+  ) => state.results.isEmpty
+      ? _NoResults(query: state.query)
+      : _resultList(context, state, cs, bottomPad);
+
+  Widget _resultList(
+    BuildContext context,
+    SearchState state,
+    ColorScheme cs,
+    double bottomPad,
+  ) => ListView.separated(
+    // Results sit behind the keyboard on a phone; dragging the
+    // list is the reflex for getting it out of the way.
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+    padding: EdgeInsets.only(
+      bottom: bottomPad + AppTheme.space16,
+    ),
+    itemCount: state.results.length,
+    separatorBuilder: (_, _) => Divider(
+      height: 1,
+      thickness: 0.5,
+      color: cs.outlineVariant,
+    ),
+    itemBuilder: (context, index) {
+      final result = state.results[index];
+      return _SearchResultRow(
+        result: result,
+        transportType: _transportType(result.type),
+        onTap: () => _navigateToResult(context, result),
+      );
+    },
+  );
 }
 
 /// Shared header for the recents and results lists, so the two read as one
@@ -621,7 +649,7 @@ class _SkeletonRows extends StatelessWidget {
           itemBuilder: (_, i) => _SearchResultRow(
             result: SearchResult(
               type: SearchResultType.busStation,
-              uid: 'skeleton-$i',
+              uid: i.toString(),
               name: BoneMock.chars(5, '囗'),
               subtitle: BoneMock.chars(9, '囗'),
             ),

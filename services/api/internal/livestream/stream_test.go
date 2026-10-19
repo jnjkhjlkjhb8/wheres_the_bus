@@ -45,6 +45,37 @@ func newFakeLiveSource() *fakeLiveSource {
 	}
 }
 
+func TestDemandRefreshWindowBoundary(t *testing.T) {
+	src := newFakeLiveSource()
+	now := time.Unix(1_800_000_000, 0)
+	stream := liveStream{source: src, spec: LiveStreamSpec{DemandKey: "demand:city"}, touched: now}
+	stream.refreshDemand(t.Context(), now.Add(_demandRefresh-time.Nanosecond))
+	if len(src.touches) != 0 {
+		t.Fatal("demand refreshed before its renewal window")
+	}
+	stream.refreshDemand(t.Context(), now.Add(_demandRefresh))
+	if len(src.touches) != 1 || src.touches[0] != "demand:city" {
+		t.Fatalf("demand was not refreshed at the boundary: %v", src.touches)
+	}
+	stream.refreshDemand(t.Context(), now.Add(2*_demandRefresh-time.Nanosecond))
+	if len(src.touches) != 1 {
+		t.Fatal("refresh did not renew the window")
+	}
+	stream.refreshDemand(t.Context(), now.Add(2*_demandRefresh))
+	if len(src.touches) != 2 {
+		t.Fatal("second refresh window was not honored")
+	}
+}
+
+func TestDemandRefreshWithoutDemandKey(t *testing.T) {
+	src := newFakeLiveSource()
+	stream := liveStream{source: src}
+	stream.refreshDemand(t.Context(), time.Now())
+	if len(src.touches) != 0 {
+		t.Fatal("stream without a demand key refreshed demand")
+	}
+}
+
 func (f *fakeLiveSource) Get(_ context.Context, key string) ([]byte, bool) {
 	f.ops = append(f.ops, "get:"+key)
 	v, ok := f.values[key]
@@ -101,6 +132,22 @@ func TestStreamLiveSeedsThenForwards(t *testing.T) {
 	}
 	if len(frames) != 2 || string(frames[0]) != "seed" || string(frames[1]) != "live" {
 		t.Fatalf("want [seed live], got %q", frames)
+	}
+}
+
+func TestStreamLiveDefaultFilterOmitsEmptySeedAndFrames(t *testing.T) {
+	src := newFakeLiveSource()
+	src.values["empty"] = []byte{}
+	src.ch <- []byte{}
+	src.ch <- []byte("live")
+	close(src.ch)
+	var frames []string
+	err := StreamLive(t.Context(), src, LiveStreamSpec{Channel: "empty", SeedKeys: []string{"empty"}}, func(data []byte) error {
+		frames = append(frames, string(data))
+		return nil
+	})
+	if !errors.Is(err, errLiveSourceClosed) || len(frames) != 1 || frames[0] != "live" {
+		t.Fatalf("filtered frames = %v, error %v", frames, err)
 	}
 }
 
@@ -254,9 +301,10 @@ func TestRedisLiveSourceRecordsRedisErrorButNotNil(t *testing.T) {
 		t.Fatal("get against an unreachable Redis must report ok=false")
 	}
 	unreachable.ScanKeys(context.Background(), "any:*")
+	unreachable.Touch(context.Background(), "demand:any", time.Minute)
 	after := parseCounterTotal(t, "router_redis_errors_total")
-	if after != before+2 {
-		t.Fatalf("router_redis_errors_total = %d, want %d (before %d + get + scanKeys failures)", after, before+2, before)
+	if after != before+3 {
+		t.Fatalf("router_redis_errors_total = %d, want %d (before %d + get + scan + touch failures)", after, before+3, before)
 	}
 }
 

@@ -10,7 +10,8 @@ import 'package:geolocator/geolocator.dart'
     show
         Geolocator,
         LocationServiceDisabledException,
-        PermissionDeniedException;
+        PermissionDeniedException,
+        Position;
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -26,7 +27,9 @@ import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/core/update/update_gate.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/models/near_models.dart';
+import 'package:wheres_the_bus/data/repositories/bus_repository.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
+import 'package:wheres_the_bus/data/repositories/near_repository.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_state.dart';
 import 'package:wheres_the_bus/features/alerts/view/home_alert_capsule.dart';
@@ -41,6 +44,7 @@ import 'package:wheres_the_bus/features/home/bloc/nearby_bloc.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_event.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_state.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_viewport_query.dart';
+import 'package:wheres_the_bus/features/home/widgets/home_marker_style.dart';
 import 'package:wheres_the_bus/features/home/widgets/home_station_detail.dart';
 import 'package:wheres_the_bus/features/metro/widgets/metro_svg_map.dart';
 import 'package:wheres_the_bus/features/rail/view/home_rail_query_sheet.dart';
@@ -57,7 +61,6 @@ import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/route_tab_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
-part 'widgets/home_marker_helpers.dart';
 part 'widgets/home_member_capsules.dart';
 part 'widgets/home_scaffold_widgets.dart';
 part 'widgets/home_favorites_widgets.dart';
@@ -85,7 +88,16 @@ const _ScanRing _kScanRingIdle = (
 );
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.station, this.showRailQuery = false});
+  const HomeScreen({
+    super.key,
+    this.station,
+    this.showRailQuery = false,
+    this.nearRepository,
+    this.busRepository,
+  });
+
+  final NearRepository? nearRepository;
+  final BusRepository? busRepository;
 
   final NearStationRouteArgs? station;
 
@@ -116,14 +128,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   LatLng _center = _kDefaultPosition;
   LatLng _camCenter = _kDefaultPosition;
   double _zoom = 15;
-  _MarkerStyle _markerStyleCache = _MarkerStyle.largeDot;
+  MarkerStyle _markerStyleCache = MarkerStyle.largeDot;
 
   final ValueNotifier<Set<Marker>> _markers = ValueNotifier(const {});
   int _markerRevision = 0;
   Timer? _idleDebounce;
   Timer? _metroPrecacheTimer;
 
-  late final NearbyBloc _nearbyBloc = NearbyBloc();
+  late final NearbyBloc _nearbyBloc = NearbyBloc(
+    repository: widget.nearRepository,
+  );
 
   /// Attempted/succeeded nearby-query centers — see [NearbyViewportQuery]:
   /// a failed attempt never suppresses a retry, only a successful one does.
@@ -236,14 +250,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_initializeMapPosition());
       if (_deviceLocationResolved) _scheduleNearbyForViewport();
-      _metroPrecacheTimer = Timer(const Duration(seconds: 4), () {
-        if (mounted) MetroSvgMap.precache(context);
-      });
+      _metroPrecacheTimer = Timer(const Duration(seconds: 4), _precacheMetro);
       // After the first frame, because the sheet's navigator has to exist
       // before a page can be put on it. This is what opens a cold deep link
       // into `/near/...` or `/rail-query`.
       _syncSheetToLocation();
     });
+  }
+
+  void _precacheMetro() {
+    if (mounted) MetroSvgMap.precache(context);
   }
 
   @override
@@ -257,23 +273,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _idleDebounce?.cancel();
-    _metroPrecacheTimer?.cancel();
-    App.isInitialized.removeListener(_onFavoritesReady);
-    _rootSheetTicks.dispose();
-    _sheetController.dispose();
-    _tabController.dispose();
-    _scanController.dispose();
-    _spreadPhase.dispose();
-    _markers.dispose();
-    _scanRing.dispose();
-    _spread.dispose();
-    _memberMarkers.dispose();
-    unawaited(_stopSub?.cancel());
-    unawaited(_stopBloc?.close());
-    // BlocProvider.value never closes what it is handed.
-    unawaited(_nearbyBloc.close());
+    // A list, not a run of statements: the release order is not observable.
+    for (final release in <VoidCallback?>[
+      _idleDebounce?.cancel,
+      _metroPrecacheTimer?.cancel,
+      () => App.isInitialized.removeListener(_onFavoritesReady),
+      _rootSheetTicks.dispose,
+      _sheetController.dispose,
+      _tabController.dispose,
+      _scanController.dispose,
+      _spreadPhase.dispose,
+      _markers.dispose,
+      _scanRing.dispose,
+      _spread.dispose,
+      _memberMarkers.dispose,
+      _stopSub?.cancel,
+      _stopBloc?.close,
+      // BlocProvider.value never closes what it is handed.
+      _nearbyBloc.close,
+    ]) {
+      release?.call();
+    }
     super.dispose();
+  }
+
+  void _onNearbyState(NearbyState state) {
+    _stations = state.stations;
+    unawaited(_rebuildMarkers(state.stations));
+    // A settled response releases the in-flight slot; only success covers it.
+    if (!state.loading) {
+      _viewportQuery = state.error == null
+          ? _viewportQuery.withSuccess()
+          : _viewportQuery.withFailure();
+    }
   }
 
   @override
@@ -286,22 +318,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         value: _nearbyBloc,
         child: Builder(
           builder: (context) => BlocListener<NearbyBloc, NearbyState>(
-            listenWhen: (p, c) =>
-                !listEquals(p.stations, c.stations) ||
-                p.loading != c.loading ||
-                p.error != c.error,
-            listener: (_, state) {
-              _stations = state.stations;
-              unawaited(_rebuildMarkers(state.stations));
-              // A settled response releases the in-flight slot either way: on
-              // success it becomes the covered viewport, on failure it is
-              // discarded so the next idle event can retry the same spot.
-              if (!state.loading) {
-                _viewportQuery = state.error == null
-                    ? _viewportQuery.withSuccess()
-                    : _viewportQuery.withFailure();
-              }
-            },
+            listenWhen: (previous, current) => previous != current,
+            listener: (_, state) => _onNearbyState(state),
             child: _buildScaffold(context, cs),
           ),
         ),
@@ -339,9 +357,27 @@ Widget buildNearbyRowForTest({
   required bool still,
 }) => _scanRingFrame(t: t, radius: radius, still: still);
 
-/// Dot marker diameter (logical px) for the mid ([large] = true) vs the most
-/// zoomed-out ([large] = false) marker band. Exposed so a plain unit test can
-/// verify the intended ordering — large > small — without spinning up a map.
 @visibleForTesting
-double dotMarkerSizeForTest({required bool large}) =>
-    large ? _kLargeDotSize : _kSmallDotSize;
+CustomPainter scanRingPainterForTest({
+  required Animation<double> progress,
+  required Offset center,
+  required double radius,
+  required Color color,
+  required bool still,
+}) => _ScanRingPainter(
+  progress: progress,
+  center: center,
+  radius: radius,
+  color: color,
+  still: still,
+);
+
+@visibleForTesting
+RadialGradient scanWashForTest(Color color, double alpha) =>
+    _scanWash(color, alpha);
+
+@visibleForTesting
+Widget returnMapPillForTest({
+  required bool visible,
+  required VoidCallback onTap,
+}) => _ReturnMapPill(visible: visible, onTap: onTap);

@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestBuildDatasetQuery(t *testing.T) {
 	tests := []struct {
@@ -49,5 +56,66 @@ func TestBuildDatasetQuery(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCLIReportsUsageAndOperationalFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		args    []string
+		dsn     string
+		code    int
+		message string
+	}{
+		{"help", []string{"-help"}, "", 0, "raw_tdx table name"},
+		{"bad flag", []string{"-invalid"}, "", 2, "flag provided but not defined"},
+		{"missing output", []string{"-table", "thsr_station"}, "", 2, "table and out"},
+		{"missing table", []string{"-out", "fixture.json"}, "", 2, "table and out"},
+		{"missing DSN", []string{"-table", "thsr_station", "-out", "fixture.json"}, "", 2, "DATABASE_URL not set"},
+		{"invalid DSN", []string{"-table", "thsr_station", "-out", "fixture.json"}, "postgres://localhost:invalid/bus", 1, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			if code := runCLI(test.args, test.dsn, &stderr); code != test.code {
+				t.Fatalf("code = %d, want %d", code, test.code)
+			}
+			if !strings.Contains(stderr.String(), test.message) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), test.message)
+			}
+		})
+	}
+}
+
+func TestExportReconstructsRawDatasetAndReportsIOErrors(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
+			t.Fatal("DATABASE_URL required")
+		}
+		t.Skip("DATABASE_URL not set")
+	}
+	path := filepath.Join(t.TempDir(), "stations.json")
+	var stderr bytes.Buffer
+	if code := runCLI([]string{"-table", "thsr_station", "-out", path}, dsn, &stderr); code != 0 {
+		t.Fatalf("export code = %d: %s", code, stderr.String())
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	if err := json.Unmarshal(body, &records); err != nil {
+		t.Fatalf("invalid fixture JSON: %v", err)
+	}
+	for _, record := range records {
+		if _, found := record["fetched_at"]; found {
+			t.Fatal("internal fetched_at leaked into fixture")
+		}
+	}
+	if err := export(dsn, "quality_missing_table", "", "", path); err == nil {
+		t.Fatal("missing relation succeeded")
+	}
+	if err := export(dsn, "thsr_station", "", "", filepath.Join(path, "invalid.json")); err == nil {
+		t.Fatal("invalid output path succeeded")
 	}
 }

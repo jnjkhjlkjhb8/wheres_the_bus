@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
 import 'package:wheres_the_bus/shared/widgets/main_scaffold.dart';
@@ -9,6 +12,19 @@ import 'package:wheres_the_bus/shared/widgets/nav_mini_bar.dart';
 import '../../support/helpers/i18n.dart';
 
 void main() {
+  late Directory storage;
+  setUpAll(() async {
+    storage = await Directory.systemTemp.createTemp('bus-main-scaffold-');
+    Hive.init(storage.path);
+    // PlanBloc loads saved routes at construction; complete real file I/O
+    // before widget tests enter their fake clock so close can finish.
+    await Hive.openBox<dynamic>('saved_plans');
+  });
+  tearDownAll(() async {
+    await Hive.close();
+    await storage.delete(recursive: true);
+  });
+
   Future<void> pump(WidgetTester tester, Widget shell) async {
     final alertBloc = AlertBloc();
     final planBloc = PlanBloc();

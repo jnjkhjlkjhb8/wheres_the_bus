@@ -1,7 +1,9 @@
 part of 'rail_train_screen.dart';
 
-class _TimetableTab extends StatefulWidget {
-  const _TimetableTab({
+// Public only so tests can mount the tab from stop fixtures instead of the
+// whole train screen.
+class RailTrainTimetableTab extends StatefulWidget {
+  const RailTrainTimetableTab({
     required this.stops,
     required this.serviceDate,
     required this.delayMinutes,
@@ -11,9 +13,12 @@ class _TimetableTab extends StatefulWidget {
     this.picking = false,
     this.leadStops = 0,
     this.onPickStop,
+    this.clock = DateTime.now,
+    super.key,
   });
 
   final int leadStops;
+  final DateTime Function() clock;
 
   /// Whether the rider is choosing a 下車站 right now. Stops the train has
   /// already called at, and the boarding stop itself, stay untappable.
@@ -41,10 +46,10 @@ class _TimetableTab extends StatefulWidget {
   final String? alight;
 
   @override
-  State<_TimetableTab> createState() => _TimetableTabState();
+  State<RailTrainTimetableTab> createState() => RailTrainTimetableTabState();
 }
 
-class _TimetableTabState extends State<_TimetableTab> {
+class RailTrainTimetableTabState extends State<RailTrainTimetableTab> {
   /// Stops the train has already called at stay collapsed behind one line: a
   /// 區間車 runs ~30 stations, and opening the list on the part that has
   /// already happened costs the rider the scroll every time.
@@ -63,21 +68,17 @@ class _TimetableTabState extends State<_TimetableTab> {
     final stops = widget.stops;
     final last = stops.length - 1;
     final boardIndex = _indexOf(widget.userOrigin, 0);
-    final alightIndex = widget.alight == null
-        ? null
-        : _indexOf(widget.alight, last);
+    final alightIndex = _alightIndex(last);
     final position = railPositionIndex(
       stops,
       widget.serviceDate,
       widget.delayMinutes,
-      DateTime.now(),
+      widget.clock(),
     );
 
     // Only worth a collapse when it actually hides something: at one passed
     // stop the summary line costs as much room as the row it replaces.
-    final collapseUntil = (position != null && position >= 2 && !_showPast)
-        ? position - 1
-        : -1;
+    final collapseUntil = _collapseUntil(position);
 
     final children = <Widget>[];
     if (collapseUntil >= 0) {
@@ -93,52 +94,19 @@ class _TimetableTabState extends State<_TimetableTab> {
     // The 提前提醒站, derived rather than picked. Clamped away when the lead
     // would land at or above the boarding stop: a warning for a stop the rider
     // boards at or has already passed is not a warning.
-    final leadCandidate = (alightIndex != null && widget.leadStops > 0)
-        ? alightIndex - widget.leadStops
-        : null;
-    final leadIndex = (leadCandidate != null && leadCandidate > boardIndex)
-        ? leadCandidate
-        : null;
+    final leadIndex = _leadIndex(alightIndex, boardIndex);
 
     // One decision for the whole list, not one per row: a column that appears
     // on some rows and not others is a column whose x moves.
     final showElapsed = boardIndex < last;
 
     for (var i = collapseUntil + 1; i < stops.length; i++) {
-      final stop = stops[i];
-      final travelled = position != null && i <= position;
-      final pickable = widget.picking && i > boardIndex;
       children.add(
-        _StopRow(
-          stop: stop,
-          onPick: pickable && widget.onPickStop != null
-              ? () => widget.onPickStop!(stop.name)
-              : null,
-          isFirst: i == 0,
-          isLast: i == last,
-          elapsed: i > boardIndex
-              ? elapsedMinutes(widget.serviceDate, stops[boardIndex], stop)
-              : null,
-          // The spine's covered track ends at the train, so the segment above
-          // the marker row is solid and everything past it is not.
-          travelledAbove: travelled,
-          travelledBelow: position != null && i < position,
-          isBoard: widget.userOrigin != null && i == boardIndex,
-          isAlight: alightIndex != null && i == alightIndex,
-          isLeadStop: leadIndex != null && i == leadIndex,
-          showElapsed: showElapsed,
-        ),
+        _stopRow(i, boardIndex, alightIndex, leadIndex, position, showElapsed),
       );
     }
 
-    if (widget.delayUpdatedAt != null) {
-      children.add(
-        Padding(
-          padding: const EdgeInsets.all(AppTheme.space16),
-          child: Center(child: FreshnessStamp(at: widget.delayUpdatedAt)),
-        ),
-      );
-    }
+    _appendFreshness(children);
 
     return Column(
       children: [
@@ -147,6 +115,72 @@ class _TimetableTabState extends State<_TimetableTab> {
           child: ListView(padding: EdgeInsets.zero, children: children),
         ),
       ],
+    );
+  }
+
+  int? _alightIndex(int last) =>
+      widget.alight == null ? null : _indexOf(widget.alight, last);
+
+  void _appendFreshness(List<Widget> children) {
+    if (widget.delayUpdatedAt != null) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.all(AppTheme.space16),
+          child: Center(child: FreshnessStamp(at: widget.delayUpdatedAt)),
+        ),
+      );
+    }
+  }
+
+  int _collapseUntil(int? position) {
+    if (position == null || position < 2 || _showPast) return -1;
+    return position - 1;
+  }
+
+  int? _leadIndex(int? alightIndex, int boardIndex) {
+    if (alightIndex == null || widget.leadStops <= 0) return null;
+    final candidate = alightIndex - widget.leadStops;
+    return candidate > boardIndex ? candidate : null;
+  }
+
+  VoidCallback? _pickCallback(int index, int boardIndex, String name) {
+    if (!widget.picking || index <= boardIndex || widget.onPickStop == null) {
+      return null;
+    }
+    return () => widget.onPickStop!(name);
+  }
+
+  bool _travelledAbove(int index, int? position) =>
+      position != null && index <= position;
+  bool _travelledBelow(int index, int? position) =>
+      position != null && index < position;
+  bool _isBoard(int index, int boardIndex) =>
+      widget.userOrigin != null && index == boardIndex;
+  Widget _stopRow(
+    int i,
+    int boardIndex,
+    int? alightIndex,
+    int? leadIndex,
+    int? position,
+    bool showElapsed,
+  ) {
+    final stop = widget.stops[i];
+    return _StopRow(
+      stop: stop,
+      onPick: _pickCallback(i, boardIndex, stop.name),
+      isFirst: i == 0,
+      isLast: i == widget.stops.length - 1,
+      elapsed: i > boardIndex
+          ? elapsedMinutes(widget.serviceDate, widget.stops[boardIndex], stop)
+          : null,
+      // The spine's covered track ends at the train, so the segment above
+      // the marker row is solid and everything past it is not.
+      travelledAbove: _travelledAbove(i, position),
+      travelledBelow: _travelledBelow(i, position),
+      isBoard: _isBoard(i, boardIndex),
+      isAlight: i == alightIndex,
+      isLeadStop: i == leadIndex,
+      showElapsed: showElapsed,
     );
   }
 }
@@ -330,29 +364,21 @@ class _StopRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final marked = isBoard || isAlight;
-    final primaryTime = isFirst
-        ? stop.depart
-        : (stop.arrive.isNotEmpty ? stop.arrive : stop.depart);
     // TRA prints a one-minute dwell at nearly every station: the default, not
     // information. Only a wait worth noticing is called out.
-    final dwell = isLast ? 0 : dwellMinutes(stop);
+    final dwell = _dwell;
 
     final row = Container(
       constraints: const BoxConstraints(minHeight: 48),
       // The static, non-pulsing highlight the design system reserves for
       // "find this row" cases — fill and weight only, no new colour.
-      color: isAlight ? cs.surfaceContainerHighest : null,
+      color: _rowColor(cs),
       child: IntrinsicHeight(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             TimelineSpine(
-              kind: marked
-                  ? TimelineNodeKind.emphasis
-                  : (isFirst || isLast
-                        ? TimelineNodeKind.terminus
-                        : TimelineNodeKind.intermediate),
+              kind: _nodeKind,
               lineAbove: !isFirst,
               lineBelow: !isLast,
               travelledAbove: travelledAbove,
@@ -368,85 +394,12 @@ class _StopRow extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(0, 11, AppTheme.space16, 11),
                 child: Row(
                   children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              stop.name,
-                              style: AppTextStyles.bodyRegular.copyWith(
-                                height: 1.3,
-                                fontWeight: marked ? FontWeight.w700 : null,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (isBoard) ...[
-                            const SizedBox(width: AppTheme.space6),
-                            TimelineStopTag(
-                              AppI18n.of(context).railBoard,
-                              solid: false,
-                            ),
-                          ],
-                          if (isAlight) ...[
-                            const SizedBox(width: AppTheme.space6),
-                            TimelineStopTag(AppI18n.of(context).railAlight),
-                          ],
-                          if (isLeadStop) ...[
-                            const SizedBox(width: AppTheme.space6),
-                            Icon(
-                              Icons.notifications_rounded,
-                              size: 16,
-                              color: cs.onSurfaceVariant,
-                            ),
-                          ],
-                          // The dwell note rides in the flexible area rather
-                          // than in the time slot: a variable-width note inside
-                          // a fixed column either clips or drags it off its x.
-                          if (dwell >= 2) ...[
-                            const SizedBox(width: AppTheme.space8),
-                            Text(
-                              AppI18n.of(context).railDwellMinutes(dwell),
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    SizedBox(
-                      width: scaledWidth(context, timeWidth),
-                      child: Text(
-                        primaryTime.isEmpty ? '' : hhmm(primaryTime),
-                        textAlign: TextAlign.right,
-                        style: AppTextStyles.timeValue(
-                          size: 15,
-                          weight: FontWeight.w600,
-                          color: cs.onSurface,
-                        ),
-                      ),
-                    ),
+                    Expanded(child: _stationLabel(context, cs, dwell)),
+                    _timeCell(context, cs),
                     // Reserved even when this row has no figure, so the column
                     // holds its x down the whole list instead of every
                     // upstream row shunting the times right by its width.
-                    if (showElapsed) ...[
-                      const SizedBox(width: AppTheme.space12),
-                      SizedBox(
-                        width: scaledWidth(context, elapsedWidth),
-                        child: Text(
-                          elapsed == null
-                              ? ''
-                              : AppI18n.of(context).railElapsedPlus(elapsed!),
-                          textAlign: TextAlign.right,
-                          style: AppTextStyles.timeValue(
-                            size: 12,
-                            color: cs.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ],
+                    ..._elapsedCells(context, cs),
                   ],
                 ),
               ),
@@ -461,6 +414,104 @@ class _StopRow extends StatelessWidget {
       onTap: onPick,
       semanticLabel: AppI18n.of(context).alightPickStopSemantics(stop.name),
       child: row,
+    );
+  }
+
+  Widget _timeCell(BuildContext context, ColorScheme cs) {
+    final primaryTime = _primaryTime;
+    return SizedBox(
+      width: scaledWidth(context, timeWidth),
+      child: Text(
+        primaryTime.isEmpty ? '' : hhmm(primaryTime),
+        textAlign: TextAlign.right,
+        style: AppTextStyles.timeValue(
+          size: 15,
+          weight: FontWeight.w600,
+          color: cs.onSurface,
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _elapsedCells(BuildContext context, ColorScheme cs) => [
+    if (showElapsed) ...[
+      const SizedBox(width: AppTheme.space12),
+      SizedBox(
+        width: scaledWidth(context, elapsedWidth),
+        child: Text(
+          elapsed == null ? '' : AppI18n.of(context).railElapsedPlus(elapsed!),
+          textAlign: TextAlign.right,
+          style: AppTextStyles.timeValue(
+            size: 12,
+            color: cs.onSurfaceVariant,
+          ),
+        ),
+      ),
+    ],
+  ];
+
+  int get _dwell => isLast ? 0 : dwellMinutes(stop);
+  Color? _rowColor(ColorScheme cs) =>
+      isAlight ? cs.surfaceContainerHighest : null;
+  bool get _marked => isBoard || isAlight;
+  bool get _terminus => isFirst || isLast;
+
+  String get _primaryTime => isFirst
+      ? stop.depart
+      : (stop.arrive.isNotEmpty ? stop.arrive : stop.depart);
+  TimelineNodeKind get _nodeKind {
+    if (_marked) return TimelineNodeKind.emphasis;
+    if (_terminus) return TimelineNodeKind.terminus;
+    return TimelineNodeKind.intermediate;
+  }
+
+  Widget _stationLabel(BuildContext context, ColorScheme cs, int dwell) {
+    final marked = isBoard || isAlight;
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            stop.name,
+            style: AppTextStyles.bodyRegular.copyWith(
+              height: 1.3,
+              fontWeight: marked ? FontWeight.w700 : null,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (isBoard) ...[
+          const SizedBox(width: AppTheme.space6),
+          TimelineStopTag(
+            AppI18n.of(context).railBoard,
+            solid: false,
+          ),
+        ],
+        if (isAlight) ...[
+          const SizedBox(width: AppTheme.space6),
+          TimelineStopTag(AppI18n.of(context).railAlight),
+        ],
+        if (isLeadStop) ...[
+          const SizedBox(width: AppTheme.space6),
+          Icon(
+            Icons.notifications_rounded,
+            size: 16,
+            color: cs.onSurfaceVariant,
+          ),
+        ],
+        // The dwell note rides in the flexible area rather
+        // than in the time slot: a variable-width note inside
+        // a fixed column either clips or drags it off its x.
+        if (dwell >= 2) ...[
+          const SizedBox(width: AppTheme.space8),
+          Text(
+            AppI18n.of(context).railDwellMinutes(dwell),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

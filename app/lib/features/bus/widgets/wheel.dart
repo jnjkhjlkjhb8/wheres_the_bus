@@ -80,24 +80,27 @@ class _WheelState extends State<Wheel> {
       }
       _accDelta = 0;
     } else {
-      final sc = widget.scrollController;
-      if (sc != null && sc.hasClients) {
-        final offsets = widget.stationOffsets;
-        final idx = _currentStation;
-        final progress = _accDelta / _kAnglePerStation;
-        final max = sc.position.maxScrollExtent;
-        final from = offsets[idx].clamp(0.0, max);
-        double to;
-        if (progress > 0 && idx < offsets.length - 1) {
-          to = offsets[idx + 1].clamp(0.0, max);
-        } else if (progress < 0 && idx > 0) {
-          to = offsets[idx - 1].clamp(0.0, max);
-        } else {
-          to = from;
-        }
-        sc.jumpTo(from + (to - from) * progress.abs());
-      }
+      _scrollBetweenStations();
     }
+  }
+
+  void _scrollBetweenStations() {
+    final sc = widget.scrollController;
+    if (sc == null || !sc.hasClients) return;
+    final offsets = widget.stationOffsets;
+    final idx = _currentStation;
+    final progress = _accDelta / _kAnglePerStation;
+    final max = sc.position.maxScrollExtent;
+    final from = offsets[idx].clamp(0.0, max);
+    final target = _neighborIndex(progress, idx, offsets.length);
+    final to = offsets[target].clamp(0.0, max);
+    sc.jumpTo(from + (to - from) * progress.abs());
+  }
+
+  int _neighborIndex(double progress, int index, int count) {
+    if (progress > 0) return (index + 1).clamp(0, count - 1);
+    if (progress < 0) return (index - 1).clamp(0, count - 1);
+    return index;
   }
 
   void _onPanEnd(DragEndDetails _) {

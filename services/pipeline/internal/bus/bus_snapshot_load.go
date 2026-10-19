@@ -24,12 +24,7 @@ func Load(ctx context.Context, src pipeline.LoadSource, db *pgxpool.Pool, rc *re
 	if err := persistBusCitySnapshot(ctx, pgBusTxBeginner{db: db}, snapshot, func() error {
 		return invalidateBusStaticAfterCommit(ctx, rc, city)
 	}); err != nil {
-		if !errors.Is(err, errBusPostCommitCache) {
-			return _oops.With("city", city).Wrapf(err, "load bus city: target")
-		}
-		// PostgreSQL is already committed. Return the post-commit failure so the
-		// daily retry repeats the idempotent write and repairs the generation.
-		return _oops.With("city", city).Wrapf(err, "load bus city: committed; invalidate cache")
+		return wrapBusPersistError(err, city)
 	}
 	zap.S().Infow("city complete",
 		"component", "load",
@@ -41,6 +36,14 @@ func Load(ctx context.Context, src pipeline.LoadSource, db *pgxpool.Pool, rc *re
 	return nil
 }
 
+func wrapBusPersistError(err error, city string) error {
+	if !errors.Is(err, errBusPostCommitCache) {
+		return _oops.With("city", city).Wrapf(err, "load bus city: target")
+	}
+	// The committed idempotent write must be retried to repair the generation.
+	return _oops.With("city", city).Wrapf(err, "load bus city: committed; invalidate cache")
+}
+
 func persistBusCitySnapshot(
 	ctx context.Context,
 	db busTxBeginner,
@@ -50,6 +53,10 @@ func persistBusCitySnapshot(
 	if err := writeBusCitySnapshot(ctx, db, snapshot); err != nil {
 		return err
 	}
+	return invalidateBusSnapshot(invalidate)
+}
+
+func invalidateBusSnapshot(invalidate func() error) error {
 	if invalidate == nil {
 		return _oops.Wrapf(errBusPostCommitCache, "nil invalidator")
 	}

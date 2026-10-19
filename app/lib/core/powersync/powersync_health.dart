@@ -30,22 +30,27 @@ class PowerSyncHealth<T> {
   void listen(Stream<T> stream) {
     unawaited(_subscription?.cancel());
     _lastErrorKey = null;
-    _subscription = stream.listen((status) {
-      final freshness = freshnessOf;
-      if (freshness != null) {
-        final synced = freshness(status);
-        if (synced != null) _lastSyncedAt = synced;
-      }
-      final error = errorOf(status);
-      if (error == null) {
-        _lastErrorKey = null;
-        return;
-      }
-      final key = error.toString();
-      if (key == _lastErrorKey) return;
-      _lastErrorKey = key;
-      onError(error);
-    });
+    _subscription = stream.listen(_observe);
+  }
+
+  void _observe(T status) {
+    _updateFreshness(status);
+    final error = errorOf(status);
+    if (error == null) {
+      _lastErrorKey = null;
+      return;
+    }
+    final key = error.toString();
+    if (key == _lastErrorKey) return;
+    _lastErrorKey = key;
+    onError(error);
+  }
+
+  void _updateFreshness(T status) {
+    final freshness = freshnessOf;
+    if (freshness == null) return;
+    final synced = freshness(status);
+    if (synced != null) _lastSyncedAt = synced;
   }
 
   /// Cancels the owned subscription, if any. Call from `close()`/`dispose()`

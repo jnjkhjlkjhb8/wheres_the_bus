@@ -12,6 +12,7 @@ import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/core/location/nearest_within.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
+import 'package:wheres_the_bus/data/repositories/bus_repository.dart';
 import 'package:wheres_the_bus/features/alerts/view/inline_notice.dart';
 import 'package:wheres_the_bus/features/bus/bloc/bus_stop_bloc.dart';
 import 'package:wheres_the_bus/features/bus/bloc/bus_stop_event.dart';
@@ -43,6 +44,8 @@ class BusStopScreen extends StatefulWidget {
     this.city,
     this.lat,
     this.lon,
+    this.repository,
+    this.reportError = CrashReporter.record,
     super.key,
   });
   final String stopName;
@@ -51,6 +54,8 @@ class BusStopScreen extends StatefulWidget {
 
   final double? lat;
   final double? lon;
+  final BusRepository? repository;
+  final void Function(Object error, StackTrace stack) reportError;
 
   @override
   State<BusStopScreen> createState() => _BusStopScreenState();
@@ -86,6 +91,7 @@ class _BusStopScreenState extends State<BusStopScreen> {
       i18n: AppI18n.of(context),
       stopId: widget.stopId,
       city: widget.city,
+      repository: widget.repository,
     );
   }
 
@@ -128,41 +134,38 @@ class _BusStopScreenState extends State<BusStopScreen> {
   Future<void> _moveToInitialLocation() async {
     final initial = _initialPosition;
     if (initial == null) return;
-    if (_bloc.state.members.isNotEmpty) return;
     try {
       final pos = await initial;
-      final controller = _controller;
-      if (controller != null) {
-        unawaited(
-          controller.animateCamera(
-            CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
-          ),
-        );
-      }
+      _focusInitialPosition(pos);
     } on Object catch (e, s) {
-      CrashReporter.record(e, s);
+      widget.reportError(e, s);
     }
+  }
+
+  void _focusInitialPosition(Position position) {
+    // Member coordinates may arrive while the first GPS fix is pending.
+    if (!mounted || _bloc.state.members.isNotEmpty) return;
+    _focusStation(LatLng(position.latitude, position.longitude));
   }
 
   /// User-triggered recenter: always requests a fresh fix, unlike the shared
   /// one-shot [_initialPosition] used during map init.
   Future<void> _moveToCurrentLocation() async {
-    if (mounted) setState(() => _locating = true);
+    _setLocating(true);
     try {
       final pos = await LocationService.instance.currentPosition();
-      final controller = _controller;
-      if (controller != null) {
-        unawaited(
-          controller.animateCamera(
-            CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
-          ),
-        );
-      }
+      // A GPS request may finish after the map has been disposed.
+      if (!mounted) return;
+      _focusStation(LatLng(pos.latitude, pos.longitude));
     } on Object catch (e, s) {
-      CrashReporter.record(e, s);
+      widget.reportError(e, s);
     } finally {
-      if (mounted) setState(() => _locating = false);
+      _setLocating(false);
     }
+  }
+
+  void _setLocating(bool locating) {
+    if (mounted) setState(() => _locating = locating);
   }
 
   void _recenterMap() {
@@ -170,17 +173,9 @@ class _BusStopScreenState extends State<BusStopScreen> {
   }
 
   Future<void> _autoSelectMemberAtRider(List<BusStationMember> members) async {
-    if (_bloc.state.selectedStationUid != null) return;
-    final fix = await LocationService.instance.lastKnownPosition();
-    if (!mounted ||
-        fix == null ||
-        !usableAutoFocusFix(
-          fix,
-          maxAccuracyMeters: _kMemberAccuracyMeters,
-          now: DateTime.now().toUtc(),
-        )) {
-      return;
-    }
+    if (!_canAutoSelect) return;
+    final fix = await _autoSelectFix();
+    if (fix == null) return;
     final member = nearestWithin(
       members,
       lat: fix.latitude,
@@ -189,9 +184,88 @@ class _BusStopScreenState extends State<BusStopScreen> {
       latOf: (m) => m.lat,
       lonOf: (m) => m.lon,
     );
+    _selectLocatedMember(member);
+  }
+
+  bool get _canAutoSelect => mounted && _bloc.state.selectedStationUid == null;
+
+  Future<Position?> _autoSelectFix() async {
+    final fix = await LocationService.instance.lastKnownPosition();
+    if (!mounted || fix == null) return null;
+    return _usableFix(fix) ? fix : null;
+  }
+
+  bool _usableFix(Position fix) => usableAutoFocusFix(
+    fix,
+    maxAccuracyMeters: _kMemberAccuracyMeters,
+    now: DateTime.now().toUtc(),
+  );
+
+  void _selectLocatedMember(BusStationMember? member) {
     // The rider may have picked a pole themselves while the fix was in flight.
     if (member == null || _bloc.state.selectedStationUid != null) return;
     _bloc.add(BusStopStationSelected(member.stationUid));
+  }
+
+  LatLng _mapTarget(List<BusStationMember> members, LatLng? hint) =>
+      members.isEmpty
+      ? (hint ?? _kDefaultPos)
+      : LatLng(members.first.lat, members.first.lon);
+
+  Set<Marker> _markers(List<BusStationMember> members, LatLng? hint) => {
+    // The hint remains visible until authoritative member coordinates arrive.
+    if (members.isEmpty && hint != null)
+      Marker(
+        markerId: const MarkerId('_hint'),
+        position: hint,
+        icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+        anchor: const Offset(0.5, 0.5),
+        infoWindow: InfoWindow(title: widget.stopName),
+      ),
+    for (final member in members)
+      Marker(
+        markerId: MarkerId(member.stationUid),
+        position: LatLng(member.lat, member.lon),
+        icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+        anchor: const Offset(0.5, 0.5),
+        infoWindow: InfoWindow(title: member.stationName),
+      ),
+  };
+
+  void _mapCreated(
+    GoogleMapController controller,
+    List<BusStationMember> members,
+    LatLng? hint,
+  ) {
+    _controller = controller;
+    if (members.isEmpty && hint == null) {
+      unawaited(_moveToInitialLocation());
+    }
+  }
+
+  Widget _map(BuildContext context, BusStopState state) {
+    final hint = _hint;
+    final target = _mapTarget(state.members, hint);
+    return GoogleMap(
+      style: mapStyleOf(context),
+      initialCameraPosition: CameraPosition(
+        target: target,
+        zoom: 16,
+      ),
+      markers: _markers(state.members, hint),
+      myLocationEnabled: true,
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: false,
+      // Map shares a Stack with the draggable sheet; without an
+      // eager recognizer the map loses the gesture arena, so
+      // pan/pinch leak to the sheet instead of moving the map.
+      gestureRecognizers: const {
+        Factory<OneSequenceGestureRecognizer>(
+          EagerGestureRecognizer.new,
+        ),
+      },
+      onMapCreated: (c) => _mapCreated(c, state.members, hint),
+    );
   }
 
   @override
@@ -219,59 +293,7 @@ class _BusStopScreenState extends State<BusStopScreen> {
                   unawaited(_autoSelectMemberAtRider(state.members));
                 },
                 buildWhen: (prev, next) => prev.members != next.members,
-                builder: (context, state) {
-                  final hint = _hint;
-                  final target = state.members.isEmpty
-                      ? (hint ?? _kDefaultPos)
-                      : LatLng(
-                          state.members.first.lat,
-                          state.members.first.lon,
-                        );
-                  return GoogleMap(
-                    style: mapStyleOf(context),
-                    initialCameraPosition: CameraPosition(
-                      target: target,
-                      zoom: 16,
-                    ),
-                    markers: {
-                      // Stand-in pin so the stop is visible immediately; the
-                      // real member markers replace it when they arrive.
-                      if (state.members.isEmpty && hint != null)
-                        Marker(
-                          markerId: const MarkerId('_hint'),
-                          position: hint,
-                          icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-                          anchor: const Offset(0.5, 0.5),
-                          infoWindow: InfoWindow(title: widget.stopName),
-                        ),
-                      for (final m in state.members)
-                        Marker(
-                          markerId: MarkerId(m.stationUid),
-                          position: LatLng(m.lat, m.lon),
-                          icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-                          anchor: const Offset(0.5, 0.5),
-                          infoWindow: InfoWindow(title: m.stationName),
-                        ),
-                    },
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    // Map shares a Stack with the draggable sheet; without an
-                    // eager recognizer the map loses the gesture arena, so
-                    // pan/pinch leak to the sheet instead of moving the map.
-                    gestureRecognizers: const {
-                      Factory<OneSequenceGestureRecognizer>(
-                        EagerGestureRecognizer.new,
-                      ),
-                    },
-                    onMapCreated: (c) {
-                      _controller = c;
-                      if (state.members.isEmpty && hint == null) {
-                        unawaited(_moveToInitialLocation());
-                      }
-                    },
-                  );
-                },
+                builder: _map,
               ),
             ),
             Column(

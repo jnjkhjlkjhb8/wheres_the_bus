@@ -5,6 +5,96 @@ import 'package:wheres_the_bus/features/metro/widgets/metro_svg_map.dart';
 
 void main() {
   testWidgets(
+    'pick mode exposes only reachable stations and marks the chosen stop',
+    (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MetroSvgMap(
+              animate: false,
+              selectedStationId: 'BL13',
+              pickAheadIds: const {'BL14_O07', 'BL15_BR10'},
+              pickBoardId: 'BL13',
+              pickedStationId: 'BL14_O07',
+              onStationTap: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.bySemanticsLabel('BL14_O07 忠孝新生'), findsOneWidget);
+      expect(find.bySemanticsLabel('BL13 善導寺'), findsNothing);
+      expect(find.bySemanticsLabel('BL01 頂埔'), findsNothing);
+      final chosenRing = tester
+          .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+          .where((widget) {
+            final decoration = widget.decoration;
+            return decoration is BoxDecoration &&
+                decoration.shape == BoxShape.circle &&
+                decoration.boxShadow?.length == 2;
+          });
+      expect(chosenRing, hasLength(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+      semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'disabled selection settles and labels follow selection updates',
+    (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(540, 960);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      Widget host({
+        required String selected,
+        required bool animate,
+        bool reduced = false,
+      }) => MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: reduced),
+          child: Scaffold(
+            body: MetroSvgMap(
+              selectedStationId: selected,
+              stationLabels: const {'BL13': 'label'},
+              animate: animate,
+              onStationTap: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(host(selected: 'BL12_R10', animate: true));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpWidget(host(selected: 'BL13', animate: true));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpWidget(host(selected: 'BL13', animate: false));
+      await tester.pump();
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pump();
+      await tester.pumpWidget(
+        host(selected: 'BL13', animate: true, reduced: true),
+      );
+      await tester.pump();
+      final fade = tester.widget<FadeTransition>(
+        find
+            .ancestor(
+              of: find.text('label'),
+              matching: find.byType(FadeTransition),
+            )
+            .first,
+      );
+      expect(fade.opacity.value, 1);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+  testWidgets(
     'tap offset toward a neighbouring station resolves via nearest-target '
     'arbitration instead of picking whichever region is painted on top',
     (tester) async {

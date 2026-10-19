@@ -40,46 +40,50 @@ func dbSince(name string) string {
 	if DB == nil {
 		return ""
 	}
-	var q string
-	var arg any
-	switch {
-	case strings.HasPrefix(name, "tra_traindate_"):
-		q = "SELECT MAX(updated_at) FROM tra_timetable WHERE train_date=$1"
-		arg = strings.TrimPrefix(name, "tra_traindate_")
-	case strings.HasPrefix(name, "thsr_traindate_"):
-		q = "SELECT MAX(updated_at) FROM thsr_timetable WHERE train_date=$1"
-		arg = strings.TrimPrefix(name, "thsr_traindate_")
-	case name == "tra_stations":
-		q = "SELECT MAX(updated_at) FROM tra_stations"
-	case name == "thsr_stations":
-		q = "SELECT MAX(updated_at) FROM thsr_stations"
-	case name == "tra_fare":
-		q = "SELECT MAX(updated_at) FROM tra_fares"
-	case name == "thsr_fare":
-		q = "SELECT MAX(updated_at) FROM thsr_fares"
-	case strings.HasPrefix(name, "mrt_stations"):
-		q = "SELECT MAX(updated_at) FROM mrt_station WHERE system=$1"
-		arg = strings.TrimPrefix(name, "mrt_stations")
-	case strings.HasPrefix(name, "mrt_firstlast"):
-		q = "SELECT MAX(updated_at) FROM mrt_schedule WHERE system=$1"
-		arg = strings.TrimPrefix(name, "mrt_firstlast")
-	case strings.HasPrefix(name, "bike_stations"):
-		q = "SELECT MAX(updated_at) FROM bike_stations WHERE city=$1"
-		arg = strings.TrimPrefix(name, "bike_stations")
-	default:
-	}
-	ctx := context.Background()
-	var t *time.Time
-	var err error
+	q, arg := rawSinceQuery(name)
+	timestamp, err := readRawSince(q, arg)
+	return formatRawSince(timestamp, err)
+}
+
+func readRawSince(query string, arg any) (*time.Time, error) {
+	args := []any{}
 	if arg != nil {
-		err = DB.QueryRow(ctx, q, arg).Scan(&t)
-	} else {
-		err = DB.QueryRow(ctx, q).Scan(&t)
+		args = append(args, arg)
 	}
-	if err != nil || t == nil {
+	var timestamp *time.Time
+	err := DB.QueryRow(context.Background(), query, args...).Scan(&timestamp)
+	return timestamp, err
+}
+
+func formatRawSince(timestamp *time.Time, err error) string {
+	if err != nil || timestamp == nil {
 		return ""
 	}
-	return t.UTC().Format(http.TimeFormat)
+	return timestamp.UTC().Format(http.TimeFormat)
+}
+
+func rawSinceQuery(name string) (string, any) {
+	exact := map[string]string{
+		"tra_stations":  "SELECT MAX(updated_at) FROM tra_stations",
+		"thsr_stations": "SELECT MAX(updated_at) FROM thsr_stations",
+		"tra_fare":      "SELECT MAX(updated_at) FROM tra_fares",
+		"thsr_fare":     "SELECT MAX(updated_at) FROM thsr_fares",
+	}
+	if q, ok := exact[name]; ok {
+		return q, nil
+	}
+	for _, spec := range []struct{ prefix, table, column string }{
+		{"tra_traindate_", "tra_timetable", "train_date"},
+		{"thsr_traindate_", "thsr_timetable", "train_date"},
+		{"mrt_stations", "mrt_station", "system"},
+		{"mrt_firstlast", "mrt_schedule", "system"},
+		{"bike_stations", "bike_stations", "city"},
+	} {
+		if strings.HasPrefix(name, spec.prefix) {
+			return "SELECT MAX(updated_at) FROM " + spec.table + " WHERE " + spec.column + "=$1", strings.TrimPrefix(name, spec.prefix)
+		}
+	}
+	return "", nil
 }
 
 // dbSinceFallbackAllowed reports whether an empty IMS cache may fall back to a
@@ -95,40 +99,12 @@ func SinceFallback(name string) string {
 }
 
 func DumpTarget(url string) (Target, bool) {
-	var partVal string
 	seg := strings.Split(strings.Trim(url, "/"), "/")
-	if len(seg) < 3 || seg[0] != "v2" {
+	if !validRawURLSegments(seg) {
 		return Target{}, false
 	}
-	cityOf := func() string {
-		for i, s := range seg {
-			if s == "City" && i+1 < len(seg) {
-				return seg[i+1]
-			}
-			if s == "InterCity" {
-				return "InterCity"
-			}
-		}
-		return ""
-	}
-	var key dataset.FamSeg
-	switch {
-	case seg[1] == "Bus":
-		key, partVal = dataset.FamSeg{Family: dataset.FamilyBusCity, Seg: seg[2]}, cityOf()
-	case seg[1] == "Bike" && seg[2] == "Station":
-		key, partVal = dataset.FamSeg{Family: dataset.FamilyBikeCity, Seg: "Station"}, cityOf()
-	case seg[1] == "Rail" && len(seg) >= 4 && seg[2] == "Metro":
-		key, partVal = dataset.FamSeg{Family: dataset.FamilyMetroSystem, Seg: seg[3]}, seg[len(seg)-1]
-	case seg[1] == "Rail" && len(seg) == 3:
-		key = dataset.FamSeg{Family: dataset.FamilyRailSingle, Seg: seg[2]}
-	case seg[1] == "Rail" && len(seg) >= 4 && (seg[2] == "TRA" || seg[2] == "THSR"):
-		pair := seg[2] + "/" + seg[3]
-		if pair == "TRA/DailyTimetable" || pair == "THSR/DailyTimetable" {
-			key, partVal = dataset.FamSeg{Family: dataset.FamilyRailDate, Seg: pair}, seg[len(seg)-1]
-		} else {
-			key = dataset.FamSeg{Family: dataset.FamilyRailSingle, Seg: pair}
-		}
-	default:
+	key, partVal, found := rawURLFamily(seg)
+	if !found {
 		return Target{}, false
 	}
 	d, found := dataset.RawTargetIndex[key]
@@ -136,6 +112,81 @@ func DumpTarget(url string) (Target, bool) {
 		return Target{}, false
 	}
 	return Target{Table: d.RawTable, PartCol: d.PartCol, PartVal: partVal}, true
+}
+func validRawURLSegments(seg []string) bool { return len(seg) >= 3 && seg[0] == "v2" }
+
+func rawURLCity(seg []string) string {
+	for i := range seg {
+		if city := rawURLCitySegment(seg, i); city != "" {
+			return city
+		}
+	}
+	return ""
+}
+
+func rawURLCitySegment(seg []string, i int) string {
+	if seg[i] == "InterCity" {
+		return "InterCity"
+	}
+	if seg[i] == "City" {
+		return rawCityAfterSegment(seg, i)
+	}
+	return ""
+}
+
+func rawCityAfterSegment(seg []string, index int) string {
+	if index+1 < len(seg) {
+		return seg[index+1]
+	}
+	return ""
+}
+
+var _rawURLFamilies = map[string]func([]string) (dataset.FamSeg, string, bool){
+	"Bus": rawBusURLFamily, "Bike": rawBikeURLFamily, "Rail": rawRailURLFamily,
+}
+
+func rawURLFamily(seg []string) (dataset.FamSeg, string, bool) {
+	family := _rawURLFamilies[seg[1]]
+	if family == nil {
+		return dataset.FamSeg{}, "", false
+	}
+	return family(seg)
+}
+
+func rawBusURLFamily(seg []string) (dataset.FamSeg, string, bool) {
+	return dataset.FamSeg{Family: dataset.FamilyBusCity, Seg: seg[2]}, rawURLCity(seg), true
+}
+
+func rawBikeURLFamily(seg []string) (dataset.FamSeg, string, bool) {
+	if seg[2] == "Station" {
+		return dataset.FamSeg{Family: dataset.FamilyBikeCity, Seg: "Station"}, rawURLCity(seg), true
+	}
+	return dataset.FamSeg{}, "", false
+}
+
+func rawRailURLFamily(seg []string) (dataset.FamSeg, string, bool) {
+	// Three-segment rail targets take precedence over metro partition routing.
+	if len(seg) == 3 {
+		return dataset.FamSeg{Family: dataset.FamilyRailSingle, Seg: seg[2]}, "", true
+	}
+	if seg[2] == "Metro" {
+		return dataset.FamSeg{Family: dataset.FamilyMetroSystem, Seg: seg[3]}, seg[len(seg)-1], true
+	}
+	return rawTrainURLFamily(seg)
+}
+
+var _rawTrainSystems = map[string]bool{"TRA": true, "THSR": true}
+var _rawDailyTrainTargets = map[string]bool{"TRA/DailyTimetable": true, "THSR/DailyTimetable": true}
+
+func rawTrainURLFamily(seg []string) (dataset.FamSeg, string, bool) {
+	if !_rawTrainSystems[seg[2]] {
+		return dataset.FamSeg{}, "", false
+	}
+	pair := seg[2] + "/" + seg[3]
+	if _rawDailyTrainTargets[pair] {
+		return dataset.FamSeg{Family: dataset.FamilyRailDate, Seg: pair}, seg[len(seg)-1], true
+	}
+	return dataset.FamSeg{Family: dataset.FamilyRailSingle, Seg: pair}, "", true
 }
 
 type Target struct {
@@ -177,30 +228,46 @@ func ReportStalePartitions(ctx context.Context, db rawStateQuerier) int {
 		return 0
 	}
 	defer rows.Close()
-	var stale int
+	return reportStaleRows(rows)
+}
+
+func reportStaleRows(rows pgx.Rows) int {
+	stale := 0
 	for rows.Next() {
-		var table, partition string
-		var fetchedAt time.Time
-		if err := rows.Scan(&table, &partition, &fetchedAt); err != nil {
-			zap.S().Errorw("stale scan error",
-				"component", "ingest",
-				"action", "landing_state",
-				"event", "stale_scan_error",
-				"err", err,
-			)
+		if !reportStalePartitionRow(rows) {
 			return stale
 		}
 		stale++
-		zap.S().Warnw("stale partition",
+	}
+	return reportStaleSummary(rows.Err(), stale)
+}
+
+func reportStalePartitionRow(rows pgx.Rows) bool {
+	var table, partition string
+	var fetchedAt time.Time
+	if err := rows.Scan(&table, &partition, &fetchedAt); err != nil {
+		zap.S().Errorw("stale scan error",
 			"component", "ingest",
 			"action", "landing_state",
-			"event", "stale_partition",
-			"table", table,
-			"partition", partition,
-			"fetched_at", fetchedAt.Format(time.RFC3339),
+			"event", "stale_scan_error",
+			"err", err,
 		)
+		return false
 	}
-	if err := rows.Err(); err != nil {
+	zap.S().Warnw("stale partition",
+		"component", "ingest",
+		"action", "landing_state",
+		"event", "stale_partition",
+		"table", table,
+		"partition", partition,
+		"fetched_at", fetchedAt.Format(time.RFC3339),
+	)
+	return true
+}
+
+func reportStaleSummary(scanErr error, stale int) int {
+
+	if err := scanErr; err != nil {
 		zap.S().Errorw("stale scan error",
 			"component", "ingest",
 			"action", "landing_state",
@@ -287,19 +354,10 @@ func VerifyAndTouchLandingWithDB(
 	t Target,
 	marker, landingCycle string,
 ) error {
-	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
-	if err := ValidateTarget(t); err != nil {
+	if err := validateRawLandingVerification(t, marker, landingCycle); err != nil {
 		return err
 	}
-	if marker == "" {
-		return &LandingStateMismatchError{
-			Table: table, PartCol: partCol, PartVal: partVal,
-			Reason: "empty_marker", Expected: "non-empty", Observed: "empty",
-		}
-	}
-	if strings.TrimSpace(landingCycle) == "" {
-		return _oops.Wrapf(errRawDump, "landing cycle is empty")
-	}
+
 	tx, err := db.Begin(ctx)
 	if err != nil {
 		return _oops.Wrapf(err, "verify raw landing state: begin")
@@ -309,66 +367,35 @@ func VerifyAndTouchLandingWithDB(
 		defer cancel()
 		_ = tx.Rollback(rbCtx)
 	}()
-	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '20s'"); err != nil {
-		return _oops.Wrapf(err, "verify raw landing state: set lock_timeout")
-	}
+	return verifyAndTouchRawTransaction(ctx, tx, t, marker, landingCycle)
+}
 
-	var stateMarker string
-	var rowCount int64
-	err = tx.QueryRow(ctx, `
-		SELECT last_modified, row_count
-		FROM raw_tdx.landing_state
-		WHERE table_name=$1 AND partition_column=$2 AND partition_value=$3
-		FOR UPDATE`, table, partCol, partVal).Scan(&stateMarker, &rowCount)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return &LandingStateMismatchError{
-			Table: table, PartCol: partCol, PartVal: partVal,
-			Reason: "missing_state", Expected: marker, Observed: "missing",
-		}
+func verifyAndTouchRawTransaction(ctx context.Context, tx pgx.Tx, t Target, marker, landingCycle string) error {
+	if err := verifyLockedRawLanding(ctx, tx, t, marker); err != nil {
+		return err
 	}
-	if err != nil {
-		return _oops.Wrapf(err, "verify raw landing state: read state")
-	}
-	if stateMarker != marker {
-		return &LandingStateMismatchError{
-			Table: table, PartCol: partCol, PartVal: partVal,
-			Reason: "marker", Expected: stateMarker, Observed: marker,
-		}
-	}
-
-	existsSQL := fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM raw_tdx.%s", table)
-	args := []any{}
-	if partCol != "" {
-		existsSQL += " " + PartitionWhere(t)
-		args = append(args, partVal)
-	}
-	existsSQL += " LIMIT 1)"
-	var hasRows bool
-	if err := tx.QueryRow(ctx, existsSQL, args...).Scan(&hasRows); err != nil {
-		return _oops.Wrapf(err, "verify raw landing state: inspect partition")
-	}
-	expectedRows := rowCount > 0
-	if hasRows != expectedRows {
-		return &LandingStateMismatchError{
-			Table: table, PartCol: partCol, PartVal: partVal,
-			Reason: "row_presence", Expected: fmt.Sprint(expectedRows), Observed: fmt.Sprint(hasRows),
-		}
-	}
-	ct, err := tx.Exec(ctx, `
-		UPDATE raw_tdx.landing_state SET fetched_at=now(), landing_cycle=$4
-		WHERE table_name=$1 AND partition_column=$2 AND partition_value=$3`, table, partCol, partVal, landingCycle)
-	if err != nil {
-		return _oops.Wrapf(err, "verify raw landing state: touch state")
-	}
-	if ct.RowsAffected() != 1 {
-		return &LandingStateMismatchError{
-			Table: table, PartCol: partCol, PartVal: partVal,
-			Reason: "state_update", Expected: "1", Observed: fmt.Sprint(ct.RowsAffected()),
-		}
+	if err := touchRawLandingState(ctx, tx, t, landingCycle); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return _oops.Wrapf(err, "verify raw landing state: commit")
 	}
+	return nil
+}
+
+func verifyLockedRawLanding(ctx context.Context, tx pgx.Tx, t Target, marker string) error {
+	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '20s'"); err != nil {
+		return _oops.Wrapf(err, "verify raw landing state: set lock_timeout")
+	}
+
+	rowCount, err := verifyRawLandingMarker(ctx, tx, t, marker)
+	if err != nil {
+		return err
+	}
+	if err := verifyRawLandingPresence(ctx, tx, t, rowCount); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -410,6 +437,26 @@ func DumpReader(ctx context.Context, t Target, marker, landingCycle string, body
 	return dumpRawTDXReaderWithDB(ctx, DB, t, marker, landingCycle, body)
 }
 
+func validateRawMarkerInput(marker, landingCycle string) error {
+	if strings.TrimSpace(marker) == "" {
+		return _oops.Wrapf(errRawDump, "last-modified marker is empty")
+	}
+	if strings.TrimSpace(landingCycle) == "" {
+		return _oops.Wrapf(errRawDump, "landing cycle is empty")
+	}
+	return nil
+}
+
+func validateRawReaderInput(t Target, marker, landingCycle string, body io.ReadSeeker) error {
+	if err := ValidateTarget(t); err != nil {
+		return err
+	}
+	if body == nil {
+		return _oops.Wrapf(errRawDump, "response body is nil")
+	}
+	return validateRawMarkerInput(marker, landingCycle)
+}
+
 func dumpRawTDXReaderWithDB(
 	ctx context.Context,
 	db LandingBeginner,
@@ -417,25 +464,20 @@ func dumpRawTDXReaderWithDB(
 	marker, landingCycle string,
 	body io.ReadSeeker,
 ) error {
-	if err := ValidateTarget(t); err != nil {
+	if err := validateRawReaderInput(t, marker, landingCycle, body); err != nil {
 		return err
-	}
-	if body == nil {
-		return _oops.Wrapf(errRawDump, "response body is nil")
-	}
-	if strings.TrimSpace(marker) == "" {
-		return _oops.Wrapf(errRawDump, "last-modified marker is empty")
-	}
-	if strings.TrimSpace(landingCycle) == "" {
-		return _oops.Wrapf(errRawDump, "landing cycle is empty")
 	}
 	ArchivePayload(ctx, history.Target(), t, marker, landingCycle, body)
 	return obs.Retry(ctx, 3, 2*time.Second, func() error {
-		if _, err := body.Seek(0, io.SeekStart); err != nil {
-			return _oops.Wrapf(err, "rewind response")
-		}
-		return obs.Transient(landRawTDXWithDB(ctx, db, t, marker, landingCycle, body))
+		return retryRawLanding(ctx, db, t, marker, landingCycle, body)
 	})
+}
+
+func retryRawLanding(ctx context.Context, db LandingBeginner, t Target, marker, landingCycle string, body io.ReadSeeker) error {
+	if _, err := body.Seek(0, io.SeekStart); err != nil {
+		return _oops.Wrapf(err, "rewind response")
+	}
+	return obs.Transient(landRawTDXWithDB(ctx, db, t, marker, landingCycle, body))
 }
 
 func landRawTDXWithDB(
@@ -445,19 +487,16 @@ func landRawTDXWithDB(
 	marker, landingCycle string,
 	body io.Reader,
 ) error {
-	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
-	if err := ValidateTarget(t); err != nil {
+	if err := validateRawLandingInput(t, marker, landingCycle); err != nil {
 		return err
-	}
-	if strings.TrimSpace(marker) == "" {
-		return _oops.Wrapf(errRawDump, "last-modified marker is empty")
-	}
-	if strings.TrimSpace(landingCycle) == "" {
-		return _oops.Wrapf(errRawDump, "landing cycle is empty")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
+	return runRawLandingTransaction(ctx, db, t, marker, landingCycle, body)
+}
+
+func runRawLandingTransaction(ctx context.Context, db LandingBeginner, t Target, marker, landingCycle string, body io.Reader) error {
 	tx, err := db.Begin(ctx)
 	if err != nil {
 		return _oops.Wrapf(err, "begin")
@@ -469,32 +508,36 @@ func landRawTDXWithDB(
 		_ = tx.Rollback(rbCtx)
 	}()
 
+	rows, err := writeRawLandingRows(ctx, tx, t, body)
+	if err != nil {
+		return err
+	}
+	if err := writeRawLandingState(ctx, tx, t, marker, landingCycle, rows); err != nil {
+		return err
+	}
+	return commitRawLanding(ctx, tx, t.Table, rows)
+}
+
+func writeRawLandingRows(ctx context.Context, tx pgx.Tx, t Target, body io.Reader) (int64, error) {
 	// Bound lock waits so a held lock fails this attempt fast (retryable) instead of
 	// stalling TRUNCATE/DELETE for the full landing deadline.
 	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '20s'"); err != nil {
-		return _oops.Wrapf(err, "set lock_timeout")
+		return 0, _oops.Wrapf(err, "set lock_timeout")
 	}
 
-	inject := "{}"
-	if partCol != "" {
-		if _, err := tx.Exec(ctx, rawDeleteSQL(t), partVal); err != nil {
-			return _oops.Wrapf(err, "delete partition")
-		}
-		b, _ := json.Marshal(map[string]string{partCol: partVal})
-		inject = string(b)
-	} else if _, err := tx.Exec(ctx, fmt.Sprintf("TRUNCATE raw_tdx.%s", table)); err != nil {
-		return _oops.Wrapf(err, "truncate")
-	}
-	rows, err := insertRawChunks(ctx, func(ctx context.Context, sql string, args ...any) (int64, error) {
-		ct, err := tx.Exec(ctx, sql, args...)
-		if err != nil {
-			return 0, err
-		}
-		return ct.RowsAffected(), nil
-	}, table, inject, body)
+	inject, err := clearRawLandingPartition(ctx, tx, t)
 	if err != nil {
-		return _oops.Wrapf(err, "insert")
+		return 0, err
 	}
+	rows, err := insertRawChunks(ctx, rawLandingExecutor(tx), t.Table, inject, body)
+	if err != nil {
+		return 0, _oops.Wrapf(err, "insert")
+	}
+	return rows, nil
+}
+
+func writeRawLandingState(ctx context.Context, tx pgx.Tx, t Target, marker, landingCycle string, rows int64) error {
+	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO raw_tdx.landing_state
 			(table_name, partition_column, partition_value, last_modified, row_count, fetched_at, landing_cycle)
@@ -507,6 +550,10 @@ func landRawTDXWithDB(
 		table, partCol, partVal, marker, rows, landingCycle); err != nil {
 		return _oops.Wrapf(err, "upsert landing state")
 	}
+	return nil
+}
+
+func commitRawLanding(ctx context.Context, tx pgx.Tx, table string, rows int64) error {
 	if err := tx.Commit(ctx); err != nil {
 		return _oops.Wrapf(err, "commit")
 	}
@@ -516,67 +563,220 @@ func landRawTDXWithDB(
 
 const _rawChunkBytes = 4 << 20
 
+type rawChunkWriter struct {
+	ctx         context.Context
+	exec        func(context.Context, string, ...any) (int64, error)
+	sql, inject string
+	chunk       []byte
+	rows        int64
+	flushed     bool
+}
+
 func insertRawChunks(ctx context.Context, exec func(context.Context, string, ...any) (int64, error), table, inject string, body io.Reader) (int64, error) {
+	dec, err := rawArrayDecoder(body, table)
+	if err != nil {
+		return 0, err
+	}
+	writer := rawChunkWriter{ctx: ctx, exec: exec, sql: rawInsertSQL(table), inject: inject, chunk: append(make([]byte, 0, _rawChunkBytes+(1<<20)), '[')}
+	if err := writer.consume(dec); err != nil {
+		return writer.rows, err
+	}
+	err = writer.finish(dec)
+	return writer.rows, err
+}
+func (w *rawChunkWriter) shouldFlush() bool { return len(w.chunk) > 1 || !w.flushed }
+
+func (w *rawChunkWriter) finish(dec *json.Decoder) error {
+	if err := finishRawArray(dec); err != nil {
+		return err
+	}
+	if w.shouldFlush() {
+		return w.flush()
+	}
+	return nil
+}
+
+func rawArrayDecoder(body io.Reader, table string) (*json.Decoder, error) {
 	dec := json.NewDecoder(body)
-	// Split rather than folded into one condition: a well-formed token that is
-	// simply not "[" carries no error to wrap, and Wrapf(nil) is nil — folding
-	// the two would return a nil error for a non-array payload.
+	// A well-formed non-array token has no error to wrap; Wrapf(nil) would accept it.
 	tok, err := dec.Token()
 	if err != nil {
-		return 0, _oops.With("table", table).Wrapf(err, "read payload opening token")
+		return nil, _oops.With("table", table).Wrapf(err, "read payload opening token")
 	}
 	if tok != json.Delim('[') {
-		return 0, _oops.With("table", table).With("token", tok).Errorf("payload is not a JSON array")
+		return nil, _oops.With("table", table).With("token", tok).Errorf("payload is not a JSON array")
 	}
-	sql := rawInsertSQL(table)
-	chunk := append(make([]byte, 0, _rawChunkBytes+(1<<20)), '[')
-	var rows int64
-	flush := func() error {
-		n, err := exec(ctx, sql, inject, append(chunk, ']'))
-		if err != nil {
+	return dec, nil
+}
+func (w *rawChunkWriter) flush() error {
+	n, err := w.exec(w.ctx, w.sql, w.inject, append(w.chunk, ']'))
+	if err != nil {
+		return err
+	}
+	w.rows += n
+	w.chunk = w.chunk[:1]
+	w.flushed = true
+	return nil
+}
+func (w *rawChunkWriter) consume(dec *json.Decoder) error {
+	for dec.More() {
+		if err := w.consumeElement(dec); err != nil {
 			return err
 		}
-		rows += n
-		chunk = chunk[:1]
-		return nil
 	}
-	flushed := false
-	for dec.More() {
-		var elem json.RawMessage
-		if err := dec.Decode(&elem); err != nil {
-			return rows, _oops.Wrapf(err, "decode array element")
-		}
-		if len(chunk) > 1 {
-			chunk = append(chunk, ',')
-		}
-		chunk = append(chunk, elem...)
-		if len(chunk) >= _rawChunkBytes {
-			if err := flush(); err != nil {
-				return rows, err
-			}
-			flushed = true
-		}
+	return nil
+}
+
+func (w *rawChunkWriter) consumeElement(dec *json.Decoder) error {
+	var elem json.RawMessage
+	if err := dec.Decode(&elem); err != nil {
+		return _oops.Wrapf(err, "decode array element")
 	}
+	return w.appendElement(elem)
+}
+
+func (w *rawChunkWriter) appendElement(elem json.RawMessage) error {
+	if len(w.chunk) > 1 {
+		w.chunk = append(w.chunk, ',')
+	}
+	w.chunk = append(w.chunk, elem...)
+	if len(w.chunk) >= _rawChunkBytes {
+		return w.flush()
+	}
+	return nil
+}
+func finishRawArray(dec *json.Decoder) error {
 	closing, err := dec.Token()
 	if err != nil {
-		return rows, _oops.Wrapf(err, "decode array closing delimiter")
+		return _oops.Wrapf(err, "decode array closing delimiter")
 	}
 	if closing != json.Delim(']') {
-		return rows, _oops.With("closing", closing).Errorf("payload has invalid array closing token")
+		return _oops.With("closing", closing).Errorf("payload has invalid array closing token")
 	}
+	return rejectRawTrailingData(dec)
+}
+
+func rejectRawTrailingData(dec *json.Decoder) error {
 	var trailing json.RawMessage
-	switch err := dec.Decode(&trailing); {
-	case errors.Is(err, io.EOF):
+	err := dec.Decode(&trailing)
+	if errors.Is(err, io.EOF) {
 		// Only JSON whitespace may follow the closing array delimiter.
-	case err != nil:
-		return rows, _oops.Wrapf(err, "decode data after JSON array")
-	default:
-		return rows, errors.New("payload contains data after JSON array")
+		return nil
 	}
-	if len(chunk) > 1 || !flushed {
-		if err := flush(); err != nil {
-			return rows, err
+	if err != nil {
+		return _oops.Wrapf(err, "decode data after JSON array")
+	}
+	return errors.New("payload contains data after JSON array")
+}
+
+func validateRawLandingVerification(t Target, marker, landingCycle string) error {
+	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
+	if err := ValidateTarget(t); err != nil {
+		return err
+	}
+	if marker == "" {
+		return &LandingStateMismatchError{
+			Table: table, PartCol: partCol, PartVal: partVal,
+			Reason: "empty_marker", Expected: "non-empty", Observed: "empty",
 		}
 	}
-	return rows, nil
+	if strings.TrimSpace(landingCycle) == "" {
+		return _oops.Wrapf(errRawDump, "landing cycle is empty")
+	}
+	return nil
+}
+func verifyRawLandingMarker(ctx context.Context, tx pgx.Tx, t Target, marker string) (int64, error) {
+	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
+	var stateMarker string
+	var rowCount int64
+	err := tx.QueryRow(ctx, `
+		SELECT last_modified, row_count
+		FROM raw_tdx.landing_state
+		WHERE table_name=$1 AND partition_column=$2 AND partition_value=$3
+		FOR UPDATE`, table, partCol, partVal).Scan(&stateMarker, &rowCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, &LandingStateMismatchError{
+			Table: table, PartCol: partCol, PartVal: partVal,
+			Reason: "missing_state", Expected: marker, Observed: "missing",
+		}
+	}
+	if err != nil {
+		return 0, _oops.Wrapf(err, "verify raw landing state: read state")
+	}
+	if stateMarker != marker {
+		return 0, &LandingStateMismatchError{
+			Table: table, PartCol: partCol, PartVal: partVal,
+			Reason: "marker", Expected: stateMarker, Observed: marker,
+		}
+	}
+
+	return rowCount, nil
+}
+func verifyRawLandingPresence(ctx context.Context, tx pgx.Tx, t Target, rowCount int64) error {
+	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
+	existsSQL := fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM raw_tdx.%s", table)
+	args := []any{}
+	if partCol != "" {
+		existsSQL += " " + PartitionWhere(t)
+		args = append(args, partVal)
+	}
+	existsSQL += " LIMIT 1)"
+	var hasRows bool
+	if err := tx.QueryRow(ctx, existsSQL, args...).Scan(&hasRows); err != nil {
+		return _oops.Wrapf(err, "verify raw landing state: inspect partition")
+	}
+	expectedRows := rowCount > 0
+	if hasRows != expectedRows {
+		return &LandingStateMismatchError{
+			Table: table, PartCol: partCol, PartVal: partVal,
+			Reason: "row_presence", Expected: fmt.Sprint(expectedRows), Observed: fmt.Sprint(hasRows),
+		}
+	}
+	return nil
+}
+func touchRawLandingState(ctx context.Context, tx pgx.Tx, t Target, landingCycle string) error {
+	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
+	ct, err := tx.Exec(ctx, `
+		UPDATE raw_tdx.landing_state SET fetched_at=now(), landing_cycle=$4
+		WHERE table_name=$1 AND partition_column=$2 AND partition_value=$3`, table, partCol, partVal, landingCycle)
+	if err != nil {
+		return _oops.Wrapf(err, "verify raw landing state: touch state")
+	}
+	if ct.RowsAffected() != 1 {
+		return &LandingStateMismatchError{
+			Table: table, PartCol: partCol, PartVal: partVal,
+			Reason: "state_update", Expected: "1", Observed: fmt.Sprint(ct.RowsAffected()),
+		}
+	}
+	return nil
+}
+
+func validateRawLandingInput(t Target, marker, landingCycle string) error {
+	if err := ValidateTarget(t); err != nil {
+		return err
+	}
+	return validateRawMarkerInput(marker, landingCycle)
+}
+func clearRawLandingPartition(ctx context.Context, tx pgx.Tx, t Target) (string, error) {
+	table, partCol, partVal := t.Table, t.PartCol, t.PartVal
+	inject := "{}"
+	if partCol != "" {
+		if _, err := tx.Exec(ctx, rawDeleteSQL(t), partVal); err != nil {
+			return "", _oops.Wrapf(err, "delete partition")
+		}
+		b, _ := json.Marshal(map[string]string{partCol: partVal})
+		inject = string(b)
+	} else if _, err := tx.Exec(ctx, fmt.Sprintf("TRUNCATE raw_tdx.%s", table)); err != nil {
+		return "", _oops.Wrapf(err, "truncate")
+	}
+	return inject, nil
+}
+func rawLandingExecutor(tx pgx.Tx) func(context.Context, string, ...any) (int64, error) {
+	return func(ctx context.Context, sql string, args ...any) (int64, error) {
+		ct, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return 0, err
+		}
+		return ct.RowsAffected(), nil
+	}
 }

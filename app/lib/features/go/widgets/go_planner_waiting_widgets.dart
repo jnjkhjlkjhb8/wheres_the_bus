@@ -24,6 +24,8 @@ class PlanWaitingPanel extends StatefulWidget {
   State<PlanWaitingPanel> createState() => _PlanWaitingState();
 }
 
+enum _WaitStage { planning, comparing, upstream }
+
 class _PlanWaitingState extends State<PlanWaitingPanel> {
   // Two one-shot timers rather than a ticking clock: the copy changes twice,
   // and nothing on screen counts seconds.
@@ -32,16 +34,16 @@ class _PlanWaitingState extends State<PlanWaitingPanel> {
 
   Timer? _settled;
   Timer? _long;
-  Duration _elapsed = Duration.zero;
+  _WaitStage _stage = _WaitStage.planning;
 
   @override
   void initState() {
     super.initState();
     _settled = Timer(_settleIn, () {
-      if (mounted) setState(() => _elapsed = _settleIn);
+      if (mounted) setState(() => _stage = _WaitStage.comparing);
     });
     _long = Timer(_longEnoughToOffer, () {
-      if (mounted) setState(() => _elapsed = _longEnoughToOffer);
+      if (mounted) setState(() => _stage = _WaitStage.upstream);
     });
   }
 
@@ -56,10 +58,11 @@ class _PlanWaitingState extends State<PlanWaitingPanel> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final reduce = MediaQuery.disableAnimationsOf(context);
-    final label = switch (_elapsed) {
-      >= _longEnoughToOffer => AppI18n.of(context).goWaitingUpstream,
-      >= _settleIn => AppI18n.of(context).goComparingTransfers,
-      _ => AppI18n.of(context).goPlanningRoute,
+    final upstream = _stage == _WaitStage.upstream;
+    final label = switch (_stage) {
+      _WaitStage.upstream => AppI18n.of(context).goWaitingUpstream,
+      _WaitStage.comparing => AppI18n.of(context).goComparingTransfers,
+      _WaitStage.planning => AppI18n.of(context).goPlanningRoute,
     };
     return ListView(
       padding: const EdgeInsets.only(bottom: AppTheme.space24),
@@ -93,13 +96,12 @@ class _PlanWaitingState extends State<PlanWaitingPanel> {
                   ),
                 ),
               ),
-              if (widget.straightLineMeters != null &&
-                  _elapsed < _longEnoughToOffer)
+              if (widget.straightLineMeters != null && !upstream)
                 _StraightLineReadout(meters: widget.straightLineMeters!),
               // Only offered once waiting has actually become unreasonable —
               // an escape hatch on screen from the first frame reads as a
               // warning that this is going to be slow.
-              if (_elapsed >= _longEnoughToOffer)
+              if (upstream)
                 Pressable(
                   onTap: widget.onCancel,
                   semanticLabel: AppI18n.of(context).goCancelPlanning,

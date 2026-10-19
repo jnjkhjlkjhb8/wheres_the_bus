@@ -43,9 +43,17 @@ func NewFirebaseSender(ctx context.Context) (Sender, error) {
 	if projectID == "" {
 		return nil, _oops.Errorf("FIREBASE_PROJECT_ID is required when Firebase is enabled")
 	}
+	return initializeFirebaseSender(ctx, projectID)
+}
+
+func initializeFirebaseSender(ctx context.Context, projectID string) (Sender, error) {
 	if _, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/firebase.messaging"); err != nil {
 		return nil, _oops.Wrapf(err, "load Firebase credentials")
 	}
+	return firebaseSenderForProject(ctx, projectID)
+}
+
+func firebaseSenderForProject(ctx context.Context, projectID string) (Sender, error) {
 	app, err := firebase.NewApp(ctx, &firebase.Config{ProjectID: projectID})
 	if err != nil {
 		return nil, _oops.Wrapf(err, "initialize Firebase Admin")

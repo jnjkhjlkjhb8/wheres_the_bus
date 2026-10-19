@@ -30,22 +30,27 @@ func upsertSegmentTimes(ctx context.Context, db *pgxpool.Pool, segs []SegmentObs
 	var total int64
 	for start := 0; start < len(segs); start += _segmentUpsertBatch {
 		batch := segs[start:min(start+_segmentUpsertBatch, len(segs))]
-		subRoutes := make([]string, len(batch))
-		directions := make([]int16, len(batch))
-		fromStops := make([]string, len(batch))
-		toStops := make([]string, len(batch))
-		secs := make([]int32, len(batch))
-		samples := make([]int32, len(batch))
-		for i, s := range batch {
-			subRoutes[i], directions[i] = s.SubRouteUID, s.Direction
-			fromStops[i], toStops[i] = s.fromStopUID, s.toStopUID
-			secs[i], samples[i] = int32(s.secs), int32(s.sampleCount)
-		}
-		tag, err := db.Exec(ctx, stmt, subRoutes, directions, fromStops, toStops, secs, samples)
+		args := segmentBatchArgs(batch)
+		tag, err := db.Exec(ctx, stmt, args...)
 		if err != nil {
 			return total, _oops.With("start", start).With("end", start+len(batch)).Wrapf(err, "upsert segments")
 		}
 		total += tag.RowsAffected()
 	}
 	return total, nil
+}
+
+func segmentBatchArgs(batch []SegmentObs) []any {
+	subRoutes := make([]string, len(batch))
+	directions := make([]int16, len(batch))
+	fromStops := make([]string, len(batch))
+	toStops := make([]string, len(batch))
+	secs := make([]int32, len(batch))
+	samples := make([]int32, len(batch))
+	for i, s := range batch {
+		subRoutes[i], directions[i] = s.SubRouteUID, s.Direction
+		fromStops[i], toStops[i] = s.fromStopUID, s.toStopUID
+		secs[i], samples[i] = int32(s.secs), int32(s.sampleCount)
+	}
+	return []any{subRoutes, directions, fromStops, toStops, secs, samples}
 }

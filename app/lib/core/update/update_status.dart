@@ -28,13 +28,20 @@ bool isBelowVersion(String current, String other) {
   final a = _segments(current);
   final b = _segments(other);
   if (a == null || b == null) return false;
-  for (var i = 0; i < a.length || i < b.length; i++) {
-    final x = i < a.length ? a[i] : 0;
-    final y = i < b.length ? b[i] : 0;
-    if (x != y) return x < y;
-  }
-  return false;
+  return _compareSegments(a, b) < 0;
 }
+
+int _compareSegments(List<int> a, List<int> b) {
+  final length = a.length > b.length ? a.length : b.length;
+  for (var i = 0; i < length; i++) {
+    final difference = _segmentAt(a, i) - _segmentAt(b, i);
+    if (difference != 0) return difference;
+  }
+  return 0;
+}
+
+int _segmentAt(List<int> segments, int index) =>
+    index < segments.length ? segments[index] : 0;
 
 List<int>? _segments(String v) {
   final core = v.split(RegExp('[+-]')).first.trim();

@@ -59,13 +59,26 @@ func NewAPNSSender() (APNSSender, error) {
 	teamID := os.Getenv("APNS_TEAM_ID")
 	topic := os.Getenv("APNS_TOPIC")
 	p8 := os.Getenv("APNS_P8")
-	if keyID == "" || teamID == "" || topic == "" || p8 == "" {
+	if !apnsCredentialsPresent(keyID, teamID, topic, p8) {
 		return nil, nil
 	}
 	key, err := parseP8(p8)
 	if err != nil {
 		return nil, _oops.Wrapf(err, "parse APNS_P8")
 	}
+	return configuredAPNSSender(keyID, teamID, topic, key), nil
+}
+
+func apnsCredentialsPresent(values ...string) bool {
+	for _, value := range values {
+		if value == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func configuredAPNSSender(keyID, teamID, topic string, key *ecdsa.PrivateKey) *apnsSender {
 	host := _apnsProduction
 	if os.Getenv("APNS_SANDBOX") == "1" {
 		host = _apnsSandbox
@@ -79,7 +92,7 @@ func NewAPNSSender() (APNSSender, error) {
 		keyID:  keyID,
 		teamID: teamID,
 		key:    key,
-	}, nil
+	}
 }
 
 // SendLiveActivity POSTs one update to one activity token. A 410 (the token is
@@ -102,21 +115,28 @@ func (s *apnsSender) SendLiveActivity(ctx context.Context, token string, payload
 	request.Header.Set("apns-priority", "10")
 	request.Header.Set("content-type", "application/json")
 
+	return s.sendAPNSRequest(request)
+}
+
+func (s *apnsSender) sendAPNSRequest(request *http.Request) error {
 	response, err := s.client.Do(request)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = response.Body.Close() }()
-	switch response.StatusCode {
-	case http.StatusOK:
+	return apnsResponseError(response)
+}
+
+func apnsResponseError(response *http.Response) error {
+	if response.StatusCode == http.StatusOK {
 		return nil
-	case http.StatusGone:
-		return ErrAPNSGone
-	default:
-		var body bytes.Buffer
-		_, _ = body.ReadFrom(response.Body)
-		return _oops.With("status_code", response.StatusCode).With("string", strings.TrimSpace(body.String())).Errorf("apns")
 	}
+	if response.StatusCode == http.StatusGone {
+		return ErrAPNSGone
+	}
+	var body bytes.Buffer
+	_, _ = body.ReadFrom(response.Body)
+	return _oops.With("status_code", response.StatusCode).With("string", strings.TrimSpace(body.String())).Errorf("apns")
 }
 
 // ErrAPNSGone is Apple's 410: this activity token no longer addresses a card.
@@ -131,7 +151,11 @@ func (s *apnsSender) providerToken() (string, error) {
 	if s.nowFunc != nil {
 		now = s.nowFunc()
 	}
-	if s.token != "" && now.Sub(s.tokenAge) < _apnsTokenTTL {
+	return s.providerTokenAt(now)
+}
+
+func (s *apnsSender) providerTokenAt(now time.Time) (string, error) {
+	if s.cachedAPNSTokenValid(now) {
 		return s.token, nil
 	}
 	token, err := signES256(s.key, map[string]string{"alg": "ES256", "kid": s.keyID}, map[string]any{
@@ -143,6 +167,10 @@ func (s *apnsSender) providerToken() (string, error) {
 	}
 	s.token, s.tokenAge = token, now
 	return token, nil
+}
+
+func (s *apnsSender) cachedAPNSTokenValid(now time.Time) bool {
+	return s.token != "" && now.Sub(s.tokenAge) < _apnsTokenTTL
 }
 
 // parseP8 reads Apple's PKCS#8 EC provider key. The env var may carry the PEM
@@ -157,6 +185,10 @@ func parseP8(value string) (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parsedP8Key(parsed)
+}
+
+func parsedP8Key(parsed any) (*ecdsa.PrivateKey, error) {
 	key, ok := parsed.(*ecdsa.PrivateKey)
 	if !ok {
 		return nil, _oops.With("parsed", parsed).Errorf("want an EC key")

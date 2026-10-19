@@ -228,20 +228,21 @@ class _DetailAppBarState extends State<DetailAppBar> {
   void _handleScrollNotification(ScrollNotification notification) {
     if (notification is! ScrollUpdateNotification) return;
     if (!defaultScrollNotificationPredicate(notification)) return;
-    final metrics = notification.metrics;
-    final bool under;
-    switch (metrics.axisDirection) {
-      case AxisDirection.down:
-        under = metrics.extentBefore > 0;
-      case AxisDirection.up:
-        under = metrics.extentAfter > 0;
-      case AxisDirection.left:
-      case AxisDirection.right:
-        // Horizontal scrollers under the bar say nothing about whether
-        // vertical content has passed beneath it.
-        return;
-    }
-    if (under != _scrolledUnder) setState(() => _scrolledUnder = under);
+    _applyScrolledUnder(_verticalScrolledUnder(notification.metrics));
+  }
+
+  bool? _verticalScrolledUnder(
+    ScrollMetrics metrics,
+  ) => switch (metrics.axisDirection) {
+    AxisDirection.down => metrics.extentBefore > 0,
+    AxisDirection.up => metrics.extentAfter > 0,
+    // Horizontal scroll position does not describe the content under this bar.
+    AxisDirection.left || AxisDirection.right => null,
+  };
+
+  void _applyScrolledUnder(bool? under) {
+    if (under == null || under == _scrolledUnder) return;
+    setState(() => _scrolledUnder = under);
   }
 
   @override
@@ -279,21 +280,8 @@ class _DetailAppBarState extends State<DetailAppBar> {
             ),
             child: NavigationToolbar(
               leading: AppBarBackButton(onTap: widget.onBack),
-              middle: widget.title != null
-                  ? _Title(
-                      widget.title!,
-                      widget.subtitle,
-                      textAlign: widget.centerTitle
-                          ? TextAlign.center
-                          : TextAlign.left,
-                    )
-                  : null,
-              trailing: widget.actions != null && widget.actions!.isNotEmpty
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: widget.actions!,
-                    )
-                  : null,
+              middle: _titleSlot,
+              trailing: _actionSlot,
               centerMiddle: widget.centerTitle,
               middleSpacing: 8,
             ),
@@ -301,6 +289,20 @@ class _DetailAppBarState extends State<DetailAppBar> {
         ),
       ),
     );
+  }
+
+  Widget? get _titleSlot => widget.title == null
+      ? null
+      : _Title(
+          widget.title!,
+          widget.subtitle,
+          textAlign: widget.centerTitle ? TextAlign.center : TextAlign.left,
+        );
+
+  Widget? get _actionSlot {
+    final actions = widget.actions;
+    if (actions == null || actions.isEmpty) return null;
+    return Row(mainAxisSize: MainAxisSize.min, children: actions);
   }
 }
 

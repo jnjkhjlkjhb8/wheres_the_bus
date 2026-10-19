@@ -130,26 +130,38 @@ func trustedProxiesFromEnv() ([]netip.Prefix, error) {
 	proxies := make([]netip.Prefix, 0, len(parts))
 	for _, part := range parts {
 		value := strings.TrimSpace(part)
-		prefix, err := netip.ParsePrefix(value)
+		prefix, err := trustedProxyPrefix(value)
 		if err != nil {
-			addr, addrErr := netip.ParseAddr(value)
-			if addrErr != nil {
-				return nil, _oops.With("_trusted_proxies_env", _trustedProxiesEnv).With("value", value).Errorf("contains invalid IP or CIDR")
-			}
-			prefix = netip.PrefixFrom(addr, addr.BitLen())
-		}
-		prefix = prefix.Masked()
-		addressBits := prefix.Addr().BitLen()
-		network := &net.IPNet{
-			IP:   net.IP(prefix.Addr().AsSlice()),
-			Mask: net.CIDRMask(prefix.Bits(), addressBits),
-		}
-		if network.Contains(net.IPv4zero) || network.Contains(net.IPv6zero) {
-			return nil, _oops.With("_trusted_proxies_env", _trustedProxiesEnv).With("value", value).Errorf("contains unsafe catch-all or unspecified proxy")
+			return nil, err
 		}
 		proxies = append(proxies, prefix)
 	}
 	return proxies, nil
+}
+
+func trustedProxyPrefix(value string) (netip.Prefix, error) {
+	prefix, err := parseProxyPrefix(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	prefix = prefix.Masked()
+	network := &net.IPNet{IP: net.IP(prefix.Addr().AsSlice()), Mask: net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())}
+	if network.Contains(net.IPv4zero) || network.Contains(net.IPv6zero) {
+		return netip.Prefix{}, _oops.With("_trusted_proxies_env", _trustedProxiesEnv).With("value", value).Errorf("contains unsafe catch-all or unspecified proxy")
+	}
+	return prefix, nil
+}
+
+func parseProxyPrefix(value string) (netip.Prefix, error) {
+	prefix, err := netip.ParsePrefix(value)
+	if err == nil {
+		return prefix, nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, _oops.With("_trusted_proxies_env", _trustedProxiesEnv).With("value", value).Errorf("contains invalid IP or CIDR")
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
 type trackedHTTPHandler struct {
@@ -174,15 +186,17 @@ func (h *trackedHTTPHandler) ServeHTTP(writer http.ResponseWriter, request *http
 	}
 	h.active++
 	h.mu.Unlock()
-	defer func() {
-		h.mu.Lock()
-		h.active--
-		if h.stopping && h.active == 0 {
-			h.doneOnce.Do(func() { close(h.done) })
-		}
-		h.mu.Unlock()
-	}()
+	defer h.handlerFinished()
 	h.handler.ServeHTTP(writer, request)
+}
+
+func (h *trackedHTTPHandler) handlerFinished() {
+	h.mu.Lock()
+	h.active--
+	if h.stopping && h.active == 0 {
+		h.doneOnce.Do(func() { close(h.done) })
+	}
+	h.mu.Unlock()
 }
 
 func (h *trackedHTTPHandler) stopAndWait() {
@@ -232,15 +246,24 @@ func prepareHTTPServer(
 
 func newHTTPRouter(db *pgxpool.Pool, live *livestream.LiveHub, key *rsa.PrivateKey, config httpServerConfig) *gin.Engine {
 	r := gin.New()
-	trustedProxies := make([]string, len(config.TrustedProxies))
-	for index, prefix := range config.TrustedProxies {
+	configureHTTPRouter(r, config.TrustedProxies)
+	r.Use(safeAccessLogger(), gin.Recovery())
+	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+	registerHTTPRoutes(r, db, live, key, config)
+	return r
+}
+
+func configureHTTPRouter(r *gin.Engine, proxies []netip.Prefix) {
+	trustedProxies := make([]string, len(proxies))
+	for index, prefix := range proxies {
 		trustedProxies[index] = prefix.String()
 	}
 	if err := r.SetTrustedProxies(trustedProxies); err != nil {
 		panic(fmt.Sprintf("validated trusted proxy configuration rejected: %v", err))
 	}
-	r.Use(safeAccessLogger(), gin.Recovery())
-	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+}
+
+func registerHTTPRoutes(r *gin.Engine, db *pgxpool.Pool, live *livestream.LiveHub, key *rsa.PrivateKey, config httpServerConfig) {
 	limiter := ratelimit.New()
 	tokenLimit := configuredLimit(config.TokenRateLimit, _httpTokenRateLimit)
 	jwksLimit := configuredLimit(config.JWKSRateLimit, _httpJWKSRateLimit)
@@ -287,7 +310,6 @@ func newHTTPRouter(db *pgxpool.Pool, live *livestream.LiveHub, key *rsa.PrivateK
 		requireMetricsCredential(config.MetricsCredential),
 		httpPrincipalRateLimit(limiter, "GET /metrics", metricsLimit, time.Minute),
 		handleMetrics(live))
-	return r
 }
 
 func configuredLimit(configured, fallback int) int {
@@ -338,9 +360,8 @@ const _metricsPrincipalContextKey = "metrics-principal"
 
 func httpPrincipalRateLimit(limiter *ratelimit.Limiter, scope string, limit int, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		principal, ok := c.Get(_metricsPrincipalContextKey)
-		caller, valid := principal.(string)
-		if !ok || !valid || caller == "" {
+		caller := metricsPrincipal(c)
+		if caller == "" {
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
@@ -351,6 +372,15 @@ func httpPrincipalRateLimit(limiter *ratelimit.Limiter, scope string, limit int,
 		}
 		c.Next()
 	}
+}
+
+func metricsPrincipal(c *gin.Context) string {
+	principal, ok := c.Get(_metricsPrincipalContextKey)
+	caller, valid := principal.(string)
+	if !ok || !valid {
+		return ""
+	}
+	return caller
 }
 
 func metricsCredentialFromEnv() (string, error) {
@@ -420,13 +450,13 @@ func tokenSubject(installID string) string {
 	if installID == "" || len(installID) > _installIDHeaderMaxLen {
 		return _powersyncAnonymousSubject
 	}
-	for _, r := range installID {
-		if r < 0x20 || r == 0x7f {
-			return _powersyncAnonymousSubject
-		}
+	if strings.IndexFunc(installID, invalidInstallationRune) >= 0 {
+		return _powersyncAnonymousSubject
 	}
 	return installID
 }
+
+func invalidInstallationRune(r rune) bool { return r < 0x20 || r == 0x7f }
 func handleJWKS(key *rsa.PrivateKey) gin.HandlerFunc {
 	pub := &key.PublicKey
 	n := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
@@ -470,6 +500,10 @@ func loadSigningKey() (*rsa.PrivateKey, error) {
 	if err != nil {
 		return nil, _oops.With("key_file", path).Wrapf(err, "read PowerSync signing key")
 	}
+	return parseSigningKey(path, data)
+}
+
+func parseSigningKey(path string, data []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
 		return nil, _oops.With("key_file", path).Errorf("PowerSync signing key is not PEM")
@@ -486,22 +520,19 @@ func loadOrGenerateKey() (*rsa.PrivateKey, error) {
 }
 
 func loadOrGenerateKeyAt(keyFile string) (*rsa.PrivateKey, error) {
-	data, err := os.ReadFile(keyFile)
-	if err == nil {
-		block, _ := pem.Decode(data)
-		if block != nil {
-			key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-			if err == nil {
-				zap.S().Infow("loaded persisted RSA key", "component", "http", "key_file", keyFile)
-				return key, nil
-			}
-		}
+	if key, ok := persistedSigningKey(keyFile); ok {
+		zap.S().Infow("loaded persisted RSA key", "component", "http", "key_file", keyFile)
+		return key, nil
 	}
+	return generateAndPersistKey(keyFile)
+}
+
+func generateAndPersistKey(keyFile string) (*rsa.PrivateKey, error) {
 	key, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}
-	data = pem.EncodeToMemory(&pem.Block{
+	data := pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
@@ -512,6 +543,15 @@ func loadOrGenerateKeyAt(keyFile string) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
+func persistedSigningKey(keyFile string) (*rsa.PrivateKey, bool) {
+	data, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, false
+	}
+	key, err := parseSigningKey(keyFile, data)
+	return key, err == nil
+}
+
 func persistKeyAtomically(keyFile string, data []byte) error {
 	dir := filepath.Dir(keyFile)
 	tmp, err := os.CreateTemp(dir, filepath.Base(keyFile)+".tmp-*")
@@ -520,11 +560,41 @@ func persistKeyAtomically(keyFile string, data []byte) error {
 	}
 	tmpName := tmp.Name()
 	renamed := false
-	defer func() {
-		if !renamed {
-			_ = os.Remove(tmpName)
-		}
-	}()
+	defer removeUnpublishedKey(tmpName, &renamed)
+	if err := prepareKeyFile(tmp, keyFile, data); err != nil {
+		return err
+	}
+	renamed = true
+	return nil
+}
+
+func removeUnpublishedKey(path string, renamed *bool) {
+	if !*renamed {
+		_ = os.Remove(path)
+	}
+}
+
+func prepareKeyFile(tmp *os.File, keyFile string, data []byte) error {
+	if err := writeKeyFile(tmp, data); err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		return _oops.Wrapf(err, "chmod temp key file")
+	}
+	if err := os.Rename(tmpName, keyFile); err != nil {
+		return _oops.Wrapf(err, "rename temp key file into place")
+	}
+	return nil
+}
+
+type keyFileWriter interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+func writeKeyFile(tmp keyFileWriter, data []byte) error {
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return _oops.Wrapf(err, "write temp key file")
@@ -536,12 +606,5 @@ func persistKeyAtomically(keyFile string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return _oops.Wrapf(err, "close temp key file")
 	}
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		return _oops.Wrapf(err, "chmod temp key file")
-	}
-	if err := os.Rename(tmpName, keyFile); err != nil {
-		return _oops.Wrapf(err, "rename temp key file into place")
-	}
-	renamed = true
 	return nil
 }

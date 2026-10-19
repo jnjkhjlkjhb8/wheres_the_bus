@@ -22,19 +22,13 @@ class MrtDecoder {
   static List<int> _congestion(Mrt_live live) {
     if (!live.hasWeight()) return const [];
     final w = live.weight;
-    final out = <int>[];
-    for (final raw in [
+    return [
       w.cart1L,
       w.cart2L,
       w.cart3L,
       w.cart4L,
       w.cart5L,
       w.cart6L,
-    ]) {
-      if (raw.isEmpty) continue;
-      final level = int.tryParse(raw);
-      if (level != null) out.add(level);
-    }
-    return out;
+    ].map(int.tryParse).whereType<int>().toList();
   }
 }

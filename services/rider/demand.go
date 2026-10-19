@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
@@ -22,6 +23,10 @@ func restoreReminderDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.
 	if db == nil || sink == nil {
 		return 0
 	}
+	return restoreDatabaseDemand(ctx, db, sink)
+}
+
+func restoreDatabaseDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.LiveSink) int {
 	rows, err := db.Query(ctx, _reminderDemandCitiesSQL)
 	if err != nil {
 		zap.S().Errorw("query failed",
@@ -34,43 +39,21 @@ func restoreReminderDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.
 	}
 	defer rows.Close()
 
-	pipe := sink.Pipe()
-	restored := 0
-	now := time.Now()
-	for rows.Next() {
-		var (
-			prefix    string
-			expiresAt time.Time
-		)
-		if err := rows.Scan(&prefix, &expiresAt); err != nil {
-			zap.S().Errorw("scan failed",
-				"component", "live",
-				"action", "restore_reminder_demand",
-				"event", "failed",
-				"err", err,
-			)
-			return 0
-		}
-		city := shared.CityFromUID(prefix)
-		ttl := expiresAt.Sub(now)
-		if city == "" || ttl <= 0 {
-			continue
-		}
-		pipe.Set(shared.LiveDemandKey("bus_eta", city), "1", ttl)
-		restored++
-	}
-	if err := rows.Err(); err != nil {
-		zap.S().Errorw("rows failed",
-			"component", "live",
-			"action", "restore_reminder_demand",
-			"event", "failed",
-			"err", err,
-		)
+	return publishRestoredDemand(ctx, rows, sink.Pipe())
+}
+
+func publishRestoredDemand(ctx context.Context, rows pgx.Rows, pipe pipeline.LivePipe) int {
+	restored, err := queueReminderDemand(rows, pipe)
+	if err != nil {
 		return 0
 	}
 	if restored == 0 {
 		return 0
 	}
+	return publishDemandPipeline(ctx, pipe, restored)
+}
+
+func publishDemandPipeline(ctx context.Context, pipe pipeline.LivePipe, restored int) int {
 	if err := pipe.Exec(ctx); err != nil {
 		zap.S().Errorw("write failed",
 			"component", "live",
@@ -87,4 +70,44 @@ func restoreReminderDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.
 		"cities", restored,
 	)
 	return restored
+}
+
+func queueReminderDemand(rows pgx.Rows, pipe pipeline.LivePipe) (int, error) {
+	restored := 0
+	now := time.Now()
+	for rows.Next() {
+		queued, err := queueDemandRow(rows, pipe, now)
+		if err != nil {
+			return 0, err
+		}
+		restored += queued
+	}
+	return completedDemandRows(rows, restored)
+}
+
+func completedDemandRows(rows pgx.Rows, restored int) (int, error) {
+	if err := rows.Err(); err != nil {
+		zap.S().Errorw("rows failed", "component", "live", "action", "restore_reminder_demand", "event", "failed", "err", err)
+		return 0, err
+	}
+	return restored, nil
+}
+
+func queueDemandRow(rows pgx.Rows, pipe pipeline.LivePipe, now time.Time) (int, error) {
+	var prefix string
+	var expiresAt time.Time
+	if err := rows.Scan(&prefix, &expiresAt); err != nil {
+		zap.S().Errorw("scan failed", "component", "live", "action", "restore_reminder_demand", "event", "failed", "err", err)
+		return 0, err
+	}
+	return queueCityDemand(pipe, prefix, expiresAt.Sub(now)), nil
+}
+
+func queueCityDemand(pipe pipeline.LivePipe, prefix string, ttl time.Duration) int {
+	city := shared.CityFromUID(prefix)
+	if city == "" || ttl <= 0 {
+		return 0
+	}
+	pipe.Set(shared.LiveDemandKey("bus_eta", city), "1", ttl)
+	return 1
 }

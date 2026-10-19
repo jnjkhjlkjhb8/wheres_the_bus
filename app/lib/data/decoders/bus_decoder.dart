@@ -125,20 +125,28 @@ class BusDecoder {
   // The proto packs two shapes into one message: for a fixed timetable entry
   // the headway fields carry the origin stop's arrival/departure clock times,
   // for a headway entry they carry the minutes.
-  BusServiceEntry _service(Bus_Schedule s) => BusServiceEntry(
+  BusServiceEntry _service(Bus_Schedule s) =>
+      s.isTimetable ? _timetableService(s) : _headwayService(s);
+
+  BusServiceEntry _timetableService(Bus_Schedule s) => BusServiceEntry(
     isTimetable: s.isTimetable,
     serviceDay: s.serviceDay,
     tripId: s.tripid,
     isLowFloor: s.islowfloor,
-    departureTime: s.isTimetable
-        ? (s.maxHeadwayMinsDepartureTime.isNotEmpty
-              ? s.maxHeadwayMinsDepartureTime
-              : s.minHeadwayMinsArrivalTime)
-        : '',
-    startTime: s.isTimetable ? '' : s.startTime,
-    endTime: s.isTimetable ? '' : s.endTime,
-    minHeadwayMins: s.isTimetable ? '' : s.minHeadwayMinsArrivalTime,
-    maxHeadwayMins: s.isTimetable ? '' : s.maxHeadwayMinsDepartureTime,
+    departureTime: s.maxHeadwayMinsDepartureTime.isNotEmpty
+        ? s.maxHeadwayMinsDepartureTime
+        : s.minHeadwayMinsArrivalTime,
+  );
+
+  BusServiceEntry _headwayService(Bus_Schedule s) => BusServiceEntry(
+    isTimetable: s.isTimetable,
+    serviceDay: s.serviceDay,
+    tripId: s.tripid,
+    isLowFloor: s.islowfloor,
+    startTime: s.startTime,
+    endTime: s.endTime,
+    minHeadwayMins: s.minHeadwayMinsArrivalTime,
+    maxHeadwayMins: s.maxHeadwayMinsDepartureTime,
   );
 
   BusOperatorInfo _operator(BusOperator o) => BusOperatorInfo(

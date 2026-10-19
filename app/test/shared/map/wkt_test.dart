@@ -23,4 +23,14 @@ void main() {
     expect(parseWktLines('MULTILINESTRING ((121.5 25.0))'), isEmpty);
     expect(parseWktLines('garbage'), isEmpty);
   });
+  test('malformed coordinates are discarded without dropping a valid line', () {
+    final lines = parseWktLines(
+      'LINESTRING (lon 25, 121 lat, 121, 121.5 25, 121.6 25.1)',
+    );
+    expect(lines, hasLength(1));
+    expect(lines.single.map((point) => [point.longitude, point.latitude]), [
+      [121.5, 25.0],
+      [121.6, 25.1],
+    ]);
+  });
 }

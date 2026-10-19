@@ -33,38 +33,49 @@ NavAction decideNavAction({
   required double lon,
 }) {
   if (isWalk(section)) {
-    final arrival = section.arrival.location;
-    final distance = Geolocator.distanceBetween(
+    return _arrivalAction(
+      section.arrival.location,
       lat,
       lon,
-      arrival.lat,
-      arrival.lng,
+      _kWalkArrivalRadiusMeters,
+      NavAction.advance,
     );
-    return distance <= _kWalkArrivalRadiusMeters
-        ? NavAction.advance
-        : NavAction.none;
   }
-  if (!boarded) {
-    final departure = section.departure.location;
-    final distance = Geolocator.distanceBetween(
-      lat,
-      lon,
-      departure.lat,
-      departure.lng,
-    );
-    return distance > _kBoardDepartRadiusMeters
-        ? NavAction.board
-        : NavAction.none;
-  }
-  final arrival = section.arrival.location;
+  if (!boarded) return _boardingAction(section.departure.location, lat, lon);
+  return _arrivalAction(
+    section.arrival.location,
+    lat,
+    lon,
+    _kAlightArrivalRadiusMeters,
+    NavAction.alight,
+  );
+}
+
+NavAction _arrivalAction(
+  PlanPoint arrival,
+  double lat,
+  double lon,
+  double radius,
+  NavAction action,
+) {
   final distance = Geolocator.distanceBetween(
     lat,
     lon,
     arrival.lat,
     arrival.lng,
   );
-  return distance <= _kAlightArrivalRadiusMeters
-      ? NavAction.alight
+  return distance <= radius ? action : NavAction.none;
+}
+
+NavAction _boardingAction(PlanPoint departure, double lat, double lon) {
+  final distance = Geolocator.distanceBetween(
+    lat,
+    lon,
+    departure.lat,
+    departure.lng,
+  );
+  return distance > _kBoardDepartRadiusMeters
+      ? NavAction.board
       : NavAction.none;
 }
 
@@ -85,6 +96,7 @@ int advanceWalkStep({
 
 const _kHeadingMinDeltaDeg = 3.0;
 const _kHeadingMinInterval = Duration(milliseconds: 200);
+const _kFullTurnDeg = 360.0;
 
 bool shouldApplyHeading({
   required double? last,
@@ -93,16 +105,13 @@ bool shouldApplyHeading({
 }) {
   if (last == null) return true;
   if (sinceLast < _kHeadingMinInterval) return false;
-  final raw = (next - last).abs() % 360;
-  final delta = raw > 180 ? 360 - raw : raw;
+  final raw = (next - last).abs() % _kFullTurnDeg;
+  final delta = raw > _kFullTurnDeg / 2 ? _kFullTurnDeg - raw : raw;
   return delta > _kHeadingMinDeltaDeg;
 }
 
 class NavigationAdvanceResult {
-  const NavigationAdvanceResult({
-    required this.arrived,
-    this.nextCameraPoint,
-  });
+  const NavigationAdvanceResult({required this.arrived, this.nextCameraPoint});
 
   final bool arrived;
   final PlanPoint? nextCameraPoint;
@@ -203,12 +212,62 @@ class NavigationCoordinator {
   }
 
   void _onPosition(Position position) {
-    final activeLeg = _planBloc.state.activeLegIndex;
-    if (activeLeg == null) return;
-    final route = _currentRoute();
-    if (route == null) return;
-    if (activeLeg >= route.sections.length) return;
+    final navigation = _activeNavigation();
+    if (navigation == null) return;
+    final (route, activeLeg) = navigation;
     final section = route.sections[activeLeg];
+    _advanceWalkInstruction(section, position);
+    final boarded =
+        _lastAutoBoardedLeg == activeLeg ||
+        _journeySessionBloc.state.phase == JourneyPhase.riding;
+    final action = decideNavAction(
+      section: section,
+      boarded: boarded,
+      lat: position.latitude,
+      lon: position.longitude,
+    );
+    _applyAction(action, boarded, route, activeLeg);
+  }
+
+  (PlanRoute, int)? _activeNavigation() {
+    final activeLeg = _planBloc.state.activeLegIndex;
+    if (activeLeg == null) return null;
+    final route = _currentRoute();
+    if (route == null) return null;
+    return activeLeg < route.sections.length ? (route, activeLeg) : null;
+  }
+
+  void _applyAction(
+    NavAction action,
+    bool boarded,
+    PlanRoute route,
+    int activeLeg,
+  ) {
+    if (action == NavAction.none) return;
+    if (action == NavAction.board) {
+      _boardLeg(boarded, activeLeg);
+      return;
+    }
+    _advanceLeg(action, route, activeLeg);
+  }
+
+  void _boardLeg(bool boarded, int activeLeg) {
+    if (boarded) return;
+    _lastAutoBoardedLeg = activeLeg;
+    _journeySessionBloc.add(const BoardConfirmed());
+    _onAutoAction?.call(NavAction.board, null, false);
+  }
+
+  void _advanceLeg(NavAction action, PlanRoute route, int activeLeg) {
+    if (_lastAutoAdvancedLeg == activeLeg) return;
+    _lastAutoAdvancedLeg = activeLeg;
+    if (action == NavAction.alight) {
+      _journeySessionBloc.add(const AlightConfirmed());
+    }
+    unawaited(_autoAdvance(route, activeLeg, action));
+  }
+
+  void _advanceWalkInstruction(PlanSection section, Position position) {
     // Display-only: advance the turn-by-turn walk step. Never touches leg
     // advancement, which decideNavAction below still owns exclusively.
     if (isWalk(section) && section.walkSteps.isNotEmpty) {
@@ -222,33 +281,6 @@ class NavigationCoordinator {
       if (next != current) {
         _planBloc.add(WalkStepAdvanced(index: next));
       }
-    }
-    final boarded =
-        _lastAutoBoardedLeg == activeLeg ||
-        _journeySessionBloc.state.phase == JourneyPhase.riding;
-    final action = decideNavAction(
-      section: section,
-      boarded: boarded,
-      lat: position.latitude,
-      lon: position.longitude,
-    );
-    switch (action) {
-      case NavAction.none:
-        return;
-      case NavAction.board:
-        if (boarded) return;
-        _lastAutoBoardedLeg = activeLeg;
-        _journeySessionBloc.add(const BoardConfirmed());
-        _onAutoAction?.call(NavAction.board, null, false);
-      case NavAction.alight:
-        if (_lastAutoAdvancedLeg == activeLeg) return;
-        _lastAutoAdvancedLeg = activeLeg;
-        _journeySessionBloc.add(const AlightConfirmed());
-        unawaited(_autoAdvance(route, activeLeg, NavAction.alight));
-      case NavAction.advance:
-        if (_lastAutoAdvancedLeg == activeLeg) return;
-        _lastAutoAdvancedLeg = activeLeg;
-        unawaited(_autoAdvance(route, activeLeg, NavAction.advance));
     }
   }
 

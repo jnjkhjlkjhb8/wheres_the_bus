@@ -63,6 +63,7 @@ class _AlertCapsuleState extends State<_AlertCapsule>
   /// Arrival shows the full multi-line message; after [_kExpandedHold] it
   /// collapses to the resident single-line capsule.
   bool _expanded = true;
+  bool _motionStarted = false;
   Timer? _collapseTimer;
 
   void _scheduleCollapse() {
@@ -92,6 +93,14 @@ class _AlertCapsuleState extends State<_AlertCapsule>
       parent: _ctrl,
       curve: const Interval(0.35, 1, curve: AppMotion.easeOut),
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // MediaQuery dependencies are unavailable until initState has finished.
+    if (_motionStarted) return;
+    _motionStarted = true;
     if (AppMotion.reduced(context)) {
       _ctrl.value = 1;
     } else {
@@ -128,14 +137,7 @@ class _AlertCapsuleState extends State<_AlertCapsule>
     final cs = Theme.of(context).colorScheme;
     final dark = cs.brightness == Brightness.dark;
     final colors = noticeColors(alert.tone, cs);
-    final label = widget.extra > 0
-        ? AppI18n.of(context).alertPlusMoreAndDetails(
-            alert.title ?? alert.message,
-            widget.extra,
-          )
-        : AppI18n.of(
-            context,
-          ).alertAndDetails(alert.title ?? alert.message);
+    final label = _semanticLabel(context, alert);
 
     return Dismissible(
       key: ValueKey(alert.message),
@@ -158,35 +160,13 @@ class _AlertCapsuleState extends State<_AlertCapsule>
               ),
               // Height eases shut when the hold expires; padding rides along
               // because the whole container sits inside the AnimatedSize.
-              child: AnimatedSize(
-                duration: AppMotion.reduced(context)
-                    ? AppMotion.instant
-                    : AppMotion.sheet,
-                curve: AppMotion.easeOut,
-                alignment: Alignment.topCenter,
+              child: _sizeTransition(
                 child: Container(
                   constraints: const BoxConstraints(
                     minHeight: _kCapsuleHeight,
                   ),
-                  padding: _expanded
-                      ? const EdgeInsets.fromLTRB(
-                          AppTheme.space16,
-                          AppTheme.space12,
-                          AppTheme.space16,
-                          AppTheme.space12,
-                        )
-                      : const EdgeInsets.symmetric(
-                          horizontal: AppTheme.space14,
-                        ),
-                  decoration: BoxDecoration(
-                    color: colors.background,
-                    borderRadius: BorderRadius.circular(_kCapsuleHeight / 2),
-                    // Same elevation treatment as floatingControl: shadow on
-                    // the light map, hairline border where a shadow would
-                    // vanish.
-                    border: dark ? Border.all(color: cs.outlineVariant) : null,
-                    boxShadow: dark ? const [] : AppShadows.floating,
-                  ),
+                  padding: _padding,
+                  decoration: _decoration(colors, cs, dark),
                   child: FadeTransition(
                     opacity: _contentFade,
                     child: AnimatedSwitcher(
@@ -199,63 +179,8 @@ class _AlertCapsuleState extends State<_AlertCapsule>
                         alignment: Alignment.topCenter,
                         children: [...previous, ?current],
                       ),
-                      transitionBuilder: (child, anim) => FadeTransition(
-                        opacity: anim,
-                        child: AnimatedBuilder(
-                          animation: anim,
-                          builder: (_, blurred) {
-                            final sigma = (1 - anim.value) * 2;
-                            if (sigma == 0) return blurred!;
-                            return ImageFiltered(
-                              imageFilter: ui.ImageFilter.blur(
-                                sigmaX: sigma,
-                                sigmaY: sigma,
-                              ),
-                              child: blurred,
-                            );
-                          },
-                          child: child,
-                        ),
-                      ),
-                      child: Row(
-                        key: ValueKey(_expanded),
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: _expanded
-                            ? CrossAxisAlignment.start
-                            : CrossAxisAlignment.center,
-                        spacing: AppTheme.space6,
-                        children: [
-                          Padding(
-                            padding: EdgeInsets.only(top: _expanded ? 1 : 0),
-                            child: Icon(
-                              Icons.warning_amber_rounded,
-                              size: 16,
-                              color: colors.accent,
-                            ),
-                          ),
-                          Flexible(
-                            child: Text(
-                              _expanded
-                                  ? alert.message
-                                  : (alert.title ?? alert.message),
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: colors.ink,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              maxLines: _expanded ? 4 : 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (widget.extra > 0)
-                            Text(
-                              '+${widget.extra}',
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: colors.ink,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                        ],
-                      ),
+                      transitionBuilder: _transition,
+                      child: _row(alert, colors),
                     ),
                   ),
                 ),
@@ -264,6 +189,110 @@ class _AlertCapsuleState extends State<_AlertCapsule>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _sizeTransition({required Widget child}) {
+    // A zero-duration AnimatedSize dirties layout while the capsule collapses.
+    if (AppMotion.reduced(context)) return child;
+    return AnimatedSize(
+      duration: AppMotion.sheet,
+      curve: AppMotion.easeOut,
+      alignment: Alignment.topCenter,
+      child: child,
+    );
+  }
+
+  String _semanticLabel(BuildContext context, AlertViewModel alert) {
+    return widget.extra > 0
+        ? AppI18n.of(context).alertPlusMoreAndDetails(
+            alert.title ?? alert.message,
+            widget.extra,
+          )
+        : AppI18n.of(
+            context,
+          ).alertAndDetails(alert.title ?? alert.message);
+  }
+
+  EdgeInsets get _padding => _expanded
+      ? const EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          AppTheme.space12,
+          AppTheme.space16,
+          AppTheme.space12,
+        )
+      : const EdgeInsets.symmetric(horizontal: AppTheme.space14);
+
+  BoxDecoration _decoration(NoticeColors colors, ColorScheme cs, bool dark) =>
+      BoxDecoration(
+        color: colors.background,
+        borderRadius: BorderRadius.circular(_kCapsuleHeight / 2),
+        // A hairline preserves the floating surface boundary in dark mode.
+        border: dark ? Border.all(color: cs.outlineVariant) : null,
+        boxShadow: dark ? const [] : AppShadows.floating,
+      );
+
+  Widget _transition(Widget child, Animation<double> anim) {
+    return FadeTransition(
+      opacity: anim,
+      child: AnimatedBuilder(
+        animation: anim,
+        builder: (_, blurred) {
+          final sigma = (1 - anim.value) * 2;
+          if (sigma == 0) return blurred!;
+          return ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(
+              sigmaX: sigma,
+              sigmaY: sigma,
+            ),
+            child: blurred,
+          );
+        },
+        child: child,
+      ),
+    );
+  }
+
+  String _message(AlertViewModel alert) =>
+      _expanded ? alert.message : (alert.title ?? alert.message);
+
+  Widget _row(AlertViewModel alert, NoticeColors colors) {
+    return Row(
+      key: ValueKey(_expanded),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: _expanded
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.center,
+      spacing: AppTheme.space6,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(top: _expanded ? 1 : 0),
+          child: Icon(
+            Icons.warning_amber_rounded,
+            size: 16,
+            color: colors.accent,
+          ),
+        ),
+        Flexible(
+          child: Text(
+            _message(alert),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: colors.ink,
+              fontWeight: FontWeight.w600,
+            ),
+            maxLines: _expanded ? 4 : 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (widget.extra > 0)
+          Text(
+            '+${widget.extra}',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: colors.ink,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+      ],
     );
   }
 }

@@ -50,30 +50,55 @@ func (c *arrivalConsumer) run(ctx context.Context) {
 		zap.S().Errorw("failed", "component", "arrivals", "action", "create_group", "event", "failed", "err", err)
 	}
 	for ctx.Err() == nil {
-		if err := c.reclaim(ctx); err != nil && ctx.Err() == nil {
-			zap.S().Warnw("failed", "component", "arrivals", "action", "reclaim", "event", "failed", "err", err)
-		}
-		streams, err := c.rc.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    riderevent.Group,
-			Consumer: c.consumer,
-			Streams:  []string{riderevent.StreamKey, ">"},
-			Count:    _arrivalBatch,
-			Block:    _arrivalBlock,
-		}).Result()
-		if errors.Is(err, redis.Nil) || ctx.Err() != nil {
-			continue
-		}
-		if err != nil {
-			zap.S().Warnw("failed", "component", "arrivals", "action", "read", "event", "failed", "err", err)
-			if strings.Contains(err.Error(), "NOGROUP") {
-				_ = c.ensureGroup(ctx)
-			}
-			sleepCtx(ctx, _arrivalBlock)
-			continue
-		}
-		for _, s := range streams {
-			c.handle(ctx, s.Messages)
-		}
+		c.reclaimIfActive(ctx)
+		c.consumeBatch(ctx)
+	}
+}
+
+func (c *arrivalConsumer) reclaimIfActive(ctx context.Context) {
+	err := c.reclaim(ctx)
+	if shouldLogArrivalError(ctx, err) {
+		zap.S().Warnw("failed", "component", "arrivals", "action", "reclaim", "event", "failed", "err", err)
+	}
+}
+
+func shouldLogArrivalError(ctx context.Context, err error) bool {
+	return err != nil && ctx.Err() == nil
+}
+
+func (c *arrivalConsumer) consumeBatch(ctx context.Context) {
+	streams, err := c.rc.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    riderevent.Group,
+		Consumer: c.consumer,
+		Streams:  []string{riderevent.StreamKey, ">"},
+		Count:    _arrivalBatch,
+		Block:    _arrivalBlock,
+	}).Result()
+	if ignoreArrivalRead(ctx, err) {
+		return
+	}
+	if err != nil {
+		c.failedArrivalRead(ctx, err)
+		return
+	}
+	c.dispatchArrivalStreams(ctx, streams)
+}
+
+func ignoreArrivalRead(ctx context.Context, err error) bool {
+	return errors.Is(err, redis.Nil) || ctx.Err() != nil
+}
+
+func (c *arrivalConsumer) failedArrivalRead(ctx context.Context, err error) {
+	zap.S().Warnw("failed", "component", "arrivals", "action", "read", "event", "failed", "err", err)
+	if strings.Contains(err.Error(), "NOGROUP") {
+		_ = c.ensureGroup(ctx)
+	}
+	sleepCtx(ctx, _arrivalBlock)
+}
+
+func (c *arrivalConsumer) dispatchArrivalStreams(ctx context.Context, streams []redis.XStream) {
+	for _, stream := range streams {
+		c.handle(ctx, stream.Messages)
 	}
 }
 
@@ -105,25 +130,40 @@ func (c *arrivalConsumer) reclaim(ctx context.Context) error {
 // the entry is too old or unreadable to ever succeed.
 func (c *arrivalConsumer) handle(ctx context.Context, msgs []redis.XMessage) {
 	for _, msg := range msgs {
-		events, at, err := riderevent.Decode(msg)
-		switch {
-		case err != nil:
-			zap.S().Errorw("dropped", "component", "arrivals", "event", "undecodable", "id", msg.ID, "err", err)
-		case c.now().Sub(at) > _arrivalMaxAge:
-			zap.S().Warnw("dropped", "component", "arrivals", "event", "stale", "id", msg.ID, "age", c.now().Sub(at))
-		default:
-			dispatchCtx, cancel := context.WithTimeout(ctx, _dispatchTimeout)
-			err := c.handler.Arrivals(dispatchCtx, events)
-			cancel()
-			if err != nil {
-				// Left pending: the next reclaim retries it until it ages out.
-				zap.S().Warnw("failed", "component", "arrivals", "action", "dispatch", "event", "failed", "id", msg.ID, "err", err)
-				continue
-			}
+		if c.processArrivalMessage(ctx, msg) {
+			c.acknowledgeArrivalMessage(ctx, msg.ID)
 		}
-		if err := c.rc.XAck(ctx, riderevent.StreamKey, riderevent.Group, msg.ID).Err(); err != nil {
-			zap.S().Warnw("failed", "component", "arrivals", "action", "ack", "event", "failed", "id", msg.ID, "err", err)
-		}
+	}
+}
+
+func (c *arrivalConsumer) processArrivalMessage(ctx context.Context, msg redis.XMessage) bool {
+	events, at, err := riderevent.Decode(msg)
+	if err != nil {
+		zap.S().Errorw("dropped", "component", "arrivals", "event", "undecodable", "id", msg.ID, "err", err)
+		return true
+	}
+	if c.now().Sub(at) > _arrivalMaxAge {
+		zap.S().Warnw("dropped", "component", "arrivals", "event", "stale", "id", msg.ID, "age", c.now().Sub(at))
+		return true
+	}
+	return c.dispatchArrivalMessage(ctx, msg.ID, events)
+}
+
+func (c *arrivalConsumer) dispatchArrivalMessage(ctx context.Context, id string, events []riderevent.ArrivalEvent) bool {
+	dispatchCtx, cancel := context.WithTimeout(ctx, _dispatchTimeout)
+	err := c.handler.Arrivals(dispatchCtx, events)
+	cancel()
+	if err != nil {
+		// Failed dispatch stays pending until a reclaim retries it or it ages out.
+		zap.S().Warnw("failed", "component", "arrivals", "action", "dispatch", "event", "failed", "id", id, "err", err)
+		return false
+	}
+	return true
+}
+
+func (c *arrivalConsumer) acknowledgeArrivalMessage(ctx context.Context, id string) {
+	if err := c.rc.XAck(ctx, riderevent.StreamKey, riderevent.Group, id).Err(); err != nil {
+		zap.S().Warnw("failed", "component", "arrivals", "action", "ack", "event", "failed", "id", id, "err", err)
 	}
 }
 

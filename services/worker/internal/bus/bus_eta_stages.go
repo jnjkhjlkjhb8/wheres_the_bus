@@ -19,6 +19,10 @@ func parseSrcUpdateTime(s string) (time.Time, bool) {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, true
 	}
+	return parseLocalBusTime(s)
+}
+
+func parseLocalBusTime(s string) (time.Time, bool) {
 	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
 		if t, err := time.ParseInLocation(layout, s, pipeline.Taipei); err == nil {
 			return t, true
@@ -66,16 +70,20 @@ const _busEtaFrozenGap = 90 * time.Second
 func countFrozenEstimates(eat []busmodel.RawEstimated) int {
 	frozen := 0
 	for _, e := range eat {
-		srcT, srcOK := etaSourceTime(e)
-		dataT, dataOK := parseSrcUpdateTime(e.DataTime)
-		if !srcOK || !dataOK {
-			continue
-		}
-		if srcT.Sub(dataT) > _busEtaFrozenGap {
+		if frozenEstimate(e) {
 			frozen++
 		}
 	}
 	return frozen
+}
+
+func frozenEstimate(e busmodel.RawEstimated) bool {
+	srcT, srcOK := etaSourceTime(e)
+	dataT, dataOK := parseSrcUpdateTime(e.DataTime)
+	if !srcOK || !dataOK {
+		return false
+	}
+	return srcT.Sub(dataT) > _busEtaFrozenGap
 }
 
 // _busEtaDirectionUnknown is TDX's "direction not applicable" marker on an
@@ -84,6 +92,36 @@ func countFrozenEstimates(eat []busmodel.RawEstimated) int {
 const _busEtaDirectionUnknown uint8 = 255
 
 func buildBusEtaMap(city string, eat []busmodel.RawEstimated, mp []busmodel.StationMap) map[etaKey]busmodel.RawEstimated {
+	subsByRoute, dirsBySub := busRouteDirections(mp)
+	etamap := make(map[etaKey]busmodel.RawEstimated)
+	for _, e := range eat {
+		indexBusEstimate(city, e, subsByRoute, dirsBySub, etamap)
+	}
+	return etamap
+}
+
+func indexBusEstimate(city string, e busmodel.RawEstimated, subsByRoute map[string][]string, dirsBySub map[string][]uint8, etamap map[etaKey]busmodel.RawEstimated) {
+	uid, dir := shared.CanonicalSubroute(city, e.SubRouteUID, e.Direction)
+	subs := []string{uid}
+	if e.SubRouteUID == "" {
+		subs = subsByRoute[e.RouteUID]
+	}
+	for _, sub := range subs {
+		indexBusDirections(sub, dir, e, dirsBySub, etamap)
+	}
+}
+
+func indexBusDirections(sub string, dir uint8, e busmodel.RawEstimated, dirsBySub map[string][]uint8, etamap map[etaKey]busmodel.RawEstimated) {
+	dirs := []uint8{dir}
+	if dir == _busEtaDirectionUnknown {
+		dirs = dirsBySub[sub]
+	}
+	for _, d := range dirs {
+		putBusEstimate(etamap, etaKey{sub, d, e.StopUID}, e)
+	}
+}
+
+func busRouteDirections(mp []busmodel.StationMap) (map[string][]string, map[string][]uint8) {
 	subsByRoute := make(map[string][]string)
 	dirsBySub := make(map[string][]uint8)
 	seenSub := make(map[string]bool)
@@ -91,53 +129,33 @@ func buildBusEtaMap(city string, eat []busmodel.RawEstimated, mp []busmodel.Stat
 		if !slices.Contains(dirsBySub[b.SubRouteUID], b.Direction) {
 			dirsBySub[b.SubRouteUID] = append(dirsBySub[b.SubRouteUID], b.Direction)
 		}
-		if b.RouteUID == "" || seenSub[b.SubRouteUID] {
-			continue
-		}
-		seenSub[b.SubRouteUID] = true
-		subsByRoute[b.RouteUID] = append(subsByRoute[b.RouteUID], b.SubRouteUID)
+		indexRouteSubroute(b, seenSub, subsByRoute)
 	}
-	etamap := make(map[etaKey]busmodel.RawEstimated)
-	put := func(k etaKey, e busmodel.RawEstimated) {
-		if prev, seen := etamap[k]; seen {
-			etamap[k] = pickBusEstimate(prev, e)
-		} else {
-			etamap[k] = e
-		}
+	return subsByRoute, dirsBySub
+}
+
+func indexRouteSubroute(b busmodel.StationMap, seen map[string]bool, subsByRoute map[string][]string) {
+	if b.RouteUID == "" || seen[b.SubRouteUID] {
+		return
 	}
-	for _, e := range eat {
-		uid, dir := shared.CanonicalSubroute(city, e.SubRouteUID, e.Direction)
-		subs := []string{uid}
-		if e.SubRouteUID == "" {
-			subs = subsByRoute[e.RouteUID]
-		}
-		for _, sub := range subs {
-			dirs := []uint8{dir}
-			if dir == _busEtaDirectionUnknown {
-				dirs = dirsBySub[sub]
-			}
-			for _, d := range dirs {
-				put(etaKey{sub, d, e.StopUID}, e)
-			}
-		}
+	seen[b.SubRouteUID] = true
+	subsByRoute[b.RouteUID] = append(subsByRoute[b.RouteUID], b.SubRouteUID)
+}
+
+func putBusEstimate(etamap map[etaKey]busmodel.RawEstimated, key etaKey, value busmodel.RawEstimated) {
+	if previous, seen := etamap[key]; seen {
+		etamap[key] = pickBusEstimate(previous, value)
+	} else {
+		etamap[key] = value
 	}
-	return etamap
 }
 
 // parseGPSTimeUnix converts a TDX GPSTime string to epoch seconds. TDX usually
 // sends RFC3339 with a +08:00 offset; some feeds drop the zone, which we read as
 // Taipei local. Unparseable or empty values yield 0 (the client shows "無定位").
 func parseGPSTimeUnix(s string) int64 {
-	if s == "" {
-		return 0
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
+	if t, ok := parseSrcUpdateTime(s); ok {
 		return t.Unix()
-	}
-	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
-		if t, err := time.ParseInLocation(layout, s, pipeline.Taipei); err == nil {
-			return t.Unix()
-		}
 	}
 	return 0
 }
@@ -169,24 +187,25 @@ func collectFillKeys(mp []busmodel.StationMap, etamap map[etaKey]busmodel.RawEst
 	var fillKeys []predict.RouteDirKey
 	fillUIDs := make(map[string]bool)
 	for _, b := range mp {
-		uid, dir := b.SubRouteUID, b.Direction
-		etaEnt, ok := etaForStop(etamap, b)
-		if !ok {
-			continue
-		}
-		if etaEnt.StopStatus == 1 && etaEnt.NextBusTime == "" {
-			fillKeys = append(fillKeys, predict.RouteDirKey{SubRouteUID: uid, Direction: int32(dir)})
-			fillUIDs[uid] = true
-		}
-		// Delay propagation needs the baseline (schedule + running time) at upstream
-		// stops where a live bus is en route, so include those routes' departures
-		// and stop offsets in the batched lookups too.
-		if etaEnt.StopStatus == 0 {
-			fillKeys = append(fillKeys, predict.RouteDirKey{SubRouteUID: uid, Direction: int32(dir)})
-			fillUIDs[uid] = true
+		if key, ok := departureFillKey(b, etamap); ok {
+			fillKeys = append(fillKeys, key)
+			fillUIDs[key.SubRouteUID] = true
 		}
 	}
 	return fillKeys, fillUIDs
+}
+
+func departureFillKey(b busmodel.StationMap, etamap map[etaKey]busmodel.RawEstimated) (predict.RouteDirKey, bool) {
+	eta, ok := etaForStop(etamap, b)
+	if !ok {
+		return predict.RouteDirKey{}, false
+	}
+	return predict.RouteDirKey{SubRouteUID: b.SubRouteUID, Direction: int32(b.Direction)}, needsDepartureLookup(eta)
+}
+
+// Delay propagation needs the same schedule baseline as schedule-only fills.
+func needsDepartureLookup(eta busmodel.RawEstimated) bool {
+	return eta.StopStatus == 0 || eta.StopStatus == 1 && eta.NextBusTime == ""
 }
 
 func buildUpstreamObs(
@@ -199,7 +218,7 @@ func buildUpstreamObs(
 	for _, b := range mp {
 		uid, cdir := b.SubRouteUID, b.Direction
 		eta, ok := etaForStop(etamap, b)
-		if !ok || eta.StopStatus != 0 {
+		if !usableUpstreamEstimate(ok, eta) {
 			continue
 		}
 		dir := int32(cdir)
@@ -219,6 +238,10 @@ func buildUpstreamObs(
 	return upstreamByRoute
 }
 
+func usableUpstreamEstimate(found bool, eta busmodel.RawEstimated) bool {
+	return found && eta.StopStatus == 0
+}
+
 const (
 	_busDutyStatusEnded    uint8 = 2
 	_busStatusNotInService uint8 = 99
@@ -233,6 +256,15 @@ func nearestBus(lat, lon float64, buses []*models.BusPosition) (plate *string, s
 	if lat == 0 {
 		return nil, nil, nil
 	}
+	nearest, nearestDist := closestServiceBus(lat, lon, buses)
+	if nearest == nil {
+		return nil, nil, nil
+	}
+	pn, spd, di := nearest.PlateNumb, int16(nearest.Speed), int(nearestDist)
+	return &pn, &spd, &di
+}
+
+func closestServiceBus(lat, lon float64, buses []*models.BusPosition) (*models.BusPosition, float64) {
 	var nearest *models.BusPosition
 	var nearestDist float64
 	for _, bus := range buses {
@@ -241,18 +273,16 @@ func nearestBus(lat, lon float64, buses []*models.BusPosition) (plate *string, s
 		}
 		d := history.Haversine(lat, lon,
 			float64(bus.PositionLat), float64(bus.PositionLon))
-		if nearest == nil || d < nearestDist {
+		if nearerBus(nearest, d, nearestDist) {
 			nearestDist = d
 			nearest = bus
 		}
 	}
-	if nearest == nil {
-		return nil, nil, nil
-	}
-	pn := nearest.PlateNumb
-	spd := int16(nearest.Speed)
-	di := int(nearestDist)
-	return &pn, &spd, &di
+	return nearest, nearestDist
+}
+
+func nearerBus(nearest *models.BusPosition, distance, nearestDistance float64) bool {
+	return nearest == nil || distance < nearestDistance
 }
 
 // busAtStopKey identifies the stop one vehicle is standing at, on the same
@@ -271,24 +301,29 @@ type stopPresence struct {
 func buildBusAtStopMap(city string, positions []busmodel.RawPosition) map[busAtStopKey]stopPresence {
 	out := make(map[busAtStopKey]stopPresence, len(positions))
 	for _, p := range positions {
-		if p.StopUID == "" {
-			continue
+		if key, presence, ok := serviceStopPresence(city, p); ok {
+			out[key] = presence
 		}
-		// Same rule as nearestBus: a vehicle that ended its duty or is running
-		// out of service is not the bus this stop's estimate is about, even when
-		// the feed places it at the kerb.
-		if p.DutyStatus == _busDutyStatusEnded || p.BusStatus == _busStatusNotInService {
-			continue
-		}
-		plate := normalizeArrivalPlate(p.PlateNumb)
-		if plate == "" {
-			continue
-		}
-		speed := int16(p.Speed)
-		uid, direction := shared.CanonicalSubroute(city, p.SubRouteUID, p.Direction)
-		out[busAtStopKey{uid, direction, p.StopUID}] = stopPresence{plate: plate, speed: &speed}
 	}
 	return out
+}
+
+func serviceStopPresence(city string, p busmodel.RawPosition) (busAtStopKey, stopPresence, bool) {
+	if !positionAtServiceStop(p) {
+		return busAtStopKey{}, stopPresence{}, false
+	}
+	plate := normalizeArrivalPlate(p.PlateNumb)
+	if plate == "" {
+		return busAtStopKey{}, stopPresence{}, false
+	}
+	speed := int16(p.Speed)
+	uid, direction := shared.CanonicalSubroute(city, p.SubRouteUID, p.Direction)
+	return busAtStopKey{uid, direction, p.StopUID}, stopPresence{plate: plate, speed: &speed}, true
+}
+
+// Out-of-service and ended-duty vehicles cannot be the stop's arriving bus.
+func positionAtServiceStop(p busmodel.RawPosition) bool {
+	return p.StopUID != "" && p.DutyStatus != _busDutyStatusEnded && p.BusStatus != _busStatusNotInService
 }
 
 func busAtStop(index map[busAtStopKey]stopPresence, key busAtStopKey) (*string, *int16, *int, bool) {
@@ -304,8 +339,12 @@ func crowdForPlate(buses []*models.BusPosition, plate *string) models.BusCrowdLe
 	if plate == nil || *plate == "" {
 		return models.BusCrowdLevel_BUS_CROWD_UNKNOWN
 	}
+	return crowdForKnownPlate(buses, *plate)
+}
+
+func crowdForKnownPlate(buses []*models.BusPosition, plate string) models.BusCrowdLevel {
 	for _, bus := range buses {
-		if normalizeArrivalPlate(bus.PlateNumb) == *plate {
+		if normalizeArrivalPlate(bus.PlateNumb) == plate {
 			return bus.CrowdLevel
 		}
 	}
@@ -316,6 +355,10 @@ func computeArrivalUnix(status uint8, est int32, nextBusTime string, now time.Ti
 	if status == 0 && est > 0 {
 		return now.Add(time.Duration(est) * time.Second).Unix()
 	}
+	return scheduledArrivalUnix(status, nextBusTime)
+}
+
+func scheduledArrivalUnix(status uint8, nextBusTime string) int64 {
 	if status == 1 && nextBusTime != "" {
 		if t, err := time.Parse(time.RFC3339, nextBusTime); err == nil {
 			return t.Unix()

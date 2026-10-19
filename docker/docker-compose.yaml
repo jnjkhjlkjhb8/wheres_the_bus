@@ -44,12 +44,14 @@ services:
       REDIS_ADDR: redis:6379
       MAAS_BACKEND: ${MAAS_BACKEND:-motis}
       MOTIS_BASE_URL: ${MOTIS_BASE_URL:-http://motis:8080}
+      ROUTER_ASSETS_DIR: /srv/assets
     networks:
       - frontend
       - backend
       - routing
     volumes:
       - router_keys:/data
+      - ${ROUTER_ASSETS_HOST_DIR:-/srv/bus-assets}:/srv/assets:ro
     mem_limit: ${ROUTER_MEM_LIMIT:-256m}
     pids_limit: 128
     cpus: 1.0

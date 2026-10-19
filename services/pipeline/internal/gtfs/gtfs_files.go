@@ -256,7 +256,34 @@ WHERE COALESCE(TRIM(route_short_name), '') <> ''
 ORDER BY route_id`
 }
 
-var _gtfsTranslationsSQL = `
+var _gtfsTranslationsSQL = buildGTFSTranslationsSQL()
+
+var _gtfsPathwaysSQL = buildGTFSPathwaysSQL()
+
+// _gtfsAttributionsSQL records where the data came from. TDX's terms require the
+// source to be credited, so this file is a licensing obligation rather than a
+// nicety, and it is a constant because there is exactly one source.
+const _gtfsAttributionsSQL = `
+SELECT
+  'motc' AS attribution_id,
+  '交通部運輸資料流通服務平臺 (TDX)' AS organization_name,
+  0 AS is_producer,
+  0 AS is_operator,
+  1 AS is_authority,
+  'https://tdx.transportdata.tw/' AS attribution_url`
+
+func gtfsFeedInfoSQL(version string) string {
+	return `
+SELECT
+  '我車呢' AS feed_publisher_name,
+  'https://tdx.transportdata.tw/' AS feed_publisher_url,
+  '` + _gtfsLang + `' AS feed_lang,
+  'https://tdx.transportdata.tw/' AS feed_contact_url,
+  ` + pipeline.SQLStringLiteral(version) + ` AS feed_version`
+}
+
+func buildGTFSTranslationsSQL() string {
+	return `
 WITH a AS (` + gtfsAgencySQLFor(_gtfsNameEn) + `
 ), s AS (` + gtfsStopsSQLFor(_gtfsNameEn) + `
 ), r AS (` + gtfsRoutesSQLFor(_gtfsNameEn) + `
@@ -278,8 +305,10 @@ SELECT 'routes', 'route_long_name', '` + _gtfsTranslationLang + `', route_long_n
 FROM r
 WHERE COALESCE(TRIM(route_long_name), '') <> ''
 ORDER BY 1, 2, 5`
+}
 
-var _gtfsPathwaysSQL = `
+func buildGTFSPathwaysSQL() string {
+	return `
 WITH stop AS (SELECT * FROM ` + _gtfsStopTable + `), entrance AS (
   SELECT stop_id, parent_station FROM stop WHERE location_type = 2
 ), flag AS (
@@ -313,25 +342,4 @@ CROSS JOIN LATERAL (
                              OR COALESCE(f.stair, false))
 ) m
 ORDER BY pathway_id`
-
-// _gtfsAttributionsSQL records where the data came from. TDX's terms require the
-// source to be credited, so this file is a licensing obligation rather than a
-// nicety, and it is a constant because there is exactly one source.
-const _gtfsAttributionsSQL = `
-SELECT
-  'motc' AS attribution_id,
-  '交通部運輸資料流通服務平臺 (TDX)' AS organization_name,
-  0 AS is_producer,
-  0 AS is_operator,
-  1 AS is_authority,
-  'https://tdx.transportdata.tw/' AS attribution_url`
-
-func gtfsFeedInfoSQL(version string) string {
-	return `
-SELECT
-  '我車呢' AS feed_publisher_name,
-  'https://tdx.transportdata.tw/' AS feed_publisher_url,
-  '` + _gtfsLang + `' AS feed_lang,
-  'https://tdx.transportdata.tw/' AS feed_contact_url,
-  ` + pipeline.SQLStringLiteral(version) + ` AS feed_version`
 }

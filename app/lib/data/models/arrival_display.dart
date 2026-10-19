@@ -15,32 +15,28 @@ class ArrivalDisplay {
 
   factory ArrivalDisplay.fromBusStop(AppI18n i18n, BusStopArrival a) {
     final label = a.displayLabelOf(i18n);
+    final minutes = a.minutes;
+    final serviceState = label != null
+        ? EtaStatus.label(label)
+        : EtaStatus.unknown();
     final (EtaStatus status, int rank) = switch (a.displayStatus) {
       BusStopDisplayStatus.arriving => (EtaStatus.arriving(), 0),
       BusStopDisplayStatus.departingSoon => (EtaStatus.approaching(), 1),
-      BusStopDisplayStatus.minutes => (
-        EtaStatus.minutes(a.minutes ?? 0),
-        (a.minutes ?? 0) + 2,
+      BusStopDisplayStatus.minutes when minutes != null => (
+        EtaStatus.minutes(minutes),
+        minutes + 2,
       ),
       // Not-yet-departed with a scheduled clock time (HH:mm): show the clock
       // but keep the time-based rank so it interleaves with live arrivals by
       // when it actually comes, instead of sinking to the service-state floor.
-      BusStopDisplayStatus.notDeparted
-          when label != null && a.minutes != null =>
-        (
-          EtaStatus.label(label),
-          (a.minutes ?? 0) + 2,
-        ),
+      BusStopDisplayStatus.notDeparted when minutes != null => (
+        serviceState,
+        minutes + 2,
+      ),
       // Service has ended for the day: sink below every other service-state
       // row (交管不停靠 / 未營運 / unknown), which stay at 9999.
-      BusStopDisplayStatus.lastBusPassed => (
-        label != null ? EtaStatus.label(label) : EtaStatus.unknown(),
-        10000,
-      ),
-      _ => (
-        label != null ? EtaStatus.label(label) : EtaStatus.unknown(),
-        9999,
-      ),
+      BusStopDisplayStatus.lastBusPassed => (serviceState, 10000),
+      _ => (serviceState, 9999),
     };
     return ArrivalDisplay(
       label: a.routeName,

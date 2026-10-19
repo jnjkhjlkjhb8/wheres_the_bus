@@ -154,15 +154,7 @@ func (c *motisClient) Plan(
 		return nil, _oops.Wrapf(err, "MOTIS plan")
 	}
 	if !resp.IsSuccess() {
-		err := _oops.
-			With("status_code", resp.StatusCode()).
-			With("url", resp.Request.URL).
-			With("string", strings.TrimSpace(resp.String())).
-			Errorf("MOTIS plan HTTP")
-		if resp.StatusCode() == http.StatusNotFound {
-			return nil, _oops.Join(errMaasNoRoute, errMotisNoItinerary, err)
-		}
-		return nil, err
+		return nil, motisHTTPError(resp)
 	}
 	if len(out.Itineraries) == 0 {
 		return nil, _oops.Join(errMaasNoRoute, errMotisNoItinerary)
@@ -174,6 +166,18 @@ func (c *motisClient) Plan(
 		previous: out.PreviousPageCursor,
 		next:     out.NextPageCursor,
 	}, nil
+}
+
+func motisHTTPError(resp *resty.Response) error {
+	err := _oops.
+		With("status_code", resp.StatusCode()).
+		With("url", resp.Request.URL).
+		With("string", strings.TrimSpace(resp.String())).
+		Errorf("MOTIS plan HTTP")
+	if resp.StatusCode() == http.StatusNotFound {
+		return _oops.Join(errMaasNoRoute, errMotisNoItinerary, err)
+	}
+	return err
 }
 
 func convertMotisItineraries(itineraries []motisItinerary) (*tdxAPIResponse, []*motisWalkGeometry) {
@@ -230,6 +234,12 @@ func motisSection(leg motisLeg) tdxSection {
 			RouteColor: leg.RouteColor,
 		}
 	}
+	addMotisStopMetadata(&section, leg)
+	addMotisAlternatives(&section, leg.Alternatives)
+	return section
+}
+
+func addMotisStopMetadata(section *tdxSection, leg motisLeg) {
 	for _, stop := range leg.IntermediateStops {
 		section.IntermediateStops = append(section.IntermediateStops, tdxStop{
 			Departure: tdxPlaceInfo{
@@ -248,14 +258,16 @@ func motisSection(leg motisLeg) tdxSection {
 			Website:  leg.AgencyURL,
 		}
 	}
-	for _, alternative := range leg.Alternatives {
+}
+
+func addMotisAlternatives(section *tdxSection, alternatives [][]motisLeg) {
+	for _, alternative := range alternatives {
 		transit, ok := motisAlternativeLeg(alternative)
 		if !ok {
 			continue
 		}
 		section.Alternatives = append(section.Alternatives, motisSection(transit))
 	}
-	return section
 }
 
 func motisAlternativeLeg(legs []motisLeg) (motisLeg, bool) {
@@ -298,27 +310,13 @@ func motisPlaceType(place motisPlace) string {
 }
 
 func motisTransitMode(mode string) string {
-	switch strings.ToUpper(mode) {
-	case "BUS":
-		return "Bus"
-	case "COACH":
-		return "HighwayBus"
-	case "SUBWAY":
-		return "Subway"
-	case "TRAM":
-		return "Tram"
-	case "HIGHSPEED_RAIL":
-		return "THSR"
-	case "RAIL", "LONG_DISTANCE", "NIGHT_RAIL", "REGIONAL_RAIL", "REGIONAL_FAST_RAIL", "SUBURBAN":
-		return "Rail"
-	case "FERRY":
-		return "Ferry"
-	case "AERIAL_LIFT", "FUNICULAR":
-		return "CableCar"
-	default:
-		// WALK, BIKE, RENTAL, CAR and anything MOTIS adds later.
-		return ""
+	modes := map[string]string{
+		"BUS": "Bus", "COACH": "HighwayBus", "SUBWAY": "Subway", "TRAM": "Tram",
+		"HIGHSPEED_RAIL": "THSR", "RAIL": "Rail", "LONG_DISTANCE": "Rail",
+		"NIGHT_RAIL": "Rail", "REGIONAL_RAIL": "Rail", "REGIONAL_FAST_RAIL": "Rail",
+		"SUBURBAN": "Rail", "FERRY": "Ferry", "AERIAL_LIFT": "CableCar", "FUNICULAR": "CableCar",
 	}
+	return modes[strings.ToUpper(mode)]
 }
 
 // motisLegGeometry lifts the street geometry MOTIS already computed for a walk
@@ -329,48 +327,44 @@ func motisLegGeometry(leg motisLeg) *motisWalkGeometry {
 		return nil
 	}
 	path := decodeMotisPolyline(leg.LegGeometry)
-	if len(path) == 0 && len(leg.Steps) == 0 {
+	if !motisGeometryPresent(path, leg.Steps) {
 		return nil
 	}
 	geometry := &motisWalkGeometry{path: path}
 	for _, step := range leg.Steps {
-		walkStep := &pb.WalkStep{
-			Instruction:    motisStepInstruction(step),
-			ManeuverType:   "turn",
-			Modifier:       motisStepModifier(step.RelativeDirection),
-			DistanceMeters: step.Distance,
-		}
-		if points := decodeMotisPolyline(step.Polyline); len(points) > 0 {
-			walkStep.Location = points[0]
-		}
-		geometry.steps = append(geometry.steps, walkStep)
+		geometry.steps = append(geometry.steps, motisWalkStep(step))
 	}
 	return geometry
+}
+
+func motisGeometryPresent(path []*pb.Location, steps []motisStep) bool {
+	return len(path) != 0 || len(steps) != 0
+}
+
+func motisWalkStep(step motisStep) *pb.WalkStep {
+	walkStep := &pb.WalkStep{
+		Instruction:    motisStepInstruction(step),
+		ManeuverType:   "turn",
+		Modifier:       motisStepModifier(step.RelativeDirection),
+		DistanceMeters: step.Distance,
+	}
+	if points := decodeMotisPolyline(step.Polyline); len(points) > 0 {
+		walkStep.Location = points[0]
+	}
+	return walkStep
 }
 
 // motisStepModifier maps MOTIS's relativeDirection onto the OSRM modifier
 // vocabulary [walkInstruction] and the app already speak, so the turn-by-turn
 // list renders identically whichever backend produced it.
 func motisStepModifier(direction string) string {
-	switch strings.ToUpper(direction) {
-	case "HARD_LEFT":
-		return "sharp left"
-	case "HARD_RIGHT":
-		return "sharp right"
-	case "LEFT", "CONTINUE_LEFT":
-		return "left"
-	case "RIGHT", "CONTINUE_RIGHT":
-		return "right"
-	case "SLIGHTLY_LEFT":
-		return "slight left"
-	case "SLIGHTLY_RIGHT":
-		return "slight right"
-	case "UTURN_LEFT", "UTURN_RIGHT":
-		return "uturn"
-	default:
-		// CONTINUE, DEPART, ELEVATOR, STAIRS and anything added later.
-		return ""
+	modifiers := map[string]string{
+		"HARD_LEFT": "sharp left", "HARD_RIGHT": "sharp right", "LEFT": "left",
+		"CONTINUE_LEFT": "left", "RIGHT": "right", "CONTINUE_RIGHT": "right",
+		"SLIGHTLY_LEFT": "slight left", "SLIGHTLY_RIGHT": "slight right",
+		"UTURN_LEFT": "uturn", "UTURN_RIGHT": "uturn",
 	}
+	return modifiers[strings.ToUpper(direction)]
 }
 
 // motisStepInstruction composes the same Traditional Chinese sentence the OSRM
@@ -393,62 +387,90 @@ func applyMotisWalkGeometry(refs []maasSectionRef, geometry []*motisWalkGeometry
 	}
 	for i, ref := range refs {
 		leg := geometry[i]
-		if leg == nil || ref.target == nil {
-			continue
-		}
-		ref.target.WalkPath = leg.path
-		ref.target.WalkSteps = leg.steps
+		applyMotisSectionGeometry(ref.target, leg)
 	}
 	return true
 }
 
+func applyMotisSectionGeometry(target *pb.Section, geometry *motisWalkGeometry) {
+	if geometry == nil || target == nil {
+		return
+	}
+	target.WalkPath = geometry.path
+	target.WalkSteps = geometry.steps
+}
+
+type motisPolylineDecoder struct {
+	encoded string
+	index   int
+}
+
+func (d *motisPolylineDecoder) readValue() (int64, bool) {
+	result, ok := d.readUnsignedValue()
+	if !ok {
+		return 0, false
+	}
+	if result&1 != 0 {
+		return ^(result >> 1), true
+	}
+	return result >> 1, true
+}
+
+func (d *motisPolylineDecoder) readUnsignedValue() (int64, bool) {
+	var (
+		shift  uint
+		result int64
+	)
+	for shift <= 60 {
+		b, ok := d.readByte()
+		if !ok {
+			return 0, false
+		}
+		result |= (b & 0x1f) << shift
+		if b < 0x20 {
+			return result, true
+		}
+		shift += 5
+	}
+	return 0, false
+}
+
+func (d *motisPolylineDecoder) readByte() (int64, bool) {
+	if d.index >= len(d.encoded) {
+		return 0, false
+	}
+	b := int64(d.encoded[d.index]) - 63
+	d.index++
+	return b, true
+}
+
 func decodeMotisPolyline(line motisPolyline) []*pb.Location {
-	if line.Points == "" {
+	if line.Points == "" || line.Precision <= 0 {
 		return nil
 	}
-	precision := line.Precision
-	if precision <= 0 {
-		return nil
+	return decodeMotisPoints(line)
+}
+
+func (d *motisPolylineDecoder) readDeltas() (int64, int64, bool) {
+	lat, ok := d.readValue()
+	if !ok {
+		return 0, 0, false
 	}
-	scale := math.Pow10(precision)
+	lng, ok := d.readValue()
+	return lat, lng, ok
+}
+
+func decodeMotisPoints(line motisPolyline) []*pb.Location {
+	scale := math.Pow10(line.Precision)
 	var (
 		out     []*pb.Location
 		lat     int64
 		lng     int64
-		index   int
 		encoded = line.Points
 	)
-	readValue := func() (int64, bool) {
-		var (
-			shift  uint
-			result int64
-		)
-		for {
-			if index >= len(encoded) {
-				return 0, false
-			}
-			b := int64(encoded[index]) - 63
-			index++
-			result |= (b & 0x1f) << shift
-			if b < 0x20 {
-				break
-			}
-			shift += 5
-			if shift > 60 {
-				return 0, false
-			}
-		}
-		if result&1 != 0 {
-			return ^(result >> 1), true
-		}
-		return result >> 1, true
-	}
-	for index < len(encoded) {
-		dLat, ok := readValue()
-		if !ok {
-			return out
-		}
-		dLng, ok := readValue()
+	decoder := motisPolylineDecoder{encoded: encoded}
+	for decoder.index < len(encoded) {
+		dLat, dLng, ok := decoder.readDeltas()
 		if !ok {
 			return out
 		}
@@ -492,14 +514,18 @@ func motisPlanQuery(req *pb.MaasPlanRequest, now time.Time) url.Values {
 	// Shared bike is RENTAL plus a form-factor filter: without the filter MOTIS
 	// would also offer scooters and cargo bikes from any GBFS feed that carries
 	// them, which is not what the rider asked for by picking 共享單車.
-	if firstRental {
-		query.Set("preTransitRentalFormFactors", "BICYCLE")
-	}
-	if lastRental {
-		query.Set("postTransitRentalFormFactors", "BICYCLE")
-	}
+	addMotisRentalFilters(query, firstRental, lastRental)
 	addMotisPreferences(query, req)
 	return query
+}
+
+func addMotisRentalFilters(query url.Values, first, last bool) {
+	if first {
+		query.Set("preTransitRentalFormFactors", "BICYCLE")
+	}
+	if last {
+		query.Set("postTransitRentalFormFactors", "BICYCLE")
+	}
 }
 
 func addMotisPreferences(query url.Values, req *pb.MaasPlanRequest) {
@@ -514,6 +540,11 @@ func addMotisPreferences(query url.Values, req *pb.MaasPlanRequest) {
 	}
 	// Zero is a request here -- direct connections only -- which is why the
 	// field carries presence and this reads it rather than testing for zero.
+	addMotisConstraints(query, req)
+	addMotisPaging(query, req)
+}
+
+func addMotisConstraints(query url.Values, req *pb.MaasPlanRequest) {
 	if req.MaxTransfers != nil {
 		query.Set("maxTransfers", strconv.Itoa(int(clampInt(req.GetMaxTransfers(), 0, 5, 0))))
 	}
@@ -523,6 +554,9 @@ func addMotisPreferences(query url.Values, req *pb.MaasPlanRequest) {
 	if req.CarryBike {
 		query.Set("requireBikeTransport", "true")
 	}
+}
+
+func addMotisPaging(query url.Values, req *pb.MaasPlanRequest) {
 	if cursor := strings.TrimSpace(req.PageCursor); cursor != "" {
 		query.Set("pageCursor", cursor)
 		// Paging only means anything against a timetable view: the default
@@ -579,47 +613,37 @@ func motisTransitModes(modes []int32) []string {
 }
 
 func motisMileModes(mode int32) (modes []string, rental bool) {
-	switch mode {
-	case 1:
-		return []string{"BIKE"}, false
-	case 2:
-		return []string{"CAR"}, false
-	case 3:
-		return []string{"RENTAL", "WALK"}, true
-	default:
-		return []string{"WALK"}, false
+	choices := map[int32][]string{
+		1: {"BIKE"},
+		2: {"CAR"},
+		3: {"RENTAL", "WALK"},
 	}
+	modes, ok := choices[mode]
+	if !ok {
+		modes = []string{"WALK"}
+	}
+	return modes, mode == 3
+}
+
+func validGeneralisedCost(gc float64) float64 {
+	if gc < 0 || gc > 1 {
+		return 0
+	}
+	return gc
+}
+
+func normaliseRouteAxis(value, low, high int64) float64 {
+	if high <= low {
+		return 0
+	}
+	return float64(value-low) / float64(high-low)
 }
 
 func rankMotisRoutes(response *pb.MaasPlanResponse, gc float64, top int32) {
 	if response == nil || len(response.Routes) <= 1 {
 		return
 	}
-	if gc < 0 || gc > 1 {
-		gc = 0
-	}
-	minTime, maxTime := response.Routes[0].TravelTime, response.Routes[0].TravelTime
-	minFare, maxFare := response.Routes[0].TotalFare, response.Routes[0].TotalFare
-	for _, route := range response.Routes {
-		minTime = min(minTime, route.TravelTime)
-		maxTime = max(maxTime, route.TravelTime)
-		minFare = min(minFare, route.TotalFare)
-		maxFare = max(maxFare, route.TotalFare)
-	}
-	// A zero span means every itinerary agrees on that axis, so it carries no
-	// information and must not be allowed to divide by zero into one.
-	normalise := func(value, low, high int64) float64 {
-		if high <= low {
-			return 0
-		}
-		return float64(value-low) / float64(high-low)
-	}
-	cost := make(map[*pb.Route]float64, len(response.Routes))
-	for _, route := range response.Routes {
-		timeCost := normalise(route.TravelTime, minTime, maxTime)
-		fareCost := normalise(int64(route.TotalFare), int64(minFare), int64(maxFare))
-		cost[route] = gc*timeCost + (1-gc)*fareCost
-	}
+	cost := motisRouteCosts(response.Routes, gc)
 	// SliceStable so itineraries the weighting cannot separate keep the order
 	// MOTIS returned them in, which is by departure time.
 	sort.SliceStable(response.Routes, func(i, j int) bool {
@@ -628,6 +652,27 @@ func rankMotisRoutes(response *pb.MaasPlanResponse, gc float64, top int32) {
 	if limit := int(clampInt(top, 1, 10, 5)); len(response.Routes) > limit {
 		response.Routes = response.Routes[:limit]
 	}
+}
+
+func motisRouteCosts(routes []*pb.Route, gc float64) map[*pb.Route]float64 {
+	gc = validGeneralisedCost(gc)
+	minTime, maxTime := routes[0].TravelTime, routes[0].TravelTime
+	minFare, maxFare := routes[0].TotalFare, routes[0].TotalFare
+	for _, route := range routes {
+		minTime = min(minTime, route.TravelTime)
+		maxTime = max(maxTime, route.TravelTime)
+		minFare = min(minFare, route.TotalFare)
+		maxFare = max(maxFare, route.TotalFare)
+	}
+	// A zero span means every itinerary agrees on that axis, so it carries no
+	// information and must not be allowed to divide by zero into one.
+	cost := make(map[*pb.Route]float64, len(routes))
+	for _, route := range routes {
+		timeCost := normaliseRouteAxis(route.TravelTime, minTime, maxTime)
+		fareCost := normaliseRouteAxis(int64(route.TotalFare), int64(minFare), int64(maxFare))
+		cost[route] = gc*timeCost + (1-gc)*fareCost
+	}
+	return cost
 }
 
 // BackendName labels the selected planner for the startup log, so the

@@ -57,14 +57,10 @@ class JourneyLeg extends Equatable {
         pendingWalkSeconds += section.travelSummary.duration;
         continue;
       }
-      final headsign = section.transport.headsign;
-      final label = section.transport.shortName.isEmpty
-          ? section.transport.name
-          : section.transport.shortName;
       legs.add(
         JourneyLeg(
           kind: _kindOf(section),
-          routeLabel: headsign.isEmpty ? label : '$label 往$headsign',
+          routeLabel: _routeLabel(section),
           boardStop: section.departure.name,
           alightStop: section.arrival.name,
           stopNames: [for (final s in section.intermediateStops) s.name],
@@ -82,6 +78,14 @@ class JourneyLeg extends Equatable {
       pendingWalkSeconds = 0;
     }
     return legs;
+  }
+
+  static String _routeLabel(PlanSection section) {
+    final headsign = section.transport.headsign;
+    final label = section.transport.shortName.isEmpty
+        ? section.transport.name
+        : section.transport.shortName;
+    return headsign.isEmpty ? label : '$label 往$headsign';
   }
 
   final JourneyLegKind kind;

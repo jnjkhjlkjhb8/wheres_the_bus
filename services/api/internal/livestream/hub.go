@@ -77,24 +77,15 @@ func (h *LiveHub) Touch(ctx context.Context, key string, ttl time.Duration) {
 
 func (h *LiveHub) Subscribe(ctx context.Context, channel string) (<-chan []byte, func(), error) {
 	h.mu.Lock()
-	if h.maxStreams > 0 && h.activeStreams >= h.maxStreams {
+	if h.atCapacityLocked() {
 		h.mu.Unlock()
 		return nil, nil, status.Error(codes.ResourceExhausted, "live stream capacity reached")
 	}
 
-	entry := h.entries[channel]
-	if entry == nil {
-		upstream, upstreamClose, err := h.source.Subscribe(context.WithoutCancel(ctx), channel)
-		if err != nil {
-			h.mu.Unlock()
-			return nil, nil, err
-		}
-		entry = &liveHubEntry{
-			upstreamClose: upstreamClose,
-			subscribers:   make(map[uint64]chan []byte),
-		}
-		h.entries[channel] = entry
-		go h.forward(channel, entry, upstream)
+	entry, err := h.subscribeEntryLocked(ctx, channel)
+	if err != nil {
+		h.mu.Unlock()
+		return nil, nil, err
 	}
 
 	h.nextSubscriber++
@@ -111,6 +102,28 @@ func (h *LiveHub) Subscribe(ctx context.Context, channel string) (<-chan []byte,
 		})
 	}
 	return downstream, closeSubscriber, nil
+}
+
+func (h *LiveHub) atCapacityLocked() bool {
+	return h.maxStreams > 0 && h.activeStreams >= h.maxStreams
+}
+
+func (h *LiveHub) subscribeEntryLocked(ctx context.Context, channel string) (*liveHubEntry, error) {
+	entry := h.entries[channel]
+	if entry == nil {
+		upstream, upstreamClose, err := h.source.Subscribe(context.WithoutCancel(ctx), channel)
+		if err != nil {
+			return nil, err
+		}
+		entry = &liveHubEntry{
+			upstreamClose: upstreamClose,
+			subscribers:   make(map[uint64]chan []byte),
+		}
+		h.entries[channel] = entry
+		go h.forward(channel, entry, upstream)
+	}
+
+	return entry, nil
 }
 
 func (h *LiveHub) unsubscribe(channel string, entry *liveHubEntry, id uint64, downstream chan []byte) {
@@ -133,9 +146,7 @@ func (h *LiveHub) unsubscribe(channel string, entry *liveHubEntry, id uint64, do
 	upstreamClose := h.closeEntryIfEmptyLocked(channel, entry)
 	h.mu.Unlock()
 
-	if upstreamClose != nil {
-		upstreamClose()
-	}
+	closeHubUpstream(upstreamClose)
 }
 
 // Caller holds h.mu. Disconnect on overflow rather than silently losing deltas.
@@ -160,28 +171,44 @@ func (h *LiveHub) closeEntryIfEmptyLocked(channel string, entry *liveHubEntry) f
 
 func (h *LiveHub) forward(channel string, entry *liveHubEntry, upstream <-chan []byte) {
 	for payload := range upstream {
-		h.mu.Lock()
-		if h.entries[channel] != entry {
-			h.mu.Unlock()
+		if !h.forwardPayload(channel, entry, payload) {
 			return
 		}
-		for id, downstream := range entry.subscribers {
-			select {
-			case downstream <- payload:
-			default:
-				// The subscriber's bounded queue is full: it is falling
-				// behind. Evict it rather than dropping or replacing this
-				// frame, so no distinct delta is silently lost.
-				h.evictSlowSubscriber(entry, id, downstream)
-			}
-		}
-		upstreamClose := h.closeEntryIfEmptyLocked(channel, entry)
+	}
+	h.closeUpstream(channel, entry)
+}
+
+func (h *LiveHub) forwardPayload(channel string, entry *liveHubEntry, payload []byte) bool {
+	h.mu.Lock()
+	if h.entries[channel] != entry {
 		h.mu.Unlock()
-		if upstreamClose != nil {
-			upstreamClose()
+		return false
+	}
+	h.broadcastLocked(entry, payload)
+	upstreamClose := h.closeEntryIfEmptyLocked(channel, entry)
+	h.mu.Unlock()
+	closeHubUpstream(upstreamClose)
+	return true
+}
+
+func (h *LiveHub) broadcastLocked(entry *liveHubEntry, payload []byte) {
+	for id, downstream := range entry.subscribers {
+		select {
+		case downstream <- payload:
+		default:
+			// Eviction forces reconnection instead of silently losing a delta.
+			h.evictSlowSubscriber(entry, id, downstream)
 		}
 	}
+}
 
+func closeHubUpstream(closeSubscription func()) {
+	if closeSubscription != nil {
+		closeSubscription()
+	}
+}
+
+func (h *LiveHub) closeUpstream(channel string, entry *liveHubEntry) {
 	var upstreamClose func()
 	h.mu.Lock()
 	if h.entries[channel] == entry {
@@ -196,9 +223,7 @@ func (h *LiveHub) forward(channel string, entry *liveHubEntry, upstream <-chan [
 	}
 	h.mu.Unlock()
 
-	if upstreamClose != nil {
-		upstreamClose()
-	}
+	closeHubUpstream(upstreamClose)
 }
 
 // subscriptionCloseCause reports why ch was closed when the cause is a

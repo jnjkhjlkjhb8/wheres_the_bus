@@ -8,16 +8,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/notify"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
+	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
@@ -31,52 +34,123 @@ const (
 	_reminderRetention = 30 * 24 * time.Hour
 )
 
-func main() {
-	if err := run(os.Args[1:]); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "rider exited with error: %v\n", err)
-		os.Exit(1)
+func main() { os.Exit(commandExitCode(run(os.Args[1:]), os.Stderr)) }
+
+func commandExitCode(err error, output io.Writer) int {
+	if err == nil {
+		return 0
 	}
+	_, _ = fmt.Fprintf(output, "rider exited with error: %v\n", err)
+	return 1
 }
 
 func run(args []string) error {
-	if len(args) != 1 || (args[0] != "worker" && args[0] != "api") {
+	if !validRiderCommand(args) {
 		return errors.New("usage: rider <api|worker>")
 	}
 	defer obs.Init("rider-" + args[0])()
 	defer obs.Recover("main")
-	if args[0] == "api" {
-		return runAPI()
-	}
-	return runWorker()
+	return dispatchRiderCommand(args[0], runAPI, runWorker)
 }
 
-func runWorker() error {
+func dispatchRiderCommand(command string, api, worker func() error) error {
+	if command == "api" {
+		return api()
+	}
+	return worker()
+}
+
+func runWorker() error { return runRiderWorker(waitForShutdown) }
+
+func runRiderWorker(waitShutdown func()) error {
 	rc := shared.ConnectRedis()
-	defer func() {
-		if err := rc.Close(); err != nil {
-			zap.S().Errorw("failed", "component", "redis", "action", "close", "event", "failed", "err", err)
-		}
-	}()
+	defer closeRiderRedis(rc)
 	db := shared.ConnectDB("RIDER_DB_MAX_CONNS", 5)
 	defer db.Close()
 	_health = newHealthFile(defaultHealthFilePath())
 
-	sender, err := notify.NewFirebaseSender(context.Background())
+	dispatcher, pusher, err := riderPushServices(db)
 	if err != nil {
-		return _oops.Wrapf(err, "init Firebase sender")
+		return err
 	}
-	dispatcher := notify.NewDispatcher(notify.NewStore(db), sender)
-	apns, err := notify.NewAPNSSender()
-	if err != nil {
-		return _oops.Wrapf(err, "init APNs sender")
-	}
-	pusher := notify.NewTrackPusher(sender, apns)
 
 	bootCtx, bootCancel := context.WithTimeout(context.Background(), _bootTimeout)
 	restoreReminderDemand(bootCtx, db, pipeline.NewRedisLiveSink(rc))
 	bootCancel()
 
 	r := cron.New(cron.WithSeconds())
+	registerRiderJobs(r, rc, db, dispatcher, pusher)
+
+	ctx, stop := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		newArrivalConsumer(rc, dispatcher).run(ctx)
+	}()
+	r.Start()
+	_health.touch()
+
+	waitShutdown()
+	stop()
+	cronDone := r.Stop()
+	drainRiderJobs(cronDone, &wg)
+
+	return nil
+}
+
+func closeRiderRedis(rc *redis.Client) {
+	if err := rc.Close(); err != nil {
+		zap.S().Errorw("failed", "component", "redis", "action", "close", "event", "failed", "err", err)
+	}
+}
+
+func riderPushServices(db *pgxpool.Pool) (*notify.Dispatcher, *notify.TrackPusher, error) {
+	sender, err := notify.NewFirebaseSender(context.Background())
+	if err != nil {
+		return nil, nil, _oops.Wrapf(err, "init Firebase sender")
+	}
+	dispatcher := notify.NewDispatcher(notify.NewStore(db), sender)
+	apns, err := notify.NewAPNSSender()
+	if err != nil {
+		return nil, nil, _oops.Wrapf(err, "init APNs sender")
+	}
+	return dispatcher, notify.NewTrackPusher(sender, apns), nil
+}
+
+func drainRiderJobs(cronDone context.Context, wg *sync.WaitGroup) {
+
+	drained := make(chan struct{})
+	go func() {
+		<-cronDone.Done()
+		wg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		zap.S().Infow("jobs drained", "component", "boot", "action", "shutdown", "event", "jobs_drained")
+	case <-time.After(_shutdownGrace):
+		zap.S().Warnw("grace timeout", "component", "boot", "action", "shutdown", "event", "grace_timeout")
+	}
+}
+
+func addStaticCron(r *cron.Cron, spec string, job func()) (cron.EntryID, error) {
+	guarded := cron.NewChain(cron.SkipIfStillRunning(cron.DefaultLogger)).Then(cron.FuncJob(func() {
+		job()
+		_health.touch()
+	}))
+	return r.AddJob(spec, guarded)
+}
+
+func waitForShutdown() {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	zap.S().Infow("signal received", "component", "boot", "action", "shutdown", "event", "signal_received")
+}
+
+func registerRiderJobs(r *cron.Cron, rc *redis.Client, db *pgxpool.Pool, dispatcher *notify.Dispatcher, pusher *notify.TrackPusher) {
+
 	// Rail reminders fire on a schedule (fire_at = arrival - lead), not off a
 	// live ETA. Nil-safe when push is disabled.
 	_, _ = addStaticCron(r, "@every 30s", func() {
@@ -103,45 +177,8 @@ func runWorker() error {
 		})
 	})
 
-	ctx, stop := context.WithCancel(context.Background())
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		newArrivalConsumer(rc, dispatcher).run(ctx)
-	}()
-	r.Start()
-	_health.touch()
-
-	waitForShutdown()
-	stop()
-	cronDone := r.Stop()
-	drained := make(chan struct{})
-	go func() {
-		<-cronDone.Done()
-		wg.Wait()
-		close(drained)
-	}()
-	select {
-	case <-drained:
-		zap.S().Infow("jobs drained", "component", "boot", "action", "shutdown", "event", "jobs_drained")
-	case <-time.After(_shutdownGrace):
-		zap.S().Warnw("grace timeout", "component", "boot", "action", "shutdown", "event", "grace_timeout")
-	}
-	return nil
 }
 
-func addStaticCron(r *cron.Cron, spec string, job func()) (cron.EntryID, error) {
-	guarded := cron.NewChain(cron.SkipIfStillRunning(cron.DefaultLogger)).Then(cron.FuncJob(func() {
-		job()
-		_health.touch()
-	}))
-	return r.AddJob(spec, guarded)
-}
-
-func waitForShutdown() {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	zap.S().Infow("signal received", "component", "boot", "action", "shutdown", "event", "signal_received")
+func validRiderCommand(args []string) bool {
+	return len(args) == 1 && (args[0] == "worker" || args[0] == "api")
 }

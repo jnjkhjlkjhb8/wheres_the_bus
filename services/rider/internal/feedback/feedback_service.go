@@ -44,28 +44,17 @@ type FeedbackServer struct {
 }
 
 func (s *FeedbackServer) PostFeedback(ctx context.Context, request *pb.PostFeedbackRequest) (*pb.ReportReceipt, error) {
-	if !installid.ValidText(request.GetInstallId(), 128) {
-		return nil, status.Error(codes.InvalidArgument, "install_id is required")
-	}
-	if !validFeedbackCategory(request.GetCategory()) {
-		return nil, status.Error(codes.InvalidArgument, "category must be route_data, eta, crash or suggestion")
-	}
-	// Trimmed rather than rejected for surrounding whitespace: a trailing
-	// newline from a multiline field is the rider's keyboard, not a bad client.
-	body := strings.TrimSpace(request.GetBody())
-	if body == "" {
-		return nil, status.Error(codes.InvalidArgument, "body is required")
-	}
-	if utf8.RuneCountInString(body) > _feedbackBodyLimit {
-		return nil, status.Errorf(codes.InvalidArgument, "body is limited to %d characters", _feedbackBodyLimit)
-	}
-	diagnostics, err := feedbackDiagnostics(request.GetDiagnostics())
+	body, diagnostics, err := normalizeFeedback(request)
 	if err != nil {
 		return nil, err
 	}
 	if err := installid.Authorize(ctx, s.devices, request.InstallId); err != nil {
 		return nil, err
 	}
+	return s.openNormalizedFeedback(ctx, request, body, diagnostics)
+}
+
+func (s *FeedbackServer) openNormalizedFeedback(ctx context.Context, request *pb.PostFeedbackRequest, body string, diagnostics map[string]string) (*pb.ReportReceipt, error) {
 	threadID, err := installid.NewUUIDv4()
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to open report")
@@ -81,6 +70,10 @@ func (s *FeedbackServer) PostFeedback(ctx context.Context, request *pb.PostFeedb
 		Body:        body,
 		Diagnostics: diagnostics,
 	}
+	return s.persistFeedback(ctx, request, record, messageID)
+}
+
+func (s *FeedbackServer) persistFeedback(ctx context.Context, request *pb.PostFeedbackRequest, record feedbackThreadRecord, messageID string) (*pb.ReportReceipt, error) {
 	createdAt, err := s.store.OpenThread(ctx, record, messageID)
 	if errors.Is(err, errFeedbackQuota) {
 		return nil, status.Errorf(codes.ResourceExhausted, "at most %d reports per day", _feedbackQuota)
@@ -96,12 +89,47 @@ func (s *FeedbackServer) PostFeedback(ctx context.Context, request *pb.PostFeedb
 		return nil, status.Error(codes.Internal, "failed to save report")
 	}
 	s.notifier.Notify(feedbackNotice{
-		ThreadID:    threadID,
-		Category:    request.Category,
-		Body:        body,
-		Diagnostics: diagnostics,
+		ThreadID:    record.ThreadID,
+		Category:    record.Category,
+		Body:        record.Body,
+		Diagnostics: record.Diagnostics,
 	})
-	return &pb.ReportReceipt{ThreadId: threadID, CreatedAtUnix: createdAt.Unix()}, nil
+	return &pb.ReportReceipt{ThreadId: record.ThreadID, CreatedAtUnix: createdAt.Unix()}, nil
+}
+
+func normalizeFeedback(request *pb.PostFeedbackRequest) (string, map[string]string, error) {
+	if !installid.ValidText(request.GetInstallId(), 128) {
+		return "", nil, status.Error(codes.InvalidArgument, "install_id is required")
+	}
+	if !validFeedbackCategory(request.GetCategory()) {
+		return "", nil, status.Error(codes.InvalidArgument, "category must be route_data, eta, crash or suggestion")
+	}
+	body, err := normalizeFeedbackBody(request.GetBody())
+	if err != nil {
+		return "", nil, err
+	}
+	return normalizedFeedbackDiagnostics(body, request.GetDiagnostics())
+}
+
+func normalizeFeedbackBody(raw string) (string, error) {
+	// Trimmed rather than rejected for surrounding whitespace: a trailing
+	// newline from a multiline field is the rider's keyboard, not a bad client.
+	body := strings.TrimSpace(raw)
+	if body == "" {
+		return "", status.Error(codes.InvalidArgument, "body is required")
+	}
+	if utf8.RuneCountInString(body) > _feedbackBodyLimit {
+		return "", status.Errorf(codes.InvalidArgument, "body is limited to %d characters", _feedbackBodyLimit)
+	}
+	return body, nil
+}
+
+func normalizedFeedbackDiagnostics(body string, report *pb.ReportDiagnostics) (string, map[string]string, error) {
+	diagnostics, err := feedbackDiagnostics(report)
+	if err != nil {
+		return "", nil, err
+	}
+	return body, diagnostics, nil
 }
 
 func validFeedbackCategory(category string) bool {
@@ -202,11 +230,19 @@ func (n *webhookNotifier) post(ctx context.Context, notice feedbackNotice) error
 	if err != nil {
 		return _oops.Wrapf(err, "marshal payload")
 	}
+	return n.postPayload(ctx, payload)
+}
+
+func (n *webhookNotifier) postPayload(ctx context.Context, payload []byte) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, n.url, bytes.NewReader(payload))
 	if err != nil {
 		return _oops.Wrapf(err, "build request")
 	}
 	request.Header.Set("Content-Type", "application/json")
+	return n.sendWebhookRequest(request)
+}
+
+func (n *webhookNotifier) sendWebhookRequest(request *http.Request) error {
 	response, err := n.client.Do(request)
 	if err != nil {
 		return _oops.Wrapf(err, "send")

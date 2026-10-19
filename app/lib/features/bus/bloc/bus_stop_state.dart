@@ -46,10 +46,22 @@ Map<String, String> memberStopLabels(
   }
 
   final bases = {for (final m in members) m.stationUid: base(m)};
+  return _memberLabels(members, bases, _labelCounts(bases));
+}
+
+Map<String, int> _labelCounts(Map<String, String> bases) {
   final counts = <String, int>{};
   for (final v in bases.values) {
     counts[v] = (counts[v] ?? 0) + 1;
   }
+  return counts;
+}
+
+Map<String, String> _memberLabels(
+  List<BusStationMember> members,
+  Map<String, String> bases,
+  Map<String, int> counts,
+) {
   final seen = <String, int>{};
   final labels = <String, String>{};
   for (final m in members) {

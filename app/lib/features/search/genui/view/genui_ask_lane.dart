@@ -68,10 +68,7 @@ class GenUiLane extends StatelessWidget {
   Widget _lane(BuildContext context, GenUiState state) {
     final q = query.trim();
     final idle = state.status == GenUiStatus.idle;
-    final canAskNew =
-        q.isNotEmpty &&
-        (idle ||
-            (state.status != GenUiStatus.loading && q != state.lastPrompt));
+    final canAskNew = _canAskNew(q, state);
 
     final lane = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -96,6 +93,12 @@ class GenUiLane extends StatelessWidget {
         child: lane,
       ),
     );
+  }
+
+  bool _canAskNew(String query, GenUiState state) {
+    if (query.isEmpty) return false;
+    if (state.status == GenUiStatus.idle) return true;
+    return state.status != GenUiStatus.loading && query != state.lastPrompt;
   }
 }
 
@@ -354,9 +357,7 @@ class _TrailingAction extends StatelessWidget {
     final i18n = AppI18n.of(context);
     final label = loading ? i18n.genuiStop : i18n.genuiCollapse;
     return Pressable(
-      onTap: () => context.read<GenUiBloc>().add(
-        loading ? const GenUiCancelled() : const GenUiDismissed(),
-      ),
+      onTap: () => _activate(context),
       semanticLabel: label,
       minTapSize: 44,
       child: Container(
@@ -364,13 +365,7 @@ class _TrailingAction extends StatelessWidget {
           horizontal: AppTheme.space10,
           vertical: AppTheme.space4,
         ),
-        decoration: BoxDecoration(
-          color: loading ? cs.surfaceContainerLow : null,
-          borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-          border: loading
-              ? Border.all(color: cs.outlineVariant, width: 0.5)
-              : null,
-        ),
+        decoration: _decoration(cs),
         child: Text(
           label,
           style: AppTextStyles.bodySmall.copyWith(
@@ -381,6 +376,18 @@ class _TrailingAction extends StatelessWidget {
       ),
     );
   }
+
+  void _activate(BuildContext context) => context.read<GenUiBloc>().add(
+    loading ? const GenUiCancelled() : const GenUiDismissed(),
+  );
+
+  BoxDecoration _decoration(ColorScheme colors) => BoxDecoration(
+    color: loading ? colors.surfaceContainerLow : null,
+    borderRadius: BorderRadius.circular(AppTheme.radiusButton),
+    border: loading
+        ? Border.all(color: colors.outlineVariant, width: 0.5)
+        : null,
+  );
 }
 
 /// Elapsed stage, not progress: the model reports which tool it is in, and

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/data/live/arrival_feed.dart';
@@ -355,6 +357,153 @@ void main() {
       expect(state.error, isNotNull);
     },
   );
+
+  test('a missing stop id settles as empty without any request', () async {
+    final repository = _FakeBusRepository();
+    final bloc = BusStopBloc(
+      i18n: zhStrings,
+      stopId: null,
+      repository: repository,
+    );
+    addTearDown(bloc.close);
+
+    await bloc.stream.firstWhere((s) => s.status == BusStopStatus.empty);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bloc.state.status, BusStopStatus.empty);
+    expect(repository.groupCalls, 0);
+
+    final blank = BusStopBloc(
+      i18n: zhStrings,
+      stopId: '',
+      repository: repository,
+    );
+    addTearDown(blank.close);
+    await blank.stream.firstWhere((s) => s.status == BusStopStatus.empty);
+    expect(repository.groupCalls, 0);
+  });
+
+  test(
+    'retry after a failure goes back to loading and drops the error',
+    () async {
+      final repository = _HeldGroupBusRepository();
+      final bloc = BusStopBloc(
+        i18n: zhStrings,
+        stopId: 'group-1',
+        repository: repository,
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const BusStopFailed(OfflineError()));
+      await bloc.stream.firstWhere((s) => s.status == BusStopStatus.error);
+
+      bloc.add(const BusStopRetryRequested());
+      final loading = await bloc.stream.firstWhere(
+        (s) => s.status == BusStopStatus.loading,
+      );
+
+      expect(loading.error, isNull);
+      repository.members.complete(const []);
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
+    'a station-group failure is reported with its own error and stack',
+    () async {
+      final reported = <(Object, StackTrace)>[];
+      final bloc = BusStopBloc(
+        i18n: zhStrings,
+        stopId: 'group-1',
+        repository: _FailingGroupBusRepository(),
+        reportError: (e, s) => reported.add((e, s)),
+      );
+      addTearDown(bloc.close);
+
+      await bloc.stream.firstWhere((s) => s.status == BusStopStatus.error);
+
+      expect(reported, hasLength(1));
+      expect(reported.single.$1, isA<StateError>());
+      expect(
+        (reported.single.$1 as StateError).message,
+        'station group unavailable',
+      );
+    },
+  );
+
+  test('an empty member list keeps loading until arrivals settle it', () async {
+    final repository = _HeldGroupBusRepository();
+    final bloc = BusStopBloc(
+      i18n: zhStrings,
+      stopId: 'group-1',
+      repository: repository,
+    );
+    addTearDown(bloc.close);
+
+    repository.members.complete(const []);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bloc.state.status, BusStopStatus.loading);
+    expect(bloc.state.members, isEmpty);
+  });
+
+  test('a repeated source frame still recovers from an error', () async {
+    const arrival = BusStopArrival(
+      stationId: 'stop-1',
+      subRouteUid: 'sub-307',
+      routeName: '307',
+      destination: '板橋',
+      estimateSeconds: 180,
+    );
+    final repository = _FakeBusRepository(
+      membersResult: const [
+        BusStationMember(
+          stationUid: 'stop-1',
+          stationId: 'stop-1',
+          stationName: '台北車站',
+          lat: 25,
+          lon: 121,
+        ),
+      ],
+      arrivalsResult: const [arrival],
+    );
+    final bloc = BusStopBloc(
+      i18n: zhStrings,
+      stopId: 'group-1',
+      repository: repository,
+    );
+    addTearDown(bloc.close);
+    await bloc.stream.firstWhere(
+      (s) => s.status == BusStopStatus.loaded && s.arrivals.isNotEmpty,
+    );
+    final stamp = bloc.state.updatedAt;
+    bloc.add(const BusStopFailed(OfflineError()));
+    await bloc.stream.firstWhere((s) => s.status == BusStopStatus.error);
+
+    bloc.add(const BusStopArrivalsUpdated([arrival]));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bloc.state.status, BusStopStatus.loaded);
+    expect(bloc.state.error, isNull);
+    expect(bloc.state.updatedAt, stamp);
+  });
+}
+
+class _HeldGroupBusRepository implements BusRepository {
+  final members = Completer<List<BusStationMember>>();
+
+  @override
+  Future<List<BusStationMember>> stationGroup(String groupUid) =>
+      members.future;
+
+  @override
+  Stream<List<BusStopArrival>> stationEta(String city, String groupUid) =>
+      const Stream.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName} not faked');
 }
 
 /// Station group fetch always throws; ETA stream never emits (silent) —

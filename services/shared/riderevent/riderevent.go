@@ -55,11 +55,15 @@ func (p Publisher) Arrivals(ctx context.Context, events []ArrivalEvent) error {
 	if err != nil {
 		return _oops.Wrapf(err, "encode arrival events")
 	}
+	return p.publishArrivalBatch(ctx, body)
+}
+
+func (p Publisher) publishArrivalBatch(ctx context.Context, body []byte) error {
 	now := time.Now
 	if p.Now != nil {
 		now = p.Now
 	}
-	err = p.RC.XAdd(ctx, &redis.XAddArgs{
+	err := p.RC.XAdd(ctx, &redis.XAddArgs{
 		Stream: StreamKey,
 		MaxLen: _maxLen,
 		Approx: true,

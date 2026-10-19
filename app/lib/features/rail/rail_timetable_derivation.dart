@@ -22,22 +22,33 @@ String hhmm(String t) => t.length >= 5 ? t.substring(0, 5) : t;
 /// on [serviceDate] (`yyyy-MM-dd`), or null when it can't be parsed.
 DateTime? stopDateTime(String serviceDate, RailTrainStop stop) {
   final time = stop.arrive.isNotEmpty ? stop.arrive : stop.depart;
-  final d = serviceDate.split('-');
-  final hm = time.split(':');
-  if (d.length != 3 || hm.length < 2) return null;
-  final year = int.tryParse(d[0]);
-  final month = int.tryParse(d[1]);
-  final day = int.tryParse(d[2]);
-  final hour = int.tryParse(hm[0]);
-  final minute = int.tryParse(hm[1]);
-  if (year == null ||
-      month == null ||
-      day == null ||
-      hour == null ||
-      minute == null) {
-    return null;
-  }
-  return DateTime(year, month, day, hour, minute);
+  final date = _dateParts(serviceDate);
+  final clock = _clockParts(time);
+  if (date == null || clock == null) return null;
+  return DateTime(date.year, date.month, date.day, clock.hour, clock.minute);
+}
+
+({int year, int month, int day})? _dateParts(String date) {
+  final parts = date.split('-');
+  if (parts.length != 3) return null;
+  return _parsedDate(parts);
+}
+
+({int year, int month, int day})? _parsedDate(List<String> parts) {
+  final year = int.tryParse(parts[0]);
+  final month = int.tryParse(parts[1]);
+  final day = int.tryParse(parts[2]);
+  if (year == null || month == null || day == null) return null;
+  return (year: year, month: month, day: day);
+}
+
+({int hour, int minute})? _clockParts(String time) {
+  final parts = time.split(':');
+  if (parts.length < 2) return null;
+  final hour = int.tryParse(parts[0]);
+  final minute = int.tryParse(parts[1]);
+  if (hour == null || minute == null) return null;
+  return (hour: hour, minute: minute);
 }
 
 int? railPositionIndex(
@@ -47,6 +58,16 @@ int? railPositionIndex(
   DateTime now,
 ) {
   if (stops.isEmpty) return null;
+  final reached = _reachedStops(stops, serviceDate, delayMinutes, now);
+  return _intermediatePosition(reached, stops.length);
+}
+
+int? _reachedStops(
+  List<RailTrainStop> stops,
+  String serviceDate,
+  int delayMinutes,
+  DateTime now,
+) {
   final delay = Duration(minutes: delayMinutes);
   var reached = 0;
   for (final stop in stops) {
@@ -54,8 +75,12 @@ int? railPositionIndex(
     if (scheduled == null) return null;
     if (!scheduled.add(delay).isAfter(now)) reached++;
   }
-  if (reached == 0 || reached >= stops.length) return null;
-  return reached - 1;
+  return reached;
+}
+
+int? _intermediatePosition(int? reached, int stops) {
+  if (reached == null) return null;
+  return reached > 0 && reached < stops ? reached - 1 : null;
 }
 
 /// Whole minutes from [from] to [to] along the run, or null when either time
@@ -69,12 +94,15 @@ int? elapsedMinutes(String serviceDate, RailTrainStop from, RailTrainStop to) {
 }
 
 int dwellMinutes(RailTrainStop stop) {
-  if (stop.arrive.isEmpty || stop.depart.isEmpty) return 0;
-  final a = stop.arrive.split(':');
-  final d = stop.depart.split(':');
-  if (a.length < 2 || d.length < 2) return 0;
-  final am = (int.tryParse(a[0]) ?? 0) * 60 + (int.tryParse(a[1]) ?? 0);
-  final dm = (int.tryParse(d[0]) ?? 0) * 60 + (int.tryParse(d[1]) ?? 0);
-  final diff = dm - am;
-  return diff > 0 ? diff : 0;
+  final arrival = _dwellClockMinutes(stop.arrive);
+  final departure = _dwellClockMinutes(stop.depart);
+  if (arrival == null || departure == null) return 0;
+  final difference = departure - arrival;
+  return difference > 0 ? difference : 0;
+}
+
+int? _dwellClockMinutes(String time) {
+  final parts = time.split(':');
+  if (parts.length < 2) return null;
+  return (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
 }

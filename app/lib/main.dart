@@ -17,9 +17,18 @@ import 'package:wheres_the_bus/core/powersync/powersync_service.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 
-Future<void> main() async {
+Future<void> main() => startApp();
+
+/// The seams exist because [FirebaseGate.enabled] is a compile-time constant,
+/// so a test run can only reach the Firebase-enabled branches through them.
+@visibleForTesting
+Future<void> startApp({
+  bool firebaseEnabled = FirebaseGate.enabled,
+  Future<void> Function() ensureFirebaseCore =
+      FirebaseBootstrap.ensureCoreInitialized,
+}) async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (FirebaseGate.enabled) {
+  if (firebaseEnabled) {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   }
 
@@ -38,9 +47,7 @@ Future<void> main() async {
     initFirebase: () => FirebaseBootstrap.initFailSoft(hiveReady: hiveReady),
     initPowerSync: PowerSyncService.instance.init,
   );
-  unawaited(
-    FirebaseBootstrap.ensureCoreInitialized().catchError(CrashReporter.record),
-  );
+  unawaited(ensureFirebaseCore().catchError(CrashReporter.record));
   unawaited(bootstrap.start());
 
   runApp(App(bootstrap: bootstrap));

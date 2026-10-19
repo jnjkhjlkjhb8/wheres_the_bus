@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -43,10 +44,15 @@ const (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "pipeline exited with error: %v\n", err)
-		os.Exit(1)
+	os.Exit(runPipelineCLI(os.Args[1:], os.Stderr))
+}
+
+func runPipelineCLI(args []string, stderr io.Writer) int {
+	if err := run(args); err != nil {
+		_, _ = fmt.Fprintf(stderr, "pipeline exited with error: %v\n", err)
+		return 1
 	}
+	return 0
 }
 
 type deps struct {
@@ -56,8 +62,8 @@ type deps struct {
 }
 
 func run(args []string) error {
-	if len(args) != 2 || args[0] != "run" {
-		return errors.New("usage: pipeline run <nightly|hourly|publish|ingest|load|vector|gtfs>")
+	if err := validatePipelineArgs(args); err != nil {
+		return err
 	}
 	defer obs.Init("pipeline")()
 	defer obs.Recover("main")
@@ -65,23 +71,32 @@ func run(args []string) error {
 	// This process lands raw_tdx; the ingestor-only switches in raw follow it.
 	raw.DumpEnabled = true
 	rc := shared.ConnectRedis()
-	defer func() {
-		if err := rc.Close(); err != nil {
-			zap.S().Errorw("failed", "component", "redis", "action", "close", "event", "failed", "err", err)
-		}
-	}()
+	defer closePipelineResource(rc.Close, "redis")
 	db := shared.ConnectDB("PIPELINE_DB_MAX_CONNS", 5)
 	defer db.Close()
 	raw.DB = db
+	return runConfiguredPipeline(db, rc, args[1])
+}
+
+func validatePipelineArgs(args []string) error {
+	if len(args) != 2 || args[0] != "run" {
+		return errors.New("usage: pipeline run <nightly|hourly|publish|ingest|load|vector|gtfs>")
+	}
+	return nil
+}
+
+func closePipelineResource(closeResource func() error, component string) {
+	if err := closeResource(); err != nil {
+		zap.S().Errorw("failed", "component", component, "action", "close", "event", "failed", "err", err)
+	}
+}
+
+func runConfiguredPipeline(db *pgxpool.Pool, rc *redis.Client, name string) error {
 	closeArchive, err := history.Init(context.Background(), os.Getenv("ARCHIVE_MYSQL_DSN"))
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := closeArchive(); err != nil {
-			zap.S().Errorw("failed", "component", "archive", "action", "close", "event", "failed", "err", err)
-		}
-	}()
+	defer closePipelineResource(closeArchive, "archive")
 	rawPool, closeRawPool, err := rawSourcePool(context.Background(), db)
 	if err != nil {
 		return err
@@ -98,25 +113,24 @@ func run(args []string) error {
 		}),
 	}
 
-	ctx := context.Background()
-	switch args[1] {
-	case "nightly":
-		return runNightly(ctx, d)
-	case "hourly":
-		return runHourly(ctx, d)
-	case "ingest":
-		return stepIngest(ctx, d)
-	case "load":
-		return stepLoad(ctx, d)
-	case "vector":
-		return stepVector(ctx, d)
-	case "gtfs":
-		return stepGTFS(ctx, d)
-	case "publish":
-		return runPublish(ctx, d)
-	default:
-		return _oops.With("step", args[1]).Errorf("unknown pipeline step")
+	return runPipelineStep(context.Background(), d, name)
+}
+
+func runPipelineStep(ctx context.Context, d deps, name string) error {
+	runners := map[string]func(context.Context, deps) error{
+		"nightly": runNightly,
+		"hourly":  runHourly,
+		"ingest":  stepIngest,
+		"load":    stepLoad,
+		"vector":  stepVector,
+		"gtfs":    stepGTFS,
+		"publish": runPublish,
 	}
+	run := runners[name]
+	if run == nil {
+		return _oops.With("step", name).Errorf("unknown pipeline step")
+	}
+	return run(ctx, d)
 }
 
 type step struct {
@@ -145,12 +159,18 @@ func runNightly(ctx context.Context, d deps) error {
 	if err != nil {
 		return _oops.Wrapf(err, "nightly: acquire run lock")
 	}
-	defer func() {
-		if err := lock.release(); err != nil {
-			zap.S().Errorw("failed", "component", "pipeline", "action", "release_run_lock", "event", "failed", "err", err)
-		}
-	}()
-	for _, s := range nightlySteps() {
+	defer releasePipelineRunLock(lock)
+	return runNightlySteps(ctx, d, nightlySteps())
+}
+
+func releasePipelineRunLock(lock *runLock) {
+	if err := lock.release(); err != nil {
+		zap.S().Errorw("failed", "component", "pipeline", "action", "release_run_lock", "event", "failed", "err", err)
+	}
+}
+
+func runNightlySteps(ctx context.Context, d deps, steps []step) error {
+	for _, s := range steps {
 		start := time.Now()
 		if err := s.run(ctx, d); err != nil {
 			return _oops.With("step", s.name).Wrapf(err, "nightly")
@@ -172,22 +192,28 @@ func runHourly(ctx context.Context, d deps) error {
 	if err != nil {
 		return _oops.Wrapf(err, "hourly: acquire run lock")
 	}
-	defer func() {
-		if err := lock.release(); err != nil {
-			zap.S().Errorw("failed", "component", "pipeline", "action", "release_run_lock", "event", "failed", "err", err)
-		}
-	}()
+	defer releasePipelineRunLock(lock)
+	return runHourlyDailyTimetable(ctx, d)
+}
+
+func runHourlyDailyTimetable(ctx context.Context, d deps) error {
+	if err := ingestHourlyPipelineBatch(ctx, d); err != nil {
+		return err
+	}
+	return loadHourlyDailyTimetable(ctx, d)
+}
+
+func ingestHourlyPipelineBatch(ctx context.Context, d deps) error {
 	ingest := newStaticPipelineRunner(d.rawPool, _busDailyIngestTimeout)
-	err = ingest.Run(ctx, func(ctx context.Context) error {
-		var taipeiErr error
-		if hasTDXCredentials() {
-			taipeiErr = bus.LandDataTaipeiDailyTimetable(ctx, bus.NewDataTaipeiFeed(dataset.DataTaipeiCity), time.Now)
-		}
-		return errors.Join(ingestRaw(ctx, d.tdx, "bus_dailytimetable"), taipeiErr)
-	})
-	if err != nil {
+	if err := ingest.Run(ctx, func(ctx context.Context) error {
+		return ingestHourlyDailyTimetable(ctx, d)
+	}); err != nil {
 		return _oops.Wrapf(err, "hourly: ingest bus_dailytimetable")
 	}
+	return nil
+}
+
+func loadHourlyDailyTimetable(ctx context.Context, d deps) error {
 	loaded, err := readLoadedDailyMarkers(ctx, d.rc)
 	if err != nil {
 		return err
@@ -199,6 +225,14 @@ func runHourly(ctx context.Context, d deps) error {
 	// Cities that did load are recorded even when others failed, so the next
 	// hour only retries the failures.
 	return errors.Join(loadErr, writeLoadedDailyMarkers(ctx, d.rc, loaded))
+}
+
+func ingestHourlyDailyTimetable(ctx context.Context, d deps) error {
+	var taipeiErr error
+	if hasTDXCredentials() {
+		taipeiErr = bus.LandDataTaipeiDailyTimetable(ctx, bus.NewDataTaipeiFeed(dataset.DataTaipeiCity), time.Now)
+	}
+	return errors.Join(ingestRaw(ctx, d.tdx, "bus_dailytimetable"), taipeiErr)
 }
 
 func stepIngest(ctx context.Context, d deps) error {
@@ -267,22 +301,33 @@ func runPublish(ctx context.Context, d deps) error {
 	if err != nil {
 		return err
 	}
-	if err := gtfs.Publish(ctx, d.db, gtfsRoot(), m); err != nil {
-		if errors.Is(err, gtfs.ErrStaleRun) {
-			zap.S().Warnw("skipped", "component", "gtfs", "action", "publish", "event", "skipped",
-				"reason", "stale_run", "run_id", m.RunID, "build_seq", m.BuildSeq)
-			return nil
-		}
-		return err
+	return publishPipelineRun(ctx, d.db, m)
+}
+
+func publishPipelineRun(ctx context.Context, db *pgxpool.Pool, m gtfs.Manifest) error {
+	if err := gtfs.Publish(ctx, db, gtfsRoot(), m); err != nil {
+		return handlePipelinePublishError(err, m)
 	}
 	zap.S().Infow("published", "component", "gtfs", "action", "publish", "event", "published",
 		"run_id", m.RunID, "build_seq", m.BuildSeq)
-	// A run directory younger than the nightly deadline may belong to a run
-	// still exporting, so pruning leaves it alone.
-	if err := gtfs.Prune(ctx, d.db, gtfsRoot(), _nightlyDeadline); err != nil {
+	prunePublishedPipelineRuns(ctx, db)
+	return nil
+}
+
+func handlePipelinePublishError(err error, m gtfs.Manifest) error {
+	if errors.Is(err, gtfs.ErrStaleRun) {
+		zap.S().Warnw("skipped", "component", "gtfs", "action", "publish", "event", "skipped",
+			"reason", "stale_run", "run_id", m.RunID, "build_seq", m.BuildSeq)
+		return nil
+	}
+	return err
+}
+
+func prunePublishedPipelineRuns(ctx context.Context, db *pgxpool.Pool) {
+	// A run directory younger than the nightly deadline may still be exporting.
+	if err := gtfs.Prune(ctx, db, gtfsRoot(), _nightlyDeadline); err != nil {
 		zap.S().Warnw("failed", "component", "gtfs", "action", "prune", "event", "failed", "err", err)
 	}
-	return nil
 }
 
 // _nightlyDeadline matches the nightly CronJob's activeDeadlineSeconds.

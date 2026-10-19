@@ -27,20 +27,22 @@ func enrichWalkSections(ctx context.Context, osrmClient *resty.Client, refs []ma
 			continue
 		}
 
-		group.Go(func() error {
-			if err := groupCtx.Err(); err != nil {
-				return err
-			}
-			secs, path, steps, ok := walkRoute(groupCtx, osrmClient, ref.target.Departure.Location, ref.target.Arrival.Location)
-			if ok {
-				ref.target.TravelSummary.Duration = secs
-				ref.target.WalkPath = path
-				ref.target.WalkSteps = steps
-			}
-			return nil
-		})
+		group.Go(func() error { return enrichWalkSection(groupCtx, osrmClient, ref) })
 	}
 	_ = group.Wait()
+}
+
+func enrichWalkSection(ctx context.Context, client *resty.Client, ref maasSectionRef) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	secs, path, steps, ok := walkRoute(ctx, client, ref.target.Departure.Location, ref.target.Arrival.Location)
+	if ok {
+		ref.target.TravelSummary.Duration = secs
+		ref.target.WalkPath = path
+		ref.target.WalkSteps = steps
+	}
+	return nil
 }
 
 func isWalkSection(sec tdxSection) bool {
@@ -51,33 +53,38 @@ func isWalkSection(sec tdxSection) bool {
 // osrmRouteResponse is the subset of the OSRM /route/v1/foot response the
 // planner consumes: total duration, the geojson geometry, and the per-leg
 // turn-by-turn steps.
+type osrmManeuver struct {
+	Type     string    `json:"type"`
+	Modifier string    `json:"modifier"`
+	Location []float64 `json:"location"`
+}
+
+type osrmStep struct {
+	Distance float64      `json:"distance"`
+	Duration float64      `json:"duration"`
+	Name     string       `json:"name"`
+	Maneuver osrmManeuver `json:"maneuver"`
+}
+
+type osrmLeg struct {
+	Steps []osrmStep `json:"steps"`
+}
+
+type osrmRoute struct {
+	Duration float64 `json:"duration"`
+	Geometry struct {
+		Coordinates [][]float64 `json:"coordinates"`
+	} `json:"geometry"`
+	Legs []osrmLeg `json:"legs"`
+}
+
 type osrmRouteResponse struct {
-	Code   string `json:"code"`
-	Routes []struct {
-		Duration float64 `json:"duration"`
-		Geometry struct {
-			Coordinates [][]float64 `json:"coordinates"`
-		} `json:"geometry"`
-		Legs []struct {
-			Steps []struct {
-				Distance float64 `json:"distance"`
-				Duration float64 `json:"duration"`
-				Name     string  `json:"name"`
-				Maneuver struct {
-					Type     string    `json:"type"`
-					Modifier string    `json:"modifier"`
-					Location []float64 `json:"location"`
-				} `json:"maneuver"`
-			} `json:"steps"`
-		} `json:"legs"`
-	} `json:"routes"`
+	Code   string      `json:"code"`
+	Routes []osrmRoute `json:"routes"`
 }
 
 func walkRoute(ctx context.Context, osrmClient *resty.Client, from, to *pb.Location) (int64, []*pb.Location, []*pb.WalkStep, bool) {
-	if osrmClient == nil || from == nil || to == nil {
-		return 0, nil, nil, false
-	}
-	if (from.Lat == 0 && from.Lng == 0) || (to.Lat == 0 && to.Lng == 0) {
+	if !walkRequestUsable(osrmClient, from, to) {
 		return 0, nil, nil, false
 	}
 	coords := fmt.Sprintf("%f,%f;%f,%f", from.Lng, from.Lat, to.Lng, to.Lat)
@@ -89,10 +96,18 @@ func walkRoute(ctx context.Context, osrmClient *resty.Client, from, to *pb.Locat
 		SetQueryParam("overview", "full").
 		SetResult(&out).
 		Get(fmt.Sprintf("http://osrm:5000/route/v1/foot/%s", coords))
-	if err != nil || !resp.IsSuccess() || out.Code != "Ok" || len(out.Routes) == 0 {
+	if err != nil || !osrmRouteAvailable(resp, out) {
 		return 0, nil, nil, false
 	}
 	route := out.Routes[0]
+	return int64(route.Duration), osrmWalkPath(route), osrmWalkSteps(route), true
+}
+
+func walkRequestUsable(client *resty.Client, from, to *pb.Location) bool {
+	return client != nil && walkLocationUsable(from) && walkLocationUsable(to)
+}
+
+func osrmWalkPath(route osrmRoute) []*pb.Location {
 	path := make([]*pb.Location, 0, len(route.Geometry.Coordinates))
 	for _, c := range route.Geometry.Coordinates {
 		if len(c) < 2 {
@@ -101,6 +116,10 @@ func walkRoute(ctx context.Context, osrmClient *resty.Client, from, to *pb.Locat
 		// geojson coordinates are [lng, lat].
 		path = append(path, &pb.Location{Lng: c[0], Lat: c[1]})
 	}
+	return path
+}
+
+func osrmWalkSteps(route osrmRoute) []*pb.WalkStep {
 	var steps []*pb.WalkStep
 	for _, leg := range route.Legs {
 		for _, st := range leg.Steps {
@@ -117,7 +136,15 @@ func walkRoute(ctx context.Context, osrmClient *resty.Client, from, to *pb.Locat
 			steps = append(steps, step)
 		}
 	}
-	return int64(route.Duration), path, steps, true
+	return steps
+}
+
+func walkLocationUsable(location *pb.Location) bool {
+	return location != nil && (location.Lat != 0 || location.Lng != 0)
+}
+
+func osrmRouteAvailable(response *resty.Response, payload osrmRouteResponse) bool {
+	return response.IsSuccess() && payload.Code == "Ok" && len(payload.Routes) > 0
 }
 
 func walkInstruction(maneuverType, modifier, name string) string {
@@ -130,22 +157,30 @@ func walkInstruction(maneuverType, modifier, name string) string {
 		}
 		return "開始步行"
 	}
+	return walkTurnInstruction(modifier, name)
+}
+
+func walkTurnInstruction(modifier, name string) string {
 	turn := map[string]string{
 		"left": "左轉", "right": "右轉",
 		"slight left": "稍向左", "slight right": "稍向右",
 		"sharp left": "向左急轉", "sharp right": "向右急轉",
 		"uturn": "迴轉",
 	}[modifier]
-	switch {
-	case turn != "" && name != "":
-		return fmt.Sprintf("%s進入%s", turn, name)
-	case turn != "":
-		return turn
-	case name != "":
-		return fmt.Sprintf("沿%s直走", name)
-	default:
-		return "繼續直走"
+	if turn != "" {
+		return namedWalkTurn(turn, name)
 	}
+	if name != "" {
+		return fmt.Sprintf("沿%s直走", name)
+	}
+	return "繼續直走"
+}
+
+func namedWalkTurn(turn, name string) string {
+	if name != "" {
+		return fmt.Sprintf("%s進入%s", turn, name)
+	}
+	return turn
 }
 
 // Rail-mode classifiers. TDX MaaS mode strings vary by dataset; these cover the
@@ -217,16 +252,16 @@ SELECT ST_AsText(
 FROM located`
 
 func railShapeMode(mode string) string {
-	switch {
-	case isMetroMode(mode):
+	if isMetroMode(mode) {
 		return "metro"
-	case isThsrMode(mode):
-		return "thsr"
-	case isRailMode(mode):
-		return "tra"
-	default:
-		return ""
 	}
+	if isThsrMode(mode) {
+		return "thsr"
+	}
+	if isRailMode(mode) {
+		return "tra"
+	}
+	return ""
 }
 
 // transitStopPoint is one stop a transit section passes through, in travel
@@ -252,13 +287,18 @@ func appendTransitSegment(path []*pb.Location, seg []*pb.Location) []*pb.Locatio
 	if len(seg) == 0 {
 		return path
 	}
-	if len(path) > 0 {
-		last := path[len(path)-1]
-		if last.Lat == seg[0].Lat && last.Lng == seg[0].Lng {
-			seg = seg[1:]
-		}
+	if joinsTransitSegment(path, seg[0]) {
+		seg = seg[1:]
 	}
 	return append(path, seg...)
+}
+
+func joinsTransitSegment(path []*pb.Location, first *pb.Location) bool {
+	if len(path) == 0 {
+		return false
+	}
+	last := path[len(path)-1]
+	return last.Lat == first.Lat && last.Lng == first.Lng
 }
 
 // parseWKTLineString parses a PostGIS ST_AsText LINESTRING result into
@@ -268,67 +308,68 @@ func parseWKTLineString(wkt string) ([]*pb.Location, error) {
 	wkt = strings.TrimSpace(wkt)
 	open := strings.IndexByte(wkt, '(')
 	closeIdx := strings.LastIndexByte(wkt, ')')
-	if !strings.HasPrefix(strings.ToUpper(wkt), "LINESTRING") || open < 0 || closeIdx <= open {
+	if !wktLineStringBounds(wkt, open, closeIdx) {
 		return nil, _oops.With("wkt", wkt).Errorf("not a LINESTRING")
 	}
 	body := wkt[open+1 : closeIdx]
 	if strings.TrimSpace(body) == "" {
 		return nil, _oops.With("wkt", wkt).Errorf("empty LINESTRING")
 	}
+	return parseWKTPoints(body, wkt)
+}
+
+func wktLineStringBounds(wkt string, open, closeIdx int) bool {
+	return strings.HasPrefix(strings.ToUpper(wkt), "LINESTRING") && open >= 0 && closeIdx > open
+}
+
+func parseWKTPoints(body, wkt string) ([]*pb.Location, error) {
 	pairs := strings.Split(body, ",")
 	points := make([]*pb.Location, 0, len(pairs))
 	for _, pair := range pairs {
-		fields := strings.Fields(strings.TrimSpace(pair))
-		if len(fields) < 2 {
-			return nil, _oops.With("pair", pair).With("wkt", wkt).Errorf("malformed coordinate")
-		}
-		lng, err := strconv.ParseFloat(fields[0], 64)
+		point, err := parseWKTCoordinate(pair, wkt)
 		if err != nil {
-			return nil, _oops.With("fields", fields[0]).Wrapf(err, "parse lng")
+			return nil, err
 		}
-		lat, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil {
-			return nil, _oops.With("fields", fields[1]).Wrapf(err, "parse lat")
-		}
-		points = append(points, &pb.Location{Lat: lat, Lng: lng})
+		points = append(points, point)
 	}
 	return points, nil
+}
+
+func parseWKTCoordinate(pair, wkt string) (*pb.Location, error) {
+	fields := strings.Fields(strings.TrimSpace(pair))
+	if len(fields) < 2 {
+		return nil, _oops.With("pair", pair).With("wkt", wkt).Errorf("malformed coordinate")
+	}
+	lng, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return nil, _oops.With("fields", fields[0]).Wrapf(err, "parse lng")
+	}
+	lat, err := strconv.ParseFloat(fields[1], 64)
+	if err != nil {
+		return nil, _oops.With("fields", fields[1]).Wrapf(err, "parse lat")
+	}
+	return &pb.Location{Lat: lat, Lng: lng}, nil
 }
 
 func clipRailShape(ctx context.Context, db maasDB, mode string, a, b transitStopPoint) ([]*pb.Location, bool) {
 	if db == nil {
 		return nil, false
 	}
-	if (a.lat == 0 && a.lng == 0) || (b.lat == 0 && b.lng == 0) {
+	if !transitEndpointsUsable(a, b) {
 		return nil, false
 	}
-	rows, err := db.Query(ctx, _transitPathClipSQL,
-		mode, a.lng, a.lat, b.lng, b.lat, _railShapeSnapMeters, _railShapeSimplifyTolerance)
-	if err != nil {
-		zap.S().Warnw("query error",
-			"component", "maas",
-			"action", "transit_path",
-			"event", "query_error",
-			"mode", mode,
-			"err", err,
-		)
+	wkt, ok := railShapeWKT(ctx, db, mode, a, b)
+	if !ok {
 		return nil, false
 	}
-	defer rows.Close()
-	if !rows.Next() {
-		return nil, false
-	}
-	var wkt string
-	if err := rows.Scan(&wkt); err != nil {
-		zap.S().Warnw("scan error",
-			"component", "maas",
-			"action", "transit_path",
-			"event", "scan_error",
-			"mode", mode,
-			"err", err,
-		)
-		return nil, false
-	}
+	return railShapePoints(wkt, mode)
+}
+
+func transitEndpointsUsable(a, b transitStopPoint) bool {
+	return transitStopUsable(a) && transitStopUsable(b)
+}
+
+func railShapePoints(wkt, mode string) ([]*pb.Location, bool) {
 	points, err := parseWKTLineString(wkt)
 	if err != nil || len(points) < 2 {
 		zap.S().Warnw("parse error",
@@ -343,11 +384,43 @@ func clipRailShape(ctx context.Context, db maasDB, mode string, a, b transitStop
 	return points, true
 }
 
+func railShapeWKT(ctx context.Context, db maasDB, mode string, a, b transitStopPoint) (string, bool) {
+	rows, err := db.Query(ctx, _transitPathClipSQL,
+		mode, a.lng, a.lat, b.lng, b.lat, _railShapeSnapMeters, _railShapeSimplifyTolerance)
+	if err != nil {
+		zap.S().Warnw("query error",
+			"component", "maas",
+			"action", "transit_path",
+			"event", "query_error",
+			"mode", mode,
+			"err", err,
+		)
+		return "", false
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", false
+	}
+	var wkt string
+	if err := rows.Scan(&wkt); err != nil {
+		zap.S().Warnw("scan error",
+			"component", "maas",
+			"action", "transit_path",
+			"event", "scan_error",
+			"mode", mode,
+			"err", err,
+		)
+		return "", false
+	}
+	return wkt, true
+}
+
+func transitStopUsable(point transitStopPoint) bool {
+	return point.lat != 0 || point.lng != 0
+}
+
 func buildTransitPath(ctx context.Context, db maasDB, mode string, sec tdxSection) []*pb.Location {
 	stops := sectionStopPoints(sec)
-	if len(stops) < 2 {
-		return nil
-	}
 	var path []*pb.Location
 	for i := 0; i+1 < len(stops); i++ {
 		a, b := stops[i], stops[i+1]
@@ -358,6 +431,14 @@ func buildTransitPath(ctx context.Context, db maasDB, mode string, sec tdxSectio
 		path = appendTransitSegment(path, seg)
 	}
 	return path
+}
+
+func enrichTransitPath(ctx context.Context, db maasDB, mode string, ref maasSectionRef) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ref.target.TransitPath = buildTransitPath(ctx, db, mode, ref.source)
+	return nil
 }
 
 func enrichTransitPaths(ctx context.Context, db maasDB, refs []maasSectionRef) {
@@ -372,13 +453,7 @@ func enrichTransitPaths(ctx context.Context, db maasDB, refs []maasSectionRef) {
 			continue
 		}
 
-		group.Go(func() error {
-			if err := groupCtx.Err(); err != nil {
-				return err
-			}
-			ref.target.TransitPath = buildTransitPath(groupCtx, db, mode, ref.source)
-			return nil
-		})
+		group.Go(func() error { return enrichTransitPath(groupCtx, db, mode, ref) })
 	}
 	_ = group.Wait()
 }

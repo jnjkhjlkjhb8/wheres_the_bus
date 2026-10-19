@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart' show IconData;
+import 'package:flutter/widgets.dart';
 
 /// Presentation data for one settings row.
 class SettingsItemData {

@@ -22,6 +22,7 @@ class StationDisplayField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final (background, foreground) = _fieldColors(cs);
     final duration = AppMotion.reduced(context)
         ? Duration.zero
         : AppMotion.short;
@@ -32,7 +33,7 @@ class StationDisplayField extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: active ? cs.primary : cs.surfaceContainerHighest,
+        color: background,
         borderRadius: BorderRadius.circular(8),
       ),
       alignment: Alignment.center,
@@ -47,7 +48,7 @@ class StationDisplayField extends StatelessWidget {
               fontFamily: 'IBMPlexSans',
               fontSize: 32,
               fontWeight: FontWeight.w500,
-              color: active ? cs.onPrimary : cs.onSurface,
+              color: foreground,
             ),
             child: Text(value),
           ),
@@ -58,4 +59,8 @@ class StationDisplayField extends StatelessWidget {
     if (onTap == null) return field;
     return Pressable(onTap: onTap, semanticLabel: value, child: field);
   }
+
+  (Color, Color) _fieldColors(ColorScheme colors) => active
+      ? (colors.primary, colors.onPrimary)
+      : (colors.surfaceContainerHighest, colors.onSurface);
 }

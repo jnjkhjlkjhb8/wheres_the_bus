@@ -49,30 +49,7 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
   ) async {
     emit(const RailTrainState());
     try {
-      final List<RailTrainStop> stops;
-      if (_isThsr) {
-        final raw = await _thsr.stops(date, trainNo);
-        stops = raw
-            .map(
-              (s) => RailTrainStop(
-                name: s.stationName,
-                arrive: s.arrivalTime,
-                depart: s.departureTime,
-              ),
-            )
-            .toList();
-      } else {
-        final raw = await _tra.stops(date, trainNo);
-        stops = raw
-            .map(
-              (s) => RailTrainStop(
-                name: s.stationName,
-                arrive: s.arrivalTime,
-                depart: s.departureTime,
-              ),
-            )
-            .toList();
-      }
+      final stops = await _loadStops();
 
       if (stops.isEmpty) {
         emit(const RailTrainState(status: RailTrainStatus.empty));
@@ -89,18 +66,7 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
         ),
       );
 
-      if (!_isThsr && stops.length >= 2 && !isClosed) {
-        unawaited(_delaySub?.cancel());
-        _delaySub =
-            resilientStream(
-              () => _tra.delay(date, stops.first.name, stops.last.name),
-            ).listen(
-              (m) {
-                if (!isClosed) add(RailTrainDelayUpdated(m[trainNo] ?? 0));
-              },
-              onError: (Object _) {}, // keep last value; never surface as error
-            );
-      }
+      _subscribeDelay(stops);
     } on Object catch (e) {
       final error = AppError.from(e);
       emit(
@@ -114,28 +80,71 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
     }
   }
 
+  Future<List<RailTrainStop>> _loadStops() async {
+    if (_isThsr) {
+      final raw = await _thsr.stops(date, trainNo);
+      return raw
+          .map(
+            (s) => RailTrainStop(
+              name: s.stationName,
+              arrive: s.arrivalTime,
+              depart: s.departureTime,
+            ),
+          )
+          .toList();
+    } else {
+      final raw = await _tra.stops(date, trainNo);
+      return raw
+          .map(
+            (s) => RailTrainStop(
+              name: s.stationName,
+              arrive: s.arrivalTime,
+              depart: s.departureTime,
+            ),
+          )
+          .toList();
+    }
+  }
+
+  bool _canSubscribeDelay(List<RailTrainStop> stops) =>
+      !_isThsr && stops.length >= 2 && !isClosed;
+
+  void _subscribeDelay(List<RailTrainStop> stops) {
+    if (_canSubscribeDelay(stops)) {
+      unawaited(_delaySub?.cancel());
+      _delaySub =
+          resilientStream(
+            () => _tra.delay(date, stops.first.name, stops.last.name),
+          ).listen(
+            (m) {
+              if (!isClosed) add(RailTrainDelayUpdated(m[trainNo] ?? 0));
+            },
+            onError: (Object _) {}, // keep last value; never surface as error
+          );
+    }
+  }
+
+  bool get _hasUserSegment => userOrigin != null && userDest != null;
+
+  bool _sameFareSegment(String origin, String destination) =>
+      userOrigin == origin && userDest == destination;
+
   Future<(RailFareQuote?, RailFareQuote?)> _loadFares(
     List<RailTrainStop> stops,
   ) async {
     final originName = stops.first.name;
     final destName = stops.last.name;
-    final hasUserSegment = userOrigin != null && userDest != null;
-
-    if (!hasUserSegment) {
+    if (!_hasUserSegment) {
       return (await _loadFare(originName, destName), null);
     }
     // The user's segment can coincide with the train's full run (they
     // searched its terminal stations) — avoid quoting the same fare via two
     // separate RPCs in that case.
-    if (userOrigin == originName && userDest == destName) {
-      final fare = await _loadFare(originName, destName);
-      return (fare, fare);
-    }
-    final results = await Future.wait([
-      _loadFare(originName, destName),
-      _loadFare(userOrigin!, userDest!),
-    ]);
-    return (results[0], results[1]);
+    final full = _loadFare(originName, destName);
+    final user = _sameFareSegment(originName, destName)
+        ? full
+        : _loadFare(userOrigin!, userDest!);
+    return (await full, await user);
   }
 
   Future<RailFareQuote?> _loadFare(String originName, String destName) async {
@@ -161,12 +170,8 @@ class RailTrainBloc extends Bloc<RailTrainEvent, RailTrainState> {
     Emitter<RailTrainState> emit,
   ) {
     if (state.status != RailTrainStatus.loaded) return;
-    emit(
-      state.copyWith(
-        liveDelayMinutes: event.minutes,
-        delayUpdatedAt: DateTime.now(),
-      ),
-    );
+    final now = DateTime.now();
+    emit(state.copyWith(liveDelayMinutes: event.minutes, delayUpdatedAt: now));
   }
 
   @override

@@ -132,6 +132,10 @@ class FavoriteToggleButton extends StatelessWidget {
     );
   }
 
+  EdgeInsets get _padding =>
+      onPlate ? EdgeInsets.zero : const EdgeInsets.all(11);
+  double get _iconSize => onPlate ? AppBarMetrics.icon : 22;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -146,10 +150,10 @@ class FavoriteToggleButton extends StatelessWidget {
               : AppI18n.of(context).commonFavorite,
           child: Padding(
             // 22pt icon + 11pt padding on each side = 44pt hit envelope.
-            padding: onPlate ? EdgeInsets.zero : const EdgeInsets.all(11),
+            padding: _padding,
             child: Icon(
               saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-              size: onPlate ? AppBarMetrics.icon : 22,
+              size: _iconSize,
               color: cs.onSurface,
             ),
           ),

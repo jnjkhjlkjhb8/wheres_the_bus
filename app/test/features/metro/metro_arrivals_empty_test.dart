@@ -33,6 +33,67 @@ void main() {
   );
 
   group('metroServiceStatus', () {
+    test(
+      'invalid clocks are skipped and equal clocks keep the first destination',
+      () {
+        const entries = [
+          MetroSchedule(
+            line: 'A',
+            destination: 'invalid',
+            firstTime: 'x:10',
+            lastTime: 'bad',
+          ),
+          MetroSchedule(
+            line: 'B',
+            destination: 'first',
+            firstTime: '06:00',
+            lastTime: '00:40',
+          ),
+          MetroSchedule(
+            line: 'C',
+            destination: 'tie',
+            firstTime: '06:00',
+            lastTime: '00:40',
+          ),
+          MetroSchedule(
+            line: 'D',
+            destination: 'later',
+            firstTime: '06:10',
+            lastTime: '23:59',
+          ),
+        ];
+        final status = metroServiceStatus(entries, DateTime(2026, 7, 12, 6));
+        expect(status.state, MetroServiceState.running);
+        expect(status.firstDestination, 'first');
+        expect(status.firstTrain, '06:00');
+        expect(status.lastTrain, '00:40');
+        expect(
+          metroServiceStatus(entries, DateTime(2026, 7, 12, 0, 40)).state,
+          MetroServiceState.running,
+        );
+        for (final times in [
+          ('bad', '23:00'),
+          ('06:00', 'x:00'),
+          ('06:x', '23:00'),
+        ]) {
+          final missing = metroServiceStatus([
+            MetroSchedule(
+              line: 'X',
+              destination: '',
+              firstTime: times.$1,
+              lastTime: times.$2,
+            ),
+          ], DateTime(2026, 7, 12, 23, 50));
+          expect(missing.state, MetroServiceState.running);
+          expect(missing.firstTrain, isNull);
+          expect(missing.lastTrain, isNull);
+        }
+        expect(
+          metroServiceStatus([], DateTime(2026, 7, 12)).state,
+          MetroServiceState.running,
+        );
+      },
+    );
     test('midday counts as running', () {
       final s = metroServiceStatus(schedule, DateTime(2026, 7, 12, 12));
       expect(s.state, MetroServiceState.running);

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dmitryikh/leaves"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/holiday"
@@ -45,7 +46,13 @@ func DedupRouteDirPairs(keys []RouteDirKey) []RouteDirKey {
 	return out
 }
 
-func BatchNextDepartures(ctx context.Context, db *pgxpool.Pool, keys []RouteDirKey, todTime string, dayBit int) map[RouteDirKey]time.Time {
+// queryer is the only *pgxpool.Pool method these batched lookups call; a
+// narrow parameter lets tests substitute pgxmock instead of a live database.
+type queryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func BatchNextDepartures(ctx context.Context, db queryer, keys []RouteDirKey, todTime string, dayBit int) map[RouteDirKey]time.Time {
 	out := make(map[RouteDirKey]time.Time, len(keys))
 	if len(keys) == 0 {
 		return out
@@ -94,11 +101,23 @@ func BatchNextDepartures(ctx context.Context, db *pgxpool.Pool, keys []RouteDirK
 		return out
 	}
 	defer rows.Close()
-	type prioDep struct {
-		dep  time.Time
-		prio int
+	return collectDepartures(rows, out, len(keys))
+}
+
+type prioritizedDeparture struct {
+	dep  time.Time
+	prio int
+}
+
+func collectDepartures(rows pgx.Rows, out map[RouteDirKey]time.Time, capacity int) map[RouteDirKey]time.Time {
+	for key, value := range readPrioritizedDepartures(rows, capacity) {
+		out[key] = value.dep
 	}
-	best := make(map[RouteDirKey]prioDep, len(keys))
+	return out
+}
+
+func readPrioritizedDepartures(rows pgx.Rows, capacity int) map[RouteDirKey]prioritizedDeparture {
+	best := make(map[RouteDirKey]prioritizedDeparture, capacity)
 	for rows.Next() {
 		var uid string
 		var dir int32
@@ -108,17 +127,18 @@ func BatchNextDepartures(ctx context.Context, db *pgxpool.Pool, keys []RouteDirK
 			continue
 		}
 		k := RouteDirKey{SubRouteUID: uid, Direction: dir}
-		if cur, ok := best[k]; !ok || prio < cur.prio {
-			best[k] = prioDep{dep: dep, prio: prio}
-		}
+		preferDeparture(best, k, dep, prio)
 	}
 	if err := rows.Err(); err != nil {
 		zap.S().Errorw("BatchNextDepartures rows error", "component", "model", "err", err)
 	}
-	for k, v := range best {
-		out[k] = v.dep
+	return best
+}
+
+func preferDeparture(best map[RouteDirKey]prioritizedDeparture, key RouteDirKey, departure time.Time, priority int) {
+	if current, ok := best[key]; !ok || priority < current.prio {
+		best[key] = prioritizedDeparture{dep: departure, prio: priority}
 	}
-	return out
 }
 
 func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[StopOffsetKey]int {
@@ -130,6 +150,11 @@ func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[
 	if len(missing) == 0 {
 		return out
 	}
+	loadStopOffsets(ctx, db, missing, out)
+	return out
+}
+
+func loadStopOffsets(ctx context.Context, db queryer, missing []string, out map[StopOffsetKey]int) {
 	rows, err := db.Query(ctx, `
 		SELECT p.sub_route_uid, p.Direction, p.stop_uid, p.offset_secs
 		FROM (`+busmodel.PatternSQL+`) p
@@ -137,13 +162,17 @@ func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[
 		missing)
 	if err != nil {
 		zap.S().Errorw("BatchStopOffsets error", "component", "model", "err", err)
-		return out
+		return
 	}
 	defer rows.Close()
-	fetched := make(map[string][]stopOffset, len(missing))
-	for _, uid := range missing {
-		fetched[uid] = nil
+	fetched, complete := collectStopOffsets(rows, missing, out)
+	if complete {
+		storeStopOffsets(&_stopOffsetCache, fetched, time.Now())
 	}
+}
+
+func collectStopOffsets(rows pgx.Rows, missing []string, out map[StopOffsetKey]int) (map[string][]stopOffset, bool) {
+	fetched := initialStopOffsets(missing)
 	for rows.Next() {
 		var uid, stop string
 		var dir int32
@@ -157,10 +186,17 @@ func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[
 		// A partial read is not cached: the uids it covered would look complete
 		// and stay that way for the whole TTL.
 		zap.S().Errorw("BatchStopOffsets rows error", "component", "model", "err", err)
-		return out
+		return nil, false
 	}
-	storeStopOffsets(&_stopOffsetCache, fetched, time.Now())
-	return out
+	return fetched, true
+}
+
+func initialStopOffsets(missing []string) map[string][]stopOffset {
+	fetched := make(map[string][]stopOffset, len(missing))
+	for _, uid := range missing {
+		fetched[uid] = nil
+	}
+	return fetched
 }
 
 // _predictor is the process-wide ETA model, built once at startup by
@@ -187,6 +223,12 @@ func newPredictor() *predictor {
 		return &predictor{}
 	}
 	p := &predictor{model: m}
+	p.readEncoders(path)
+	zap.S().Infow("loaded", "component", "model", "path", path)
+	return p
+}
+
+func (p *predictor) readEncoders(path string) {
 	encPath := strings.TrimSuffix(path, ".json") + "_encoders.json"
 	encData, err := os.ReadFile(encPath)
 	if err != nil {
@@ -194,8 +236,6 @@ func newPredictor() *predictor {
 	} else if err := json.Unmarshal(encData, &p.encoders); err != nil {
 		zap.S().Infow("encoders parse failed", "component", "model", "path", encPath, "err", err)
 	}
-	zap.S().Infow("loaded", "component", "model", "path", path)
-	return p
 }
 
 // StopCtx describes the stop being predicted: its subroute/Direction, the
@@ -237,7 +277,7 @@ func NextBusTime(wx *weather.Data, stop StopCtx, inputs Inputs) string {
 }
 
 func (p *predictor) NextBusTime(wx *weather.Data, stop StopCtx, inputs Inputs) string {
-	if p == nil || p.model == nil || inputs.NextDep.IsZero() {
+	if !p.readyForPrediction(inputs.NextDep) {
 		return ""
 	}
 	t := inputs.Now.In(pipeline.Taipei)
@@ -246,6 +286,17 @@ func (p *predictor) NextBusTime(wx *weather.Data, stop StopCtx, inputs Inputs) s
 	if !inputs.HasOffset {
 		return dep.Format(time.RFC3339)
 	}
+	features := p.features(wx, stop, t)
+	correction := p.model.PredictSingle(features, 0)
+	eta := dep.Add(time.Duration(inputs.OffsetSec)*time.Second + time.Duration(correction)*time.Second)
+	return eta.Format(time.RFC3339)
+}
+
+func (p *predictor) readyForPrediction(departure time.Time) bool {
+	return p != nil && p.model != nil && !departure.IsZero()
+}
+
+func (p *predictor) features(wx *weather.Data, stop StopCtx, t time.Time) []float64 {
 	ratio := 0.0
 	if stop.TotalStops > 0 {
 		ratio = float64(stop.StopSequence) / float64(stop.TotalStops)
@@ -260,7 +311,7 @@ func (p *predictor) NextBusTime(wx *weather.Data, stop StopCtx, inputs Inputs) s
 	if v, ok := p.encoders.City[stop.City]; ok {
 		cityEnc = float64(v)
 	}
-	features := []float64{
+	return []float64{
 		float64(t.Hour()),
 		float64(t.Weekday()),
 		boolToFloat64(holiday.IsHoliday(t)),
@@ -277,9 +328,6 @@ func (p *predictor) NextBusTime(wx *weather.Data, stop StopCtx, inputs Inputs) s
 		-1,
 		-1,
 	}
-	correction := p.model.PredictSingle(features, 0)
-	eta := dep.Add(time.Duration(inputs.OffsetSec)*time.Second + time.Duration(correction)*time.Second)
-	return eta.Format(time.RFC3339)
 }
 
 // boolToFloat64 maps true to 1 and false to 0 for encoding a boolean feature

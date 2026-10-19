@@ -64,79 +64,24 @@ class TransportIcon extends StatelessWidget {
   /// Icon size in logical pixels.
   final double size;
 
-  static Color _mrtColor(TransportType t) {
-    switch (t) {
-      case TransportType.mrtBL:
-        return AppTheme.mrtBL;
-      case TransportType.mrtR:
-        return AppTheme.mrtR;
-      case TransportType.mrtG:
-        return AppTheme.mrtG;
-      case TransportType.mrtO:
-        return AppTheme.mrtO;
-      case TransportType.mrtBR:
-        return AppTheme.mrtBR;
-      case TransportType.mrtY:
-        return AppTheme.mrtY;
-      case TransportType.mrtAM:
-        return AppTheme.mrtAM;
-      case TransportType.mrtKG:
-        return AppTheme.mrtKG;
-      case TransportType.mrtKR:
-        return AppTheme.mrtKR;
-      case TransportType.mrtKO:
-        return AppTheme.mrtKO;
-      case TransportType.thsr:
-      case TransportType.tra:
-      case TransportType.bus:
-      case TransportType.bike:
-      case TransportType.busStop:
-      case TransportType.location:
-      case TransportType.walking:
-        return Colors.grey;
-    }
-  }
+  static const _svgAssets = <TransportType, String>{
+    TransportType.thsr: 'assets/rails/THSR.svg',
+    TransportType.tra: 'assets/rails/TRA.svg',
+    TransportType.mrtBL: 'assets/mrt/TRTC/BL.svg',
+    TransportType.mrtR: 'assets/mrt/TRTC/R.svg',
+    TransportType.mrtG: 'assets/mrt/TRTC/G.svg',
+    TransportType.mrtO: 'assets/mrt/TRTC/O.svg',
+    TransportType.mrtBR: 'assets/mrt/TRTC/BR.svg',
+    TransportType.mrtY: 'assets/mrt/TRTC/Y.svg',
+  };
 
-  static bool _isMrt(TransportType t) => t.name.startsWith('mrt');
-
-  static String? _svgAsset(TransportType t) {
-    switch (t) {
-      case TransportType.thsr:
-        return 'assets/rails/THSR.svg';
-      case TransportType.tra:
-        return 'assets/rails/TRA.svg';
-      case TransportType.bus:
-        return null;
-      case TransportType.bike:
-        return null;
-      case TransportType.busStop:
-        return null;
-      case TransportType.location:
-        return null;
-      case TransportType.mrtBL:
-        return 'assets/mrt/TRTC/BL.svg';
-      case TransportType.mrtR:
-        return 'assets/mrt/TRTC/R.svg';
-      case TransportType.mrtG:
-        return 'assets/mrt/TRTC/G.svg';
-      case TransportType.mrtO:
-        return 'assets/mrt/TRTC/O.svg';
-      case TransportType.mrtBR:
-        return 'assets/mrt/TRTC/BR.svg';
-      case TransportType.mrtY:
-        return 'assets/mrt/TRTC/Y.svg';
-      case TransportType.mrtAM:
-        return 'assets/mrt/TYMC.svg';
-      case TransportType.mrtKG:
-        return 'assets/mrt/KLRT/C.svg';
-      case TransportType.mrtKR:
-        return 'assets/mrt/KRTC/R.svg';
-      case TransportType.mrtKO:
-        return 'assets/mrt/KRTC/O.svg';
-      case TransportType.walking:
-        return null;
-    }
-  }
+  // Missing logos must not turn an arrival row into an asset-load error.
+  static const _lineColors = <TransportType, Color>{
+    TransportType.mrtAM: AppTheme.mrtAM,
+    TransportType.mrtKG: AppTheme.mrtKG,
+    TransportType.mrtKR: AppTheme.mrtKR,
+    TransportType.mrtKO: AppTheme.mrtKO,
+  };
 
   Widget _materialIcon(Color color) {
     final icon = switch (type) {
@@ -165,7 +110,7 @@ class TransportIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    final svg = _svgAsset(type);
+    final svg = _svgAssets[type];
     if (svg != null) {
       final hheight = type == TransportType.thsr ? size * 0.5 : size;
       return SvgPicture.asset(
@@ -175,15 +120,9 @@ class TransportIcon extends StatelessWidget {
         placeholderBuilder: (_) => _materialIcon(cs.onSurface),
       );
     }
-    if (_isMrt(type)) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: _mrtColor(type),
-          shape: BoxShape.circle,
-        ),
-      );
+    final lineColor = _lineColors[type];
+    if (lineColor != null) {
+      return Icon(Icons.train_rounded, size: size, color: lineColor);
     }
     return _materialIcon(cs.onSurface);
   }

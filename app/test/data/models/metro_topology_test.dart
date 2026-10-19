@@ -60,14 +60,41 @@ void main() {
     });
 
     test('an unresolved board/terminal pair yields no targets', () {
-      expect(
-        MetroTopology.aheadStations(
-          line: 'BL',
-          boardCode: '',
-          terminalCode: 'BL23',
-        ),
-        isEmpty,
-      );
+      for (final (board, terminal) in const [
+        ('', 'BL23'),
+        ('BL12', ''),
+        ('BL99', 'BL23'),
+        ('BL12', 'BL99'),
+        ('BL12', 'R10'),
+        ('R10', 'BL12'),
+        ('BL12', 'BL12'),
+        ('BL99', 'BL99'),
+      ]) {
+        expect(
+          MetroTopology.aheadStations(
+            line: 'BL',
+            boardCode: board,
+            terminalCode: terminal,
+          ),
+          isEmpty,
+          reason: '$board → $terminal',
+        );
+      }
+    });
+
+    test('the trunk runs end to end and a branch hangs off its connect', () {
+      List<String> ids(String line, String board, String terminal) =>
+          MetroTopology.aheadStations(
+            line: line,
+            boardCode: board,
+            terminalCode: terminal,
+          ).map((s) => s.id).toList();
+
+      expect(ids('BL', 'BL01', 'BL03'), ['BL02', 'BL03']);
+      expect(ids('BL', 'BL03', 'BL01'), ['BL02', 'BL01']);
+      // A spur is reachable from the far side of the trunk too.
+      expect(ids('O', 'O54', 'O12'), ['O53', 'O52', 'O51', 'O50', 'O12']);
+      expect(ids('O', 'O50', 'O13'), ['O12', 'O13']);
     });
   });
 

@@ -11,6 +11,8 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/models/rail_station_board.dart';
+import 'package:wheres_the_bus/data/repositories/thsr_repository.dart';
+import 'package:wheres_the_bus/data/repositories/tra_repository.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_station_board_bloc.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_station_board_event.dart';
@@ -37,6 +39,8 @@ class RailStationDetailView extends StatelessWidget {
     required this.stationId,
     required this.name,
     this.bloc,
+    this.traRepository,
+    this.thsrRepository,
     super.key,
   });
 
@@ -45,6 +49,10 @@ class RailStationDetailView extends StatelessWidget {
   final String name;
 
   final RailStationBoardBloc? bloc;
+
+  /// Repositories for the bloc this view creates when [bloc] is null.
+  final TraRepository? traRepository;
+  final ThsrRepository? thsrRepository;
 
   @override
   Widget build(BuildContext context) {
@@ -61,9 +69,12 @@ class RailStationDetailView extends StatelessWidget {
       );
     }
     return BlocProvider(
-      create: (_) =>
-          RailStationBoardBloc(system: system, stationId: stationId)
-            ..add(const RailStationBoardRequested(RailBoardDirection.forward)),
+      create: (_) => RailStationBoardBloc(
+        system: system,
+        stationId: stationId,
+        traRepository: traRepository,
+        thsrRepository: thsrRepository,
+      )..add(const RailStationBoardRequested(RailBoardDirection.forward)),
       child: content,
     );
   }

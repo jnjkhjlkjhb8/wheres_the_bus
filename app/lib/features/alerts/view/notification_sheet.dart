@@ -278,23 +278,13 @@ class _NotificationRowState extends State<_NotificationRow> {
     final unread = widget.unread;
     final colors = noticeColors(alert.tone, cs);
     final isRed = alert.tone == NoticeTone.critical;
-    final dotColor = isRed ? colors.accent : cs.onSurfaceVariant;
-
-    // A critical row is tinted end-to-end; the old colored left stripe is
-    // gone. Every other tone stays on the plain surface — the chip and the
-    // group it sits in already say what it is.
-    final background = isRed
-        ? Color.alphaBlend(colors.accent.withValues(alpha: 0.05), cs.surface)
-        : cs.surface;
+    final (background, dotColor) = _rowSurface(cs, colors, isRed);
 
     final titleText = alert.title ?? alert.message;
     // When there is a distinct title, [message] becomes the body; otherwise the
     // message already reads as the title and a body line would duplicate it.
-    final bodyText = alert.title != null ? alert.message : null;
+    final bodyText = _bodyText;
     final clampTarget = bodyText ?? titleText;
-
-    final time = alert.time;
-    final now = DateTime.now();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -304,69 +294,15 @@ class _NotificationRowState extends State<_NotificationRow> {
           0.0,
           double.infinity,
         );
-        final overflows = _overflows(
+        final canExpand = _canExpand(
           context,
-          clampTarget,
-          bodyText != null ? _bodyStyle(cs) : _titleStyle(cs, unread),
+          cs,
           textWidth,
+          clampTarget,
+          bodyText,
         );
-        final canExpand = overflows || time != null;
 
-        final content = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                AlertSourceChip(
-                  source: alert.source,
-                  department: alert.department,
-                ),
-                if (alert.source != null && isRed)
-                  const SizedBox(width: AppTheme.space8),
-                if (isRed) _SeverityTag(accent: colors.accent, cs: cs),
-                const Spacer(),
-                if (time != null)
-                  Text(
-                    alertRelativeTime(AppI18n.of(context), time, now),
-                    style: AppTextStyles.memo.copyWith(
-                      fontSize: 11.5,
-                      color: cs.onSurfaceVariant,
-                      height: 1,
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppTheme.space8),
-            Text(
-              titleText,
-              maxLines: bodyText == null && !_expanded ? 2 : null,
-              overflow: bodyText == null && !_expanded
-                  ? TextOverflow.ellipsis
-                  : TextOverflow.clip,
-              style: _titleStyle(cs, unread),
-            ),
-            if (bodyText != null) ...[
-              const SizedBox(height: AppTheme.space4),
-              Text(
-                bodyText,
-                maxLines: _expanded ? null : 2,
-                overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
-                style: _bodyStyle(cs),
-              ),
-            ],
-            if (_expanded && time != null) ...[
-              const SizedBox(height: AppTheme.space8),
-              Text(
-                _publishFooter(AppI18n.of(context), alert),
-                style: AppTextStyles.memo.copyWith(
-                  fontSize: 11.5,
-                  color: cs.outline,
-                  height: 1,
-                ),
-              ),
-            ],
-          ],
-        );
+        final content = _noticeContent(context, cs, colors, isRed);
 
         return Pressable(
           onTap: canExpand ? _toggle : null,
@@ -406,13 +342,7 @@ class _NotificationRowState extends State<_NotificationRow> {
                     ),
                   ] else if (canExpand) ...[
                     const SizedBox(width: AppTheme.space12),
-                    Icon(
-                      _expanded
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_down_rounded,
-                      size: 18,
-                      color: cs.outline,
-                    ),
+                    _expandIcon(cs),
                   ],
                 ],
               ),
@@ -420,6 +350,120 @@ class _NotificationRowState extends State<_NotificationRow> {
           ),
         );
       },
+    );
+  }
+
+  String? get _bodyText =>
+      widget.alert.title != null ? widget.alert.message : null;
+
+  (Color, Color) _rowSurface(
+    ColorScheme cs,
+    NoticeColors colors,
+    bool critical,
+  ) => critical
+      ? (
+          Color.alphaBlend(colors.accent.withValues(alpha: 0.05), cs.surface),
+          colors.accent,
+        )
+      : (cs.surface, cs.onSurfaceVariant);
+
+  bool _canExpand(
+    BuildContext context,
+    ColorScheme cs,
+    double width,
+    String target,
+    String? body,
+  ) =>
+      _overflows(
+        context,
+        target,
+        body != null ? _bodyStyle(cs) : _titleStyle(cs, widget.unread),
+        width,
+      ) ||
+      widget.alert.time != null;
+
+  bool _showSourceGap(AlertViewModel alert, bool critical) =>
+      alert.source != null && critical;
+
+  bool _showFooter(DateTime? time) => _expanded && time != null;
+
+  Widget _expandIcon(ColorScheme cs) => Icon(
+    _expanded
+        ? Icons.keyboard_arrow_up_rounded
+        : Icons.keyboard_arrow_down_rounded,
+    size: 18,
+    color: cs.outline,
+  );
+
+  Widget _title(ColorScheme cs, String? body) {
+    final clamped = body == null && !_expanded;
+    return Text(
+      widget.alert.title ?? widget.alert.message,
+      maxLines: clamped ? 2 : null,
+      overflow: clamped ? TextOverflow.ellipsis : TextOverflow.clip,
+      style: _titleStyle(cs, widget.unread),
+    );
+  }
+
+  Widget _body(ColorScheme cs, String text) => Text(
+    text,
+    maxLines: _expanded ? null : 2,
+    overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
+    style: _bodyStyle(cs),
+  );
+
+  Widget _noticeContent(
+    BuildContext context,
+    ColorScheme cs,
+    NoticeColors colors,
+    bool isRed,
+  ) {
+    final alert = widget.alert;
+    final time = alert.time;
+    final now = DateTime.now();
+    final bodyText = _bodyText;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            AlertSourceChip(
+              source: alert.source,
+              department: alert.department,
+            ),
+            if (_showSourceGap(alert, isRed))
+              const SizedBox(width: AppTheme.space8),
+            if (isRed) _SeverityTag(accent: colors.accent, cs: cs),
+            const Spacer(),
+            if (time != null)
+              Text(
+                alertRelativeTime(AppI18n.of(context), time, now),
+                style: AppTextStyles.memo.copyWith(
+                  fontSize: 11.5,
+                  color: cs.onSurfaceVariant,
+                  height: 1,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppTheme.space8),
+        _title(cs, bodyText),
+        if (bodyText != null) ...[
+          const SizedBox(height: AppTheme.space4),
+          _body(cs, bodyText),
+        ],
+        if (_showFooter(time)) ...[
+          const SizedBox(height: AppTheme.space8),
+          Text(
+            _publishFooter(AppI18n.of(context), alert),
+            style: AppTextStyles.memo.copyWith(
+              fontSize: 11.5,
+              color: cs.outline,
+              height: 1,
+            ),
+          ),
+        ],
+      ],
     );
   }
 

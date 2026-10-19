@@ -51,55 +51,21 @@ class AvailabilityGauge extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final total = _total;
 
-    final noBikes = hasLiveData && available == 0;
-    final noDocks = hasLiveData && docks == 0;
-    final lowBikes = hasLiveData && !noBikes && available <= _lowLimit(total);
+    final noBikes = _noBikes;
+    final noDocks = _noDocks;
+    final lowBikes = _lowBikes;
 
-    final ({String text, Color color})? flag;
-    if (!hasLiveData) {
-      flag = (
-        text: AppI18n.of(context).bikeWaitingLive,
-        color: cs.onSurfaceVariant,
-      );
-    } else if (noBikes && noDocks) {
-      // Physically impossible while the station is in service: every dock is
-      // either holding a bike or free to take one.
-      flag = (
-        text: AppI18n.of(context).bikeSuspended,
-        color: AppTheme.etaArriving,
-      );
-    } else if (noBikes) {
-      flag = (
-        text: AppI18n.of(context).bikeNoBikes,
-        color: AppTheme.etaArriving,
-      );
-    } else if (noDocks) {
-      flag = (
-        text: AppI18n.of(context).bikeNoDocks,
-        color: AppTheme.etaArriving,
-      );
-    } else if (lowBikes) {
-      flag = (
-        text: AppI18n.of(context).bikeFewBikes,
-        color: AppTheme.etaApproaching,
-      );
-    } else {
-      flag = null;
-    }
-
-    final borrowColor = noBikes
-        ? AppTheme.etaArriving
-        : lowBikes
-        ? AppTheme.etaApproaching
-        : cs.onSurface;
-    final returnColor = noDocks ? AppTheme.etaArriving : cs.onSurface;
+    final flag = _statusFlag(
+      AppI18n.of(context),
+      cs,
+      noBikes,
+      noDocks,
+      lowBikes,
+    );
 
     return Semantics(
       container: true,
-      label: hasLiveData
-          ? '${AppI18n.of(context).bikeGaugeSemantics(total, available, docks)}'
-                '${flag == null ? '' : '，${flag.text}'}'
-          : AppI18n.of(context).bikeGaugeNoLiveSemantics(total),
+      label: _semanticsLabel(AppI18n.of(context), total, flag?.text),
       excludeSemantics: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -109,28 +75,7 @@ class AvailabilityGauge extends StatelessWidget {
             total: total,
           ),
           const SizedBox(height: AppTheme.space10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _EndCount(
-                  value: hasLiveData ? '$available' : '—',
-                  unit: AppI18n.of(context).bikeUnitBikes,
-                  caption: _borrowCaption(AppI18n.of(context)),
-                  color: hasLiveData ? borrowColor : cs.onSurfaceVariant,
-                ),
-              ),
-              Expanded(
-                child: _EndCount(
-                  value: hasLiveData ? '$docks' : '—',
-                  unit: AppI18n.of(context).bikeUnitDocks,
-                  caption: AppI18n.of(context).bikeReturnSpaces,
-                  color: hasLiveData ? returnColor : cs.onSurfaceVariant,
-                  alignEnd: true,
-                ),
-              ),
-            ],
-          ),
+          _counts(context, noBikes, noDocks, lowBikes),
           if (flag != null) ...[
             const SizedBox(height: AppTheme.space14),
             Text(
@@ -146,20 +91,117 @@ class AvailabilityGauge extends StatelessWidget {
     );
   }
 
+  bool get _noBikes => hasLiveData && available == 0;
+  bool get _noDocks => hasLiveData && docks == 0;
+  bool get _lowBikes =>
+      hasLiveData && !_noBikes && available <= _lowLimit(_total);
+
+  String _semanticsLabel(AppI18n i18n, int total, String? flag) {
+    if (!hasLiveData) return i18n.bikeGaugeNoLiveSemantics(total);
+    final counts = i18n.bikeGaugeSemantics(total, available, docks);
+    return flag == null ? counts : '$counts，$flag';
+  }
+
+  ({String text, Color color})? _statusFlag(
+    AppI18n i18n,
+    ColorScheme colors,
+    bool noBikes,
+    bool noDocks,
+    bool lowBikes,
+  ) {
+    if (!hasLiveData) {
+      return (text: i18n.bikeWaitingLive, color: colors.onSurfaceVariant);
+    }
+    return _liveStatusFlag(i18n, noBikes, noDocks, lowBikes);
+  }
+
+  ({String text, Color color})? _liveStatusFlag(
+    AppI18n i18n,
+    bool noBikes,
+    bool noDocks,
+    bool lowBikes,
+  ) {
+    if (noBikes) return _noBikeFlag(i18n, noDocks);
+    if (noDocks) return (text: i18n.bikeNoDocks, color: AppTheme.etaArriving);
+    if (lowBikes) {
+      return (text: i18n.bikeFewBikes, color: AppTheme.etaApproaching);
+    }
+    return null;
+  }
+
+  ({String text, Color color}) _noBikeFlag(AppI18n i18n, bool noDocks) => (
+    // Both zero means the station cannot currently serve a rider.
+    text: noDocks ? i18n.bikeSuspended : i18n.bikeNoBikes,
+    color: AppTheme.etaArriving,
+  );
+
+  Widget _counts(
+    BuildContext context,
+    bool noBikes,
+    bool noDocks,
+    bool lowBikes,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: _borrowCount(i18n, colors, noBikes, lowBikes)),
+        Expanded(child: _returnCount(i18n, colors, noDocks)),
+      ],
+    );
+  }
+
+  Color _borrowColor(ColorScheme colors, bool noBikes, bool lowBikes) {
+    if (!hasLiveData) return colors.onSurfaceVariant;
+    return noBikes
+        ? AppTheme.etaArriving
+        : lowBikes
+        ? AppTheme.etaApproaching
+        : colors.onSurface;
+  }
+
+  Widget _borrowCount(
+    AppI18n i18n,
+    ColorScheme colors,
+    bool noBikes,
+    bool lowBikes,
+  ) => _EndCount(
+    value: hasLiveData ? '$available' : '—',
+    unit: i18n.bikeUnitBikes,
+    caption: _borrowCaption(i18n),
+    color: _borrowColor(colors, noBikes, lowBikes),
+  );
+
+  Widget _returnCount(AppI18n i18n, ColorScheme colors, bool noDocks) =>
+      _EndCount(
+        value: hasLiveData ? '$docks' : '—',
+        unit: i18n.bikeUnitDocks,
+        caption: i18n.bikeReturnSpaces,
+        color: !hasLiveData
+            ? colors.onSurfaceVariant
+            : noDocks
+            ? AppTheme.etaArriving
+            : colors.onSurface,
+        alignEnd: true,
+      );
+
   /// `可借` alone, or with the by-type split appended. The split used to be
   /// two full rows restating a sum already shown above them.
   String _borrowCaption(AppI18n i18n) {
     if (!hasLiveData) return i18n.bikeAvailable;
     final general = generalBikes;
     final electric = electricBikes;
-    if (general == null && electric == null) return i18n.bikeAvailable;
     final parts = <String>[
-      if (general != null && general > 0) i18n.bikeGeneralCount(general),
-      if (electric != null && electric > 0) i18n.bikeElectricCount(electric),
+      ..._bikeCountCaption(general, i18n.bikeGeneralCount),
+      ..._bikeCountCaption(electric, i18n.bikeElectricCount),
     ];
     if (parts.isEmpty) return i18n.bikeAvailable;
     return '${i18n.bikeAvailable} · ${parts.join(' · ')}';
   }
+
+  List<String> _bikeCountCaption(int? count, String Function(int) label) =>
+      count != null && count > 0 ? [label(count)] : [];
 }
 
 class _DockRack extends StatelessWidget {
@@ -185,31 +227,42 @@ class _DockRack extends StatelessWidget {
         final slots = (width - (total - 1) * _gap) / total >= _minSlotWidth
             ? total
             : 1;
-        return TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0, end: fraction),
-          duration: AppMotion.reduced(context)
-              ? AppMotion.instant
-              : AppMotion.medium,
-          curve: AppMotion.easeInOut,
-          builder: (context, value, _) => RepaintBoundary(
-            child: CustomPaint(
-              size: Size(width, _height),
-              painter: _RackPainter(
-                slots: slots,
-                fraction: value,
-                gap: slots == 1 ? 0 : _gap,
-                radius: slots == 1
-                    ? AppTheme.radiusStadium
-                    : AppTheme.radiusSlot,
-                emptyColor: cs.outlineVariant,
-                filledColor: AppTheme.statusArriving,
-              ),
-            ),
-          ),
-        );
+        return _animateRack(context, cs, width, slots, fraction);
       },
     );
   }
+
+  Widget _animateRack(
+    BuildContext context,
+    ColorScheme colors,
+    double width,
+    int slots,
+    double fraction,
+  ) => TweenAnimationBuilder<double>(
+    tween: Tween(begin: 0, end: fraction),
+    duration: AppMotion.reduced(context) ? AppMotion.instant : AppMotion.medium,
+    curve: AppMotion.easeInOut,
+    builder: (context, value, _) => _rackFrame(colors, width, slots, value),
+  );
+
+  Widget _rackFrame(
+    ColorScheme colors,
+    double width,
+    int slots,
+    double fraction,
+  ) => RepaintBoundary(
+    child: CustomPaint(
+      size: Size(width, _height),
+      painter: _RackPainter(
+        slots: slots,
+        fraction: fraction,
+        gap: slots == 1 ? 0 : _gap,
+        radius: slots == 1 ? AppTheme.radiusStadium : AppTheme.radiusSlot,
+        emptyColor: colors.outlineVariant,
+        filledColor: AppTheme.statusArriving,
+      ),
+    ),
+  );
 }
 
 class _RackPainter extends CustomPainter {
@@ -242,9 +295,7 @@ class _RackPainter extends CustomPainter {
     ];
 
     final empty = Paint()..color = emptyColor;
-    for (final r in rects) {
-      canvas.drawRRect(r, empty);
-    }
+    _drawSlots(canvas, rects, empty);
 
     if (fraction <= 0) return;
     // The green layer is the same rack clipped to the fill boundary, which is
@@ -254,20 +305,21 @@ class _RackPainter extends CustomPainter {
       ..save()
       ..clipRect(Rect.fromLTWH(0, 0, size.width * fraction, size.height));
     final full = Paint()..color = filledColor;
-    for (final r in rects) {
-      canvas.drawRRect(r, full);
-    }
+    _drawSlots(canvas, rects, full);
     canvas.restore();
   }
 
+  void _drawSlots(Canvas canvas, List<RRect> rects, Paint paint) {
+    for (final rect in rects) {
+      canvas.drawRRect(rect, paint);
+    }
+  }
+
   @override
-  bool shouldRepaint(_RackPainter old) =>
-      old.slots != slots ||
-      old.fraction != fraction ||
-      old.gap != gap ||
-      old.radius != radius ||
-      old.emptyColor != emptyColor ||
-      old.filledColor != filledColor;
+  bool shouldRepaint(_RackPainter old) => old._appearance != _appearance;
+
+  (int, double, double, double, Color, Color) get _appearance =>
+      (slots, fraction, gap, radius, emptyColor, filledColor);
 }
 
 /// One end label of the rack: the count, its unit, and what it counts.

@@ -63,31 +63,37 @@ func (q *Quarantine) Drop(kind, reason, detail string) {
 // in place — stale but whole, which beats fresh but silently gutted.
 func (q *Quarantine) Exceeded() error {
 	limit := QuarantineRatioLimit()
-	byKind := map[string]int{}
-	for reason, n := range q.dropped {
-		byKind[q.kind[reason]] += n
-	}
+	byKind := q.dropsByKind()
 	var over []error
 	for _, kind := range SortedKeys(byKind) {
-		seen := q.seen[kind]
-		if seen == 0 {
-			continue
-		}
-		ratio := float64(byKind[kind]) / float64(seen)
-		if ratio > limit {
-			over = append(over, _oops.
-				With("kind", kind).
-				With("dropped", byKind[kind]).
-				With("seen", seen).
-				With("ratio", ratio).
-				With("limit", limit).
-				Errorf("drop ratio exceeded"))
+		if err := q.kindExceeded(kind, byKind[kind], limit); err != nil {
+			over = append(over, err)
 		}
 	}
 	if len(over) == 0 {
 		return nil
 	}
 	return _oops.With("dataset", q.dataset).With("part", q.part).Wrapf(errors.Join(over...), "quarantine ratio exceeded")
+}
+
+func (q *Quarantine) dropsByKind() map[string]int {
+	byKind := map[string]int{}
+	for reason, n := range q.dropped {
+		byKind[q.kind[reason]] += n
+	}
+	return byKind
+}
+
+func (q *Quarantine) kindExceeded(kind string, dropped int, limit float64) error {
+	seen := q.seen[kind]
+	if seen == 0 {
+		return nil
+	}
+	ratio := float64(dropped) / float64(seen)
+	if !(ratio > limit) {
+		return nil
+	}
+	return _oops.With("kind", kind).With("dropped", dropped).With("seen", seen).With("ratio", ratio).With("limit", limit).Errorf("drop ratio exceeded")
 }
 
 // report logs one line per reason with its share of the kind it came from, so a
@@ -118,7 +124,7 @@ func (q *Quarantine) Report() {
 
 func QuarantineRatioLimit() float64 {
 	if v := os.Getenv("LOAD_QUARANTINE_MAX_RATIO"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && f <= 1 {
+		if f, valid := validQuarantineRatio(v); valid {
 			return f
 		}
 		zap.S().Warnw("bad ratio env",
@@ -133,3 +139,11 @@ func QuarantineRatioLimit() float64 {
 }
 
 const _defaultQuarantineRatio = 0.10
+
+func validQuarantineRatio(v string) (float64, bool) {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, false
+	}
+	return f, f >= 0 && f <= 1
+}

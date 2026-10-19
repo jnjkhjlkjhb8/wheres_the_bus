@@ -390,12 +390,7 @@ type fixtureSource struct {
 
 func (f fixtureSource) DatasetJSON(_ context.Context, table, _, _ string) ([]byte, time.Time, error) {
 	b, err := os.ReadFile(filepath.Join(f.dir, table+".json"))
-	if err != nil {
-		// Absent fixture → empty array, treated as fresh so the transform runs on
-		// zero rows rather than being staleness-skipped.
-		return []byte("[]"), f.fetched, nil //nolint:nilerr // a missing fixture is the empty-dataset case, not a failure
-	}
-	return b, f.fetched, nil
+	return b, f.fetched, err
 }
 
 func provisionThsrStationSink(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

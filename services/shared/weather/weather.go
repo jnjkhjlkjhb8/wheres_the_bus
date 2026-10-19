@@ -48,6 +48,10 @@ func Sync(ctx context.Context, rc *redis.Client) error {
 		zap.S().Warnw("CWA_API_KEY not set, skipping", "component", "weather")
 		return nil
 	}
+	return syncConfiguredWeather(ctx, rc, apiKey)
+}
+
+func syncConfiguredWeather(ctx context.Context, rc *redis.Client, apiKey string) error {
 	if rc == nil {
 		return errors.New("weather Redis client is nil")
 	}
@@ -75,29 +79,62 @@ func writeWeatherSnapshot(ctx context.Context, rc *redis.Client, snapshot map[st
 	return nil
 }
 
+type weatherBodies struct{ observations, rainfall []byte }
+
 func fetchWeatherSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (map[string]Data, error) {
-	if ctx == nil {
-		return nil, errors.New("weather context is nil")
+	if err := validateWeatherRequest(ctx, client); err != nil {
+		return nil, err
 	}
-	if client == nil {
-		return nil, errors.New("weather HTTP client is nil")
+	bodies, err := fetchWeatherBodies(ctx, client, baseURL, apiKey)
+	if err != nil {
+		return nil, err
 	}
+	return decodeWeatherSnapshot(bodies)
+}
+
+func fetchWeatherBodies(ctx context.Context, client *http.Client, baseURL, apiKey string) (weatherBodies, error) {
 	obsBody, err := fetchCWA(ctx, client, baseURL+"/O-A0003-001", apiKey)
 	if err != nil {
-		return nil, _oops.Wrapf(err, "fetch observations")
+		return weatherBodies{}, _oops.Wrapf(err, "fetch observations")
 	}
 	rainBody, err := fetchCWA(ctx, client, baseURL+"/O-A0002-001", apiKey)
 	if err != nil {
-		return nil, _oops.Wrapf(err, "fetch rainfall")
+		return weatherBodies{}, _oops.Wrapf(err, "fetch rainfall")
 	}
-	observations, err := parseObservations(obsBody)
+	return weatherBodies{observations: obsBody, rainfall: rainBody}, nil
+}
+
+func decodeWeatherSnapshot(bodies weatherBodies) (map[string]Data, error) {
+	observations, err := parseObservations(bodies.observations)
 	if err != nil {
 		return nil, _oops.Wrapf(err, "parse observations")
 	}
-	rainfall, err := parseRainfall(rainBody)
+	rainfall, err := parseRainfall(bodies.rainfall)
 	if err != nil {
 		return nil, _oops.Wrapf(err, "parse rainfall")
 	}
+	mergeRainfall(observations, rainfall)
+	return usableWeatherSnapshot(observations)
+}
+
+func usableWeatherSnapshot(observations map[string]Data) (map[string]Data, error) {
+	if len(observations) == 0 {
+		return nil, errors.New("weather snapshot contains no usable cities")
+	}
+	return observations, nil
+}
+
+func validateWeatherRequest(ctx context.Context, client *http.Client) error {
+	if ctx == nil {
+		return errors.New("weather context is nil")
+	}
+	if client == nil {
+		return errors.New("weather HTTP client is nil")
+	}
+	return nil
+}
+
+func mergeRainfall(observations map[string]Data, rainfall map[string]float64) {
 	for city, precipitation := range rainfall {
 		data, ok := observations[city]
 		if !ok {
@@ -106,10 +143,6 @@ func fetchWeatherSnapshot(ctx context.Context, client *http.Client, baseURL, api
 		data.Precipitation = precipitation
 		observations[city] = data
 	}
-	if len(observations) == 0 {
-		return nil, errors.New("weather snapshot contains no usable cities")
-	}
-	return observations, nil
 }
 
 func fetchCWA(ctx context.Context, client *http.Client, url, apiKey string) ([]byte, error) {
@@ -123,6 +156,10 @@ func fetchCWA(ctx context.Context, client *http.Client, url, apiKey string) ([]b
 		return nil, _oops.With("url", url).Wrapf(err, "request")
 	}
 	defer func() { _ = resp.Body.Close() }()
+	return readCWAResponse(resp, url)
+}
+
+func readCWAResponse(resp *http.Response, url string) ([]byte, error) {
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		return nil, _oops.With("url", url).Wrapf(readErr, "read body")
@@ -135,20 +172,27 @@ func fetchCWA(ctx context.Context, client *http.Client, url, apiKey string) ([]b
 
 type observationResponse struct {
 	Records struct {
-		Station []struct {
-			GeoInfo struct {
-				CountyName string `json:"CountyName"`
-			} `json:"GeoInfo"`
-			ObsTime struct {
-				DateTime string `json:"DateTime"`
-			} `json:"ObsTime"`
-			WeatherElement struct {
-				AirTemperature   string `json:"AirTemperature"`
-				WindSpeed        string `json:"WindSpeed"`
-				RelativeHumidity string `json:"RelativeHumidity"`
-			} `json:"WeatherElement"`
-		} `json:"Station"`
+		Station []observationStation `json:"Station"`
 	} `json:"records"`
+}
+
+type observationStation struct {
+	GeoInfo struct {
+		CountyName string `json:"CountyName"`
+	} `json:"GeoInfo"`
+	ObsTime struct {
+		DateTime string `json:"DateTime"`
+	} `json:"ObsTime"`
+	WeatherElement struct {
+		AirTemperature   string `json:"AirTemperature"`
+		WindSpeed        string `json:"WindSpeed"`
+		RelativeHumidity string `json:"RelativeHumidity"`
+	} `json:"WeatherElement"`
+}
+
+type observedWeather struct {
+	time time.Time
+	data Data
 }
 
 func parseObservations(body []byte) (map[string]Data, error) {
@@ -156,63 +200,105 @@ func parseObservations(body []byte) (map[string]Data, error) {
 	if err := decodeWeatherJSON(body, &payload); err != nil {
 		return nil, err
 	}
-	type best struct {
-		time time.Time
-		data Data
+	latest, err := latestObservations(payload.Records.Station)
+	if err != nil {
+		return nil, err
 	}
-	latest := make(map[string]best)
-	for _, station := range payload.Records.Station {
-		city, ok := _countyToCity[station.GeoInfo.CountyName]
-		if !ok {
-			continue
+	return observationSnapshot(latest), nil
+}
+
+func latestObservations(stations []observationStation) (map[string]observedWeather, error) {
+	latest := make(map[string]observedWeather)
+	for _, station := range stations {
+		if err := storeObservation(latest, station); err != nil {
+			return nil, err
 		}
-		observedAt, err := time.Parse(time.RFC3339, station.ObsTime.DateTime)
-		if err != nil {
-			return nil, _oops.With("city", city).Wrapf(err, "city observation time")
-		}
-		if previous, exists := latest[city]; exists && !observedAt.After(previous.time) {
-			continue
-		}
-		temperature, err := parseCWAValue(station.WeatherElement.AirTemperature, "temperature")
-		if err != nil {
-			return nil, _oops.With("city", city).Wrapf(err, "city")
-		}
-		wind, err := parseCWAValue(station.WeatherElement.WindSpeed, "wind speed")
-		if err != nil {
-			return nil, _oops.With("city", city).Wrapf(err, "city")
-		}
-		humidity, err := parseCWAValue(station.WeatherElement.RelativeHumidity, "humidity")
-		if err != nil {
-			return nil, _oops.With("city", city).Wrapf(err, "city")
-		}
-		if temperature < -90 || wind < -90 || humidity < -90 {
-			continue
-		}
-		latest[city] = best{time: observedAt, data: Data{Temperature: temperature, WindSpeed: wind, Humidity: humidity}}
 	}
+	return latest, nil
+}
+
+func observationSnapshot(latest map[string]observedWeather) map[string]Data {
 	out := make(map[string]Data, len(latest))
 	for city, value := range latest {
 		out[city] = value.data
 	}
-	return out, nil
+	return out
+}
+
+func storeObservation(latest map[string]observedWeather, station observationStation) error {
+	city, ok := _countyToCity[station.GeoInfo.CountyName]
+	if !ok {
+		return nil
+	}
+	observedAt, err := time.Parse(time.RFC3339, station.ObsTime.DateTime)
+	if err != nil {
+		return _oops.With("city", city).Wrapf(err, "city observation time")
+	}
+	return updateObservation(latest, city, observedAt, station)
+}
+
+func updateObservation(latest map[string]observedWeather, city string, observedAt time.Time, station observationStation) error {
+	if previous, exists := latest[city]; exists && !observedAt.After(previous.time) {
+		return nil
+	}
+	return assignObservation(latest, city, observedAt, station)
+}
+
+func assignObservation(latest map[string]observedWeather, city string, observedAt time.Time, station observationStation) error {
+	data, usable, err := observationData(station)
+	if err != nil {
+		return _oops.With("city", city).Wrapf(err, "city")
+	}
+	if usable {
+		latest[city] = observedWeather{time: observedAt, data: data}
+	}
+	return nil
+}
+
+func observationData(station observationStation) (Data, bool, error) {
+	temperature, err := parseCWAValue(station.WeatherElement.AirTemperature, "temperature")
+	if err != nil {
+		return Data{}, false, err
+	}
+	wind, err := parseCWAValue(station.WeatherElement.WindSpeed, "wind speed")
+	if err != nil {
+		return Data{}, false, err
+	}
+	humidity, err := parseCWAValue(station.WeatherElement.RelativeHumidity, "humidity")
+	if err != nil {
+		return Data{}, false, err
+	}
+	data := Data{Temperature: temperature, WindSpeed: wind, Humidity: humidity}
+	return data, usableObservation(data), nil
+}
+
+func usableObservation(data Data) bool {
+	return !(data.Temperature < -90 || data.WindSpeed < -90 || data.Humidity < -90)
 }
 
 type rainfallResponse struct {
 	Records struct {
-		Station []struct {
-			GeoInfo struct {
-				CountyName string `json:"CountyName"`
-			} `json:"GeoInfo"`
-			ObsTime struct {
-				DateTime string `json:"DateTime"`
-			} `json:"ObsTime"`
-			RainfallElement struct {
-				Now struct {
-					Precipitation string `json:"Precipitation"`
-				} `json:"Now"`
-			} `json:"RainfallElement"`
-		} `json:"Station"`
+		Station []rainfallStation `json:"Station"`
 	} `json:"records"`
+}
+
+type rainfallStation struct {
+	GeoInfo struct {
+		CountyName string `json:"CountyName"`
+	} `json:"GeoInfo"`
+	ObsTime struct {
+		DateTime string `json:"DateTime"`
+	} `json:"ObsTime"`
+	RainfallElement struct {
+		Now struct {
+			Precipitation string `json:"Precipitation"`
+		} `json:"Now"`
+	} `json:"RainfallElement"`
+}
+
+type observedRainfall struct {
+	time  time.Time
+	value float64
 }
 
 func parseRainfall(body []byte) (map[string]float64, error) {
@@ -220,36 +306,59 @@ func parseRainfall(body []byte) (map[string]float64, error) {
 	if err := decodeWeatherJSON(body, &payload); err != nil {
 		return nil, err
 	}
-	type best struct {
-		time  time.Time
-		value float64
+	latest, err := latestRainfall(payload.Records.Station)
+	if err != nil {
+		return nil, err
 	}
-	latest := make(map[string]best)
-	for _, station := range payload.Records.Station {
-		city, ok := _countyToCity[station.GeoInfo.CountyName]
-		if !ok {
-			continue
-		}
-		observedAt, err := time.Parse(time.RFC3339, station.ObsTime.DateTime)
-		if err != nil {
-			return nil, _oops.With("city", city).Wrapf(err, "city rainfall time")
-		}
-		value, err := parseCWAValue(station.RainfallElement.Now.Precipitation, "precipitation")
-		if err != nil {
-			return nil, _oops.With("city", city).Wrapf(err, "city")
-		}
-		if value < 0 {
-			continue
-		}
-		if previous, exists := latest[city]; !exists || observedAt.After(previous.time) {
-			latest[city] = best{time: observedAt, value: value}
+	return rainfallSnapshot(latest), nil
+}
+
+func latestRainfall(stations []rainfallStation) (map[string]observedRainfall, error) {
+	latest := make(map[string]observedRainfall)
+	for _, station := range stations {
+		if err := storeRainfall(latest, station); err != nil {
+			return nil, err
 		}
 	}
+	return latest, nil
+}
+
+func rainfallSnapshot(latest map[string]observedRainfall) map[string]float64 {
 	out := make(map[string]float64, len(latest))
 	for city, value := range latest {
 		out[city] = value.value
 	}
-	return out, nil
+	return out
+}
+
+func storeRainfall(latest map[string]observedRainfall, station rainfallStation) error {
+	city, ok := _countyToCity[station.GeoInfo.CountyName]
+	if !ok {
+		return nil
+	}
+	observedAt, err := time.Parse(time.RFC3339, station.ObsTime.DateTime)
+	if err != nil {
+		return _oops.With("city", city).Wrapf(err, "city rainfall time")
+	}
+	return updateRainfall(latest, city, observedAt, station)
+}
+
+func updateRainfall(latest map[string]observedRainfall, city string, observedAt time.Time, station rainfallStation) error {
+	value, err := parseCWAValue(station.RainfallElement.Now.Precipitation, "precipitation")
+	if err != nil {
+		return _oops.With("city", city).Wrapf(err, "city")
+	}
+	if value < 0 {
+		return nil
+	}
+	assignRainfall(latest, city, observedRainfall{time: observedAt, value: value})
+	return nil
+}
+
+func assignRainfall(latest map[string]observedRainfall, city string, next observedRainfall) {
+	if previous, exists := latest[city]; !exists || next.time.After(previous.time) {
+		latest[city] = next
+	}
 }
 
 func parseCWAValue(raw, field string) (float64, error) {

@@ -58,7 +58,79 @@ const _gtfsFareODSQL = `
     AND (t.value->>'Price') ~ '^[0-9]+$'
   GROUP BY 1, 2, 3`
 
-var _gtfsFarePricedSQL = `
+var _gtfsFarePricedSQL = buildGTFSFarePricedSQL()
+
+// _gtfsFareFlatSQL prices the routes that charge one fare however far the rider
+// goes. Both area fields empty is Fares v2's way of saying "any leg on this
+// network".
+var _gtfsFareFlatSQL = buildGTFSFareFlatSQL()
+
+// _gtfsFareZoneSQL is busSectionZoneSQL restricted to stops the feed emits, so a
+// zone that survives has something in it.
+var _gtfsFareZoneSQL = buildGTFSFareZoneSQL()
+
+var _gtfsFareZoneMembersSQL = buildGTFSFareZoneMembersSQL()
+
+var _gtfsFareZoneRulesSQL = buildGTFSFareZoneRulesSQL()
+
+// busSectionUnitsSQL is how many section fares a leg from one zone index to
+// another costs. Pulled out of the query so TestGTFSSectionFareUnits can
+// evaluate the same expression the feed does rather than a copy of it.
+func busSectionUnitsSQL(from, to string) string {
+	return `(GREATEST(` + to + ` / 2 - (` + from + ` + 1) / 2, 0) + 1)`
+}
+
+// _gtfsFareAllRulesSQL is every priced leg: per-pair, sectioned and flat alike.
+var _gtfsFareAllRulesSQL = buildGTFSFareAllRulesSQL()
+
+// _gtfsAreasSQL declares every fare area: one per priced stop, plus one per
+// section zone.
+var _gtfsAreasSQL = buildGTFSAreasSQL()
+
+var _gtfsStopAreasSQL = buildGTFSStopAreasSQL()
+
+var _busFareSourceSQL = buildBusFareSourceSQL()
+
+const _busStopSeqSQL = `
+    SELECT r.city, r.subrouteuid, COALESCE(r.direction, 0) AS direction,
+           s->>'StopUID' AS stop_uid, s->>'StopID' AS stop_id,
+           (s->>'StopSequence')::int AS seq
+    FROM raw_tdx.bus_stopofroute r
+    CROSS JOIN LATERAL jsonb_array_elements(r.stops) s
+    WHERE jsonb_typeof(r.stops) = 'array'
+      AND COALESCE(s->>'StopUID', '') <> ''
+      AND (s->>'StopSequence') ~ '^[0-9]+$'`
+
+var _busSectionZoneSQL = buildBusSectionZoneSQL()
+
+// _busFareAdultSQL pins the rider axis to the full adult single, the same axis
+// the rail fares pin. FareClass 1 is 全票 in every bus pricing type; the classes
+// beside it are 半票 and the concession tiers.
+const _busFareAdultSQL = `(p.value->>'TicketType')::int = 1
+    AND (p.value->>'FareClass')::int = 1
+    AND (p.value->>'Price') ~ '^[0-9]+$'`
+
+// _busStopUIDSQL maps TDX's city-local StopID to the StopUID stop_times
+// references. It is materialized (gtfsTempTables) because the fare legs join to
+// it twice, once per endpoint, over 1.8M rows.
+const _busStopUIDSQL = `
+    SELECT DISTINCT r.city, s->>'StopID' AS stop_id, s->>'StopUID' AS stop_uid
+    FROM raw_tdx.bus_stopofroute r
+    CROSS JOIN LATERAL jsonb_array_elements(r.stops) s
+    WHERE jsonb_typeof(r.stops) = 'array'
+      AND COALESCE(s->>'StopID', '') <> ''
+      AND COALESCE(s->>'StopUID', '') <> ''`
+
+var _busFarePairSQL = buildBusFarePairSQL()
+
+var _busFareLegSQL = buildBusFareLegSQL()
+
+var _gtfsFareProductsSQL = buildGTFSFareProductsSQL()
+
+var _gtfsFareLegRulesSQL = buildGTFSFareLegRulesSQL()
+
+func buildGTFSFarePricedSQL() string {
+	return `
   WITH leg AS (
     SELECT network_id, from_stop, to_stop, amount FROM (` + _gtfsFareODSQL + `) rail
     UNION ALL
@@ -75,27 +147,30 @@ var _gtfsFarePricedSQL = `
     AND leg.from_stop <> leg.to_stop
     AND leg.from_stop IN (SELECT stop_id FROM ` + _gtfsStopTable + `)
     AND leg.to_stop   IN (SELECT stop_id FROM ` + _gtfsStopTable + `)`
+}
 
-// _gtfsFareFlatSQL prices the routes that charge one fare however far the rider
-// goes. Both area fields empty is Fares v2's way of saying "any leg on this
-// network".
-var _gtfsFareFlatSQL = `
+func buildGTFSFareFlatSQL() string {
+	return `
   SELECT network_id, '' AS from_area_id, '' AS to_area_id, amount
   FROM ` + _gtfsFareLegTable + ` flat
   WHERE from_uid IS NULL AND amount >= 0`
+}
 
-// _gtfsFareZoneSQL is busSectionZoneSQL restricted to stops the feed emits, so a
-// zone that survives has something in it.
-var _gtfsFareZoneSQL = `
+func buildGTFSFareZoneSQL() string {
+	return `
   SELECT z.routeuid, z.unit, z.stop_uid, z.idx
   FROM (` + _busSectionZoneSQL + `) z
   WHERE z.stop_uid IN (SELECT stop_id FROM ` + _gtfsStopTable + `)`
+}
 
-var _gtfsFareZoneMembersSQL = `
+func buildGTFSFareZoneMembersSQL() string {
+	return `
   SELECT DISTINCT 'Z:' || z.routeuid || ':' || z.idx::text AS area_id, z.stop_uid AS stop_id
   FROM ` + _gtfsFareZoneTable + ` z`
+}
 
-var _gtfsFareZoneRulesSQL = `
+func buildGTFSFareZoneRulesSQL() string {
+	return `
   WITH zone AS (SELECT DISTINCT routeuid, unit, idx FROM ` + _gtfsFareZoneTable + ` z)
   SELECT 'BUS:' || a.routeuid AS network_id,
          'Z:' || a.routeuid || ':' || a.idx::text AS from_area_id,
@@ -103,25 +178,19 @@ var _gtfsFareZoneRulesSQL = `
          ` + busSectionUnitsSQL("a.idx", "b.idx") + ` * a.unit AS amount
   FROM zone a
   JOIN zone b ON b.routeuid = a.routeuid AND b.idx >= a.idx`
-
-// busSectionUnitsSQL is how many section fares a leg from one zone index to
-// another costs. Pulled out of the query so TestGTFSSectionFareUnits can
-// evaluate the same expression the feed does rather than a copy of it.
-func busSectionUnitsSQL(from, to string) string {
-	return `(GREATEST(` + to + ` / 2 - (` + from + ` + 1) / 2, 0) + 1)`
 }
 
-// _gtfsFareAllRulesSQL is every priced leg: per-pair, sectioned and flat alike.
-var _gtfsFareAllRulesSQL = `
+func buildGTFSFareAllRulesSQL() string {
+	return `
   SELECT network_id, from_area_id, to_area_id, amount FROM ` + _gtfsFarePricedTable + ` p
   UNION ALL
   SELECT network_id, from_area_id, to_area_id, amount FROM (` + _gtfsFareZoneRulesSQL + `) z
   UNION ALL
   SELECT network_id, from_area_id, to_area_id, amount FROM (` + _gtfsFareFlatSQL + `) f`
+}
 
-// _gtfsAreasSQL declares every fare area: one per priced stop, plus one per
-// section zone.
-var _gtfsAreasSQL = `
+func buildGTFSAreasSQL() string {
+	return `
 WITH priced AS (SELECT * FROM ` + _gtfsFarePricedTable + `)
 SELECT DISTINCT area_id, '' AS area_name
 FROM (
@@ -132,8 +201,10 @@ FROM (
   SELECT area_id FROM (` + _gtfsFareZoneMembersSQL + `) z
 ) x
 ORDER BY area_id`
+}
 
-var _gtfsStopAreasSQL = `
+func buildGTFSStopAreasSQL() string {
+	return `
 WITH area AS (
   SELECT from_area_id AS area_id FROM ` + _gtfsFarePricedTable + `
   UNION
@@ -147,8 +218,10 @@ JOIN ` + _gtfsStopTable + ` s
 UNION
 SELECT area_id, stop_id FROM (` + _gtfsFareZoneMembersSQL + `) z
 ORDER BY area_id, stop_id`
+}
 
-const _busFareSourceSQL = `
+func buildBusFareSourceSQL() string {
+	return `
   SELECT f.city, f.routeid, NULL::text AS from_id, NULL::text AS to_id, 0 AS amount
   FROM raw_tdx.bus_routefare f
   WHERE COALESCE(f.isfreebus, 0) = 1
@@ -196,18 +269,10 @@ const _busFareSourceSQL = `
     AND COALESCE(e.value->'DestinationStage'->>'StopID', '') <> ''
     AND ` + _busFareAdultSQL + `
   GROUP BY 1, 2, 3, 4`
+}
 
-const _busStopSeqSQL = `
-    SELECT r.city, r.subrouteuid, COALESCE(r.direction, 0) AS direction,
-           s->>'StopUID' AS stop_uid, s->>'StopID' AS stop_id,
-           (s->>'StopSequence')::int AS seq
-    FROM raw_tdx.bus_stopofroute r
-    CROSS JOIN LATERAL jsonb_array_elements(r.stops) s
-    WHERE jsonb_typeof(r.stops) = 'array'
-      AND COALESCE(s->>'StopUID', '') <> ''
-      AND (s->>'StopSequence') ~ '^[0-9]+$'`
-
-const _busSectionZoneSQL = `
+func buildBusSectionZoneSQL() string {
+	return `
   WITH rec AS (
     SELECT f.city, f.routeid, f.subrouteid,
            MIN((p.value->>'Price')::int) AS unit,
@@ -267,26 +332,10 @@ const _busSectionZoneSQL = `
   SELECT z.routeuid, z.unit, z.stop_uid, z.idx
   FROM zoned z
   WHERE z.routeuid NOT IN (SELECT routeuid FROM conflict)`
+}
 
-// _busFareAdultSQL pins the rider axis to the full adult single, the same axis
-// the rail fares pin. FareClass 1 is 全票 in every bus pricing type; the classes
-// beside it are 半票 and the concession tiers.
-const _busFareAdultSQL = `(p.value->>'TicketType')::int = 1
-    AND (p.value->>'FareClass')::int = 1
-    AND (p.value->>'Price') ~ '^[0-9]+$'`
-
-// _busStopUIDSQL maps TDX's city-local StopID to the StopUID stop_times
-// references. It is materialized (gtfsTempTables) because the fare legs join to
-// it twice, once per endpoint, over 1.8M rows.
-const _busStopUIDSQL = `
-    SELECT DISTINCT r.city, s->>'StopID' AS stop_id, s->>'StopUID' AS stop_uid
-    FROM raw_tdx.bus_stopofroute r
-    CROSS JOIN LATERAL jsonb_array_elements(r.stops) s
-    WHERE jsonb_typeof(r.stops) = 'array'
-      AND COALESCE(s->>'StopID', '') <> ''
-      AND COALESCE(s->>'StopUID', '') <> ''`
-
-var _busFarePairSQL = `
+func buildBusFarePairSQL() string {
+	return `
   WITH route AS (
     -- The same route set gtfsRoutesSQL's bus branch emits, and for the same
     -- reason it has to be: a fare naming a route routes.txt dropped is a leg
@@ -309,8 +358,10 @@ var _busFarePairSQL = `
   -- make the route look flat when it is not.
   WHERE (src.from_id IS NULL) = (fu.stop_uid IS NULL)
     AND (src.to_id IS NULL) = (tu.stop_uid IS NULL)`
+}
 
-var _busFareLegSQL = `
+func buildBusFareLegSQL() string {
+	return `
   WITH flat AS (
     SELECT routeuid, MIN(amount) AS amount
     FROM ` + _gtfsFarePairTable + `
@@ -343,8 +394,10 @@ var _busFareLegSQL = `
       SELECT 1 FROM ` + _gtfsFarePairTable + ` x
       WHERE x.routeuid = p.routeuid AND x.from_uid = p.to_uid AND x.to_uid = p.from_uid
     )`
+}
 
-var _gtfsFareProductsSQL = `
+func buildGTFSFareProductsSQL() string {
+	return `
 SELECT DISTINCT
   'P:' || amount::text AS fare_product_id,
   '' AS fare_product_name,
@@ -355,8 +408,11 @@ SELECT DISTINCT
   'TWD' AS currency
 FROM (` + _gtfsFareAllRulesSQL + `) p
 ORDER BY fare_product_id`
+}
 
-var _gtfsFareLegRulesSQL = `
+func buildGTFSFareLegRulesSQL() string {
+	return `
 SELECT network_id, from_area_id, to_area_id, 'P:' || amount::text AS fare_product_id
 FROM (` + _gtfsFareAllRulesSQL + `) r
 ORDER BY network_id, from_area_id, to_area_id`
+}

@@ -82,10 +82,7 @@ class FirebaseRepository {
     String plate = '',
     String alightEvent = '',
   }) async {
-    if (!isArrivalReminderRouteType(routeType) ||
-        routeKey.isEmpty ||
-        stopKey.isEmpty ||
-        (direction != '0' && direction != '1')) {
+    if (!_validArrivalIdentity(routeType, routeKey, stopKey, direction)) {
       throw ArgumentError('invalid canonical arrival identity');
     }
     if (!FirebaseGate.enabled) {
@@ -110,6 +107,17 @@ class FirebaseRepository {
       options: await FirebaseCallOptions.build(),
     );
     return FirebaseDecoder.instance.decodeReminder(reminder);
+  }
+
+  static bool _validArrivalIdentity(
+    String routeType,
+    String routeKey,
+    String stopKey,
+    String direction,
+  ) {
+    if (!isArrivalReminderRouteType(routeType)) return false;
+    if ([routeKey, stopKey].any((key) => key.isEmpty)) return false;
+    return const ['0', '1'].contains(direction);
   }
 
   Future<FirebaseAck> cancelArrivalReminder(String reminderId) async {

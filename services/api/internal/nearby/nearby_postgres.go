@@ -39,6 +39,10 @@ func (s *PostgresNearbyStore) Find(ctx context.Context, mode NearbyMode, query N
 	if err != nil {
 		return nil, err
 	}
+	return nearbyCandidates(mode, dbRows), nil
+}
+
+func nearbyCandidates(mode NearbyMode, dbRows []nearbyDBRow) []NearbyCandidate {
 	candidates := make([]NearbyCandidate, 0, len(dbRows))
 	for _, row := range dbRows {
 		candidates = append(candidates, NearbyCandidate{
@@ -46,29 +50,29 @@ func (s *PostgresNearbyStore) Find(ctx context.Context, mode NearbyMode, query N
 			Point: GeoPoint{Lon: row.Lon, Lat: row.Lat}, GeodesicMeters: row.GeodesicMeters,
 		})
 	}
-	return candidates, nil
+	return candidates
 }
 
 func nearbySQL(mode NearbyMode) (string, error) {
-	switch mode {
-	case NearbyBus:
+	if mode == NearbyBus {
 		return `SELECT group_uid AS id, group_name AS name, city,
 			ST_Distance(position::geography, ST_SetSRID(ST_MakePoint($1,$2), 4326)::geography) AS geodesic_meters,
 			ST_X(position) AS lon, ST_Y(position) AS lat
 			FROM bus_station_groups g WHERE ST_DWithin(position::geography, ST_SetSRID(ST_MakePoint($1,$2), 4326)::geography, $3)
 			AND EXISTS (SELECT 1 FROM bus_station_group_members m WHERE m.group_uid = g.group_uid)
 			ORDER BY geodesic_meters LIMIT $4`, nil
-	case _nearbyBike:
-		return nearbyPointSQL("station_uid", "name", "bike_stations", "geom"), nil
-	case _nearbyMRT:
-		return nearbyPointSQL("station_id", "name", "mrt_station", "stationposition"), nil
-	case _nearbyTRA:
-		return nearbyPointSQL("station_id", "name", "tra_stations", "geom"), nil
-	case _nearbyTHSR:
-		return nearbyPointSQL("station_id", "name", "thsr_stations", "geom"), nil
-	default:
+	}
+	type pointTable struct{ id, table, position string }
+	table, ok := map[NearbyMode]pointTable{
+		_nearbyBike: {"station_uid", "bike_stations", "geom"},
+		_nearbyMRT:  {"station_id", "mrt_station", "stationposition"},
+		_nearbyTRA:  {"station_id", "tra_stations", "geom"},
+		_nearbyTHSR: {"station_id", "thsr_stations", "geom"},
+	}[mode]
+	if !ok {
 		return "", _oops.With("mode", mode).Errorf("unknown nearby mode")
 	}
+	return nearbyPointSQL(table.id, "name", table.table, table.position), nil
 }
 
 func nearbyPointSQL(idColumn, nameColumn, table, positionColumn string) string {

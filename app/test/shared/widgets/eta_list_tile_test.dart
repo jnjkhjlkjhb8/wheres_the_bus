@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/arrival_display.dart';
+import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/crowd_meter.dart';
 import 'package:wheres_the_bus/shared/widgets/eta_list_tile.dart';
 
 void main() {
@@ -118,4 +121,88 @@ void main() {
     });
     expect(highlighted, findsOneWidget);
   });
+  testWidgets('ETA shapes retain clock, seconds and service wording', (
+    tester,
+  ) async {
+    for (final muted in [false, true]) {
+      for (final (status, labels) in <(EtaStatus, List<String>)>[
+        (const EtaApproaching(), ['即將進站']),
+        (const EtaMinutesSeconds(3, 7), ['3', '07']),
+        (const EtaLabel('08:30'), ['08:30']),
+        (const EtaLabel('末班已過'), ['末班已過']),
+        (const EtaUnknown(), ['—']),
+      ]) {
+        await pump(tester, EtaValue(status: status, muted: muted));
+        for (final text in labels) {
+          expect(find.text(text), findsOneWidget);
+        }
+        if (status is EtaLabel) {
+          final rendered = tester.widget<Text>(find.text(status.text));
+          expect(
+            rendered.style!.color,
+            muted
+                ? AppTheme.inkTertiary(Brightness.light)
+                : status.text.contains(':')
+                ? AppTheme.light.colorScheme.onSurface
+                : AppTheme.light.colorScheme.onSurfaceVariant,
+          );
+        }
+      }
+    }
+  });
+
+  testWidgets(
+    'bare rows retain custom leading, track and mute crowd information',
+    (tester) async {
+      var taps = 0;
+      for (final bare in [false, true]) {
+        for (final muted in [false, true]) {
+          await pump(
+            tester,
+            EtaListTile(
+              routeNo: '307',
+              destination: '板橋',
+              status: const EtaMinutes(5),
+              bare: bare,
+              muted: muted,
+              highlighted: true,
+              leading: const Icon(Icons.train),
+              direction: '去程',
+              destinationStyle: const TextStyle(color: Colors.purple),
+              track: const Text('tracking'),
+              crowdLevel: CrowdLevel.crowded,
+              onTap: () => taps++,
+            ),
+          );
+          expect(find.byIcon(Icons.train), findsOneWidget);
+          expect(find.text('去程'), findsOneWidget);
+          expect(find.text('tracking'), findsOneWidget);
+          expect(
+            tester.widget<Text>(find.text('往 板橋')).style!.color,
+            Colors.purple,
+          );
+          expect(
+            find.byType(CrowdMeter),
+            muted ? findsNothing : findsOneWidget,
+          );
+          expect(find.byType(Pressable), bare ? findsNothing : findsOneWidget);
+          if (!bare) {
+            await tester.tap(find.text('去程'));
+          }
+        }
+      }
+      expect(taps, 2);
+      await pump(
+        tester,
+        const EtaListTile(
+          routeNo: '261',
+          destination: 'A',
+          status: EtaUnknown(),
+          bare: true,
+        ),
+      );
+      expect(find.text('261'), findsOneWidget);
+      expect(find.text('tracking'), findsNothing);
+    },
+  );
 }

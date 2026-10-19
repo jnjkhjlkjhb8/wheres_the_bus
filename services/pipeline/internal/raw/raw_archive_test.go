@@ -94,3 +94,32 @@ func (f *fakeExecer) ExecContext(_ context.Context, q string, a ...any) (sql.Res
 	f.args = append(f.args, a)
 	return nil, f.err
 }
+
+type failedArchiveReader struct {
+	seeks, failSeek int
+	failRead        bool
+}
+
+func (r *failedArchiveReader) Seek(int64, int) (int64, error) {
+	r.seeks++
+	if r.seeks == r.failSeek {
+		return 0, io.ErrUnexpectedEOF
+	}
+	return 0, nil
+}
+func (r *failedArchiveReader) Read([]byte) (int, error) {
+	if r.failRead {
+		return 0, io.ErrUnexpectedEOF
+	}
+	return 0, io.EOF
+}
+
+func TestArchivePayloadNeverWritesOnReadOrRewindFailure(t *testing.T) {
+	for _, reader := range []*failedArchiveReader{{failSeek: 1}, {failSeek: 2}, {failRead: true}} {
+		db := &fakeExecer{}
+		ArchivePayload(context.Background(), db, Target{Table: "bus_route"}, "marker", "cycle", reader)
+		if len(db.stmts) != 0 {
+			t.Fatal("unreadable or unrewindable payload archived")
+		}
+	}
+}

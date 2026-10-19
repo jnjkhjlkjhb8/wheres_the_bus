@@ -111,34 +111,54 @@ class GenUiBloc extends Bloc<GenUiEvent, GenUiState> {
       final answer = await _service
           .ask(
             prompt,
-            onPhase: (phase, query) {
-              if (gen == _generation && !isClosed) {
-                add(GenUiPhaseChanged(phase, query));
-              }
-            },
+            onPhase: (phase, query) => _reportPhase(gen, phase, query),
           )
           .timeout(_timeout);
-      if (gen != _generation) return;
-      emit(
-        GenUiState(
-          status: GenUiStatus.content,
-          nodes: answer.nodes,
-          refs: answer.refs,
-          lastPrompt: prompt,
-        ),
-      );
+      _publishAnswer(gen, prompt, answer, emit);
     } on Object catch (e) {
-      if (gen != _generation) return;
-      emit(
-        GenUiState(
-          status: GenUiStatus.error,
-          errorKind: _isOffline(e)
-              ? GenUiErrorKind.offline
-              : GenUiErrorKind.generic,
-          lastPrompt: prompt,
-        ),
-      );
+      _publishError(gen, prompt, e, emit);
     }
+  }
+
+  void _reportPhase(int generation, GenUiPhase phase, String? query) {
+    if (generation == _generation && !isClosed) {
+      add(GenUiPhaseChanged(phase, query));
+    }
+  }
+
+  void _publishAnswer(
+    int generation,
+    String prompt,
+    GenUiAnswer answer,
+    Emitter<GenUiState> emit,
+  ) {
+    if (generation != _generation) return;
+    emit(
+      GenUiState(
+        status: GenUiStatus.content,
+        nodes: answer.nodes,
+        refs: answer.refs,
+        lastPrompt: prompt,
+      ),
+    );
+  }
+
+  void _publishError(
+    int generation,
+    String prompt,
+    Object error,
+    Emitter<GenUiState> emit,
+  ) {
+    if (generation != _generation) return;
+    emit(
+      GenUiState(
+        status: GenUiStatus.error,
+        errorKind: _isOffline(error)
+            ? GenUiErrorKind.offline
+            : GenUiErrorKind.generic,
+        lastPrompt: prompt,
+      ),
+    );
   }
 
   void _onCancelled(GenUiCancelled event, Emitter<GenUiState> emit) {

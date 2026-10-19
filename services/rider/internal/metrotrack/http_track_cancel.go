@@ -30,26 +30,16 @@ type trackCancelStore interface {
 func HandleTrackCancel(store trackCancelStore, rc *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var request trackCancelRequest
-		if err := c.ShouldBindJSON(&request); err != nil || !validUUIDv4(request.TrackID) {
+		if !bindTrackCancelRequest(c, &request) {
 			c.Status(http.StatusBadRequest)
 			return
 		}
 		ctx := c.Request.Context()
-		cancelled := false
-		for _, id := range []string{request.TrackID, mrtLeadReminderID(request.TrackID)} {
-			done, err := store.CancelArrivalReminderByID(ctx, id)
-			if err != nil {
-				zap.S().Warnw("cancel error",
-					"component", "mrt_track",
-					"action", "http_cancel",
-					"event", "cancel_error",
-					"track", request.TrackID,
-					"err", err,
-				)
-				c.Status(http.StatusInternalServerError)
-				return
-			}
-			cancelled = cancelled || done
+		cancelled, err := cancelHTTPTrackRows(ctx, store, request.TrackID)
+		if err != nil {
+			zap.S().Warnw("cancel error", "component", "mrt_track", "action", "http_cancel", "event", "cancel_error", "track", request.TrackID, "err", err)
+			c.Status(http.StatusInternalServerError)
+			return
 		}
 		if cancelled {
 			publishCancelledTrackState(ctx, rc, request.TrackID)
@@ -64,27 +54,46 @@ func HandleTrackCancel(store trackCancelStore, rc *redis.Client) gin.HandlerFunc
 	}
 }
 
+func bindTrackCancelRequest(c *gin.Context, request *trackCancelRequest) bool {
+	if err := c.ShouldBindJSON(request); err != nil {
+		return false
+	}
+	return validUUIDv4(request.TrackID)
+}
+
+func cancelHTTPTrackRows(ctx context.Context, store trackCancelStore, trackID string) (bool, error) {
+	cancelled := false
+	for _, id := range []string{trackID, mrtLeadReminderID(trackID)} {
+		done, err := store.CancelArrivalReminderByID(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		cancelled = cancelled || done
+	}
+	return cancelled, nil
+}
+
 func validUUIDv4(value string) bool {
 	if len(value) != 36 {
 		return false
 	}
 	for index, r := range value {
-		switch index {
-		case 8, 13, 18, 23:
-			if r != '-' {
-				return false
-			}
-		case 14:
-			if r != '4' {
-				return false
-			}
-		default:
-			if !isHexDigit(r) {
-				return false
-			}
+		if !validUUIDRune(index, r) {
+			return false
 		}
 	}
 	return true
+}
+
+func validUUIDRune(index int, r rune) bool {
+	switch index {
+	case 8, 13, 18, 23:
+		return r == '-'
+	case 14:
+		return r == '4'
+	default:
+		return isHexDigit(r)
+	}
 }
 
 // TrackCancelStoreFor adapts the pool the HTTP router is built with. Kept here

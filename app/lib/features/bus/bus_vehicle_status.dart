@@ -32,9 +32,13 @@ typedef BusGpsAge = ({String text, bool stale});
 
 BusGpsAge busGpsAge(AppI18n i18n, int gpsUnix, DateTime now) {
   if (gpsUnix <= 0) return (text: i18n.busGpsNone, stale: true);
-  final reported = now.millisecondsSinceEpoch ~/ 1000 - gpsUnix;
-  final age = reported < 0 ? 0 : reported;
+  final age = _gpsAgeSeconds(gpsUnix, now);
   if (age >= 180) return (text: i18n.busGpsStale, stale: true);
   if (age < 60) return (text: i18n.busGpsSecondsAgo(age), stale: false);
   return (text: i18n.busGpsMinutesAgo(age ~/ 60), stale: false);
+}
+
+int _gpsAgeSeconds(int gpsUnix, DateTime now) {
+  final reported = now.millisecondsSinceEpoch ~/ 1000 - gpsUnix;
+  return reported < 0 ? 0 : reported;
 }

@@ -7,7 +7,7 @@ class _RouteDetailTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final departures = _departuresFor(state);
+    final departures = busRouteDepartures(state, TimeOfDay.now());
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppTheme.space16),
       child: Column(
@@ -18,7 +18,11 @@ class _RouteDetailTab extends StatelessWidget {
           _RouteMeta(cs: cs, state: state),
           _Operators(cs: cs, operators: state.route?.operators ?? const []),
           _Fares(cs: cs, fare: state.fare),
-          _Timetable(cs: cs, headsign: _headsignFor(state), state: state),
+          BusRouteTimetable(
+            cs: cs,
+            headsign: busRouteHeadsign(state),
+            state: state,
+          ),
         ],
       ),
     );
@@ -58,7 +62,7 @@ class _EmptyDetailText extends StatelessWidget {
 class _NextDepartures extends StatelessWidget {
   const _NextDepartures({required this.cs, required this.departures});
   final ColorScheme cs;
-  final List<_DepartureInfo> departures;
+  final List<BusDepartureInfo> departures;
 
   @override
   Widget build(BuildContext context) {
@@ -145,13 +149,8 @@ class _RouteMeta extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final route = state.route;
-    final stops = state.currentStops;
-    final origin = route?.departureStopName.isNotEmpty == true
-        ? route!.departureStopName
-        : (stops.isEmpty ? '-' : stops.first.stopName);
-    final destination = route?.destinationStopName.isNotEmpty == true
-        ? route!.destinationStopName
-        : (stops.isEmpty ? '-' : stops.last.stopName);
+    final origin = _origin;
+    final destination = _destination;
     // route.city is a TDX county code (e.g. "Taoyuan"), and it names where
     // the route operates, not a regulator — map it to its Chinese name
     // rather than label it 主管機關 and leak the English identifier.
@@ -187,6 +186,18 @@ class _RouteMeta extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  String get _origin {
+    final name = state.route?.departureStopName;
+    if (name != null && name.isNotEmpty) return name;
+    return state.currentStops.isEmpty ? '-' : state.currentStops.first.stopName;
+  }
+
+  String get _destination {
+    final name = state.route?.destinationStopName;
+    if (name != null && name.isNotEmpty) return name;
+    return state.currentStops.isEmpty ? '-' : state.currentStops.last.stopName;
   }
 
   Widget _originDestinationLine(
@@ -293,10 +304,13 @@ class _OperatorRow extends StatelessWidget {
     await launchUrl(Uri(scheme: 'tel', path: digits));
   }
 
+  static bool _supportsInApp(Uri uri) =>
+      uri.scheme == 'https' || uri.scheme == 'http';
+
   static Future<void> _open(String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null) return;
-    final inApp = uri.scheme == 'https' || uri.scheme == 'http';
+    final inApp = _supportsInApp(uri);
     if (inApp) {
       try {
         await launchUrl(uri, mode: LaunchMode.inAppBrowserView);

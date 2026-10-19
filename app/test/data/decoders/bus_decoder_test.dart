@@ -14,6 +14,50 @@ final DateTime _now = DateTime.fromMillisecondsSinceEpoch(1000000 * 1000);
 int get _nowUnix => _now.millisecondsSinceEpoch ~/ 1000;
 
 void main() {
+  test('static schedules retain timetable clocks and headway intervals', () {
+    final route = _decoder.decodeStatic(
+      Bus_subroute(
+        directions: [
+          MapEntry(
+            0,
+            Direction(
+              schedules: [
+                Bus_Schedule(
+                  isTimetable: true,
+                  serviceDay: 2,
+                  tripid: 'trip',
+                  islowfloor: true,
+                  minHeadwayMinsArrivalTime: '08:00',
+                  maxHeadwayMinsDepartureTime: '08:01',
+                ),
+                Bus_Schedule(
+                  isTimetable: true,
+                  minHeadwayMinsArrivalTime: '09:00',
+                ),
+                Bus_Schedule(
+                  startTime: '06:00',
+                  endTime: '22:00',
+                  minHeadwayMinsArrivalTime: '5',
+                  maxHeadwayMinsDepartureTime: '10',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    expect(route.schedulesGo[0].departureTime, '08:01');
+    expect(route.schedulesGo[0].serviceDay, 2);
+    expect(route.schedulesGo[0].tripId, 'trip');
+    expect(route.schedulesGo[0].isLowFloor, isTrue);
+    expect(route.schedulesGo[1].departureTime, '09:00');
+    expect(route.schedulesGo[2].isTimetable, isFalse);
+    expect(route.schedulesGo[2].startTime, '06:00');
+    expect(route.schedulesGo[2].endTime, '22:00');
+    expect(route.schedulesGo[2].minHeadwayMins, '5');
+    expect(route.schedulesGo[2].maxHeadwayMins, '10');
+  });
+
   group('etaRemainingSeconds (shared decay derivation)', () {
     test('absolute instant derives vs now; ceil boundary 61s -> 2 min', () {
       final seconds = etaRemainingSeconds(

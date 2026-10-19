@@ -5,6 +5,7 @@ import 'package:wheres_the_bus/core/lifecycle/app_network.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/data/generated/bus.pbgrpc.dart';
 import 'package:wheres_the_bus/data/repositories/bus_repository.dart';
+import 'package:wheres_the_bus/data/repositories/offline_cache.dart';
 
 import '../../support/helpers/fake_grpc.dart';
 
@@ -30,6 +31,27 @@ void main() {
   );
 
   final subRoute = Bus_subroute(subRouteUID: 'R1', routeName: '307');
+
+  for (final online in [true, false]) {
+    test('a decoded null is a cached answer while online=$online', () async {
+      await HiveStore.putStatic('nullable-result', group.writeToBuffer());
+      AppNetwork.online.value = online;
+      addTearDown(AppNetwork.reset);
+      var fetches = 0;
+      final answer = await offlineCached<Bus_StationGroup, String?>(
+        key: 'nullable-result',
+        maxAge: online ? const Duration(days: 1) : null,
+        fetch: () async {
+          fetches++;
+          return group;
+        },
+        parse: Bus_StationGroup.fromBuffer,
+        decode: (_) => null,
+      );
+      expect(answer, isNull);
+      expect(fetches, 0);
+    });
+  }
 
   test('an unreachable server is served from the cached response', () async {
     final online = _FakeBusStationClient(group: group);

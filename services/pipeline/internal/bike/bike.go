@@ -39,24 +39,14 @@ func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 	if strings.TrimSpace(city) == "" {
 		return errors.New("bike stations: city is required")
 	}
-	stations, err := pipeline.DecodeLoadArray[bikeStation](dec, "bike stations "+city, func(_ int, station bikeStation) error {
-		if strings.TrimSpace(station.StationUID) == "" {
-			return errors.New("StationUID is required")
-		}
-		if strings.TrimSpace(station.StationID) == "" {
-			return errors.New("StationID is required")
-		}
-		if !pipeline.ValidPosition(station.StationPosition.PositionLon, station.StationPosition.PositionLat) {
-			return _oops.With("position_lon", station.StationPosition.PositionLon).With("position_lat", station.StationPosition.PositionLat).Errorf("position is invalid: lon= lat=")
-		}
-		// ServiceType is stored and served as an opaque smallint, never
-		// switched on, so an operator TDX adds later must not reject the
-		// city. A value this loader has not seen flows through unchanged.
-		return nil
-	})
+	stations, err := pipeline.DecodeLoadArray[bikeStation](dec, "bike stations "+city, validateBikeStation)
 	if err != nil {
 		return err
 	}
+	return writeBikeStations(ctx, sink, city, stations)
+}
+
+func bikeStationRows(city string, stations []bikeStation) ([][]any, error) {
 	row := [][]any{}
 	seen := make(map[string][]any, len(stations))
 	for _, temp := range stations {
@@ -72,8 +62,16 @@ func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 			temp.StationAddress.ZhTw,
 		}
 		if err := pipeline.AppendUniqueLoadRow(&row, seen, temp.StationUID, "StationUID", candidate); err != nil {
-			return _oops.With("city", city).Wrapf(err, "bike stations")
+			return nil, _oops.With("city", city).Wrapf(err, "bike stations")
 		}
+	}
+	return row, nil
+}
+
+func writeBikeStations(ctx context.Context, sink pipeline.CopyUpsertSink, city string, stations []bikeStation) error {
+	row, err := bikeStationRows(city, stations)
+	if err != nil {
+		return err
 	}
 	if len(row) == 0 {
 		return nil
@@ -116,3 +114,19 @@ func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 // here is 840 lines an hour that never once means anything is wrong.
 
 // Sample into history at most once per 5 minutes per station.
+
+func validateBikeStation(_ int, station bikeStation) error {
+	if strings.TrimSpace(station.StationUID) == "" {
+		return errors.New("StationUID is required")
+	}
+	if strings.TrimSpace(station.StationID) == "" {
+		return errors.New("StationID is required")
+	}
+	if !pipeline.ValidPosition(station.StationPosition.PositionLon, station.StationPosition.PositionLat) {
+		return _oops.With("position_lon", station.StationPosition.PositionLon).With("position_lat", station.StationPosition.PositionLat).Errorf("position is invalid: lon= lat=")
+	}
+	// ServiceType is stored and served as an opaque smallint, never
+	// switched on, so an operator TDX adds later must not reject the
+	// city. A value this loader has not seen flows through unchanged.
+	return nil
+}

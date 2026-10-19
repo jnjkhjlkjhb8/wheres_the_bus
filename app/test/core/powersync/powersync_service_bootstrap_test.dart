@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:powersync/powersync.dart';
 import 'package:wheres_the_bus/core/powersync/powersync_service.dart';
 
 void main() {
@@ -33,4 +35,33 @@ void main() {
       await expectLater(service.readyDb, throwsA(anything));
     });
   });
+  test(
+    'the native connection exposes readyDb and detached query rows',
+    () async {
+      final storage = await Directory.systemTemp.createTemp(
+        'powersync-native-',
+      );
+      final database = PowerSyncDatabase(
+        schema: const Schema([]),
+        path: '${storage.path}/local.db',
+      );
+      final service = PowerSyncService(dbFactory: () async => database);
+      try {
+        await service.init();
+        expect(await service.readyDb, same(database));
+        await CachedPowerSyncConnector().uploadData(database);
+        final rows = await service.getAll('SELECT 1 AS value');
+        expect(rows, [
+          {'value': 1},
+        ]);
+        rows.single['value'] = 2;
+        expect(await service.getAll('SELECT 1 AS value'), [
+          {'value': 1},
+        ]);
+      } finally {
+        await service.close();
+        await storage.delete(recursive: true);
+      }
+    },
+  );
 }

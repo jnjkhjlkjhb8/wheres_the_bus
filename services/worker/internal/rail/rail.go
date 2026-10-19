@@ -73,53 +73,74 @@ func TraEta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSi
 		)
 		return nil
 	}
-	err = pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error {
-		data := &models.TraDelays{
-			Delay: make(map[string]int32),
-		}
-		count := 0
-		pipe := sink.Pipe()
-		if decErr := pipeline.DecodeLiveItems(dec, func(temp traDelay) error {
-			count++
-			delay := int32(temp.DelayTime)
-			data.Delay[temp.TrainNo] = delay
-			pipe.HSet(shared.TraDelayHashKey, temp.TrainNo, temp.DelayTime)
-			if temp.StationID != "" {
-				pipe.HSet(shared.TraDelayStationKey, temp.TrainNo, temp.StationID)
-			}
-			trainBytes, err := proto.Marshal(&models.TraDelays{Delay: map[string]int32{temp.TrainNo: delay}})
-			if err != nil {
-				return _oops.With("train_no", temp.TrainNo).Wrapf(err, "marshal TRA delay for train")
-			}
-			trainKey := shared.TraDelayTrainChannel(temp.TrainNo)
-			pipe.Set(trainKey, trainBytes, pipeline.TraLiveTTL)
-			pipe.Publish(trainKey, trainBytes)
-			return nil
-		}); decErr != nil {
-			return decErr
-		}
-		bytes, err := proto.Marshal(data)
-		if err != nil {
-			return err
-		}
-		pipe.Set(shared.TraDelayAllKey, bytes, pipeline.TraLiveTTL)
-		pipe.Publish(shared.TraDelayAllKey, string(bytes))
-		pipe.Expire(shared.TraDelayHashKey, pipeline.TraLiveTTL)
-		pipe.Expire(shared.TraDelayStationKey, pipeline.TraLiveTTL)
-		if err := pipe.Exec(ctx); err != nil {
-			return _oops.Wrapf(err, "publish TRA delay snapshot")
-		}
-		zap.S().Infow("delay redis success",
-			"component", "tra_eta",
-			"action", "tra_eta",
-			"event", "delay_redis_success",
-			"count", count,
-		)
-		return nil
+	return commitTraDelays(ctx, sink, result)
+}
+
+func commitTraDelays(ctx context.Context, sink pipeline.LiveSink, result *shared.TDXFetch) error {
+	err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error {
+		return publishTraDelays(ctx, sink, dec)
 	})
 	if err != nil {
 		return _oops.Wrapf(err, "process TRA live train delay")
 	}
 	zap.S().Infow("complete", "component", "tra_eta", "action", "tra_eta", "event", "complete")
+	return nil
+}
+
+func publishTraDelays(ctx context.Context, sink pipeline.LiveSink, dec *json.Decoder) error {
+	data := &models.TraDelays{
+		Delay: make(map[string]int32),
+	}
+	count := 0
+	pipe := sink.Pipe()
+	err := pipeline.DecodeLiveItems(dec, func(temp traDelay) error {
+		count++
+		return queueTraDelay(pipe, data, temp)
+	})
+	if err != nil {
+		return err
+	}
+	bytes, err := proto.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return publishTraSnapshot(ctx, pipe, bytes, count)
+}
+
+func publishTraSnapshot(ctx context.Context, pipe pipeline.LivePipe, bytes []byte, count int) error {
+	pipe.Set(shared.TraDelayAllKey, bytes, pipeline.TraLiveTTL)
+	pipe.Publish(shared.TraDelayAllKey, string(bytes))
+	pipe.Expire(shared.TraDelayHashKey, pipeline.TraLiveTTL)
+	pipe.Expire(shared.TraDelayStationKey, pipeline.TraLiveTTL)
+	if err := pipe.Exec(ctx); err != nil {
+		return _oops.Wrapf(err, "publish TRA delay snapshot")
+	}
+	zap.S().Infow("delay redis success",
+		"component", "tra_eta",
+		"action", "tra_eta",
+		"event", "delay_redis_success",
+		"count", count,
+	)
+	return nil
+}
+
+func queueTraDelay(pipe pipeline.LivePipe, data *models.TraDelays, temp traDelay) error {
+	delay := int32(temp.DelayTime)
+	data.Delay[temp.TrainNo] = delay
+	pipe.HSet(shared.TraDelayHashKey, temp.TrainNo, temp.DelayTime)
+	if temp.StationID != "" {
+		pipe.HSet(shared.TraDelayStationKey, temp.TrainNo, temp.StationID)
+	}
+	return queueTrainDelay(pipe, temp.TrainNo, delay)
+}
+
+func queueTrainDelay(pipe pipeline.LivePipe, trainNo string, delay int32) error {
+	trainBytes, err := proto.Marshal(&models.TraDelays{Delay: map[string]int32{trainNo: delay}})
+	if err != nil {
+		return _oops.With("train_no", trainNo).Wrapf(err, "marshal TRA delay for train")
+	}
+	trainKey := shared.TraDelayTrainChannel(trainNo)
+	pipe.Set(trainKey, trainBytes, pipeline.TraLiveTTL)
+	pipe.Publish(trainKey, trainBytes)
 	return nil
 }

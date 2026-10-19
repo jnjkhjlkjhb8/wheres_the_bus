@@ -117,15 +117,11 @@ func RunExport(db *pgxpool.Pool, runDate time.Time) {
 }
 
 func buildGTFSFeed(ctx context.Context, db *pgxpool.Pool, dir string, runDate time.Time) (string, int64, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", 0, _oops.With("dir", dir).Wrapf(err, "gtfs export: create")
-	}
 	version := runDate.Format("20060102-1504")
 	final := filepath.Join(dir, "gtfs-"+version+".zip")
-
-	temp, err := os.CreateTemp(dir, ".gtfs-*.zip.tmp")
+	temp, err := createGTFSBuildFile(dir)
 	if err != nil {
-		return "", 0, _oops.Wrapf(err, "gtfs export: create temp")
+		return "", 0, err
 	}
 	tempName := temp.Name()
 	// Removing the temp file is a no-op once it has been renamed away.
@@ -134,33 +130,52 @@ func buildGTFSFeed(ctx context.Context, db *pgxpool.Pool, dir string, runDate ti
 		_ = os.Remove(tempName)
 	}()
 
-	rows, err := writeGTFSArchive(ctx, db, temp, version)
+	return completeGTFSFeed(ctx, db, temp, dir, final, version)
+}
+
+func completeGTFSFeed(ctx context.Context, db *pgxpool.Pool, temp *os.File, dir, final, version string) (string, int64, error) {
+	rows, err := writePublishedGTFSArchive(ctx, db, temp, final, version)
 	if err != nil {
 		return "", 0, err
 	}
-	// fsync before the rename: a crash between the two would otherwise publish a
-	// name that points at unflushed content.
-	if err := temp.Sync(); err != nil {
-		return "", 0, _oops.Wrapf(err, "gtfs export: sync")
-	}
-	if err := temp.Close(); err != nil {
-		return "", 0, _oops.Wrapf(err, "gtfs export: close")
-	}
-	if err := os.Chmod(tempName, 0o644); err != nil {
-		return "", 0, _oops.With("temp", tempName).Wrapf(err, "gtfs export: chmod")
-	}
-	if err := os.Rename(tempName, final); err != nil {
-		return "", 0, _oops.With("final", final).Wrapf(err, "gtfs export: publish")
-	}
-	if err := linkLatestGTFS(dir, filepath.Base(final)); err != nil {
+	if err := finishGTFSBuild(dir, final); err != nil {
 		return "", 0, err
+	}
+	return final, rows, nil
+}
+
+func createGTFSBuildFile(dir string) (*os.File, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, _oops.With("dir", dir).Wrapf(err, "gtfs export: create")
+	}
+	temp, err := os.CreateTemp(dir, ".gtfs-*.zip.tmp")
+	if err != nil {
+		return nil, _oops.Wrapf(err, "gtfs export: create temp")
+	}
+	return temp, nil
+}
+
+func writePublishedGTFSArchive(ctx context.Context, db *pgxpool.Pool, temp *os.File, final, version string) (int64, error) {
+	rows, err := writeGTFSArchive(ctx, db, temp, version)
+	if err != nil {
+		return 0, err
+	}
+	if err := publishGTFSFile(temp, final); err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
+func finishGTFSBuild(dir, final string) error {
+	if err := linkLatestGTFS(dir, filepath.Base(final)); err != nil {
+		return err
 	}
 	if err := pruneGTFSFeeds(dir, _gtfsKeepFeeds); err != nil {
 		// A failed prune leaves extra files behind; the feed itself is published
 		// and usable, so this is reported without failing the build.
 		zap.S().Warnw("failed", "component", "gtfs", "action", "prune", "event", "failed", "err", err)
 	}
-	return final, rows, nil
+	return nil
 }
 
 func writeGTFSArchive(ctx context.Context, db *pgxpool.Pool, w io.Writer, version string) (int64, error) {
@@ -169,39 +184,33 @@ func writeGTFSArchive(ctx context.Context, db *pgxpool.Pool, w io.Writer, versio
 		return 0, _oops.Wrapf(err, "gtfs export: acquire connection")
 	}
 	defer conn.Release()
+	return writeGTFSConnectionArchive(ctx, conn, w, version)
+}
 
+func writeGTFSConnectionArchive(ctx context.Context, conn *pgxpool.Conn, w io.Writer, version string) (int64, error) {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return 0, _oops.Wrapf(err, "gtfs export: begin")
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"); err != nil {
-		return 0, _oops.Wrapf(err, "gtfs export: set snapshot")
-	}
-	if err := createGTFSTempTables(ctx, tx, true /* withData */); err != nil {
+	if err := prepareGTFSSnapshot(ctx, tx); err != nil {
 		return 0, err
 	}
+	return writeGTFSZip(ctx, conn, w, version)
+}
 
+func prepareGTFSSnapshot(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"); err != nil {
+		return _oops.Wrapf(err, "gtfs export: set snapshot")
+	}
+	return createGTFSTempTables(ctx, tx, true /* withData */)
+}
+
+func writeGTFSZip(ctx context.Context, conn *pgxpool.Conn, w io.Writer, version string) (int64, error) {
 	zw := zip.NewWriter(w)
-	var total int64
-	for _, file := range gtfsFiles(version) {
-		entry, err := zw.Create(file.name)
-		if err != nil {
-			return 0, _oops.With("file_name", file.name).Wrapf(err, "gtfs export: create")
-		}
-		tag, err := conn.Conn().PgConn().CopyTo(ctx, entry,
-			"COPY ("+file.sql+") TO STDOUT WITH (FORMAT csv, HEADER true)")
-		if err != nil {
-			return 0, _oops.With("file_name", file.name).Wrapf(err, "gtfs export: copy")
-		}
-		zap.S().Infow("written",
-			"component", "gtfs",
-			"action", "export",
-			"file", file.name,
-			"rows", tag.RowsAffected(),
-			"event", "written",
-		)
-		total += tag.RowsAffected()
+	total, err := writeGTFSZipEntries(ctx, conn, zw, version)
+	if err != nil {
+		return 0, err
 	}
 	if err := zw.Close(); err != nil {
 		return 0, _oops.Wrapf(err, "gtfs export: finish archive")
@@ -209,36 +218,87 @@ func writeGTFSArchive(ctx context.Context, db *pgxpool.Pool, w io.Writer, versio
 	return total, nil
 }
 
+func writeGTFSZipEntries(ctx context.Context, conn *pgxpool.Conn, zw *zip.Writer, version string) (int64, error) {
+	var total int64
+	for _, file := range gtfsFiles(version) {
+		rows, err := writeGTFSZipEntry(ctx, conn, zw, file)
+		if err != nil {
+			return 0, err
+		}
+		total += rows
+	}
+	return total, nil
+}
+
+func writeGTFSZipEntry(ctx context.Context, conn *pgxpool.Conn, zw *zip.Writer, file gtfsFile) (int64, error) {
+	entry, err := zw.Create(file.name)
+	if err != nil {
+		return 0, _oops.With("file_name", file.name).Wrapf(err, "gtfs export: create")
+	}
+	tag, err := conn.Conn().PgConn().CopyTo(ctx, entry,
+		"COPY ("+file.sql+") TO STDOUT WITH (FORMAT csv, HEADER true)")
+	if err != nil {
+		return 0, _oops.With("file_name", file.name).Wrapf(err, "gtfs export: copy")
+	}
+	zap.S().Infow("written",
+		"component", "gtfs",
+		"action", "export",
+		"file", file.name,
+		"rows", tag.RowsAffected(),
+		"event", "written",
+	)
+	return tag.RowsAffected(), nil
+}
+
 func createGTFSTempTables(ctx context.Context, tx pgx.Tx, withData bool) error {
 	for _, table := range gtfsTempTables() {
-		started := time.Now()
-		create := "CREATE TEMP TABLE " + table.name + " ON COMMIT DROP AS " + table.sql
-		if !withData {
-			if _, err := tx.Exec(ctx, create+" WITH NO DATA"); err != nil {
-				return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: declare")
-			}
-			continue
+		if err := createGTFSTempTable(ctx, tx, table, withData); err != nil {
+			return err
 		}
-		if _, err := tx.Exec(ctx, create); err != nil {
-			return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: materialize")
+	}
+	return nil
+}
+
+func createGTFSTempTable(ctx context.Context, tx pgx.Tx, table gtfsTempTable, withData bool) error {
+	create := "CREATE TEMP TABLE " + table.name + " ON COMMIT DROP AS " + table.sql
+	if !withData {
+		if _, err := tx.Exec(ctx, create+" WITH NO DATA"); err != nil {
+			return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: declare")
 		}
-		if table.indexOn != "" {
-			if _, err := tx.Exec(ctx, "CREATE INDEX ON "+table.name+" ("+table.indexOn+")"); err != nil {
-				return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: index")
-			}
+		return nil
+	}
+	return materializeGTFSTempTable(ctx, tx, table, create)
+}
+
+func materializeGTFSTempTable(ctx context.Context, tx pgx.Tx, table gtfsTempTable, create string) error {
+	started := time.Now()
+	if _, err := tx.Exec(ctx, create); err != nil {
+		return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: materialize")
+	}
+	if err := analyzeGTFSTempTable(ctx, tx, table); err != nil {
+		return err
+	}
+	zap.S().Infow("materialized", "component", "gtfs", "action", "export", "table", table.name,
+		"elapsed", time.Since(started).Round(time.Millisecond), "event", "materialized")
+	return nil
+}
+
+func analyzeGTFSTempTable(ctx context.Context, tx pgx.Tx, table gtfsTempTable) error {
+	if err := indexGTFSTempTable(ctx, tx, table); err != nil {
+		return err
+	}
+	// Materialized tables need statistics for their downstream joins.
+	if _, err := tx.Exec(ctx, "ANALYZE "+table.name); err != nil {
+		return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: analyze")
+	}
+	return nil
+}
+
+func indexGTFSTempTable(ctx context.Context, tx pgx.Tx, table gtfsTempTable) error {
+	if table.indexOn != "" {
+		if _, err := tx.Exec(ctx, "CREATE INDEX ON "+table.name+" ("+table.indexOn+")"); err != nil {
+			return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: index")
 		}
-		// Without this the temp table is as opaque to the planner as the
-		// expansion it replaced, and the whole point is lost.
-		if _, err := tx.Exec(ctx, "ANALYZE "+table.name); err != nil {
-			return _oops.With("table_name", table.name).Wrapf(err, "gtfs export: analyze")
-		}
-		zap.S().Infow("materialized",
-			"component", "gtfs",
-			"action", "export",
-			"table", table.name,
-			"elapsed", time.Since(started).Round(time.Millisecond),
-			"event", "materialized",
-		)
 	}
 	return nil
 }
@@ -267,26 +327,77 @@ func pruneGTFSFeeds(dir string, keep int) error {
 	if err != nil {
 		return _oops.With("dir", dir).Wrapf(err, "read")
 	}
-	var feeds []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, "gtfs-") || !strings.HasSuffix(name, ".zip") {
-			continue
-		}
-		feeds = append(feeds, name)
-	}
+	feeds := datedGTFSFeeds(entries)
 	if len(feeds) <= keep {
 		return nil
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(feeds)))
-	var failures []string
-	for _, name := range feeds[keep:] {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
-			failures = append(failures, name)
-		}
-	}
+	return removeGTFSFeeds(dir, feeds[keep:])
+}
+
+func removeGTFSFeeds(dir string, feeds []string) error {
+	failures := deleteGTFSFeeds(dir, feeds)
 	if len(failures) > 0 {
 		return _oops.With("failures", strings.Join(failures, ", ")).Errorf("remove")
 	}
 	return nil
+}
+
+func deleteGTFSFeeds(dir string, feeds []string) []string {
+	var failures []string
+	for _, name := range feeds {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			failures = append(failures, name)
+		}
+	}
+	return failures
+}
+
+func publishGTFSFile(temp *os.File, final string) error {
+	if err := closeDurableGTFSFile(temp); err != nil {
+		return err
+	}
+	return renameGTFSFile(temp.Name(), final)
+}
+
+func renameGTFSFile(tempName, final string) error {
+	if err := os.Chmod(tempName, 0o644); err != nil {
+		return _oops.With("temp", tempName).Wrapf(err, "gtfs export: chmod")
+	}
+	if err := os.Rename(tempName, final); err != nil {
+		return _oops.With("final", final).Wrapf(err, "gtfs export: publish")
+	}
+	return nil
+}
+
+func closeDurableGTFSFile(temp *os.File) error {
+	// Flush before publishing the name so a crash cannot expose incomplete bytes.
+	if err := temp.Sync(); err != nil {
+		return _oops.Wrapf(err, "gtfs export: sync")
+	}
+	if err := temp.Close(); err != nil {
+		return _oops.Wrapf(err, "gtfs export: close")
+	}
+
+	return nil
+}
+
+func datedGTFSFeeds(entries []os.DirEntry) []string {
+	var feeds []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !isDatedGTFSFile(entry) {
+			continue
+		}
+		feeds = append(feeds, name)
+	}
+	return feeds
+}
+
+func isDatedGTFSFeed(name string) bool {
+	return strings.HasPrefix(name, "gtfs-") && strings.HasSuffix(name, ".zip")
+}
+
+func isDatedGTFSFile(entry os.DirEntry) bool {
+	return !entry.IsDir() && isDatedGTFSFeed(entry.Name())
 }

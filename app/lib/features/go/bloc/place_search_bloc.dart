@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:wheres_the_bus/data/repositories/place_recent_repository.dart';
 import 'package:wheres_the_bus/data/repositories/places_repository.dart';
 import 'package:wheres_the_bus/data/repositories/saved_place_repository.dart';
@@ -68,18 +69,26 @@ class PlaceSearchBloc extends Bloc<PlaceSearchEvent, PlaceSearchState> {
     emit(state.copyWith(query: query, loading: true));
 
     await Future<void>.delayed(_debounce);
-    if (emit.isDone || state.query != query) return;
+    if (_obsoleteQuery(query, emit)) return;
 
-    List<PlaceSuggestion> results;
-    try {
-      results = await _places.autocomplete(query, bias: event.bias);
-    } on Object {
-      // A failed lookup reads as "nothing matched" rather than an error state:
-      // the next keystroke retries anyway, so an alert here would be noise.
-      results = const [];
-    }
-    if (emit.isDone || state.query != query) return;
+    final results = await _autocomplete(query, event.bias);
+    if (_obsoleteQuery(query, emit)) return;
     emit(state.copyWith(results: results, loading: false));
+  }
+
+  bool _obsoleteQuery(String query, Emitter<PlaceSearchState> emit) =>
+      emit.isDone || state.query != query;
+
+  Future<List<PlaceSuggestion>> _autocomplete(
+    String query,
+    LatLng? bias,
+  ) async {
+    try {
+      return await _places.autocomplete(query, bias: bias);
+    } on Object {
+      // A keystroke retries, so an empty match list avoids a noisy alert.
+      return const [];
+    }
   }
 
   Future<void> _onResolveRequested(
@@ -91,23 +100,35 @@ class PlaceSearchBloc extends Bloc<PlaceSearchEvent, PlaceSearchState> {
     try {
       final place = await _places.details(event.placeId);
       if (event.intent == ResolveIntent.pick) await _recents.add(place);
-      if (emit.isDone) return;
-      emit(
-        state.copyWith(
-          clearPicking: true,
-          recents: _recents.all(),
-          effect: _effect(resolved: place, intent: event.intent),
-        ),
-      );
+      _emitResolvedPlace(place, event.intent, emit);
     } on Object {
-      if (emit.isDone) return;
-      emit(
-        state.copyWith(
-          clearPicking: true,
-          effect: _effect(error: PlaceSearchErrorKind.place),
-        ),
-      );
+      _emitResolveFailure(emit);
     }
+  }
+
+  void _emitResolvedPlace(
+    PlannedPlace place,
+    ResolveIntent intent,
+    Emitter<PlaceSearchState> emit,
+  ) {
+    if (emit.isDone) return;
+    emit(
+      state.copyWith(
+        clearPicking: true,
+        recents: _recents.all(),
+        effect: _effect(resolved: place, intent: intent),
+      ),
+    );
+  }
+
+  void _emitResolveFailure(Emitter<PlaceSearchState> emit) {
+    if (emit.isDone) return;
+    emit(
+      state.copyWith(
+        clearPicking: true,
+        effect: _effect(error: PlaceSearchErrorKind.place),
+      ),
+    );
   }
 
   void _onLocationResolving(

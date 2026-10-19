@@ -47,41 +47,37 @@ type LoadTxBeginner interface {
 }
 
 func DecodeLoadArray[T any](dec *json.Decoder, dataset string, validate func(int, T) error) ([]T, error) {
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, _oops.With("dataset", dataset).Wrapf(err, "opening array")
-	}
-	if tok != json.Delim('[') {
-		return nil, _oops.With("dataset", dataset).With("token", tok).Errorf("opening array")
+	if err := openLoadArray(dec, dataset); err != nil {
+		return nil, err
 	}
 
-	items := make([]T, 0)
-	for index := 0; dec.More(); index++ {
-		var item T
-		if err := dec.Decode(&item); err != nil {
-			return nil, _oops.With("dataset", dataset).With("index", index).Wrapf(err, "element decode")
-		}
-		if validate != nil {
-			if err := validate(index, item); err != nil {
-				return nil, _oops.With("dataset", dataset).With("index", index).Wrapf(err, "element")
-			}
-		}
-		items = append(items, item)
+	items, err := readLoadItems(dec, dataset, validate)
+	if err != nil {
+		return nil, err
 	}
-	if tok, err = dec.Token(); err != nil {
-		return nil, _oops.With("dataset", dataset).Wrapf(err, "closing array")
-	}
-	if tok != json.Delim(']') {
-		return nil, _oops.With("dataset", dataset).With("token", tok).Errorf("closing array")
-	}
-	var trailing json.RawMessage
-	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return nil, _oops.With("dataset", dataset).Errorf("trailing JSON value")
-		}
-		return nil, _oops.With("dataset", dataset).Wrapf(err, "trailing JSON")
+
+	if err := finishLoadArray(dec, dataset); err != nil {
+		return nil, err
 	}
 	return items, nil
+}
+
+func validateLoadItem[T any](index int, item T, validate func(int, T) error) error {
+	if validate == nil {
+		return nil
+	}
+	return validate(index, item)
+}
+
+func finishLoadArray(dec *json.Decoder, dataset string) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return _oops.With("dataset", dataset).Wrapf(err, "closing array")
+	}
+	if tok != json.Delim(']') {
+		return _oops.With("dataset", dataset).With("token", tok).Errorf("closing array")
+	}
+	return rejectLoadTrailer(dec, dataset)
 }
 
 // AppendUniqueLoadRow keeps the first row for a target natural key. Identical
@@ -100,41 +96,17 @@ func AppendUniqueLoadRow(rows *[][]any, seen map[string][]any, key, label string
 }
 
 func RunCopyUpsert(ctx context.Context, db LoadTxBeginner, spec CopyUpsertSpec, rows [][]any) (resultErr error) {
-	if db == nil {
-		return _oops.With("spec_key", spec.Key).Errorf("copy-upsert begin: nil database")
-	}
-	b, err := db.BeginLoadTx(ctx)
+	b, err := beginCopyUpsert(ctx, db, spec.Key)
 	if err != nil {
-		return _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert begin")
+		return err
 	}
+
 	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := errorWithout(b.Rollback(rollbackCtx), pgx.ErrTxClosed); err != nil {
-			resultErr = errors.Join(resultErr, _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert rollback"))
-		}
-	}()
-	for index, st := range spec.PreExec {
-		if _, err := b.Exec(ctx, st.SQL, st.Args...); err != nil {
-			return _oops.With("spec_key", spec.Key).With("index", index).Wrapf(err, "copy-upsert pre-exec")
-		}
+	defer func() { resultErr = errors.Join(resultErr, rollbackUncommittedLoad(committed, b, spec.Key)) }()
+	if err := completeCopyUpsert(ctx, b, spec, rows); err != nil {
+		return err
 	}
-	if _, err := b.Exec(ctx, spec.CreateSQL); err != nil {
-		return _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert create temp")
-	}
-	if _, err := b.CopyFrom(ctx, pgx.Identifier{spec.TempTable}, spec.CopyCols, pgx.CopyFromRows(rows)); err != nil {
-		return _oops.With("spec_key", spec.Key).With("temp_table", spec.TempTable).Wrapf(err, "copy-upsert COPY")
-	}
-	if _, err := b.Exec(ctx, spec.InsertSQL); err != nil {
-		return _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert final exec")
-	}
-	if err := b.Commit(ctx); err != nil {
-		return _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert commit")
-	}
+
 	committed = true
 	zap.S().Infow("success",
 		"component", "load",
@@ -146,16 +118,35 @@ func RunCopyUpsert(ctx context.Context, db LoadTxBeginner, spec CopyUpsertSpec, 
 	return nil
 }
 
+func rollbackLoad(tx LoadTx, key string) error {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := errorWithout(tx.Rollback(rollbackCtx), pgx.ErrTxClosed); err != nil {
+		return _oops.With("spec_key", key).Wrapf(err, "copy-upsert rollback")
+	}
+	return nil
+}
+
+func stageCopyUpsert(ctx context.Context, b LoadTx, spec CopyUpsertSpec, rows [][]any) error {
+	if err := execCopyPreparation(ctx, b, spec); err != nil {
+		return err
+	}
+	if err := copyUpsertRows(ctx, b, spec, rows); err != nil {
+		return err
+	}
+	if _, err := b.Exec(ctx, spec.InsertSQL); err != nil {
+		return _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert final exec")
+	}
+	return nil
+}
+
 func Mask(mon, tues, wed, thur, fri, satur, sun bool, nationalHoliday ...bool) uint8 {
 	var res uint8
-	days := []bool{mon, tues, wed, thur, fri, satur, sun}
+	days := []bool{mon, tues, wed, thur, fri, satur, sun, firstHolidayFlag(nationalHoliday)}
 	for i, v := range days {
 		if v {
 			res |= 1 << i
 		}
-	}
-	if len(nationalHoliday) > 0 && nationalHoliday[0] {
-		res |= 1 << 7
 	}
 	return res
 }
@@ -208,14 +199,12 @@ func errorWithout(err, target error) error {
 		return nil
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		remaining := make([]error, 0, len(joined.Unwrap()))
-		for _, child := range joined.Unwrap() {
-			if child = errorWithout(child, target); child != nil {
-				remaining = append(remaining, child)
-			}
-		}
-		return errors.Join(remaining...)
+		return joinedWithout(joined.Unwrap(), target)
 	}
+	return wrappedWithout(err, target)
+}
+
+func wrappedWithout(err, target error) error {
 	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
 		child := wrapped.Unwrap()
 		if errors.Is(child, target) {
@@ -226,4 +215,115 @@ func errorWithout(err, target error) error {
 		return nil
 	}
 	return err
+}
+
+func joinedWithout(children []error, target error) error {
+	remaining := make([]error, 0, len(children))
+	for _, child := range children {
+		if child = errorWithout(child, target); child != nil {
+			remaining = append(remaining, child)
+		}
+	}
+	return errors.Join(remaining...)
+}
+
+func openLoadArray(dec *json.Decoder, dataset string) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return _oops.With("dataset", dataset).Wrapf(err, "opening array")
+	}
+	if tok != json.Delim('[') {
+		return _oops.With("dataset", dataset).With("token", tok).Errorf("opening array")
+	}
+
+	return nil
+}
+
+func readLoadItems[T any](dec *json.Decoder, dataset string, validate func(int, T) error) ([]T, error) {
+	items := make([]T, 0)
+	for index := 0; dec.More(); index++ {
+		item, err := decodeLoadItem(dec, dataset, index, validate)
+		if err != nil {
+			return nil, err
+		}
+
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func decodeLoadItem[T any](dec *json.Decoder, dataset string, index int, validate func(int, T) error) (T, error) {
+	var item T
+	if err := dec.Decode(&item); err != nil {
+		return item, _oops.With("dataset", dataset).With("index", index).Wrapf(err, "element decode")
+	}
+	if err := validateLoadItem(index, item, validate); err != nil {
+		return item, _oops.With("dataset", dataset).With("index", index).Wrapf(err, "element")
+	}
+	return item, nil
+}
+
+func rejectLoadTrailer(dec *json.Decoder, dataset string) error {
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return _oops.With("dataset", dataset).Errorf("trailing JSON value")
+		}
+		return _oops.With("dataset", dataset).Wrapf(err, "trailing JSON")
+	}
+	return nil
+}
+
+func beginCopyUpsert(ctx context.Context, db LoadTxBeginner, key string) (LoadTx, error) {
+	if db == nil {
+		return nil, _oops.With("spec_key", key).Errorf("copy-upsert begin: nil database")
+	}
+	b, err := db.BeginLoadTx(ctx)
+	if err != nil {
+		return nil, _oops.With("spec_key", key).Wrapf(err, "copy-upsert begin")
+	}
+	return b, nil
+}
+
+func rollbackUncommittedLoad(committed bool, tx LoadTx, key string) error {
+	if committed {
+		return nil
+	}
+	return rollbackLoad(tx, key)
+}
+
+func completeCopyUpsert(ctx context.Context, b LoadTx, spec CopyUpsertSpec, rows [][]any) error {
+	if err := stageCopyUpsert(ctx, b, spec, rows); err != nil {
+		return err
+	}
+	if err := b.Commit(ctx); err != nil {
+		return _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert commit")
+	}
+	return nil
+}
+
+func execCopyPreparation(ctx context.Context, b LoadTx, spec CopyUpsertSpec) error {
+	for index, st := range spec.PreExec {
+		if _, err := b.Exec(ctx, st.SQL, st.Args...); err != nil {
+			return _oops.With("spec_key", spec.Key).With("index", index).Wrapf(err, "copy-upsert pre-exec")
+		}
+	}
+	return nil
+}
+
+func copyUpsertRows(ctx context.Context, b LoadTx, spec CopyUpsertSpec, rows [][]any) error {
+	if _, err := b.Exec(ctx, spec.CreateSQL); err != nil {
+		return _oops.With("spec_key", spec.Key).Wrapf(err, "copy-upsert create temp")
+	}
+	if _, err := b.CopyFrom(ctx, pgx.Identifier{spec.TempTable}, spec.CopyCols, pgx.CopyFromRows(rows)); err != nil {
+		return _oops.With("spec_key", spec.Key).With("temp_table", spec.TempTable).Wrapf(err, "copy-upsert COPY")
+	}
+	return nil
+}
+
+func firstHolidayFlag(flags []bool) bool {
+	if len(flags) == 0 {
+		return false
+	}
+	return flags[0]
 }

@@ -67,9 +67,15 @@ func trtcTrainInfoBody(carID, user, pass string) string {
 }
 
 func (c *TRTCTrainInfoClient) GetTrainInfo(ctx context.Context, carID string) (*TRTCTrainInfo, bool, error) {
-	if c.user == "" || c.pass == "" {
+	if !c.credentialsPresent() {
 		return nil, false, nil
 	}
+	return c.fetchTrainInfo(ctx, carID)
+}
+
+func (c *TRTCTrainInfoClient) credentialsPresent() bool { return c.user != "" && c.pass != "" }
+
+func (c *TRTCTrainInfoClient) fetchTrainInfo(ctx context.Context, carID string) (*TRTCTrainInfo, bool, error) {
 	resp, err := c.http.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/soap+xml; charset=utf-8").
@@ -81,7 +87,11 @@ func (c *TRTCTrainInfoClient) GetTrainInfo(ctx context.Context, carID string) (*
 	if resp.StatusCode() != http.StatusOK {
 		return nil, false, _oops.With("status_code", resp.StatusCode()).Errorf("GetTrainInfo: status")
 	}
-	raw, ok := extractJSONObject(resp.Body())
+	return decodeTRTCTrainInfo(resp.Body())
+}
+
+func decodeTRTCTrainInfo(body []byte) (*TRTCTrainInfo, bool, error) {
+	raw, ok := extractJSONObject(body)
 	if !ok {
 		// No JSON object in the response is the empty-result signal (unknown or
 		// invalid carID), not a parse failure.

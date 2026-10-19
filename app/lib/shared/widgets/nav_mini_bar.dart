@@ -23,25 +23,32 @@ class NavMiniBar extends StatelessWidget {
       buildWhen: (p, c) =>
           p.activeLegIndex != c.activeLegIndex ||
           p.selectedRouteIndex != c.selectedRouteIndex,
-      builder: (context, state) {
-        final route = _route(state);
-        final activeLeg = state.activeLegIndex;
-        if (route == null || activeLeg == null) {
-          return const SizedBox.shrink();
-        }
-        if (activeLeg < 0 || activeLeg >= route.sections.length) {
-          return const SizedBox.shrink();
-        }
-        return _MiniBar(route: route, activeLeg: activeLeg);
-      },
+      builder: (context, state) => _barForState(state),
     );
+  }
+
+  Widget _barForState(PlanState state) {
+    final route = _route(state);
+    final activeLeg = state.activeLegIndex;
+    if (route == null || activeLeg == null) return const SizedBox.shrink();
+    return _barForRoute(route, activeLeg);
+  }
+
+  Widget _barForRoute(PlanRoute route, int activeLeg) {
+    if (activeLeg < 0 || activeLeg >= route.sections.length) {
+      return const SizedBox.shrink();
+    }
+    return _MiniBar(route: route, activeLeg: activeLeg);
   }
 
   PlanRoute? _route(PlanState state) {
     final routes = state.result?.routes;
     if (routes == null || routes.isEmpty) return null;
-    final i = state.selectedRouteIndex ?? 0;
-    return i >= 0 && i < routes.length ? routes[i] : routes.first;
+    return _selectedRoute(routes, state.selectedRouteIndex ?? 0);
+  }
+
+  PlanRoute _selectedRoute(List<PlanRoute> routes, int i) {
+    return routes.asMap()[i] ?? routes.first;
   }
 }
 
@@ -76,10 +83,7 @@ class _MiniBar extends StatelessWidget {
           AppTheme.space12,
         ),
         child: Pressable(
-          onTap: () {
-            if (GoRouterState.of(context).uri.path == AppRoutes.go) return;
-            unawaited(context.push(AppRoutes.go));
-          },
+          onTap: () => _openNavigation(context),
           semanticLabel: AppI18n.of(context).navBackSemantics(dest),
           child: Container(
             padding: const EdgeInsets.symmetric(
@@ -132,15 +136,7 @@ class _MiniBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: AppTheme.space10),
-                if (arrival.isNotEmpty)
-                  Text(
-                    arrival,
-                    style: AppTextStyles.timeValue(
-                      size: 16,
-                      weight: FontWeight.w700,
-                      color: cs.onSurface,
-                    ),
-                  ),
+                ..._arrivalWidgets(arrival, cs),
                 const SizedBox(width: AppTheme.space4),
                 Icon(
                   Icons.chevron_right_rounded,
@@ -153,5 +149,24 @@ class _MiniBar extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  void _openNavigation(BuildContext context) {
+    if (GoRouterState.of(context).uri.path == AppRoutes.go) return;
+    unawaited(context.push(AppRoutes.go));
+  }
+
+  List<Widget> _arrivalWidgets(String arrival, ColorScheme colors) {
+    if (arrival.isEmpty) return [];
+    return [
+      Text(
+        arrival,
+        style: AppTextStyles.timeValue(
+          size: 16,
+          weight: FontWeight.w700,
+          color: colors.onSurface,
+        ),
+      ),
+    ];
   }
 }

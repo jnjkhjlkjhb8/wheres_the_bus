@@ -128,12 +128,26 @@ func Init(ctx context.Context, dsn string) (func() error, error) {
 		_archive = nil
 		return func() error { return nil }, nil
 	}
+	return initEnabledArchive(ctx, dsn)
+}
+
+func initEnabledArchive(ctx context.Context, dsn string) (func() error, error) {
 	// Without parseTime the driver hands DATETIME back as []byte and every
 	// history read fails at scan time — at 04:00, in a cron, a day after the
 	// deploy. Refuse at startup instead.
 	if !strings.Contains(dsn, "parseTime=true") {
 		return nil, errors.New("archive DSN must set parseTime=true (DATETIME columns are scanned into time.Time)")
 	}
+	db, err := openArchiveDatabase(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	zap.S().Infow("ready", "component", "archive", "event", "ready")
+	_archive = &archiver{db: db}
+	return _archive.Close, nil
+}
+
+func openArchiveDatabase(ctx context.Context, dsn string) (*sql.DB, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, _oops.Wrapf(err, "open archive")
@@ -146,9 +160,7 @@ func Init(ctx context.Context, dsn string) (func() error, error) {
 	if err := db.PingContext(pingCtx); err != nil {
 		return nil, _oops.Wrapf(errors.Join(err, db.Close()), "ping archive")
 	}
-	zap.S().Infow("ready", "component", "archive", "event", "ready")
-	_archive = &archiver{db: db}
-	return _archive.Close, nil
+	return db, nil
 }
 
 // Close closes the pool, or is a no-op on a disabled (nil) archiver.
@@ -210,21 +222,39 @@ func Insert(ctx context.Context, db Execer, table string, cols []string, rows []
 	if db == nil || len(rows) == 0 {
 		return nil
 	}
+	return insertArchiveBatches(ctx, db, table, cols, rows)
+}
+
+func insertArchiveBatches(ctx context.Context, db Execer, table string, cols []string, rows [][]any) error {
 	for start := 0; start < len(rows); start += RowsPerInsert {
 		end := min(start+RowsPerInsert, len(rows))
-		batch := rows[start:end]
-		args := make([]any, 0, len(batch)*len(cols))
-		for _, r := range batch {
-			if len(r) != len(cols) {
-				return _oops.With("table", table).With("values", len(r)).With("cols", len(cols)).Errorf("row width does not match column count")
-			}
-			args = append(args, archiveUTC(r)...)
-		}
-		if _, err := db.ExecContext(ctx, archiveInsertSQL(table, cols, len(batch)), args...); err != nil {
-			return _oops.With("table", table).With("start", start).With("end", end).Wrapf(err, "archive rows ..")
+		if err := insertArchiveBatch(ctx, db, table, cols, rows[start:end], start, end); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func insertArchiveBatch(ctx context.Context, db Execer, table string, cols []string, batch [][]any, start, end int) error {
+	args, err := archiveBatchArgs(table, cols, batch)
+	if err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, archiveInsertSQL(table, cols, len(batch)), args...); err != nil {
+		return _oops.With("table", table).With("start", start).With("end", end).Wrapf(err, "archive rows ..")
+	}
+	return nil
+}
+
+func archiveBatchArgs(table string, cols []string, batch [][]any) ([]any, error) {
+	args := make([]any, 0, len(batch)*len(cols))
+	for _, row := range batch {
+		if len(row) != len(cols) {
+			return nil, _oops.With("table", table).With("values", len(row)).With("cols", len(cols)).Errorf("row width does not match column count")
+		}
+		args = append(args, archiveUTC(row)...)
+	}
+	return args, nil
 }
 
 // archiveUTC normalizes every timestamp in a row to UTC. MySQL DATETIME carries

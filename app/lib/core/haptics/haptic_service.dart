@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
-/// Centralised haptic feedback — including the 6.7-second sustained bus
-/// arrival vibration.
 class HapticService {
   HapticService._();
   static final HapticService instance = HapticService._();
@@ -20,13 +18,13 @@ class HapticService {
     await HapticFeedback.mediumImpact();
   }
 
-  void longAlightPulse() {
+  void longAlightPulse({DateTime Function() now = DateTime.now}) {
     _sustainedTimer?.cancel();
     const pulseInterval = Duration(milliseconds: 130);
-    final endTime = DateTime.now().add(const Duration(milliseconds: 1600));
+    final endTime = now().add(const Duration(milliseconds: 1600));
     unawaited(HapticFeedback.heavyImpact());
     _sustainedTimer = Timer.periodic(pulseInterval, (timer) {
-      if (DateTime.now().isAfter(endTime)) {
+      if (now().isAfter(endTime)) {
         timer.cancel();
         _sustainedTimer = null;
         return;

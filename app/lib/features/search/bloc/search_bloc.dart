@@ -114,33 +114,48 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     SearchQuerySubmitted event,
     Emitter<SearchState> emit,
   ) async {
-    if (event.requestId != _requestId || event.query != state.query) return;
+    if (!_matchesCurrentQuery(event)) return;
     try {
       final results = await _searchRepository.search(
         event.query,
         city: event.city,
       );
-      if (event.requestId == _requestId && !isClosed) {
-        emit(
-          state.copyWith(
-            results: _rank(results, event.query),
-            loading: false,
-            clearError: true,
-            cityOptions: event.city == null ? _cityOptions(results) : null,
-          ),
-        );
-      }
+      _publishResults(event, results, emit);
     } on Object catch (e) {
-      if (event.requestId == _requestId && !isClosed) {
-        emit(
-          state.copyWith(
-            results: const [],
-            loading: false,
-            error: AppError.from(e),
-          ),
-        );
-      }
+      _publishFailure(event.requestId, e, emit);
     }
+  }
+
+  bool _matchesCurrentQuery(SearchQuerySubmitted event) =>
+      event.requestId == _requestId && event.query == state.query;
+
+  bool _canPublish(int requestId) => requestId == _requestId && !isClosed;
+
+  void _publishResults(
+    SearchQuerySubmitted event,
+    List<SearchResult> results,
+    Emitter<SearchState> emit,
+  ) {
+    if (!_canPublish(event.requestId)) return;
+    emit(
+      state.copyWith(
+        results: _rank(results, event.query),
+        loading: false,
+        clearError: true,
+        cityOptions: event.city == null ? _cityOptions(results) : null,
+      ),
+    );
+  }
+
+  void _publishFailure(int requestId, Object error, Emitter<SearchState> emit) {
+    if (!_canPublish(requestId)) return;
+    emit(
+      state.copyWith(
+        results: const [],
+        loading: false,
+        error: AppError.from(error),
+      ),
+    );
   }
 
   static List<String> _cityOptions(List<SearchResult> results) {
@@ -151,11 +166,13 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       counts[city] = (counts[city] ?? 0) + 1;
     }
     final codes = counts.keys.toList()
-      ..sort((a, b) {
-        final byCount = counts[b]!.compareTo(counts[a]!);
-        return byCount != 0 ? byCount : cityOrder(a).compareTo(cityOrder(b));
-      });
+      ..sort((a, b) => _compareCities(counts, a, b));
     return codes;
+  }
+
+  static int _compareCities(Map<String, int> counts, String a, String b) {
+    final byCount = counts[b]!.compareTo(counts[a]!);
+    return byCount != 0 ? byCount : cityOrder(a).compareTo(cityOrder(b));
   }
 
   List<SearchResult> _rank(List<SearchResult> results, String query) =>

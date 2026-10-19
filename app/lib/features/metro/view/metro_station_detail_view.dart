@@ -11,6 +11,7 @@ import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/data/models/arrival_display.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
+import 'package:wheres_the_bus/data/repositories/mrt_repository.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_eta_bloc.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_eta_event.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_eta_state.dart';
@@ -49,20 +50,14 @@ String _stationLineLabel(AppI18n i18n, String id) => id
     .join('  ');
 
 TransportType _getTransportType(String line) {
-  switch (line) {
-    case 'BL':
-      return TransportType.mrtBL;
-    case 'R':
-      return TransportType.mrtR;
-    case 'G':
-      return TransportType.mrtG;
-    case 'BR':
-      return TransportType.mrtBR;
-    case 'O':
-      return TransportType.mrtO;
-    default:
-      return TransportType.mrtBL;
-  }
+  return switch (line) {
+    'BL' => TransportType.mrtBL,
+    'R' => TransportType.mrtR,
+    'G' => TransportType.mrtG,
+    'BR' => TransportType.mrtBR,
+    'O' => TransportType.mrtO,
+    _ => TransportType.mrtBL,
+  };
 }
 
 class MetroStationDetailView extends StatelessWidget {
@@ -71,6 +66,7 @@ class MetroStationDetailView extends StatelessWidget {
     required this.stationId,
     required this.name,
     this.onClose,
+    this.repository,
     super.key,
   });
 
@@ -78,11 +74,14 @@ class MetroStationDetailView extends StatelessWidget {
   final String stationId;
   final String name;
   final VoidCallback? onClose;
+  final MrtRepository? repository;
 
   @override
   Widget build(BuildContext context) {
     final sheet = BlocProvider(
-      create: (_) => MetroEtaBloc()..add(LoadMetroEta(system, stationId)),
+      create: (_) =>
+          MetroEtaBloc(repository: repository)
+            ..add(LoadMetroEta(system, stationId)),
       child: _StationDetailSheet(
         system: system,
         station: MetroMapStation(id: stationId, name: name, x: 0, y: 0),

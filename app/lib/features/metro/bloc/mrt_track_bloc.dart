@@ -24,7 +24,9 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     bool Function()? liveActivityEnabled,
     Future<void> Function(String trackId, AlightEvent event)? vibrate,
     BoardEtaStream? boardEtaStream,
+    void Function(Object error, StackTrace stack)? reportError,
   }) : _i18n = i18n,
+       _reportError = reportError ?? CrashReporter.record,
        _repository = repository ?? MrtTrackRepository.instance,
        _boardEtaStream = boardEtaStream ?? defaultBoardEtaStream,
        _channel = channel,
@@ -66,6 +68,7 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
   }
 
   final AppI18n _i18n;
+  final void Function(Object error, StackTrace stack) _reportError;
   final MrtTrackRepository _repository;
   final BoardEtaStream _boardEtaStream;
   final AlightTrackChannel? _channel;
@@ -118,7 +121,7 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     } on GrpcError catch (err) {
       emit(state.copyWith(creating: false, createError: _mapError(err.code)));
     } on Object catch (err, s) {
-      CrashReporter.record(err, s);
+      _reportError(err, s);
       emit(
         state.copyWith(
           creating: false,
@@ -132,12 +135,11 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     MrtTrackRestored e,
     Emitter<MrtTrackBlocState> emit,
   ) async {
-    if (state.session != null) return;
-    if (!HiveStore.settingsReady) return;
+    if (!_canRestoreSession) return;
     final raw = HiveStore.mrtTrackSession;
     if (raw == null) return;
     final session = MrtTrackSession.fromJson(raw);
-    if (session.trackId.isEmpty || session.status.isTerminal) {
+    if (_discardRestoredSession(session)) {
       await _clearPersisted();
       return;
     }
@@ -147,6 +149,12 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     _lease = await _startActivity(session);
     _subscribe(session.trackId);
   }
+
+  bool get _canRestoreSession =>
+      state.session == null && HiveStore.settingsReady;
+
+  bool _discardRestoredSession(MrtTrackSession session) =>
+      session.trackId.isEmpty || session.status.isTerminal;
 
   /// Watches the boarding station until the tracked train pulls in, then stops.
   void _subscribeBoardEta(MrtTrackRequested e) {
@@ -243,7 +251,7 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
       try {
         await _repository.cancel(session.trackId);
       } on Object catch (err, s) {
-        CrashReporter.record(err, s);
+        _reportError(err, s);
       }
     }
   }
@@ -312,7 +320,7 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
     try {
       await _repository.setPushToken(trackId, e.token);
     } on Object catch (err, s) {
-      CrashReporter.record(err, s);
+      _reportError(err, s);
     }
   }
 
@@ -373,7 +381,7 @@ class MrtTrackBloc extends Bloc<MrtTrackEvent, MrtTrackBlocState> {
   AlightTrackContent _content(MrtTrackSession s, {MrtTrackStatus? ended}) {
     final board = s.pathStationNames.isNotEmpty ? s.pathStationNames.first : '';
     // The bar runs board→target, one segment per hop.
-    final hopCount = max(1, s.targetIndex);
+    final hopCount = s.targetIndex > 0 ? s.targetIndex : 1;
     final remaining = s.remainingStops.clamp(0, hopCount);
     final waiting = ended == null && state.waitingToBoard;
     return AlightTrackContent(

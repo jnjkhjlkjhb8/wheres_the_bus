@@ -20,7 +20,7 @@ func ArchivePayload(
 	marker, landingCycle string,
 	body io.ReadSeeker,
 ) {
-	if db == nil || body == nil {
+	if !rawArchiveReady(db, body) {
 		return
 	}
 	payload, err := gzipAll(body)
@@ -28,6 +28,12 @@ func ArchivePayload(
 		zap.S().Errorw("compress error", "component", "raw_archive", "table", t.Table, "partition", t.PartVal, "err", err)
 		return
 	}
+	writeRawArchive(ctx, db, t, marker, landingCycle, payload)
+}
+
+func rawArchiveReady(db history.Execer, body io.ReadSeeker) bool { return db != nil && body != nil }
+
+func writeRawArchive(ctx context.Context, db history.Execer, t Target, marker, landingCycle string, payload []byte) {
 	row := []any{t.Table, t.PartVal, marker, landingCycle, time.Now(), payload}
 	if err := history.Insert(ctx, db, "raw_tdx_archive", _rawArchiveCols, [][]any{row}); err != nil {
 		zap.S().Errorw("insert error", "component", "raw_archive", "table", t.Table, "partition", t.PartVal, "err", err)
@@ -46,6 +52,17 @@ func gzipAll(r io.ReadSeeker) ([]byte, error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
 		return nil, _oops.Wrapf(err, "rewind payload")
 	}
+	payload, err := compressRawArchive(r)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return nil, _oops.Wrapf(err, "rewind payload after compress")
+	}
+	return payload, nil
+}
+
+func compressRawArchive(r io.Reader) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	if _, err := io.Copy(zw, r); err != nil {
@@ -53,9 +70,6 @@ func gzipAll(r io.ReadSeeker) ([]byte, error) {
 	}
 	if err := zw.Close(); err != nil {
 		return nil, _oops.Wrapf(err, "finish gzip stream")
-	}
-	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return nil, _oops.Wrapf(err, "rewind payload after compress")
 	}
 	return buf.Bytes(), nil
 }

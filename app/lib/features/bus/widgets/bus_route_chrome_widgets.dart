@@ -50,6 +50,14 @@ class _RoutePill extends StatelessWidget {
   final String dirName;
   final int direction;
 
+  Offset _transitionOffset(AnimationStatus status) {
+    final incoming =
+        status == AnimationStatus.forward ||
+        status == AnimationStatus.completed;
+    final sign = direction == 1 ? 1.0 : -1.0;
+    return Offset(0, incoming ? sign : -sign);
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -81,13 +89,7 @@ class _RoutePill extends StatelessWidget {
               switchInCurve: AppMotion.easeOut,
               switchOutCurve: AppMotion.easeOut,
               transitionBuilder: (child, animation) {
-                final isIncoming =
-                    animation.status == AnimationStatus.forward ||
-                    animation.status == AnimationStatus.completed;
-
-                final beginOffset = direction == 1
-                    ? (isIncoming ? const Offset(0, 1) : const Offset(0, -1))
-                    : (isIncoming ? const Offset(0, -1) : const Offset(0, 1));
+                final beginOffset = _transitionOffset(animation.status);
 
                 return ClipRect(
                   child: SlideTransition(

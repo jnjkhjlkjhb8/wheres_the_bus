@@ -2,6 +2,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 
 void main() {
+  test('top-inset offsets compare layout values and concrete types', () {
+    final offset = TopInsetSheetOffset(double.parse('24'));
+    expect(offset == offset, isTrue);
+    expect(offset == const TopInsetSheetOffset(24), isTrue);
+    expect(offset == const TopInsetSheetOffset(25), isFalse);
+    expect(offset == const _DerivedOffset(24), isFalse);
+    expect(offset == Object(), isFalse);
+    expect(offset.hashCode, const TopInsetSheetOffset(24).hashCode);
+  });
   group('carriedFraction', () {
     test('returns the current height as a viewport fraction', () {
       expect(
@@ -62,4 +71,8 @@ void main() {
       );
     });
   });
+}
+
+class _DerivedOffset extends TopInsetSheetOffset {
+  const _DerivedOffset(super.inset);
 }

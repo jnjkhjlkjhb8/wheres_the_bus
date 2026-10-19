@@ -44,12 +44,24 @@ class ShakeRecognizer {
     required double z,
     required Duration at,
   }) {
-    final firedAt = _firedAt;
-    if (firedAt != null && at - firedAt < cooldown) return false;
+    if (_isCoolingDown(at)) return false;
 
     final magnitude = math.sqrt(x * x + y * y + z * z);
     if (magnitude < threshold) return false;
 
+    if (_beginAttempt(x, y, z, magnitude, at)) return false;
+
+    final projection = x * _axisX + y * _axisY + z * _axisZ;
+    return _finishPeak(projection, at);
+  }
+
+  bool _beginAttempt(
+    double x,
+    double y,
+    double z,
+    double magnitude,
+    Duration at,
+  ) {
     if (_sign == 0 || at - _attemptStart > window) {
       _axisX = x / magnitude;
       _axisY = y / magnitude;
@@ -57,24 +69,33 @@ class ShakeRecognizer {
       _sign = 1;
       _reversals = 0;
       _attemptStart = at;
-      return false;
+      return true;
     }
+    return false;
+  }
 
-    final projection = x * _axisX + y * _axisY + z * _axisZ;
-    // A peak perpendicular to the axis projects to near zero, where the sign
-    // is noise rather than a direction. Half the threshold is the point past
-    // which the sample is plainly travelling along the shake, not across it.
-    if (projection.abs() < threshold / 2) return false;
-    final sign = projection >= 0 ? 1 : -1;
-    if (sign == _sign) return false;
-
-    _sign = sign;
-    _reversals++;
+  bool _finishPeak(double projection, Duration at) {
+    if (!_acceptReversal(projection)) return false;
     if (_reversals < requiredReversals) return false;
 
     _firedAt = at;
     _sign = 0;
     _reversals = 0;
+    return true;
+  }
+
+  bool _isCoolingDown(Duration at) {
+    final firedAt = _firedAt;
+    return firedAt != null && at - firedAt < cooldown;
+  }
+
+  bool _acceptReversal(double projection) {
+    // Perpendicular peaks carry directional noise rather than a reversal.
+    if (projection.abs() < threshold / 2) return false;
+    final sign = projection >= 0 ? 1 : -1;
+    if (sign == _sign) return false;
+    _sign = sign;
+    _reversals++;
     return true;
   }
 

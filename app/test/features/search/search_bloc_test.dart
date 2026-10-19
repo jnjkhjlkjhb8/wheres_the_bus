@@ -1,10 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/data/models/search_models.dart';
 import 'package:wheres_the_bus/data/repositories/search_affinity_repository.dart';
 import 'package:wheres_the_bus/data/repositories/search_recent_repository.dart';
 import 'package:wheres_the_bus/data/repositories/search_repository.dart';
 import 'package:wheres_the_bus/features/search/bloc/search_bloc.dart';
 import 'package:wheres_the_bus/features/search/bloc/search_event.dart';
+import 'package:wheres_the_bus/features/search/bloc/search_state.dart';
 
 void main() {
   test('loads recents on construction', () async {
@@ -20,23 +25,33 @@ void main() {
     expect(bloc.state.recentResults, hasLength(1));
   });
 
-  test('debounces query changes and searches latest query once', () async {
+  testWidgets('debounces query changes and searches latest query once', (
+    tester,
+  ) async {
     final search = _FakeSearchRepository(results: [_result('result')]);
     final bloc = SearchBloc(
       searchRepository: search,
       recentRepository: _FakeSearchRecentRepository(),
+      locationService: _FakeLocationService(),
     );
-    addTearDown(bloc.close);
 
-    bloc
-      ..add(const SearchQueryChanged('tai'))
-      ..add(const SearchQueryChanged('taipei'));
+    try {
+      bloc
+        ..add(const SearchQueryChanged('tai'))
+        ..add(const SearchQueryChanged('taipei'));
 
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    await Future<void>.delayed(Duration.zero);
+      await tester.pump();
+      expect(bloc.state.query, 'taipei');
+      expect(bloc.state.loading, isTrue);
+      await tester.pump(const Duration(milliseconds: 179));
+      expect(search.queries, isEmpty);
+      await tester.pump(const Duration(milliseconds: 1));
 
-    expect(search.queries, ['taipei']);
-    expect(bloc.state.results, hasLength(1));
+      expect(search.queries, ['taipei']);
+      expect(bloc.state.results, hasLength(1));
+    } finally {
+      await _closeBloc(tester, bloc);
+    }
   });
 
   test('search errors emit AppError state', () async {
@@ -46,9 +61,10 @@ void main() {
     );
     addTearDown(bloc.close);
 
-    bloc.add(const SearchQueryChanged('taipei'));
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    await Future<void>.delayed(Duration.zero);
+    await _searchAction(
+      bloc,
+      () => bloc.add(const SearchQueryChanged('taipei')),
+    );
 
     expect(bloc.state.error, isNotNull);
     expect(bloc.state.loading, isFalse);
@@ -68,8 +84,10 @@ void main() {
       );
       addTearDown(bloc.close);
 
-      bloc.add(const SearchQueryChanged('中正路'));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('中正路')),
+      );
 
       expect(bloc.state.cityOptions, ['Taipei', 'Kaohsiung']);
       expect(bloc.state.city, isNull);
@@ -95,10 +113,14 @@ void main() {
       );
       addTearDown(bloc.close);
 
-      bloc.add(const SearchQueryChanged('中正路'));
-      await _settle();
-      bloc.add(const SearchCityToggled('Tainan'));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('中正路')),
+      );
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchCityToggled('Tainan')),
+      );
 
       expect(search.cities, [null, 'Tainan']);
       expect(bloc.state.city, 'Tainan');
@@ -124,10 +146,14 @@ void main() {
         );
         addTearDown(bloc.close);
 
-        bloc.add(const SearchQueryChanged('中正路'));
-        await _settle();
-        bloc.add(const SearchCityToggled('Tainan'));
-        await _settle();
+        await _searchAction(
+          bloc,
+          () => bloc.add(const SearchQueryChanged('中正路')),
+        );
+        await _searchAction(
+          bloc,
+          () => bloc.add(const SearchCityToggled('Tainan')),
+        );
 
         // Recomputing from the filtered response would leave one chip and no
         // way back to the other cities.
@@ -148,12 +174,18 @@ void main() {
       );
       addTearDown(bloc.close);
 
-      bloc.add(const SearchQueryChanged('中正路'));
-      await _settle();
-      bloc.add(const SearchCityToggled('Tainan'));
-      await _settle();
-      bloc.add(const SearchCityToggled('Tainan'));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('中正路')),
+      );
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchCityToggled('Tainan')),
+      );
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchCityToggled('Tainan')),
+      );
 
       expect(bloc.state.city, isNull);
       expect(search.cities, [null, 'Tainan', null]);
@@ -171,12 +203,24 @@ void main() {
       );
       addTearDown(bloc.close);
 
-      bloc.add(const SearchQueryChanged('中正路'));
-      await _settle();
-      bloc.add(const SearchCityToggled('Tainan'));
-      await _settle();
-      bloc.add(const SearchQueryChanged(''));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('中正路')),
+      );
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchCityToggled('Tainan')),
+      );
+      await _afterState(
+        bloc,
+        (state) =>
+            state.query.isEmpty &&
+            state.city == null &&
+            state.results.isEmpty &&
+            state.cityOptions.isEmpty &&
+            !state.loading,
+        () => bloc.add(const SearchQueryChanged('')),
+      );
 
       // Recents don't render the chip row, so a filter kept here would be
       // invisible state waiting to swallow the next search.
@@ -197,14 +241,18 @@ void main() {
       );
       addTearDown(bloc.close);
 
-      bloc.add(const SearchQueryChanged('中正路'));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('中正路')),
+      );
       // Two taps in the same frame: the first response must not overwrite
       // the second selection.
-      bloc
-        ..add(const SearchCityToggled('Tainan'))
-        ..add(const SearchCityToggled('Taipei'));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc
+          ..add(const SearchCityToggled('Tainan'))
+          ..add(const SearchCityToggled('Taipei')),
+      );
 
       expect(bloc.state.city, 'Taipei');
       expect(bloc.state.loading, isFalse);
@@ -236,8 +284,10 @@ void main() {
       );
       addTearDown(bloc.close);
 
-      bloc.add(const SearchQueryChanged('307'));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('307')),
+      );
       bloc.add(SearchResultSelected(_result('a')));
       await Future<void>.delayed(Duration.zero);
 
@@ -265,8 +315,10 @@ void main() {
       );
       addTearDown(bloc.close);
 
-      bloc.add(const SearchQueryChanged('307'));
-      await _settle();
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('307')),
+      );
 
       expect(bloc.state.results.first.uid, 'picked');
     });
@@ -285,9 +337,7 @@ void main() {
       );
       final bloc = SearchBloc(
         searchRepository: _FakeSearchRepository(),
-        recentRepository: _FakeSearchRecentRepository(
-          recents: [_result('a')],
-        ),
+        recentRepository: _FakeSearchRecentRepository(recents: [_result('a')]),
         affinityRepository: affinity,
       );
       addTearDown(bloc.close);
@@ -300,6 +350,142 @@ void main() {
       expect(bloc.state.recentResults, isEmpty);
     });
   });
+
+  group('recents and stale work', () {
+    SearchBloc build(
+      SearchRepository search,
+      _FakeSearchRecentRepository recent,
+    ) {
+      final bloc = SearchBloc(
+        searchRepository: search,
+        recentRepository: recent,
+        locationService: _FakeLocationService(),
+      );
+      addTearDown(bloc.close);
+      return bloc;
+    }
+
+    test('removing a recent drops it from state', () async {
+      final bloc = build(
+        _FakeSearchRepository(),
+        _FakeSearchRecentRepository(recents: [_result('a'), _result('b')]),
+      );
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(SearchRecentRemoved(_result('a')));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.recentResults.map((r) => r.uid), ['b']);
+    });
+
+    test('restoring a recent puts it back at its index', () async {
+      final bloc = build(
+        _FakeSearchRepository(),
+        _FakeSearchRecentRepository(recents: [_result('b'), _result('c')]),
+      );
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(SearchRecentRestored(_result('a'), 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.recentResults.map((r) => r.uid), ['b', 'a', 'c']);
+    });
+
+    test('clearing the search keeps the recents and drops the rest', () async {
+      final bloc = build(
+        _FakeSearchRepository(results: [_result('r')]),
+        _FakeSearchRecentRepository(recents: [_result('a')]),
+      );
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('taipei')),
+      );
+      bloc.add(const SearchCleared());
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.query, isEmpty);
+      expect(bloc.state.results, isEmpty);
+      expect(bloc.state.recentResults.map((r) => r.uid), ['a']);
+    });
+
+    test(
+      'a submission with a stale id or a different query is ignored',
+      () async {
+        final search = _FakeSearchRepository(results: [_result('r')]);
+        final bloc = build(search, _FakeSearchRecentRepository())
+          ..add(const SearchQueryChanged('abc'));
+        await Future<void>.delayed(Duration.zero);
+        bloc
+          ..add(const SearchQuerySubmitted('abc', 0))
+          ..add(const SearchQuerySubmitted('zzz', 1));
+        await Future<void>.delayed(Duration.zero);
+        expect(search.queries, isEmpty);
+      },
+    );
+
+    test(
+      'results that land after the search was cleared are dropped',
+      () async {
+        final gate = Completer<List<SearchResult>>();
+        final search = _GatedSearchRepository(gate);
+        final bloc = build(search, _FakeSearchRecentRepository())
+          ..add(const SearchQueryChanged('abc'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(search.calls, 1);
+        bloc.add(const SearchCleared());
+        await Future<void>.delayed(Duration.zero);
+        gate.complete([_result('late')]);
+        await Future<void>.delayed(Duration.zero);
+        expect(bloc.state.results, isEmpty);
+        expect(bloc.state.loading, isFalse);
+      },
+    );
+
+    test(
+      'a failure that lands after the search was cleared is dropped',
+      () async {
+        final gate = Completer<List<SearchResult>>();
+        final search = _GatedSearchRepository(gate);
+        final bloc = build(search, _FakeSearchRecentRepository())
+          ..add(const SearchQueryChanged('abc'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        bloc.add(const SearchCleared());
+        await Future<void>.delayed(Duration.zero);
+        gate.completeError(StateError('late'));
+        await Future<void>.delayed(Duration.zero);
+        expect(bloc.state.error, isNull);
+      },
+    );
+
+    test('cities with equal counts are listed north to south', () async {
+      final bloc = build(
+        _FakeSearchRepository(
+          results: [
+            _result('a', city: 'Kaohsiung'),
+            _result('b', city: 'Taipei'),
+          ],
+        ),
+        _FakeSearchRecentRepository(),
+      );
+      await _searchAction(
+        bloc,
+        () => bloc.add(const SearchQueryChanged('中正路')),
+      );
+      expect(bloc.state.cityOptions, ['Taipei', 'Kaohsiung']);
+    });
+  });
+}
+
+class _GatedSearchRepository implements SearchRepository {
+  _GatedSearchRepository(this.gate);
+
+  final Completer<List<SearchResult>> gate;
+  int calls = 0;
+
+  @override
+  Future<List<SearchResult>> search(
+    String query, {
+    int limit = 20,
+    String? city,
+  }) {
+    calls++;
+    return gate.future;
+  }
 }
 
 SearchResult _result(String uid, {String? city}) => SearchResult(
@@ -310,10 +496,69 @@ SearchResult _result(String uid, {String? city}) => SearchResult(
   city: city,
 );
 
-/// Waits past the query debounce and lets the resulting async work settle.
-Future<void> _settle() async {
-  await Future<void>.delayed(const Duration(milliseconds: 250));
-  await Future<void>.delayed(Duration.zero);
+Future<void> _closeBloc(WidgetTester tester, SearchBloc bloc) async {
+  var closed = false;
+  Object? failure;
+  StackTrace? failureStack;
+  // The stream callbacks need fake-zone pumps while close awaits native work.
+  await tester.runAsync(() async {
+    unawaited(
+      bloc.close().then<void>(
+        (_) => closed = true,
+        onError: (Object error, StackTrace stack) {
+          failure = error;
+          failureStack = stack;
+          closed = true;
+        },
+      ),
+    );
+  });
+  final elapsed = Stopwatch()..start();
+  while (!closed) {
+    if (elapsed.elapsed >= const Duration(seconds: 5)) {
+      fail('SearchBloc.close did not complete within five seconds');
+    }
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  }
+  if (failure != null) {
+    Error.throwWithStackTrace(failure!, failureStack!);
+  }
+  await tester.pump();
+}
+
+Future<SearchState> _afterState(
+  SearchBloc bloc,
+  bool Function(SearchState) matches,
+  void Function() action,
+) {
+  final completed = bloc.stream
+      .firstWhere(matches)
+      .timeout(const Duration(seconds: 5));
+  action();
+  return completed;
+}
+
+Future<SearchState> _searchAction(SearchBloc bloc, void Function() action) {
+  var sawLoading = false;
+  return _afterState(bloc, (state) {
+    // QueryChanged first publishes its query with the previous loading value.
+    // Await the loading cycle so that initial emission cannot end the wait.
+    if (state.loading) sawLoading = true;
+    return sawLoading &&
+        !state.loading &&
+        (state.error != null || state.results.isNotEmpty);
+  }, action);
+}
+
+class _FakeLocationService implements LocationService {
+  @override
+  Future<Position?> lastKnownPosition() async => null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError(
+    '${invocation.memberName} is not used by this test',
+  );
 }
 
 class _FakeSearchRepository implements SearchRepository {

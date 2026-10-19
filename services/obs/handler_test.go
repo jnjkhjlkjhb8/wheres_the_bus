@@ -97,3 +97,21 @@ func TestCoreTransientErrorNotReported(t *testing.T) {
 		t.Fatalf("expected the non-transient error to report, got %d events", len(tr.events))
 	}
 }
+
+func TestLogTagValuesKeepTheirReadableText(t *testing.T) {
+	for _, tc := range []struct {
+		value any
+		want  string
+	}{
+		{"name", "name"}, {errors.New("failure"), "failure"}, {42, "42"}, {true, "true"}, {nil, "<nil>"},
+	} {
+		if got := valueText(tc.value); got != tc.want {
+			t.Fatalf("text(%T)=%q want=%q", tc.value, got, tc.want)
+		}
+	}
+	logger, transport := newTestLogger(t)
+	logger.Errorw("failed batch", "rows", 42, "failed", true)
+	if len(transport.events) != 1 || transport.events[0].Tags["rows"] != "42" || transport.events[0].Tags["failed"] != "true" {
+		t.Fatal("numeric/boolean log tags lost their values")
+	}
+}

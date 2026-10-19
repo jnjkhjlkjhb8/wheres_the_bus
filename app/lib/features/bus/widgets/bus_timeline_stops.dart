@@ -33,13 +33,17 @@ Map<int, int> fareSectionsBySequence({
   required int pricingType,
 }) {
   if (bufferSequences.isEmpty || pricingType != 2) return const {};
-  final lastBuffer = bufferSequences.reduce((a, b) => a > b ? a : b);
+  final lastBuffer = _lastBuffer(bufferSequences);
   // Only stops past the buffer zone are section 2; buffer stops and everything
   // before them read as section 1 (buffer cells are flagged separately).
   return {
-    for (final st in stops) st.sequence: st.sequence > lastBuffer ? 2 : 1,
+    for (final st in stops) st.sequence: _fareSection(st.sequence, lastBuffer),
   };
 }
+
+int _lastBuffer(Set<int> sequences) =>
+    sequences.reduce((a, b) => a > b ? a : b);
+int _fareSection(int sequence, int lastBuffer) => sequence > lastBuffer ? 2 : 1;
 
 List<TimelineStop> deriveTimelineStops({
   required AppI18n i18n,
@@ -68,39 +72,33 @@ List<TimelineStop> deriveTimelineStops({
           state: timelineStopState(eta),
           isBuffer: bufferSequences.contains(st.sequence),
           fareSection: sections[st.sequence],
-          isLiveEta:
-              eta != null &&
-              busStopLabelIsLive(
-                estimateSeconds: eta.estimateSeconds,
-                stopStatus: eta.stopStatus,
-              ),
-          etaMinutes: eta != null && eta.estimateSeconds > 0
-              ? etaCeilMinutes(eta.estimateSeconds)
-              : null,
-          serviceEnded: eta != null && busStopServiceEnded(eta.stopStatus),
+          isLiveEta: _isLiveEta(eta),
+          etaMinutes: _etaMinutes(eta),
+          serviceEnded: _serviceEnded(eta),
           plate: eta?.plate ?? '',
         ),
   ];
 }
 
+bool _isLiveEta(BusStopEtaViewModel? eta) =>
+    eta != null &&
+    busStopLabelIsLive(
+      estimateSeconds: eta.estimateSeconds,
+      stopStatus: eta.stopStatus,
+    );
+
+int? _etaMinutes(BusStopEtaViewModel? eta) =>
+    eta != null && eta.estimateSeconds > 0
+    ? etaCeilMinutes(eta.estimateSeconds)
+    : null;
+
+bool _serviceEnded(BusStopEtaViewModel? eta) =>
+    eta != null && busStopServiceEnded(eta.stopStatus);
+
 List<BusStopEtaViewModel?> retireStaleArriving(
   List<BusStopEtaViewModel?> etas,
 ) {
-  final stale = <int>{};
-  final lastByPlate = <String, int>{};
-  int? lastPlateless;
-  for (var i = 0; i < etas.length; i++) {
-    final eta = etas[i];
-    if (eta == null || !_isArriving(eta)) continue;
-    if (eta.plate.isEmpty) {
-      if (lastPlateless == i - 1) stale.add(i - 1);
-      lastPlateless = i;
-      continue;
-    }
-    final previous = lastByPlate[eta.plate];
-    if (previous != null) stale.add(previous);
-    lastByPlate[eta.plate] = i;
-  }
+  final stale = _staleArrivingIndices(etas);
   if (stale.isEmpty) return etas;
   return [
     for (final (i, eta) in etas.indexed)
@@ -108,6 +106,37 @@ List<BusStopEtaViewModel?> retireStaleArriving(
           ? eta!.copyWith(stopStatus: busStopStatusNoReading)
           : eta,
   ];
+}
+
+Set<int> _staleArrivingIndices(List<BusStopEtaViewModel?> etas) {
+  final history = _ArrivingHistory();
+  for (var i = 0; i < etas.length; i++) {
+    final plate = _arrivingPlate(etas[i]);
+    if (plate != null) history.record(plate, i);
+  }
+  return history.stale;
+}
+
+String? _arrivingPlate(BusStopEtaViewModel? eta) {
+  if (eta == null || !_isArriving(eta)) return null;
+  return eta.plate;
+}
+
+class _ArrivingHistory {
+  final stale = <int>{};
+  final _lastByPlate = <String, int>{};
+  int? _lastPlateless;
+
+  void record(String plate, int index) {
+    if (plate.isEmpty) {
+      if (_lastPlateless == index - 1) stale.add(index - 1);
+      _lastPlateless = index;
+      return;
+    }
+    final previous = _lastByPlate[plate];
+    if (previous != null) stale.add(previous);
+    _lastByPlate[plate] = index;
+  }
 }
 
 bool _isArriving(BusStopEtaViewModel eta) =>
@@ -122,16 +151,18 @@ Set<int> busVehicleMarkerIndices(List<TimelineStop> stops) {
   for (var i = 1; i < stops.length; i++) {
     final here = stops[i];
     final behind = stops[i - 1];
-    if (here.isLiveEta && !behind.isLiveEta) {
-      markers.add(i);
-      continue;
-    }
-    final a = behind.etaMinutes;
-    final b = here.etaMinutes;
-    if (a != null && b != null && b < a) markers.add(i);
+    if (_vehicleBoundary(here, behind)) markers.add(i);
   }
   return markers;
 }
+
+bool _vehicleBoundary(TimelineStop here, TimelineStop behind) {
+  if (here.isLiveEta && !behind.isLiveEta) return true;
+  return _etaDrops(behind.etaMinutes, here.etaMinutes);
+}
+
+bool _etaDrops(int? before, int? after) =>
+    before != null && after != null && after < before;
 
 /// Semantic ETA-label classes for a timeline stop, mirroring the horizontal
 /// timeline's label ladder. [countdownSoon] is a 0/1/2-minute countdown, which
@@ -148,10 +179,12 @@ TimelineEtaLabel timelineEtaLabel(TimelineStop stop) {
   if (stop.state == TimelineStopState.approaching) {
     return TimelineEtaLabel.approaching;
   }
-  final primary = stop.primaryTime;
+  return _countdownLabel(stop.primaryTime);
+}
+
+TimelineEtaLabel _countdownLabel(String? primary) {
   if (primary == null) return TimelineEtaLabel.none;
-  if (primary == '0' || primary == '1' || primary == '2') {
-    return TimelineEtaLabel.countdownSoon;
-  }
-  return TimelineEtaLabel.countdown;
+  return const {'0', '1', '2'}.contains(primary)
+      ? TimelineEtaLabel.countdownSoon
+      : TimelineEtaLabel.countdown;
 }

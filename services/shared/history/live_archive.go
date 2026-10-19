@@ -140,6 +140,10 @@ func ArchiveLivePayload(dataset, partition string, recordedAt time.Time, payload
 		return
 	}
 	_liveArchiveGaps.due(dataset)
+	archiveObservedPayload(dataset, partition, recordedAt, payload)
+}
+
+func archiveObservedPayload(dataset, partition string, recordedAt time.Time, payload []byte) {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	if _, err := zw.Write(payload); err != nil {

@@ -6,7 +6,7 @@ import 'package:wheres_the_bus/core/grpc/resilient_stream.dart';
 /// Merges a fresh server frame into the current list, returning the next list.
 /// Returning the same instance as `current` signals "no change" so the feed
 /// skips the emission (e.g. an empty replace frame while entries exist).
-typedef _Merge<T> = List<T> Function(List<T> current, List<T> frame);
+typedef _Merge<T> = List<T> Function(List<T> current, {required List<T> frame});
 
 enum ArrivalFeedEmissionKind { source, decay }
 
@@ -37,7 +37,7 @@ class ArrivalFeed<T> {
     int Function(T a, T b)? compare,
     Duration decayInterval = const Duration(seconds: 15),
   }) => ArrivalFeed._(
-    merge: (current, frame) {
+    merge: (current, {required frame}) {
       // Empty-frame guard: keep the last good list when a frame arrives empty
       // but entries already exist. Mirrors the bus blocs' original _onUpdated.
       if (frame.isEmpty && current.isNotEmpty) return current;
@@ -54,7 +54,7 @@ class ArrivalFeed<T> {
     T Function(T item, DateTime now)? decay,
     Duration decayInterval = const Duration(seconds: 15),
   }) => ArrivalFeed._(
-    merge: (current, frame) {
+    merge: (current, {required frame}) {
       if (frame.isEmpty) return current;
       final byKey = {for (final item in current) key(item): item};
       for (final item in frame) {
@@ -118,7 +118,7 @@ class ArrivalFeed<T> {
         sub = ResilientSubscription<List<T>>(
           source: source,
           onData: (frame) {
-            final merged = _merge(current, frame);
+            final merged = _merge(current, frame: frame);
             // A no-op merge (e.g. an empty replace frame) must not emit, so the
             // last good list stays put and downstream equality checks hold.
             if (identical(merged, current)) return;
@@ -130,17 +130,8 @@ class ArrivalFeed<T> {
         final decay = _decay;
         if (decay != null) {
           decayTimer = Timer.periodic(_decayInterval, (_) {
-            if (current.isEmpty) return;
-            final now = DateTime.now();
-            final next = [for (final item in current) decay(item, now)];
-            var changed = false;
-            for (var i = 0; i < next.length; i++) {
-              if (next[i] != current[i]) {
-                changed = true;
-                break;
-              }
-            }
-            if (!changed) return;
+            final next = _decayedFrame(current, DateTime.now(), decay);
+            if (next == null) return;
             // A decay tick re-derives already-known values locally; it never
             // learned anything new from the network, so it is tagged `decay`
             // (not `source`) — consumers must not treat it as fresh (F29, F30).
@@ -154,5 +145,18 @@ class ArrivalFeed<T> {
       };
 
     return controller.stream;
+  }
+
+  List<T>? _decayedFrame(
+    List<T> current,
+    DateTime now,
+    T Function(T item, DateTime now) decay,
+  ) {
+    if (current.isEmpty) return null;
+    final next = [for (final item in current) decay(item, now)];
+    for (var i = 0; i < next.length; i++) {
+      if (next[i] != current[i]) return next;
+    }
+    return null;
   }
 }

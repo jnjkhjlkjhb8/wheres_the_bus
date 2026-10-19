@@ -30,7 +30,7 @@ func TestNewAPNSSenderDisabledWithoutCredentials(t *testing.T) {
 	for _, missing := range []string{"APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC", "APNS_P8"} {
 		t.Setenv("APNS_KEY_ID", "K1")
 		t.Setenv("APNS_TEAM_ID", "T1")
-		t.Setenv("APNS_TOPIC", "com.wheres.bus")
+		t.Setenv("APNS_TOPIC", "me.rabbitsayhello.wheresthebus")
 		t.Setenv("APNS_P8", testP8(t))
 		t.Setenv(missing, "")
 
@@ -50,7 +50,7 @@ func TestNewAPNSSenderRejectsAnUnusableKey(t *testing.T) {
 	// watching the deploy.
 	t.Setenv("APNS_KEY_ID", "K1")
 	t.Setenv("APNS_TEAM_ID", "T1")
-	t.Setenv("APNS_TOPIC", "com.wheres.bus")
+	t.Setenv("APNS_TOPIC", "me.rabbitsayhello.wheresthebus")
 	t.Setenv("APNS_P8", "not a pem block")
 
 	if _, err := NewAPNSSender(); err == nil {
@@ -61,7 +61,7 @@ func TestNewAPNSSenderRejectsAnUnusableKey(t *testing.T) {
 func TestAPNSSenderTopicIsTheLiveActivitySubtype(t *testing.T) {
 	t.Setenv("APNS_KEY_ID", "K1")
 	t.Setenv("APNS_TEAM_ID", "T1")
-	t.Setenv("APNS_TOPIC", "com.wheres.bus")
+	t.Setenv("APNS_TOPIC", "me.rabbitsayhello.wheresthebus")
 	t.Setenv("APNS_P8", testP8(t))
 
 	sender, err := NewAPNSSender()
@@ -71,7 +71,7 @@ func TestAPNSSenderTopicIsTheLiveActivitySubtype(t *testing.T) {
 	// The plain bundle id addresses the app; Apple rejects it for this push
 	// type, and the rejection is a 400 per station hop rather than anything the
 	// rider would see.
-	if got := sender.(*apnsSender).topic; got != "com.wheres.bus.push-type.liveactivity" {
+	if got := sender.(*apnsSender).topic; got != "me.rabbitsayhello.wheresthebus.push-type.liveactivity" {
 		t.Errorf("topic = %q", got)
 	}
 }

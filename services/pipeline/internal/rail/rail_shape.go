@@ -47,67 +47,8 @@ func loadRailShapePart(ctx context.Context, dec *json.Decoder, sink pipeline.Cop
 	if err != nil {
 		return err
 	}
-	system := ""
-	if mode == "metro" {
-		system = part
-	}
-	row := [][]any{}
-	seen := make(map[string][]any, len(shapes))
-	for i, shape := range shapes {
-		lineID := strings.TrimSpace(shape.LineID)
-		if lineID == "" {
-			zap.S().Warnw("skip",
-				"component", "load",
-				"action", "rail_shape",
-				"event", "skip",
-				"reason", "empty_line_id",
-				"mode", mode,
-				"system", system,
-				"index", i,
-			)
-			continue
-		}
-		if !isValidRailShapeWKT(shape.Geometry) {
-			zap.S().Warnw("skip",
-				"component", "load",
-				"action", "rail_shape",
-				"event", "skip",
-				"reason", "invalid_geometry",
-				"mode", mode,
-				"system", system,
-				"line_id", lineID,
-				"index", i,
-			)
-			continue
-		}
-		nameJSON, err := json.Marshal(shape.LineName)
-		if err != nil {
-			zap.S().Warnw("skip",
-				"component", "load",
-				"action", "rail_shape",
-				"event", "skip",
-				"reason", "name_marshal_error",
-				"mode", mode,
-				"system", system,
-				"line_id", lineID,
-				"err", err,
-			)
-			continue
-		}
-		candidate := []any{mode, system, lineID, string(nameJSON), shape.Geometry, shape.UpdateTime}
-		key := mode + "/" + system + "/" + lineID
-		if err := pipeline.AppendUniqueLoadRow(&row, seen, key, "line_id", candidate); err != nil {
-			zap.S().Warnw("skip",
-				"component", "load",
-				"action", "rail_shape",
-				"event", "skip",
-				"reason", err,
-				"mode", mode,
-				"system", system,
-			)
-			continue
-		}
-	}
+	system := railShapeSystem(mode, part)
+	row := railShapeRows(shapes, mode, system)
 	if len(row) == 0 {
 		zap.S().Infow("complete",
 			"component", "load",
@@ -143,4 +84,97 @@ func loadRailShapePart(ctx context.Context, dec *json.Decoder, sink pipeline.Cop
 				geom = EXCLUDED.geom,
 				updated_at = EXCLUDED.updated_at`,
 	}, row)
+}
+
+func railShapeRows(shapes []railShapeRow, mode, system string) [][]any {
+	row := [][]any{}
+	seen := make(map[string][]any, len(shapes))
+	for i, shape := range shapes {
+		candidate, ok := railShapeCandidate(shape, mode, system, i)
+		if !ok {
+			continue
+		}
+		lineID := candidate[2].(string)
+		key := mode + "/" + system + "/" + lineID
+		if err := pipeline.AppendUniqueLoadRow(&row, seen, key, "line_id", candidate); err != nil {
+			zap.S().Warnw("skip",
+				"component", "load",
+				"action", "rail_shape",
+				"event", "skip",
+				"reason", err,
+				"mode", mode,
+				"system", system,
+			)
+			continue
+		}
+	}
+	return row
+}
+
+func validRailShape(shape railShapeRow, mode, system string, i int) bool {
+	lineID := strings.TrimSpace(shape.LineID)
+	if lineID == "" {
+		zap.S().Warnw("skip",
+			"component", "load",
+			"action", "rail_shape",
+			"event", "skip",
+			"reason", "empty_line_id",
+			"mode", mode,
+			"system", system,
+			"index", i,
+		)
+		return false
+	}
+	if !isValidRailShapeWKT(shape.Geometry) {
+		zap.S().Warnw("skip",
+			"component", "load",
+			"action", "rail_shape",
+			"event", "skip",
+			"reason", "invalid_geometry",
+			"mode", mode,
+			"system", system,
+			"line_id", lineID,
+			"index", i,
+		)
+		return false
+	}
+	return true
+}
+
+func railShapeName(shape railShapeRow, mode, system, lineID string) (string, bool) {
+	nameJSON, err := json.Marshal(shape.LineName)
+	if err != nil {
+		zap.S().Warnw("skip",
+			"component", "load",
+			"action", "rail_shape",
+			"event", "skip",
+			"reason", "name_marshal_error",
+			"mode", mode,
+			"system", system,
+			"line_id", lineID,
+			"err", err,
+		)
+		return "", false
+	}
+	return string(nameJSON), true
+}
+
+func railShapeCandidate(shape railShapeRow, mode, system string, index int) ([]any, bool) {
+	if !validRailShape(shape, mode, system, index) {
+		return nil, false
+	}
+	lineID := strings.TrimSpace(shape.LineID)
+	name, ok := railShapeName(shape, mode, system, lineID)
+	if !ok {
+		return nil, false
+	}
+	return []any{mode, system, lineID, name, shape.Geometry, shape.UpdateTime}, true
+}
+
+func railShapeSystem(mode, part string) string {
+	system := ""
+	if mode == "metro" {
+		system = part
+	}
+	return system
 }

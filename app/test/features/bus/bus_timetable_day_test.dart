@@ -123,4 +123,42 @@ void main() {
     expect(board.windows.single.start, '06:00');
     expect(board.windows.single.maxMins, '20');
   });
+
+  group('busTripOriginDeparture', () {
+    test('picks the lowest sequence wherever it sits in the list', () {
+      expect(
+        busTripOriginDeparture(
+          _dailyTrip([(1, '08:00:00'), (2, '08:10:00'), (3, '08:20:00')]),
+        ),
+        '08:00',
+      );
+      expect(
+        busTripOriginDeparture(
+          _dailyTrip([(3, '08:20:00'), (2, '08:10:00'), (1, '08:00:00')]),
+        ),
+        '08:00',
+      );
+    });
+
+    test('keeps the first stop when sequences tie', () {
+      expect(
+        busTripOriginDeparture(_dailyTrip([(1, '08:00:00'), (1, '09:00:00')])),
+        '08:00',
+      );
+    });
+  });
+
+  group('busTimeIsUpcoming', () {
+    test('is inclusive of the current minute', () {
+      expect(busTimeIsUpcoming('08:10', _now), isTrue);
+      expect(busTimeIsUpcoming('08:11', _now), isTrue);
+      expect(busTimeIsUpcoming('08:09', _now), isFalse);
+    });
+
+    test('compares the hour before the minute', () {
+      expect(busTimeIsUpcoming('09:00', _now), isTrue);
+      expect(busTimeIsUpcoming('07:59', _now), isFalse);
+      expect(busTimeIsUpcoming('07:30', _now), isFalse);
+    });
+  });
 }

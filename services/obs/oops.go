@@ -32,24 +32,14 @@ func oopsFields(err error) []zapcore.Field {
 		return nil
 	}
 	var fields []zapcore.Field
-	if domain := structured.Domain(); domain != "" {
-		fields = append(fields, zap.String(_oopsFieldPrefix+"domain", domain))
-	}
-	if code, ok := structured.Code().(string); ok && code != "" {
-		fields = append(fields, zap.String(_oopsFieldPrefix+"code", code))
-	}
+	fields = appendOopsString(fields, "domain", structured.Domain())
+	code, _ := structured.Code().(string)
+	fields = appendOopsString(fields, "code", code)
+
 	if tags := structured.Tags(); len(tags) > 0 {
 		fields = append(fields, zap.Strings(_oopsFieldPrefix+"tags", tags))
 	}
-	context := structured.Context()
-	keys := make([]string, 0, len(context))
-	for key := range context {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		fields = append(fields, zap.Any(_oopsFieldPrefix+key, context[key]))
-	}
+	fields = append(fields, oopsContextFields(structured.Context())...)
 	return fields
 }
 
@@ -57,17 +47,7 @@ func oopsFields(err error) []zapcore.Field {
 // appended. Entries without an oops error in them are returned untouched, and
 // the input slice is never mutated.
 func expandOopsFields(fields []zapcore.Field) []zapcore.Field {
-	var extra []zapcore.Field
-	for _, field := range fields {
-		if field.Type != zapcore.ErrorType {
-			continue
-		}
-		err, ok := field.Interface.(error)
-		if !ok {
-			continue
-		}
-		extra = append(extra, oopsFields(err)...)
-	}
+	extra := extraOopsFields(fields)
 	if len(extra) == 0 {
 		return fields
 	}
@@ -81,15 +61,21 @@ func applyOopsScope(scope *sentry.Scope, err error) {
 	if !ok {
 		return
 	}
-	if domain := structured.Domain(); domain != "" {
-		scope.SetTag("err.domain", domain)
-	}
-	if code, ok := structured.Code().(string); ok && code != "" {
-		scope.SetTag("err.code", code)
-	}
+	setOopsTags(scope, structured)
+	setOopsContexts(scope, structured)
+}
+
+func setOopsTags(scope *sentry.Scope, structured oops.OopsError) {
+	setOopsStringTag(scope, "err.domain", structured.Domain())
+	code, _ := structured.Code().(string)
+	setOopsStringTag(scope, "err.code", code)
+
 	for _, tag := range structured.Tags() {
 		scope.SetTag("err.tag."+tag, "true")
 	}
+}
+
+func setOopsContexts(scope *sentry.Scope, structured oops.OopsError) {
 	if context := structured.Context(); len(context) > 0 {
 		block := make(sentry.Context, len(context))
 		for key, value := range context {
@@ -99,5 +85,47 @@ func applyOopsScope(scope *sentry.Scope, err error) {
 	}
 	if trace := structured.Stacktrace(); trace != "" {
 		scope.SetContext("error stacktrace", sentry.Context{"frames": trace})
+	}
+}
+
+func oopsContextFields(context map[string]any) []zapcore.Field {
+	var fields []zapcore.Field
+	keys := make([]string, 0, len(context))
+	for key := range context {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fields = append(fields, zap.Any(_oopsFieldPrefix+key, context[key]))
+	}
+	return fields
+}
+
+func appendOopsString(fields []zapcore.Field, key, value string) []zapcore.Field {
+	if value != "" {
+		fields = append(fields, zap.String(_oopsFieldPrefix+key, value))
+	}
+	return fields
+}
+
+func extraOopsFields(fields []zapcore.Field) []zapcore.Field {
+	var extra []zapcore.Field
+	for _, field := range fields {
+		extra = append(extra, oopsFields(oopsFieldError(field))...)
+	}
+	return extra
+}
+
+func oopsFieldError(field zapcore.Field) error {
+	if field.Type != zapcore.ErrorType {
+		return nil
+	}
+	err, _ := field.Interface.(error)
+	return err
+}
+
+func setOopsStringTag(scope *sentry.Scope, key, value string) {
+	if value != "" {
+		scope.SetTag(key, value)
 	}
 }

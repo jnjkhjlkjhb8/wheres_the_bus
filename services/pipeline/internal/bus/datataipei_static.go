@@ -90,46 +90,12 @@ func dataTaipeiDailyTimetableRows(feed dataTaipeiSpecTimeTable, day time.Time) [
 	byKey := make(map[busDailyKey]*busDailyTimetableRow)
 	var order []busDailyKey
 	for _, entry := range feed.SpecificTimeTables.SpecificTimeTable {
-		direction, ok := dataTaipeiDirection(entry.Direction)
-		if !ok || strings.TrimSpace(entry.SubRouteID) == "" {
-			continue
-		}
-		uid := _dataTaipeiUIDPrefix + entry.SubRouteID
-		for _, trip := range entry.TimeTables.TimeTable {
-			if !dataTaipeiRunsOn(trip.SpecialDays.SpecialDay, date) {
-				continue
-			}
-			stopTimes := make([]busDailyTimetableStopTime, 0, len(trip.StopTimes.StopTime))
-			for _, st := range trip.StopTimes.StopTime {
-				if st.StopSequence <= 0 || strings.TrimSpace(st.StopID) == "" {
-					continue
-				}
-				if !pipeline.ValidClock(st.ArrivalTime) || !pipeline.ValidClock(st.DepartureTime) {
-					continue
-				}
-				stopTimes = append(stopTimes, busDailyTimetableStopTime{
-					StopSequence:  st.StopSequence,
-					StopUID:       _dataTaipeiUIDPrefix + st.StopID,
-					ArrivalTime:   st.ArrivalTime,
-					DepartureTime: st.DepartureTime,
-				})
-			}
-			if len(stopTimes) == 0 {
-				continue
-			}
-			key := busDailyKey{subRouteUID: uid, direction: direction}
-			row, seen := byKey[key]
-			if !seen {
-				row = &busDailyTimetableRow{SubRouteUID: uid, Direction: direction, BusDate: date}
-				byKey[key] = row
-				order = append(order, key)
-			}
-			row.Timetables = append(row.Timetables, busDailyTimetableTrip{
-				TripID:    date + "-" + strings.ReplaceAll(stopTimes[0].DepartureTime, ":", ""),
-				StopTimes: stopTimes,
-			})
-		}
+		order = appendDataTaipeiEntry(entry, date, byKey, order)
 	}
+	return sortedDataTaipeiTimetableRows(byKey, order)
+}
+
+func sortedDataTaipeiTimetableRows(byKey map[busDailyKey]*busDailyTimetableRow, order []busDailyKey) []busDailyTimetableRow {
 	rows := make([]busDailyTimetableRow, 0, len(order))
 	for _, key := range order {
 		row := byKey[key]
@@ -147,13 +113,8 @@ func dataTaipeiDailyTimetableRows(feed dataTaipeiSpecTimeTable, day time.Time) [
 // in normal service on date.
 func dataTaipeiRunsOn(days []dataTaipeiSpecialDay, date string) bool {
 	for _, d := range days {
-		if d.ServiceStatus != _dataTaipeiServiceRunning {
-			continue
-		}
-		for _, on := range d.Dates.Date {
-			if on == date {
-				return true
-			}
+		if dataTaipeiSpecialDayMatches(d, date) {
+			return true
 		}
 	}
 	return false
@@ -166,10 +127,18 @@ func LandDataTaipeiDailyTimetable(ctx context.Context, f *dataTaipeiFeed, now fu
 	}
 	day := now().In(pipeline.Taipei)
 	rows := dataTaipeiDailyTimetableRows(feed, day)
+	return landDataTaipeiRows(ctx, day, rows)
+}
+
+func landDataTaipeiRows(ctx context.Context, day time.Time, rows []busDailyTimetableRow) error {
 	body, err := json.Marshal(rows)
 	if err != nil {
 		return _oops.Wrapf(err, "encode Data.taipei daily timetable")
 	}
+	return dumpDataTaipeiRows(ctx, day, rows, body)
+}
+
+func dumpDataTaipeiRows(ctx context.Context, day time.Time, rows []busDailyTimetableRow, body []byte) error {
 	cycle, err := raw.NewLandingCycle()
 	if err != nil {
 		return err
@@ -191,4 +160,72 @@ func LandDataTaipeiDailyTimetable(ctx context.Context, f *dataTaipeiFeed, now fu
 		"subroute_directions", len(rows),
 	)
 	return nil
+}
+
+func dataTaipeiTripStopTimes(trip dataTaipeiSpecTrip) []busDailyTimetableStopTime {
+	stopTimes := make([]busDailyTimetableStopTime, 0, len(trip.StopTimes.StopTime))
+	for _, st := range trip.StopTimes.StopTime {
+		if !validDataTaipeiStop(st) {
+			continue
+		}
+		stopTimes = append(stopTimes, busDailyTimetableStopTime{
+			StopSequence:  st.StopSequence,
+			StopUID:       _dataTaipeiUIDPrefix + st.StopID,
+			ArrivalTime:   st.ArrivalTime,
+			DepartureTime: st.DepartureTime,
+		})
+	}
+	return stopTimes
+}
+
+func appendDataTaipeiEntry(entry dataTaipeiSpecEntry, date string, byKey map[busDailyKey]*busDailyTimetableRow, order []busDailyKey) []busDailyKey {
+	direction, ok := dataTaipeiDirection(entry.Direction)
+	if !ok || strings.TrimSpace(entry.SubRouteID) == "" {
+		return order
+	}
+	key := busDailyKey{subRouteUID: _dataTaipeiUIDPrefix + entry.SubRouteID, direction: direction}
+	return appendDataTaipeiTrips(entry.TimeTables.TimeTable, date, key, byKey, order)
+}
+func appendDataTaipeiTrips(trips []dataTaipeiSpecTrip, date string, key busDailyKey, byKey map[busDailyKey]*busDailyTimetableRow, order []busDailyKey) []busDailyKey {
+	for _, trip := range trips {
+		if !dataTaipeiRunsOn(trip.SpecialDays.SpecialDay, date) {
+			continue
+		}
+		order = appendDataTaipeiTrip(trip, date, key, byKey, order)
+	}
+	return order
+}
+func appendDataTaipeiTrip(trip dataTaipeiSpecTrip, date string, key busDailyKey, byKey map[busDailyKey]*busDailyTimetableRow, order []busDailyKey) []busDailyKey {
+	stopTimes := dataTaipeiTripStopTimes(trip)
+	if len(stopTimes) == 0 {
+		return order
+	}
+	row, seen := byKey[key]
+	if !seen {
+		row = &busDailyTimetableRow{SubRouteUID: key.subRouteUID, Direction: key.direction, BusDate: date}
+		byKey[key] = row
+		order = append(order, key)
+	}
+	row.Timetables = append(row.Timetables, busDailyTimetableTrip{
+		TripID: date + "-" + strings.ReplaceAll(stopTimes[0].DepartureTime, ":", ""), StopTimes: stopTimes,
+	})
+	return order
+}
+func dataTaipeiSpecialDayMatches(day dataTaipeiSpecialDay, date string) bool {
+	if day.ServiceStatus != _dataTaipeiServiceRunning {
+		return false
+	}
+	for _, on := range day.Dates.Date {
+		if on == date {
+			return true
+		}
+	}
+	return false
+}
+func validDataTaipeiStopIdentity(stop dataTaipeiSpecStopTime) bool {
+	return stop.StopSequence > 0 && strings.TrimSpace(stop.StopID) != ""
+}
+
+func validDataTaipeiStop(stop dataTaipeiSpecStopTime) bool {
+	return validDataTaipeiStopIdentity(stop) && validTimetableClockPair(stop.ArrivalTime, stop.DepartureTime)
 }

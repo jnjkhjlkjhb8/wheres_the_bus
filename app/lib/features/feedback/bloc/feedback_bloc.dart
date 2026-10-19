@@ -91,16 +91,16 @@ class FeedbackTransportFailure extends FeedbackFailure {
 }
 
 FeedbackFailure describeSubmitFailure(Object error) {
-  if (error is GrpcError) {
-    switch (error.code) {
-      case StatusCode.resourceExhausted:
-        return const FeedbackRejected(FeedbackRejection.rateLimited);
-      case StatusCode.permissionDenied:
-      case StatusCode.unauthenticated:
-        return const FeedbackRejected(FeedbackRejection.unverified);
-      case StatusCode.invalidArgument:
-        return const FeedbackRejected(FeedbackRejection.rejected);
-    }
-  }
-  return FeedbackTransportFailure(AppError.from(error));
+  final rejection = error is GrpcError ? _rejection(error.code) : null;
+  return rejection == null
+      ? FeedbackTransportFailure(AppError.from(error))
+      : FeedbackRejected(rejection);
 }
+
+FeedbackRejection? _rejection(int code) => switch (code) {
+  StatusCode.resourceExhausted => FeedbackRejection.rateLimited,
+  StatusCode.permissionDenied ||
+  StatusCode.unauthenticated => FeedbackRejection.unverified,
+  StatusCode.invalidArgument => FeedbackRejection.rejected,
+  _ => null,
+};

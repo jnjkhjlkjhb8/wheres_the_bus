@@ -18,7 +18,7 @@ class LiveActivityPlugin(
 
     companion object {
         private const val TAG = "LiveActivity"
-        private const val CHANNEL_NAME = "com.wheres.bus/live_activity"
+        private const val CHANNEL_NAME = "me.rabbitsayhello.wheresthebus/live_activity"
 
         @Volatile
         var dartIsListening: Boolean = false

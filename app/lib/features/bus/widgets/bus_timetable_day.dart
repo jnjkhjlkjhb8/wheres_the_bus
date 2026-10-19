@@ -39,29 +39,8 @@ BusDayTimetable busTimetableForDay({
   required bool isToday,
   required TimeOfDay now,
 }) {
-  final rows = <(String, bool)>[];
-  if (isToday && todayTrips.isNotEmpty) {
-    for (final trip in todayTrips) {
-      if (trip.stopTimes.isEmpty) continue;
-      final origin = trip.stopTimes.reduce(
-        (a, b) => a.stopSequence <= b.stopSequence ? a : b,
-      );
-      final time = origin.departureTime.isNotEmpty
-          ? origin.departureTime
-          : origin.arrivalTime;
-      if (time.isNotEmpty) rows.add((busClockLabel(time), trip.isLowFloor));
-    }
-  } else {
-    for (final entry in schedules) {
-      if (!entry.isTimetable ||
-          !entry.runsOn(weekday) ||
-          entry.departureTime.isEmpty) {
-        continue;
-      }
-      rows.add((busClockLabel(entry.departureTime), entry.isLowFloor));
-    }
-  }
-  rows.sort((a, b) => a.$1.compareTo(b.$1));
+  final rows = _departuresForDay(schedules, weekday, todayTrips, isToday)
+    ..sort((a, b) => a.$1.compareTo(b.$1));
   // Only today has a "next" departure; on any other day every row is equally
   // far away, so nothing is highlighted.
   final nextIndex = isToday
@@ -72,18 +51,65 @@ BusDayTimetable busTimetableForDay({
       for (final (i, r) in rows.indexed)
         (time: r.$1, lowFloor: r.$2, isNext: i == nextIndex),
     ],
-    windows: [
-      for (final entry in schedules)
-        if (!entry.isTimetable && entry.runsOn(weekday))
-          (
-            start: busClockLabel(entry.startTime),
-            end: busClockLabel(entry.endTime),
-            minMins: entry.minHeadwayMins,
-            maxMins: entry.maxHeadwayMins,
-          ),
-    ],
+    windows: _headwayWindows(schedules, weekday),
   );
 }
+
+List<(String, bool)> _departuresForDay(
+  List<BusServiceEntry> schedules,
+  int weekday,
+  List<BusDailyTrip> todayTrips,
+  bool isToday,
+) => isToday && todayTrips.isNotEmpty
+    ? _dailyDepartures(todayTrips)
+    : _weeklyDepartures(schedules, weekday);
+
+List<BusHeadwayWindow> _headwayWindows(
+  List<BusServiceEntry> schedules,
+  int weekday,
+) => [
+  for (final entry in schedules)
+    if (!entry.isTimetable && entry.runsOn(weekday))
+      (
+        start: busClockLabel(entry.startTime),
+        end: busClockLabel(entry.endTime),
+        minMins: entry.minHeadwayMins,
+        maxMins: entry.maxHeadwayMins,
+      ),
+];
+
+String? busTripOriginDeparture(BusDailyTrip trip) {
+  if (trip.stopTimes.isEmpty) return null;
+  final origin = trip.stopTimes.reduce(
+    (a, b) => a.stopSequence <= b.stopSequence ? a : b,
+  );
+  return _originClock(origin.departureTime, origin.arrivalTime);
+}
+
+String? _originClock(String departure, String arrival) {
+  final time = departure.isNotEmpty ? departure : arrival;
+  return time.isEmpty ? null : busClockLabel(time);
+}
+
+List<(String, bool)> _dailyDepartures(List<BusDailyTrip> trips) {
+  final rows = <(String, bool)>[];
+  for (final trip in trips) {
+    final time = busTripOriginDeparture(trip);
+    if (time != null) rows.add((time, trip.isLowFloor));
+  }
+  return rows;
+}
+
+List<(String, bool)> _weeklyDepartures(
+  List<BusServiceEntry> schedules,
+  int weekday,
+) => [
+  for (final entry in schedules)
+    if (entry.isTimetable &&
+        entry.runsOn(weekday) &&
+        entry.departureTime.isNotEmpty)
+      (busClockLabel(entry.departureTime), entry.isLowFloor),
+];
 
 /// Trims a TDX clock value ("08:03:00") to its display form ("08:03").
 String busClockLabel(String value) =>
@@ -98,5 +124,8 @@ bool busTimeIsUpcoming(String hhmm, TimeOfDay now) {
   final h = int.tryParse(parts[0]);
   final m = int.tryParse(parts[1]);
   if (h == null || m == null) return false;
-  return h > now.hour || (h == now.hour && m >= now.minute);
+  return _hasNotDeparted(h, m, now);
 }
+
+bool _hasNotDeparted(int hour, int minute, TimeOfDay now) =>
+    hour > now.hour || (hour == now.hour && minute >= now.minute);

@@ -45,65 +45,79 @@ class InstallIdentity {
     final write =
         secureWrite ??
         (String key, String value) => storage.write(key: key, value: value);
-    final existingRaw = box.get(_key);
-    final existingId = existingRaw is String ? existingRaw : null;
-    final storedPair = await read(_securePairKey);
+    return _restoreOrCreatePair(box, read, write);
+  }
+
+  static Future<(String, String)> _restoreOrCreatePair(
+    Box<dynamic> box,
+    Future<String?> Function(String key) read,
+    Future<void> Function(String key, String value) write,
+  ) async {
+    final storedPair = _decodePair(await read(_securePairKey));
     if (storedPair != null) {
-      try {
-        final decoded = jsonDecode(storedPair);
-        if (decoded is Map &&
-            decoded['id'] is String &&
-            decoded['secret'] is String &&
-            (decoded['id'] as String).isNotEmpty &&
-            (decoded['secret'] as String).isNotEmpty) {
-          final id = decoded['id'] as String;
-          final secret = decoded['secret'] as String;
-          if (existingId != id) await box.put(_key, id);
-          return (id, secret);
-        }
-      } on FormatException {
-        // Fall through to legacy migration and pair creation.
-      }
+      if (box.get(_key) != storedPair.$1) await box.put(_key, storedPair.$1);
+      return storedPair;
     }
-    final secure = await read(_secureSecretKey);
-    if (secure != null &&
-        secure.isNotEmpty &&
-        existingId != null &&
-        existingId.isNotEmpty) {
-      await write(
-        _securePairKey,
-        jsonEncode({'id': existingId, 'secret': secure}),
-      );
-      if (box.containsKey(_secretKey)) await box.delete(_secretKey);
-      return (existingId, secure);
+    final secure = _nonemptyString(await read(_secureSecretKey));
+    final legacyPair = _legacyPair(box, secure);
+    if (legacyPair != null) {
+      await _persistPair(box, legacyPair, write, persistSecret: secure == null);
+      return legacyPair;
     }
+    return _newPair(box, write);
+  }
 
-    final legacyRaw = box.get(_secretKey);
-    final legacy = legacyRaw is String ? legacyRaw : null;
-    if ((secure == null || secure.isEmpty) &&
-        legacy != null &&
-        legacy.isNotEmpty &&
-        existingId != null &&
-        existingId.isNotEmpty) {
-      await write(
-        _securePairKey,
-        jsonEncode({'id': existingId, 'secret': legacy}),
-      );
-      await write(_secureSecretKey, legacy);
-      await box.delete(_secretKey);
-      return (existingId, legacy);
-    }
+  static (String, String)? _legacyPair(Box<dynamic> box, String? secure) {
+    final id = _nonemptyString(box.get(_key));
+    if (id == null) return null;
+    final secret = secure ?? _nonemptyString(box.get(_secretKey));
+    return secret == null ? null : (id, secret);
+  }
 
+  static Future<(String, String)> _newPair(
+    Box<dynamic> box,
+    Future<void> Function(String key, String value) write,
+  ) async {
     final id = const Uuid().v4();
     final secret = base64UrlEncode(
       List<int>.generate(32, (_) => Random.secure().nextInt(256)),
     ).replaceAll('=', '');
-    final pair = jsonEncode({'id': id, 'secret': secret});
-    await write(_securePairKey, pair);
-    await write(_secureSecretKey, secret);
-    await box.put(_key, id);
-    if (box.containsKey(_secretKey)) await box.delete(_secretKey);
+    final pair = (id, secret);
+    await _persistPair(box, pair, write, persistSecret: true);
+    return pair;
+  }
+
+  static String? _nonemptyString(Object? value) =>
+      value is String && value.isNotEmpty ? value : null;
+
+  static (String, String)? _decodePair(String? stored) {
+    if (stored == null) return null;
+    try {
+      return _decodedPair(jsonDecode(stored));
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static (String, String)? _decodedPair(Object? decoded) {
+    if (decoded is! Map) return null;
+    final id = _nonemptyString(decoded['id']);
+    final secret = _nonemptyString(decoded['secret']);
+    if (id == null || secret == null) return null;
     return (id, secret);
+  }
+
+  static Future<void> _persistPair(
+    Box<dynamic> box,
+    (String, String) pair,
+    Future<void> Function(String key, String value) write, {
+    required bool persistSecret,
+  }) async {
+    final (id, secret) = pair;
+    await write(_securePairKey, jsonEncode({'id': id, 'secret': secret}));
+    if (persistSecret) await write(_secureSecretKey, secret);
+    if (box.get(_key) != id) await box.put(_key, id);
+    if (box.containsKey(_secretKey)) await box.delete(_secretKey);
   }
 
   static Future<String> getOrCreate({Box<dynamic>? settings}) async =>

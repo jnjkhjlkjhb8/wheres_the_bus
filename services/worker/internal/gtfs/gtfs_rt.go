@@ -106,28 +106,40 @@ func (b *gtfsRTBuilder) Run(ctx context.Context, now time.Time) error {
 	if err := b.refreshIndex(ctx, now); err != nil {
 		return err
 	}
-	if b.index == nil || len(b.index.trips) == 0 {
+	if !b.hasStaticTrips() {
 		return errors.New("gtfs-rt: static trip index is empty")
 	}
 	entities, running, stats := buildGTFSRTCancellations(ctx, b.index, now, b.readDailyTimetables)
 	// The three producers cover different modes and fail independently, so a read
 	// that errors costs its own entities and nothing else's.
+	entities = append(entities, b.railDelayEntities(ctx, now)...)
+	entities = append(entities, b.busDelayEntities(ctx, running, now)...)
+	return b.publishGTFSRTFeed(ctx, entities, stats, now)
+}
+
+func (b *gtfsRTBuilder) railDelayEntities(ctx context.Context, now time.Time) []*gtfs.FeedEntity {
 	minutes, stations, err := readRailDelays(ctx, b.rc)
 	if err != nil {
 		zap.S().Warnw("failed", "component", "gtfs_rt", "action", "delay", "event", "failed", "err", err)
-	} else {
-		delays, delayStats := buildGTFSRTRailDelays(b.index.rail, minutes, stations, now)
-		logGTFSRTRailDelayStats(delayStats)
-		entities = append(entities, delays...)
+		return nil
 	}
+	delays, stats := buildGTFSRTRailDelays(b.index.rail, minutes, stations, now)
+	logGTFSRTRailDelayStats(stats)
+	return delays
+}
+
+func (b *gtfsRTBuilder) busDelayEntities(ctx context.Context, running map[gtfsRTRouteKey][]gtfsRTTrip, now time.Time) []*gtfs.FeedEntity {
 	arrivals, err := b.readBusArrivals(ctx)
 	if err != nil {
 		zap.S().Warnw("failed", "component", "gtfs_rt", "action", "bus_delay", "event", "failed", "err", err)
-	} else {
-		busDelays, busStats := buildGTFSRTBusDelays(running, arrivals, b.index.offsets, now)
-		logGTFSRTBusStats(busStats)
-		entities = append(entities, busDelays...)
+		return nil
 	}
+	delays, stats := buildGTFSRTBusDelays(running, arrivals, b.index.offsets, now)
+	logGTFSRTBusStats(stats)
+	return delays
+}
+
+func (b *gtfsRTBuilder) publishGTFSRTFeed(ctx context.Context, entities []*gtfs.FeedEntity, stats gtfsRTStats, now time.Time) error {
 	payload, err := marshalGTFSRTFeed(entities, now)
 	if err != nil {
 		return err
@@ -159,10 +171,20 @@ func (b *gtfsRTBuilder) refreshIndex(ctx context.Context, now time.Time) error {
 	defer cancel()
 	var runID string
 	err := b.db.QueryRow(indexCtx, _publishedRunSQL).Scan(&runID)
+	if err != nil {
+		return b.publishedRunFailure(err)
+	}
+	if b.indexCurrent(runID, today) {
+		return nil
+	}
+	return b.reloadIndex(indexCtx, runID, today)
+}
+
+func (b *gtfsRTBuilder) publishedRunFailure(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) && b.index == nil {
 		return errors.New("gtfs-rt: no published static run")
 	}
-	if err != nil && b.index != nil {
+	if b.index != nil {
 		zap.S().Warnw("release check failed",
 			"component", "gtfs_rt",
 			"action", "index",
@@ -172,13 +194,12 @@ func (b *gtfsRTBuilder) refreshIndex(ctx context.Context, now time.Time) error {
 		)
 		return nil
 	}
-	if err != nil {
-		return _oops.Wrapf(err, "gtfs-rt: read published run")
-	}
-	if b.index != nil && b.index.runID == runID && b.index.builtFor == today {
-		return nil
-	}
-	index, err := loadGTFSRTIndex(indexCtx, b.db, runID, today)
+	return _oops.Wrapf(err, "gtfs-rt: read published run")
+
+}
+
+func (b *gtfsRTBuilder) reloadIndex(ctx context.Context, runID, today string) error {
+	index, err := loadGTFSRTIndex(ctx, b.db, runID, today)
 	if err != nil {
 		// A failed reload keeps yesterday's index rather than emptying the feed:
 		// the two differ only by whatever TDX republished overnight, which is far
@@ -217,22 +238,15 @@ func loadGTFSRTIndex(ctx context.Context, db *pgxpool.Pool, runID, today string)
 		return nil, _oops.Wrapf(err, "gtfs-rt: load trip index")
 	}
 	defer rows.Close()
-	index := &gtfsRTIndex{runID: runID, builtFor: today, trips: make(map[gtfsRTRouteKey][]gtfsRTTrip, 8192)}
-	for rows.Next() {
-		var tripID, serviceID string
-		var direction int32
-		if err := rows.Scan(&tripID, &direction, &serviceID); err != nil {
-			return nil, _oops.Wrapf(err, "gtfs-rt: load trip index: scan")
-		}
-		trip, key, ok := parseGTFSRTTrip(tripID, serviceID, direction)
-		if !ok {
-			continue
-		}
-		index.trips[key] = append(index.trips[key], trip)
+	index, err := readBusTripIndex(rows, runID, today)
+	if err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, _oops.Wrapf(err, "gtfs-rt: load trip index: rows")
-	}
+
+	return loadGTFSRTComponents(ctx, db, index, runID, today)
+}
+
+func loadGTFSRTComponents(ctx context.Context, db *pgxpool.Pool, index *gtfsRTIndex, runID, today string) (*gtfsRTIndex, error) {
 	rail, err := loadRailDelayIndex(ctx, db, runID, today)
 	if err != nil {
 		return nil, err
@@ -252,12 +266,13 @@ func parseGTFSRTTrip(tripID, serviceID string, direction int32) (gtfsRTTrip, gtf
 		return gtfsRTTrip{}, gtfsRTRouteKey{}, false
 	}
 	tdxUID, departure := parts[0], parts[2]
-	if tdxUID == "" || departure == "" {
+	if !validGTFSRTTripIdentity(tdxUID, departure, direction) {
 		return gtfsRTTrip{}, gtfsRTRouteKey{}, false
 	}
-	if direction < 0 || direction > 1 {
-		return gtfsRTTrip{}, gtfsRTRouteKey{}, false
-	}
+	return parseGTFSRTTripSchedule(tripID, serviceID, tdxUID, departure, direction)
+}
+
+func parseGTFSRTTripSchedule(tripID, serviceID, tdxUID, departure string, direction int32) (gtfsRTTrip, gtfsRTRouteKey, bool) {
 	minutes, ok := parseGTFSRTCompactTime(departure)
 	if !ok {
 		return gtfsRTTrip{}, gtfsRTRouteKey{}, false
@@ -280,14 +295,20 @@ func canonicalGTFSRTSubroute(tdxUID string, direction uint8) (string, uint8) {
 }
 
 func parseGTFSRTCompactTime(compact string) (int, bool) {
-	if len(compact) < 3 || len(compact) > 4 {
+	if !compactGTFSRTShape(compact) {
 		return 0, false
 	}
-	hour, err := strconv.Atoi(compact[:len(compact)-2])
+	return parseGTFSRTCompactParts(compact[:len(compact)-2], compact[len(compact)-2:])
+}
+
+func compactGTFSRTShape(compact string) bool { return len(compact) >= 3 && len(compact) <= 4 }
+
+func parseGTFSRTCompactParts(hourText, minuteText string) (int, bool) {
+	hour, err := strconv.Atoi(hourText)
 	if err != nil {
 		return 0, false
 	}
-	minute, err := strconv.Atoi(compact[len(compact)-2:])
+	minute, err := strconv.Atoi(minuteText)
 	if err != nil || minute > 59 {
 		return 0, false
 	}
@@ -300,15 +321,29 @@ func parseGTFSRTClockTime(clock string) (int, bool) {
 	if !found {
 		return 0, false
 	}
-	hour, err := strconv.Atoi(hourText)
-	if err != nil || hour < 0 {
+	return parseGTFSRTClockParts(hourText, minuteText)
+}
+
+func parseGTFSRTClockParts(hourText, minuteText string) (int, bool) {
+	hour, ok := nonnegativeGTFSRTNumber(hourText)
+	if !ok {
 		return 0, false
 	}
-	minute, err := strconv.Atoi(minuteText)
-	if err != nil || minute < 0 || minute > 59 {
+	minute, ok := gtfsRTClockMinute(minuteText)
+	if !ok {
 		return 0, false
 	}
 	return hour*60 + minute, true
+}
+
+func gtfsRTClockMinute(raw string) (int, bool) {
+	minute, ok := nonnegativeGTFSRTNumber(raw)
+	return minute, ok && minute <= 59
+}
+
+func nonnegativeGTFSRTNumber(raw string) (int, bool) {
+	value, err := strconv.Atoi(raw)
+	return value, err == nil && value >= 0
 }
 
 // parseGTFSRTWeekMask reads "W:1111100" into a Sunday-first week. The mask is
@@ -320,18 +355,21 @@ func parseGTFSRTWeekMask(serviceID string) ([7]bool, bool) {
 	if !found || len(mask) != 7 {
 		return week, false
 	}
+	return decodeGTFSRTWeekMask(mask)
+}
+
+func decodeGTFSRTWeekMask(mask string) ([7]bool, bool) {
+	var week [7]bool
 	for index := range mask {
-		switch mask[index] {
-		case '1':
-			// index 0 is Monday in the mask, weekday 1 in the array.
-			week[(index+1)%7] = true
-		case '0':
-		default:
+		if !validGTFSRTWeekDigit(mask[index]) {
 			return [7]bool{}, false
 		}
+		week[(index+1)%7] = mask[index] == '1'
 	}
 	return week, true
 }
+
+func validGTFSRTWeekDigit(digit byte) bool { return digit == '0' || digit == '1' }
 
 func buildGTFSRTCancellations(
 	ctx context.Context,
@@ -343,28 +381,7 @@ func buildGTFSRTCancellations(
 	weekday := int(now.Weekday())
 	serviceDate := now.Format("20060102")
 
-	active := make(map[gtfsRTRouteKey][]gtfsRTTrip, len(index.trips))
-	uidSet := make(map[string]struct{}, len(index.trips))
-	for key, trips := range index.trips {
-		running := make([]gtfsRTTrip, 0, len(trips))
-		for _, trip := range trips {
-			if trip.week[weekday] {
-				running = append(running, trip)
-			}
-		}
-		if len(running) == 0 {
-			continue
-		}
-		active[key] = running
-		uidSet[key.subRouteUID] = struct{}{}
-		stats.routesConsidered++
-		stats.tripsActive += len(running)
-	}
-	uids := make([]string, 0, len(uidSet))
-	for uid := range uidSet {
-		uids = append(uids, uid)
-	}
-	sort.Strings(uids)
+	active, uids := activeGTFSRTTrips(index, weekday, &stats)
 
 	daily, err := read(ctx, uids)
 	if err != nil {
@@ -372,61 +389,34 @@ func buildGTFSRTCancellations(
 		return nil, nil, stats
 	}
 
-	keys := make([]gtfsRTRouteKey, 0, len(active))
-	for key := range active {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].subRouteUID != keys[j].subRouteUID {
-			return keys[i].subRouteUID < keys[j].subRouteUID
-		}
-		return keys[i].direction < keys[j].direction
-	})
+	keys := gtfsRTActiveRouteKeys(active)
+	entities, running := cancelledGTFSRTRoutes(keys, active, daily, serviceDate, &stats)
+	return entities, running, stats
+}
 
+func cancelledGTFSRTRoutes(keys []gtfsRTRouteKey, active map[gtfsRTRouteKey][]gtfsRTTrip, daily map[string]*models.Bus_DailyTimetables, serviceDate string, stats *gtfsRTStats) ([]*gtfs.FeedEntity, map[gtfsRTRouteKey][]gtfsRTTrip) {
 	entities := make([]*gtfs.FeedEntity, 0, 512)
 	// Every trip that survives is a candidate the matcher may assign a vehicle
 	// to; a cancelled one never reaches this map.
 	running := make(map[gtfsRTRouteKey][]gtfsRTTrip, len(active))
 	for _, key := range keys {
-		observed, ok := observedDepartures(daily[key.subRouteUID], key.direction)
-		if !ok {
-			stats.routesNoDaily++
-			running[key] = active[key]
-			continue
-		}
-		scheduled := make(map[int][]string, len(active[key]))
-		for _, trip := range active[key] {
-			scheduled[trip.departure] = append(scheduled[trip.departure], trip.tripID)
-		}
-		if !gtfsRTGatePasses(observed, scheduled) {
-			// The two sources disagree about how this subroute names a departure,
-			// so no cancellation can be proven — but neither is any trip proven
-			// gone, so they all stay matchable.
-			stats.routesGateFailed++
-			running[key] = active[key]
-			continue
-		}
-		for _, trip := range active[key] {
-			if _, ran := observed[trip.departure]; ran {
-				running[key] = append(running[key], trip)
-			}
-		}
-		departures := make([]int, 0, len(scheduled))
-		for departure := range scheduled {
-			departures = append(departures, departure)
-		}
-		sort.Ints(departures)
-		for _, departure := range departures {
-			if _, ran := observed[departure]; ran {
-				continue
-			}
-			for _, tripID := range scheduled[departure] {
-				entities = append(entities, cancelledTripEntity(tripID, serviceDate))
-				stats.cancellations++
-			}
+		cancelled, matched := cancellationsForRoute(key, active[key], daily[key.subRouteUID], serviceDate, stats)
+		entities = append(entities, cancelled...)
+		if matched != nil {
+			running[key] = matched
 		}
 	}
-	return entities, running, stats
+
+	return entities, running
+}
+
+func gtfsRTActiveRouteKeys(active map[gtfsRTRouteKey][]gtfsRTTrip) []gtfsRTRouteKey {
+	keys := make([]gtfsRTRouteKey, 0, len(active))
+	for key := range active {
+		keys = append(keys, key)
+	}
+	sortGTFSRTDirections(keys)
+	return keys
 }
 
 // gtfsRTGatePasses reports whether every observed departure is one the schedule
@@ -441,35 +431,23 @@ func gtfsRTGatePasses(observed map[int]struct{}, scheduled map[int][]string) boo
 }
 
 func observedDepartures(timetable *models.Bus_DailyTimetables, direction int32) (map[int]struct{}, bool) {
-	if timetable == nil {
+	entry := timetable.GetDirection()[direction]
+	if entry == nil {
 		return nil, false
 	}
-	directions := timetable.GetDirection()
-	entry, ok := directions[direction]
-	if !ok || entry == nil {
-		return nil, false
-	}
+	return observedTimetableDepartures(entry), true
+}
+
+func observedTimetableDepartures(entry *models.Bus_DirectionTimetable) map[int]struct{} {
 	observed := make(map[int]struct{}, len(entry.GetDailyTimetables()))
 	for _, trip := range entry.GetDailyTimetables() {
-		origin := originStopTime(trip)
-		if origin == nil {
-			continue
+		minutes, found := observedDepartureMinutes(trip)
+		if found {
+			observed[minutes] = struct{}{}
 		}
-		clock := origin.GetDepartureTime()
-		if strings.TrimSpace(clock) == "" {
-			clock = origin.GetArrivalTime()
-		}
-		minutes, parsed := parseGTFSRTClockTime(clock)
-		if !parsed {
-			// An unreadable departure cannot be matched, so it will fail the gate
-			// and silence the subroute. That is the intended outcome: we cannot
-			// tell which scheduled trip it accounts for.
-			observed[-1] = struct{}{}
-			continue
-		}
-		observed[minutes] = struct{}{}
+
 	}
-	return observed, true
+	return observed
 }
 
 // originStopTime returns the call with the lowest stop sequence, which is the
@@ -518,42 +496,49 @@ func marshalGTFSRTFeed(entities []*gtfs.FeedEntity, now time.Time) ([]byte, erro
 }
 
 func (b *gtfsRTBuilder) readDailyTimetables(ctx context.Context, subRouteUIDs []string) (map[string]*models.Bus_DailyTimetables, error) {
-	client := b.rc
 	out := make(map[string]*models.Bus_DailyTimetables, len(subRouteUIDs))
 	for start := 0; start < len(subRouteUIDs); start += _gtfsRTMGetBatch {
 		end := min(start+_gtfsRTMGetBatch, len(subRouteUIDs))
-		batch := subRouteUIDs[start:end]
-		keys := make([]string, len(batch))
-		for index, uid := range batch {
-			keys[index] = shared.BusDailyTimetableKey(uid)
-		}
-		values, err := client.MGet(ctx, keys...).Result()
-		if err != nil {
-			return nil, _oops.Wrapf(err, "gtfs-rt: read daily timetables")
-		}
-		for index, value := range values {
-			text, ok := value.(string)
-			if !ok || text == "" {
-				continue
-			}
-			timetable := &models.Bus_DailyTimetables{}
-			if err := proto.Unmarshal([]byte(text), timetable); err != nil {
-				// A corrupt payload is dropped rather than failing the tick: it
-				// silences one subroute, which is the same outcome as a missing
-				// key and is already the designed degradation.
-				zap.S().Warnw("decode failed",
-					"component", "gtfs_rt",
-					"action", "daily",
-					"event", "decode_failed",
-					"subroute", batch[index],
-					"err", err,
-				)
-				continue
-			}
-			out[batch[index]] = timetable
+		if err := b.readDailyBatch(ctx, subRouteUIDs[start:end], out); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
+}
+
+func (b *gtfsRTBuilder) readDailyBatch(ctx context.Context, batch []string, out map[string]*models.Bus_DailyTimetables) error {
+	keys := make([]string, len(batch))
+	for i, uid := range batch {
+		keys[i] = shared.BusDailyTimetableKey(uid)
+	}
+	values, err := b.rc.MGet(ctx, keys...).Result()
+	if err != nil {
+		return _oops.Wrapf(err, "gtfs-rt: read daily timetables")
+	}
+	decodeDailyBatch(values, batch, out)
+	return nil
+}
+
+func decodeDailyBatch(values []any, batch []string, out map[string]*models.Bus_DailyTimetables) {
+	for i, value := range values {
+		if timetable := decodeDailyTimetable(value, batch[i]); timetable != nil {
+			out[batch[i]] = timetable
+		}
+	}
+}
+
+func decodeDailyTimetable(value any, uid string) *models.Bus_DailyTimetables {
+	text, ok := value.(string)
+	if !ok || text == "" {
+		return nil
+	}
+	timetable := &models.Bus_DailyTimetables{}
+	if err := proto.Unmarshal([]byte(text), timetable); err != nil {
+		// Dropping one corrupt snapshot silences only that route.
+		zap.S().Warnw("decode failed", "component", "gtfs_rt", "action", "daily", "event", "decode_failed", "subroute", uid, "err", err)
+		return nil
+	}
+	return timetable
 }
 
 // NewRTBuilder builds the GTFS-Realtime snapshot builder. It owns the static
@@ -561,4 +546,170 @@ func (b *gtfsRTBuilder) readDailyTimetables(ctx context.Context, subRouteUIDs []
 // two ticks concurrently.
 func NewRTBuilder(db *pgxpool.Pool, rc *redis.Client) *gtfsRTBuilder {
 	return &gtfsRTBuilder{db: db, rc: rc}
+}
+
+func activeGTFSRTTrips(index *gtfsRTIndex, weekday int, stats *gtfsRTStats) (map[gtfsRTRouteKey][]gtfsRTTrip, []string) {
+	active := make(map[gtfsRTRouteKey][]gtfsRTTrip, len(index.trips))
+	uidSet := make(map[string]struct{}, len(index.trips))
+	for key, trips := range index.trips {
+		running := weekdayGTFSRTTrips(trips, weekday)
+		if len(running) == 0 {
+			continue
+		}
+		active[key] = running
+		uidSet[key.subRouteUID] = struct{}{}
+		stats.routesConsidered++
+		stats.tripsActive += len(running)
+	}
+	uids := make([]string, 0, len(uidSet))
+	for uid := range uidSet {
+		uids = append(uids, uid)
+	}
+	sort.Strings(uids)
+
+	return active, uids
+}
+
+func weekdayGTFSRTTrips(trips []gtfsRTTrip, weekday int) []gtfsRTTrip {
+	running := make([]gtfsRTTrip, 0, len(trips))
+	for _, trip := range trips {
+		if trip.week[weekday] {
+			running = append(running, trip)
+		}
+	}
+	return running
+}
+
+func cancellationsForRoute(key gtfsRTRouteKey, trips []gtfsRTTrip, daily *models.Bus_DailyTimetables, serviceDate string, stats *gtfsRTStats) ([]*gtfs.FeedEntity, []gtfsRTTrip) {
+	var running []gtfsRTTrip
+	observed, ok := observedDepartures(daily, key.direction)
+	if !ok {
+		stats.routesNoDaily++
+		return nil, trips
+	}
+	scheduled := make(map[int][]string, len(trips))
+	for _, trip := range trips {
+		scheduled[trip.departure] = append(scheduled[trip.departure], trip.tripID)
+	}
+	if !gtfsRTGatePasses(observed, scheduled) {
+		// The two sources disagree about how this subroute names a departure,
+		// so no cancellation can be proven — but neither is any trip proven
+		// gone, so they all stay matchable.
+		stats.routesGateFailed++
+		return nil, trips
+	}
+	running = observedRunningTrips(trips, observed)
+	entities := cancelledDepartures(observed, scheduled, serviceDate, stats)
+
+	return entities, running
+}
+
+func observedRunningTrips(trips []gtfsRTTrip, observed map[int]struct{}) []gtfsRTTrip {
+	var running []gtfsRTTrip
+	for _, trip := range trips {
+		if _, ran := observed[trip.departure]; ran {
+			running = append(running, trip)
+		}
+	}
+	return running
+}
+
+func cancelledDepartures(observed map[int]struct{}, scheduled map[int][]string, serviceDate string, stats *gtfsRTStats) []*gtfs.FeedEntity {
+	entities := make([]*gtfs.FeedEntity, 0)
+	departures := make([]int, 0, len(scheduled))
+	for departure := range scheduled {
+		departures = append(departures, departure)
+	}
+	sort.Ints(departures)
+	for _, departure := range departures {
+		if _, ran := observed[departure]; ran {
+			continue
+		}
+		entities = append(entities, cancelledDepartureEntities(scheduled[departure], serviceDate, stats)...)
+	}
+	return entities
+}
+
+func cancelledDepartureEntities(tripIDs []string, serviceDate string, stats *gtfsRTStats) []*gtfs.FeedEntity {
+	var entities []*gtfs.FeedEntity
+	for _, tripID := range tripIDs {
+		entities = append(entities, cancelledTripEntity(tripID, serviceDate))
+		stats.cancellations++
+	}
+	return entities
+}
+
+func (b *gtfsRTBuilder) indexCurrent(runID, today string) bool {
+	return b.index != nil && b.index.runID == runID && b.index.builtFor == today
+}
+
+func (b *gtfsRTBuilder) hasStaticTrips() bool {
+	return b.index != nil && len(b.index.trips) != 0
+}
+
+func validGTFSRTTripIdentity(uid, departure string, direction int32) bool {
+	return uid != "" && departure != "" && direction >= 0 && direction <= 1
+}
+
+func readBusTripIndex(rows pgx.Rows, runID, today string) (*gtfsRTIndex, error) {
+	index := &gtfsRTIndex{runID: runID, builtFor: today, trips: make(map[gtfsRTRouteKey][]gtfsRTTrip, 8192)}
+	if err := indexBusTripRows(rows, index); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, _oops.Wrapf(err, "gtfs-rt: load trip index: rows")
+	}
+	return index, nil
+}
+
+func indexBusTripRows(rows pgx.Rows, index *gtfsRTIndex) error {
+	for rows.Next() {
+		if err := indexBusTripRow(rows, index); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func indexBusTripRow(rows pgx.Rows, index *gtfsRTIndex) error {
+	var tripID, serviceID string
+	var direction int32
+	if err := rows.Scan(&tripID, &direction, &serviceID); err != nil {
+		return _oops.Wrapf(err, "gtfs-rt: load trip index: scan")
+	}
+	trip, key, ok := parseGTFSRTTrip(tripID, serviceID, direction)
+	if ok {
+		index.trips[key] = append(index.trips[key], trip)
+	}
+	return nil
+}
+
+func observedDepartureMinutes(trip *models.Bus_DailyTimetable) (int, bool) {
+	origin := originStopTime(trip)
+	if origin == nil {
+		return 0, false
+	}
+	clock := preferredDepartureClock(origin)
+	minutes, parsed := parseGTFSRTClockTime(clock)
+	if !parsed {
+		// An unreadable departure must fail the cancellation gate rather than disappear from it.
+		return -1, true
+	}
+	return minutes, true
+
+}
+
+func preferredDepartureClock(origin *models.Bus_StopTime) string {
+	clock := origin.GetDepartureTime()
+	if strings.TrimSpace(clock) == "" {
+		clock = origin.GetArrivalTime()
+	}
+	return clock
+}
+
+func checkedGTFSRTRows(rows pgx.Rows, description string) error {
+	if err := rows.Err(); err != nil {
+		return _oops.Wrapf(err, "%s", description)
+	}
+	return nil
 }

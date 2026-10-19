@@ -50,8 +50,12 @@ func (s *feedbackStore) OpenThread(ctx context.Context, record feedbackThreadRec
 	if err != nil {
 		return time.Time{}, err
 	}
+	return s.insertFeedbackThread(ctx, record, messageID, diagnostics)
+}
+
+func (s *feedbackStore) insertFeedbackThread(ctx context.Context, record feedbackThreadRecord, messageID string, diagnostics []byte) (time.Time, error) {
 	var createdAt time.Time
-	err = s.db.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		WITH thread AS (
 			INSERT INTO feedback_thread (id, install_id, category, diagnostics)
 			SELECT $1, $2, $3, $4::jsonb

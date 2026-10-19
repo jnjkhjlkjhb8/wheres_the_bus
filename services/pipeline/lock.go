@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/marker"
 )
 
 // _pipelineRunLockKey serializes whole nightly and hourly runs across Pods. It
@@ -31,27 +32,41 @@ func acquireRunLock(ctx context.Context, pool *pgxpool.Pool, wait, retry time.Du
 	if err != nil {
 		return nil, _oops.Wrapf(err, "connect pipeline run lock")
 	}
-	deadline := time.Now().Add(wait)
+	lock, err := waitForPipelineRunLock(ctx, conn, time.Now().Add(wait), retry)
+	if err != nil {
+		_ = conn.Close(context.Background())
+	}
+	return lock, err
+}
+
+func waitForPipelineRunLock(ctx context.Context, conn *pgx.Conn, deadline time.Time, retry time.Duration) (*runLock, error) {
 	for {
-		var ok bool
-		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", _pipelineRunLockKey).Scan(&ok); err != nil {
-			_ = conn.Close(context.Background())
-			return nil, _oops.Wrapf(err, "try pipeline run lock")
+		acquired, err := tryPipelineRunLock(ctx, conn, deadline, retry)
+		if err != nil {
+			return nil, err
 		}
-		if ok {
+		if acquired {
 			return &runLock{conn: conn}, nil
 		}
-		if !time.Now().Add(retry).Before(deadline) {
-			_ = conn.Close(context.Background())
-			return nil, errRunLockBusy
-		}
-		select {
-		case <-ctx.Done():
-			_ = conn.Close(context.Background())
-			return nil, ctx.Err()
-		case <-time.After(retry):
-		}
 	}
+}
+
+func tryPipelineRunLock(ctx context.Context, conn *pgx.Conn, deadline time.Time, retry time.Duration) (bool, error) {
+	var acquired bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", _pipelineRunLockKey).Scan(&acquired); err != nil {
+		return false, _oops.Wrapf(err, "try pipeline run lock")
+	}
+	if acquired {
+		return true, nil
+	}
+	return false, waitPipelineRunLockRetry(ctx, deadline, retry)
+}
+
+func waitPipelineRunLockRetry(ctx context.Context, deadline time.Time, retry time.Duration) error {
+	if !time.Now().Add(retry).Before(deadline) {
+		return errRunLockBusy
+	}
+	return marker.SleepCtx(ctx, retry)
 }
 
 // release drops the lock by closing its connection; the server frees a

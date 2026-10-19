@@ -48,33 +48,40 @@ class SearchRepository {
     // Rail stations are no longer search entries — the rail query flow lives
     // on the home sheet, so a station row would have nowhere to navigate.
     if (rawType == 'tra_station' || rawType == 'thsr_station') return null;
-    final depart = row['depart'] as String? ?? '';
-    final destin = row['destin'] as String? ?? '';
     final city = row['city'] as String?;
-    final subtitle = depart.isNotEmpty && destin.isNotEmpty
-        ? '$depart → $destin'
-        // The row carries the raw TDX code; the reader gets the city's name.
-        : (city == null || city.isEmpty ? '' : cityName(city));
     return SearchResult(
       type: _parseType(rawType),
       uid: row['uid'] as String? ?? '',
       name: row['name'] as String? ?? '',
-      subtitle: subtitle,
+      subtitle: _rowSubtitle(row, city),
       city: city,
       lat: (row['lat'] as num?)?.toDouble(),
       lon: (row['lon'] as num?)?.toDouble(),
     );
   }
 
-  static SearchResultType _parseType(String t) => switch (t) {
-    'bus_route' => SearchResultType.busRoute,
-    'bus_station' => SearchResultType.busStation,
-    'bike_station' => SearchResultType.bikeStation,
-    'mrt_station' => SearchResultType.mrtStation,
-    'tra_train' => SearchResultType.traTrain,
-    'thsr_train' => SearchResultType.thsrTrain,
-    _ => SearchResultType.busRoute,
-  };
+  static String _rowSubtitle(Map<String, dynamic> row, String? city) {
+    final depart = row['depart'] as String? ?? '';
+    final destin = row['destin'] as String? ?? '';
+    if (depart.isNotEmpty && destin.isNotEmpty) {
+      return '$depart → $destin';
+    }
+    return _citySubtitle(city);
+  }
+
+  static String _citySubtitle(String? city) =>
+      city == null || city.isEmpty ? '' : cityName(city);
+
+  static SearchResultType _parseType(String t) =>
+      const {
+        'bus_route': SearchResultType.busRoute,
+        'bus_station': SearchResultType.busStation,
+        'bike_station': SearchResultType.bikeStation,
+        'mrt_station': SearchResultType.mrtStation,
+        'tra_train': SearchResultType.traTrain,
+        'thsr_train': SearchResultType.thsrTrain,
+      }[t] ??
+      SearchResultType.busRoute;
 
   static Future<List<SearchResult>> _fetchFromRouter(
     String query,

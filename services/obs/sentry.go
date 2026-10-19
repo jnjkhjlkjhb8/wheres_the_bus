@@ -26,12 +26,7 @@ func Init(service string) func() {
 		zap.S().Infow("sentry disabled", "reason", "no_dsn")
 		return sync
 	}
-	tracesRate := 0.1
-	if v := os.Getenv("SENTRY_TRACES_SAMPLE_RATE"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			tracesRate = f
-		}
-	}
+	tracesRate := sentryTracesRate()
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:                   dsn,
 		Environment:           os.Getenv("SENTRY_ENVIRONMENT"),
@@ -78,13 +73,17 @@ func scrubSentryEventQuery(event *sentry.Event, _ *sentry.EventHint) *sentry.Eve
 	if event == nil || event.Request == nil {
 		return event
 	}
-	event.Request.QueryString = ""
-	if parsed, err := url.Parse(event.Request.URL); err == nil {
+	scrubSentryRequestQuery(event.Request)
+	return event
+}
+
+func scrubSentryRequestQuery(request *sentry.Request) {
+	request.QueryString = ""
+	if parsed, err := url.Parse(request.URL); err == nil {
 		parsed.RawQuery = ""
 		parsed.ForceQuery = false
-		event.Request.URL = parsed.String()
+		request.URL = parsed.String()
 	}
-	return event
 }
 
 func Recover(name string) {
@@ -136,4 +135,14 @@ func StreamInterceptor() grpc.StreamServerInterceptor {
 		}()
 		return handler(srv, ss)
 	}
+}
+
+func sentryTracesRate() float64 {
+	tracesRate := 0.1
+	if v := os.Getenv("SENTRY_TRACES_SAMPLE_RATE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			tracesRate = f
+		}
+	}
+	return tracesRate
 }

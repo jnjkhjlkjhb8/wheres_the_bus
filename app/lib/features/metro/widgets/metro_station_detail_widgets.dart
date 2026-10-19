@@ -102,66 +102,14 @@ class _StationDetailSheet extends StatelessWidget {
           ),
           const SizedBox(height: AppTheme.space12),
           BlocBuilder<MetroEtaBloc, MetroEtaState>(
-            builder: (context, state) {
-              final arrivals = state.arrivals
-                  .where((a) => lines.contains(a.line))
-                  .toList();
-              if (state.loading && arrivals.isEmpty) {
-                return const _MetroArrivalsSkeleton();
-              }
-              final staleBanner = state.error != null
-                  ? Padding(
-                      padding: const EdgeInsets.only(bottom: AppTheme.space8),
-                      child: _MetroLiveErrorNotice(error: state.error!),
-                    )
-                  : null;
-              if (arrivals.isEmpty) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ?staleBanner,
-                    MetroArrivalsEmpty(
-                      schedule: state.schedule,
-                      onRetry: () => context.read<MetroEtaBloc>().add(
-                        LoadMetroEta(system, station.id),
-                      ),
-                    ),
-                  ],
-                );
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ?staleBanner,
-                  for (final a in arrivals) ...[
-                    MetroArrivalTile(
-                      key: ValueKey('${a.line}:${a.destination}'),
-                      arrival: a,
-                    ),
-                    Divider(
-                      height: 20,
-                      color: cs.outlineVariant.withValues(alpha: 0.5),
-                    ),
-                  ],
-                  // Under the list rather than over it: the countdowns are
-                  // what the rider came for, and the stamp is the footnote
-                  // that dates them.
-                  FreshnessStamp(at: state.updatedAt),
-                ],
-              );
-            },
+            builder: (context, state) => _arrivals(context, state, cs, lines),
           ),
           const SizedBox(height: AppTheme.space8),
           BlocBuilder<MetroEtaBloc, MetroEtaState>(
             // First/last-train data is loaded once and never changes per arrival
             // frame; rebuild only when the schedule itself (or its shimmer
             // condition) changes, not on every live ETA push.
-            buildWhen: (p, n) =>
-                p.schedule != n.schedule ||
-                (p.loading && p.schedule.isEmpty) !=
-                    (n.loading && n.schedule.isEmpty),
+            buildWhen: _scheduleChanged,
             builder: (context, state) => MetroScheduleSection(
               schedule: state.schedule,
               loading: state.loading,
@@ -169,6 +117,70 @@ class _StationDetailSheet extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  bool _scheduleChanged(MetroEtaState previous, MetroEtaState next) =>
+      previous.schedule != next.schedule ||
+      (previous.loading && previous.schedule.isEmpty) !=
+          (next.loading && next.schedule.isEmpty);
+
+  bool _waitingForArrivals(MetroEtaState state, List<MetroArrival> arrivals) =>
+      state.loading && arrivals.isEmpty;
+
+  Widget _arrivals(
+    BuildContext context,
+    MetroEtaState state,
+    ColorScheme cs,
+    List<String> lines,
+  ) {
+    final arrivals = state.arrivals
+        .where((a) => lines.contains(a.line))
+        .toList();
+    if (_waitingForArrivals(state, arrivals)) {
+      return const _MetroArrivalsSkeleton();
+    }
+    final staleBanner = state.error != null
+        ? Padding(
+            padding: const EdgeInsets.only(bottom: AppTheme.space8),
+            child: _MetroLiveErrorNotice(error: state.error!),
+          )
+        : null;
+    if (arrivals.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ?staleBanner,
+          MetroArrivalsEmpty(
+            schedule: state.schedule,
+            onRetry: () => context.read<MetroEtaBloc>().add(
+              LoadMetroEta(system, station.id),
+            ),
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ?staleBanner,
+        for (final a in arrivals) ...[
+          MetroArrivalTile(
+            key: ValueKey('${a.line}:${a.destination}'),
+            arrival: a,
+          ),
+          Divider(
+            height: 20,
+            color: cs.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ],
+        // Under the list rather than over it: the countdowns are
+        // what the rider came for, and the stamp is the footnote
+        // that dates them.
+        FreshnessStamp(at: state.updatedAt),
+      ],
     );
   }
 }
@@ -204,15 +216,15 @@ class MetroArrivalTile extends StatelessWidget {
           bare: true,
         ),
         const SizedBox(height: AppTheme.space10),
-        Row(
-          children: [
-            Expanded(child: _MetroCongestionStrip(levels: arrival.congestion)),
-            if (arrival.supportsAlightReminder)
-              _MetroAlightBell(arrival: arrival),
-          ],
-        ),
+        _congestionAndBell(),
       ],
     );
+  }
+
+  Widget _congestionAndBell() {
+    final congestion = _MetroCongestionStrip(levels: arrival.congestion);
+    if (!arrival.supportsAlightReminder) return congestion;
+    return _MetroAlightBell(arrival: arrival, congestion: congestion);
   }
 }
 
@@ -323,9 +335,10 @@ class _CongestionCar extends StatelessWidget {
 }
 
 class _MetroAlightBell extends StatefulWidget {
-  const _MetroAlightBell({required this.arrival});
+  const _MetroAlightBell({required this.arrival, required this.congestion});
 
   final MetroArrival arrival;
+  final Widget congestion;
 
   @override
   State<_MetroAlightBell> createState() => _MetroAlightBellState();
@@ -345,32 +358,43 @@ class _MetroAlightBellState extends State<_MetroAlightBell> {
     unawaited(context.push(AppRoutes.metroStation(widget.arrival.stationId)));
   }
 
+  void _toggleBell(bool active) {
+    if (active) {
+      setState(() => _managing = !_managing);
+    } else {
+      _startPick();
+    }
+  }
+
+  bool _showManage(bool active) => active && _managing;
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<MrtTrackBloc, MrtTrackBlocState>(
-      buildWhen: (p, n) =>
-          p.tracks(widget.arrival) != n.tracks(widget.arrival) ||
-          p.session != n.session,
+      // `tracks` is a pure function of the session, so a session change is the
+      // only thing that can alter either value read below.
+      buildWhen: (p, n) => p.session != n.session,
       builder: (context, state) {
         final active = state.tracks(widget.arrival);
         final session = state.session;
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            AlightTrackBell(
-              active: active,
-              semanticLabel: active
-                  ? AppI18n.of(context).alightReminderArmed
-                  : AppI18n.of(context).alightReminderSet,
-              onTap: () {
-                if (active) {
-                  setState(() => _managing = !_managing);
-                } else {
-                  _startPick();
-                }
-              },
+            Row(
+              children: [
+                Expanded(child: widget.congestion),
+                const SizedBox(width: AppTheme.space8),
+                AlightTrackBell(
+                  active: active,
+                  semanticLabel: active
+                      ? AppI18n.of(context).alightReminderArmed
+                      : AppI18n.of(context).alightReminderSet,
+                  onTap: () => _toggleBell(active),
+                ),
+              ],
             ),
-            if (active && _managing && session != null)
+            // A manage bar needs the whole tile width, outside the icon row.
+            if (session != null && _showManage(active))
               Padding(
                 padding: const EdgeInsets.only(top: AppTheme.space8),
                 child: AlightManageBar(

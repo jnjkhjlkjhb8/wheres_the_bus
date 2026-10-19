@@ -72,10 +72,7 @@ String formatSyncFreshness(AppI18n i18n, DateTime? dt) {
   if (dt == null) return i18n.settingsSyncNever;
   final local = dt.toLocal();
   final now = DateTime.now();
-  final isToday =
-      local.year == now.year &&
-      local.month == now.month &&
-      local.day == now.day;
+  final isToday = DateUtils.dateOnly(local) == DateUtils.dateOnly(now);
   final time = DateFormat('HH:mm').format(local);
   return isToday
       ? i18n.settingsSyncToday(time)
@@ -181,6 +178,9 @@ class _SettingsView extends StatelessWidget {
       context.read<SettingsBloc>().add(FareTypeSelected(picked));
     }
   }
+
+  bool get _showEnvironment =>
+      !const {'prod', 'production'}.contains(FirebaseGate.appEnv);
 
   @override
   Widget build(BuildContext context) {
@@ -315,8 +315,7 @@ class _SettingsView extends StatelessWidget {
                       monoValue: true,
                     ),
                     _UpdateCheckRow(state: state, bloc: bloc),
-                    if (FirebaseGate.appEnv != 'prod' &&
-                        FirebaseGate.appEnv != 'production')
+                    if (_showEnvironment)
                       _SettingsRow(
                         icon: Icons.developer_mode_rounded,
                         label: i18n.settingsEnvironment,
@@ -724,24 +723,26 @@ class _UpdateCheckRow extends StatelessWidget {
       // line identity, so a found release is emphasised by contrast alone.
       valueColor: found ? cs.onSurface : null,
       chevron: url != null,
-      onTap: switch (state.updateCheck) {
-        UpdateCheck.checking => null,
-        UpdateCheck.available =>
-          url == null
-              ? null
-              : () {
-                  unawaited(HapticService.instance.lightTap());
-                  unawaited(
-                    launchUrl(url, mode: LaunchMode.externalApplication),
-                  );
-                },
-        _ => () {
-          unawaited(HapticService.instance.lightTap());
-          bloc.add(const UpdateCheckRequested());
-        },
-      },
+      onTap: _tapHandler(url),
     );
   }
+
+  VoidCallback? _tapHandler(Uri? url) => switch (state.updateCheck) {
+    UpdateCheck.checking => null,
+    UpdateCheck.available =>
+      url == null
+          ? null
+          : () {
+              unawaited(HapticService.instance.lightTap());
+              unawaited(
+                launchUrl(url, mode: LaunchMode.externalApplication),
+              );
+            },
+    _ => () {
+      unawaited(HapticService.instance.lightTap());
+      bloc.add(const UpdateCheckRequested());
+    },
+  };
 }
 
 class _SettingsRow extends StatelessWidget {

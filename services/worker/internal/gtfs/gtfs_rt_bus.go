@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -26,19 +28,15 @@ const _busPatternOffsetSQL = `
 SELECT sub_route_uid, direction, stop_uid, offset_secs FROM gtfs_rt_bus_offset WHERE run_id = $1`
 
 func (b *gtfsRTBuilder) readBusArrivals(ctx context.Context) (map[string]*models.Bus_RouteArrival, error) {
-	var keys []string
-	var cursor uint64
-	for {
-		batch, next, err := b.rc.Scan(ctx, cursor, shared.BusRouteEtaPattern(""), _gtfsRTScanBatch).Result()
-		if err != nil {
-			return nil, _oops.Wrapf(err, "gtfs-rt: scan bus arrivals")
-		}
-		keys = append(keys, batch...)
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+	keys, err := scanBusArrivalKeys(ctx, b.rc)
+	if err != nil {
+		return nil, err
 	}
+
+	return b.readBusArrivalBatches(ctx, keys)
+}
+
+func (b *gtfsRTBuilder) readBusArrivalBatches(ctx context.Context, keys []string) (map[string]*models.Bus_RouteArrival, error) {
 	arrivals := make(map[string]*models.Bus_RouteArrival, len(keys))
 	for start := 0; start < len(keys); start += _gtfsRTMGetBatch {
 		end := min(start+_gtfsRTMGetBatch, len(keys))
@@ -46,21 +44,7 @@ func (b *gtfsRTBuilder) readBusArrivals(ctx context.Context) (map[string]*models
 		if err != nil {
 			return nil, _oops.Wrapf(err, "gtfs-rt: read bus arrivals")
 		}
-		for _, value := range values {
-			raw, ok := value.(string)
-			if !ok || raw == "" {
-				continue
-			}
-			arrival := &models.Bus_RouteArrival{}
-			if err := proto.Unmarshal([]byte(raw), arrival); err != nil {
-				// One undecodable snapshot costs its own subroute, not the tick.
-				continue
-			}
-			if arrival.GetSubRouteUid() == "" {
-				continue
-			}
-			arrivals[arrival.GetSubRouteUid()] = arrival
-		}
+		decodeBusArrivals(values, arrivals)
 	}
 	return arrivals, nil
 }
@@ -104,45 +88,70 @@ func loadBusPatternOffsets(ctx context.Context, db *pgxpool.Pool, runID string) 
 		return nil, _oops.Wrapf(err, "gtfs-rt: load bus pattern offsets")
 	}
 	defer rows.Close()
+	return readBusPatternOffsets(rows)
+}
+
+func readBusPatternOffsets(rows pgx.Rows) (map[gtfsRTRouteKey]map[string]int64, error) {
 	offsets := make(map[gtfsRTRouteKey]map[string]int64, 8192)
-	for rows.Next() {
-		var subRouteUID, stopUID string
-		var direction int32
-		var offset int64
-		if err := rows.Scan(&subRouteUID, &direction, &stopUID, &offset); err != nil {
-			return nil, _oops.Wrapf(err, "gtfs-rt: load bus pattern offsets: scan")
-		}
-		key := gtfsRTRouteKey{subRouteUID: subRouteUID, direction: direction}
-		if offsets[key] == nil {
-			offsets[key] = make(map[string]int64, 32)
-		}
-		offsets[key][stopUID] = offset
+	if err := indexBusPatternOffsetRows(rows, offsets); err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, _oops.Wrapf(err, "gtfs-rt: load bus pattern offsets: rows")
+	if err := checkedGTFSRTRows(rows, "gtfs-rt: load bus pattern offsets: rows"); err != nil {
+		return nil, err
 	}
 	return offsets, nil
+}
+
+func indexBusPatternOffsetRows(rows pgx.Rows, offsets map[gtfsRTRouteKey]map[string]int64) error {
+	for rows.Next() {
+		if err := indexBusPatternOffset(rows, offsets); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func indexBusPatternOffset(rows pgx.Rows, offsets map[gtfsRTRouteKey]map[string]int64) error {
+	var subRouteUID, stopUID string
+	var direction int32
+	var offset int64
+	if err := rows.Scan(&subRouteUID, &direction, &stopUID, &offset); err != nil {
+		return _oops.Wrapf(err, "gtfs-rt: load bus pattern offsets: scan")
+	}
+	key := gtfsRTRouteKey{subRouteUID: subRouteUID, direction: direction}
+	if offsets[key] == nil {
+		offsets[key] = make(map[string]int64, 32)
+	}
+	offsets[key][stopUID] = offset
+	return nil
 }
 
 func platesOnOneSubroute(arrivals map[string]*models.Bus_RouteArrival) map[string]bool {
 	seen := make(map[string]map[string]bool, 4096)
 	for uid, arrival := range arrivals {
-		for _, stop := range arrival.GetStops() {
-			plate := stop.GetPlateNumb()
-			if plate == "" {
-				continue
-			}
-			if seen[plate] == nil {
-				seen[plate] = make(map[string]bool, 2)
-			}
-			seen[plate][uid] = true
-		}
+		recordArrivalPlates(uid, arrival, seen)
 	}
 	unique := make(map[string]bool, len(seen))
 	for plate, uids := range seen {
 		unique[plate] = len(uids) == 1
 	}
 	return unique
+}
+
+func recordArrivalPlates(uid string, arrival *models.Bus_RouteArrival, seen map[string]map[string]bool) {
+	for _, stop := range arrival.GetStops() {
+		recordPlateSubroute(stop.GetPlateNumb(), uid, seen)
+	}
+}
+
+func recordPlateSubroute(plate, uid string, seen map[string]map[string]bool) {
+	if plate == "" {
+		return
+	}
+	if seen[plate] == nil {
+		seen[plate] = make(map[string]bool, 2)
+	}
+	seen[plate][uid] = true
 }
 
 // collectBusVehicles groups one subroute's estimates into vehicles and
@@ -153,43 +162,12 @@ func collectBusVehicles(
 	onOneSubroute map[string]bool,
 	stats *gtfsRTBusStats,
 ) map[gtfsRTRouteKey][]gtfsRTVehicle {
-	type vehicleKey struct {
-		key   gtfsRTRouteKey
-		plate string
-	}
-	calls := make(map[vehicleKey][]gtfsRTCall, 64)
-	projections := make(map[vehicleKey][]int64, 64)
-	for _, stop := range arrival.GetStops() {
-		plate := stop.GetPlateNumb()
-		if plate == "" || stop.GetArrivalUnix() <= 0 || stop.GetStopUid() == "" {
-			continue
-		}
-		key := gtfsRTRouteKey{subRouteUID: arrival.GetSubRouteUid(), direction: stop.GetDirection()}
-		id := vehicleKey{key: key, plate: plate}
-		calls[id] = append(calls[id], gtfsRTCall{
-			stopUID:  stop.GetStopUid(),
-			sequence: stop.GetStopSequence(),
-			arrival:  stop.GetArrivalUnix(),
-		})
-		if offset, known := offsets[key][stop.GetStopUid()]; known {
-			projections[id] = append(projections[id], stop.GetArrivalUnix()-offset)
-		}
-	}
+	calls, projections := collectBusCalls(arrival, offsets)
 
 	vehicles := make(map[gtfsRTRouteKey][]gtfsRTVehicle, 4)
 	for id, seen := range calls {
-		stats.vehiclesSeen++
-		if !onOneSubroute[id.plate] {
-			stats.plateAmbiguous++
-			continue
-		}
 		projected := projections[id]
-		if len(projected) == 0 {
-			stats.patternUnknown++
-			continue
-		}
-		if len(projected) < _gtfsRTBusMinCalls {
-			stats.tooFewCalls++
+		if !usableBusVehicle(id, projected, onOneSubroute, stats) {
 			continue
 		}
 		sort.Slice(seen, func(i, j int) bool { return seen[i].sequence < seen[j].sequence })
@@ -200,6 +178,27 @@ func collectBusVehicles(
 		})
 	}
 	return vehicles
+}
+
+func usableBusVehicle(id gtfsRTVehicleKey, projected []int64, onOneSubroute map[string]bool, stats *gtfsRTBusStats) bool {
+	stats.vehiclesSeen++
+	if !onOneSubroute[id.plate] {
+		stats.plateAmbiguous++
+		return false
+	}
+	return usableBusProjection(projected, stats)
+}
+
+func usableBusProjection(projected []int64, stats *gtfsRTBusStats) bool {
+	if len(projected) == 0 {
+		stats.patternUnknown++
+		return false
+	}
+	if len(projected) < _gtfsRTBusMinCalls {
+		stats.tooFewCalls++
+		return false
+	}
+	return true
 }
 
 func medianUnix(values []int64) int64 {
@@ -215,37 +214,45 @@ func matchBusVehicles(vehicles []gtfsRTVehicle, trips []gtfsRTTrip, midnight tim
 	copy(scheduled, trips)
 	sort.Slice(scheduled, func(i, j int) bool { return scheduled[i].departure < scheduled[j].departure })
 
-	window := int64(_gtfsRTBusMatchWindow / time.Second)
-	matched := make(map[string]gtfsRTVehicle, len(vehicles))
-	vehicleIndex, tripIndex := 0, 0
-	for vehicleIndex < len(vehicles) && tripIndex < len(scheduled) {
-		planned := midnight.Unix() + int64(scheduled[tripIndex].departure)*60
-		gap := vehicles[vehicleIndex].projected - planned
-		switch {
-		case gap < -window:
-			// This vehicle left long before the earliest departure still on
-			// offer, so nothing here can be its trip.
-			vehicleIndex++
-		case gap > window:
-			// This departure has no vehicle near it; a later one may.
-			tripIndex++
-		default:
-			// Inside the window. Hold the vehicle if the next departure fits it
-			// better — otherwise a vehicle running late would consume the trip in
-			// front of the one it is actually on.
-			if tripIndex+1 < len(scheduled) {
-				next := midnight.Unix() + int64(scheduled[tripIndex+1].departure)*60
-				if abs64(vehicles[vehicleIndex].projected-next) < abs64(gap) {
-					tripIndex++
-					continue
-				}
-			}
-			matched[scheduled[tripIndex].tripID] = vehicles[vehicleIndex]
-			vehicleIndex++
-			tripIndex++
-		}
+	state := busVehicleMatcher{vehicles: vehicles, scheduled: scheduled, midnight: midnight, window: int64(_gtfsRTBusMatchWindow / time.Second), matched: make(map[string]gtfsRTVehicle, len(vehicles))}
+	for state.vehicleIndex < len(vehicles) && state.tripIndex < len(scheduled) {
+		state.advance()
 	}
-	return matched
+	return state.matched
+}
+
+type busVehicleMatcher struct {
+	vehicles                []gtfsRTVehicle
+	scheduled               []gtfsRTTrip
+	midnight                time.Time
+	window                  int64
+	vehicleIndex, tripIndex int
+	matched                 map[string]gtfsRTVehicle
+}
+
+func (s *busVehicleMatcher) advance() {
+	planned := s.midnight.Unix() + int64(s.scheduled[s.tripIndex].departure)*60
+	gap := s.vehicles[s.vehicleIndex].projected - planned
+	if gap < -s.window {
+		s.vehicleIndex++
+		return
+	}
+	if gap > s.window {
+		s.tripIndex++
+		return
+	}
+	s.matchCurrentVehicle(gap)
+}
+
+func (s *busVehicleMatcher) matchCurrentVehicle(gap int64) {
+	// The next departure can fit better when this vehicle is running late.
+	if nextBusDepartureCloser(s.vehicles[s.vehicleIndex].projected, gap, s.scheduled, s.tripIndex, s.midnight) {
+		s.tripIndex++
+		return
+	}
+	s.matched[s.scheduled[s.tripIndex].tripID] = s.vehicles[s.vehicleIndex]
+	s.vehicleIndex++
+	s.tripIndex++
 }
 
 func abs64(v int64) int64 {
@@ -266,53 +273,58 @@ func buildGTFSRTBusDelays(
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	serviceDate := now.Format("20060102")
 
-	byKey := make(map[gtfsRTRouteKey][]gtfsRTVehicle, len(arrivals))
-	for _, arrival := range arrivals {
-		for key, vehicles := range collectBusVehicles(arrival, offsets, onOneSubroute, &stats) {
-			byKey[key] = append(byKey[key], vehicles...)
-		}
-	}
-
+	byKey := busVehiclesByRoute(arrivals, offsets, onOneSubroute, &stats)
 	keys := make([]gtfsRTRouteKey, 0, len(byKey))
 	for key := range byKey {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].subRouteUID != keys[j].subRouteUID {
-			return keys[i].subRouteUID < keys[j].subRouteUID
-		}
-		return keys[i].direction < keys[j].direction
-	})
+	sortGTFSRTDirections(keys)
 
 	entities := make([]*gtfs.FeedEntity, 0, 512)
 	for _, key := range keys {
-		trips := running[key]
-		if len(trips) == 0 {
-			stats.routeNoTrips += len(byKey[key])
-			continue
-		}
-		matched := matchBusVehicles(byKey[key], trips, midnight)
-		stats.unmatched += len(byKey[key]) - len(matched)
-		for tripID, vehicle := range matched {
-			stats.matched++
-			updates := busStopTimeUpdates(vehicle)
-			stats.stopTimeUpdates += len(updates)
-			entities = append(entities, &gtfs.FeedEntity{
-				Id: proto.String(tripID),
-				TripUpdate: &gtfs.TripUpdate{
-					Trip: &gtfs.TripDescriptor{
-						TripId:               proto.String(tripID),
-						StartDate:            proto.String(serviceDate),
-						ScheduleRelationship: gtfs.TripDescriptor_SCHEDULED.Enum(),
-					},
-					Vehicle:        &gtfs.VehicleDescriptor{Id: proto.String(vehicle.plate)},
-					StopTimeUpdate: updates,
-				},
-			})
-		}
+		entities = append(entities, routeBusDelayEntities(key, byKey[key], running[key], midnight, serviceDate, &stats)...)
 	}
 	sort.Slice(entities, func(i, j int) bool { return entities[i].GetId() < entities[j].GetId() })
 	return entities, stats
+}
+
+func busVehiclesByRoute(arrivals map[string]*models.Bus_RouteArrival, offsets map[gtfsRTRouteKey]map[string]int64, onOneSubroute map[string]bool, stats *gtfsRTBusStats) map[gtfsRTRouteKey][]gtfsRTVehicle {
+	byKey := make(map[gtfsRTRouteKey][]gtfsRTVehicle, len(arrivals))
+	for _, arrival := range arrivals {
+		for key, vehicles := range collectBusVehicles(arrival, offsets, onOneSubroute, stats) {
+			byKey[key] = append(byKey[key], vehicles...)
+		}
+	}
+	return byKey
+}
+
+func routeBusDelayEntities(key gtfsRTRouteKey, vehicles []gtfsRTVehicle, scheduled []gtfsRTTrip, midnight time.Time, serviceDate string, stats *gtfsRTBusStats) []*gtfs.FeedEntity {
+	var entities []*gtfs.FeedEntity
+	trips := scheduled
+	if len(trips) == 0 {
+		stats.routeNoTrips += len(vehicles)
+		return nil
+	}
+	matched := matchBusVehicles(vehicles, trips, midnight)
+	stats.unmatched += len(vehicles) - len(matched)
+	for tripID, vehicle := range matched {
+		stats.matched++
+		updates := busStopTimeUpdates(vehicle)
+		stats.stopTimeUpdates += len(updates)
+		entities = append(entities, &gtfs.FeedEntity{
+			Id: proto.String(tripID),
+			TripUpdate: &gtfs.TripUpdate{
+				Trip: &gtfs.TripDescriptor{
+					TripId:               proto.String(tripID),
+					StartDate:            proto.String(serviceDate),
+					ScheduleRelationship: gtfs.TripDescriptor_SCHEDULED.Enum(),
+				},
+				Vehicle:        &gtfs.VehicleDescriptor{Id: proto.String(vehicle.plate)},
+				StopTimeUpdate: updates,
+			},
+		})
+	}
+	return entities
 }
 
 func busStopTimeUpdates(vehicle gtfsRTVehicle) []*gtfs.TripUpdate_StopTimeUpdate {
@@ -349,4 +361,108 @@ func logGTFSRTBusStats(stats gtfsRTBusStats) {
 		"matched", stats.matched,
 		"stop_time_updates", stats.stopTimeUpdates,
 	)
+}
+
+func scanBusArrivalKeys(ctx context.Context, rc *redis.Client) ([]string, error) {
+	var keys []string
+	var cursor uint64
+	for {
+		batch, next, err := rc.Scan(ctx, cursor, shared.BusRouteEtaPattern(""), _gtfsRTScanBatch).Result()
+		if err != nil {
+			return nil, _oops.Wrapf(err, "gtfs-rt: scan bus arrivals")
+		}
+		keys = append(keys, batch...)
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return keys, nil
+}
+
+func decodeBusArrivals(values []any, arrivals map[string]*models.Bus_RouteArrival) {
+	for _, value := range values {
+		if arrival := decodeBusArrival(value); arrival != nil {
+			arrivals[arrival.GetSubRouteUid()] = arrival
+		}
+	}
+}
+
+func decodeBusArrival(value any) *models.Bus_RouteArrival {
+	raw, ok := gtfsRTSnapshotText(value)
+	if !ok {
+		return nil
+	}
+	return decodeBusArrivalText(raw)
+}
+
+func gtfsRTSnapshotText(value any) (string, bool) {
+	raw, ok := value.(string)
+	return raw, ok && raw != ""
+}
+
+func decodeBusArrivalText(raw string) *models.Bus_RouteArrival {
+	arrival := &models.Bus_RouteArrival{}
+	if err := proto.Unmarshal([]byte(raw), arrival); err != nil {
+		// One undecodable snapshot costs its own subroute, not the tick.
+		return nil
+	}
+	if arrival.GetSubRouteUid() == "" {
+		return nil
+	}
+	return arrival
+}
+
+type gtfsRTVehicleKey struct {
+	key   gtfsRTRouteKey
+	plate string
+}
+
+func collectBusCalls(arrival *models.Bus_RouteArrival, offsets map[gtfsRTRouteKey]map[string]int64) (map[gtfsRTVehicleKey][]gtfsRTCall, map[gtfsRTVehicleKey][]int64) {
+
+	calls := make(map[gtfsRTVehicleKey][]gtfsRTCall, 64)
+	projections := make(map[gtfsRTVehicleKey][]int64, 64)
+	for _, stop := range arrival.GetStops() {
+		appendBusCall(arrival.GetSubRouteUid(), stop, offsets, calls, projections)
+	}
+
+	return calls, projections
+}
+
+func appendBusCall(uid string, stop *models.Bus_RouteEstimate, offsets map[gtfsRTRouteKey]map[string]int64, calls map[gtfsRTVehicleKey][]gtfsRTCall, projections map[gtfsRTVehicleKey][]int64) {
+	plate := stop.GetPlateNumb()
+	if !usableBusCall(stop) {
+		return
+	}
+	key := gtfsRTRouteKey{subRouteUID: uid, direction: stop.GetDirection()}
+	id := gtfsRTVehicleKey{key: key, plate: plate}
+	calls[id] = append(calls[id], gtfsRTCall{
+		stopUID:  stop.GetStopUid(),
+		sequence: stop.GetStopSequence(),
+		arrival:  stop.GetArrivalUnix(),
+	})
+	if offset, known := offsets[key][stop.GetStopUid()]; known {
+		projections[id] = append(projections[id], stop.GetArrivalUnix()-offset)
+	}
+}
+
+func usableBusCall(stop *models.Bus_RouteEstimate) bool {
+	return stop.GetPlateNumb() != "" && stop.GetArrivalUnix() > 0 && stop.GetStopUid() != ""
+}
+
+func nextBusDepartureCloser(projected, gap int64, scheduled []gtfsRTTrip, index int, midnight time.Time) bool {
+	if index+1 >= len(scheduled) {
+		return false
+	}
+	next := midnight.Unix() + int64(scheduled[index+1].departure)*60
+	return abs64(projected-next) < abs64(gap)
+}
+
+func sortGTFSRTDirections(keys []gtfsRTRouteKey) {
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].subRouteUID != keys[j].subRouteUID {
+			return keys[i].subRouteUID < keys[j].subRouteUID
+		}
+		return keys[i].direction < keys[j].direction
+	})
 }

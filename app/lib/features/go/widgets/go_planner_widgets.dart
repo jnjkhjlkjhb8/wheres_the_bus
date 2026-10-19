@@ -28,19 +28,23 @@ class _ODFields extends StatelessWidget {
   /// tap from the thing it broke.
   final VoidCallback? onEnableLocation;
 
+  Color _floatingColor(ColorScheme cs) => cs.brightness == Brightness.light
+      ? Colors.white
+      : cs.surfaceContainerHigh;
+
+  BoxDecoration _decoration(ColorScheme cs, Color card) => BoxDecoration(
+    color: floating ? card : cs.surfaceContainerLowest,
+    borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+    boxShadow: floating ? AppShadows.floating : null,
+    border: floating ? null : Border.all(color: cs.outlineVariant),
+  );
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final card = cs.brightness == Brightness.light
-        ? Colors.white
-        : cs.surfaceContainerHigh;
+    final card = _floatingColor(cs);
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: floating ? card : cs.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
-        boxShadow: floating ? AppShadows.floating : null,
-        border: floating ? null : Border.all(color: cs.outlineVariant),
-      ),
+      decoration: _decoration(cs, card),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
           AppTheme.space14,
@@ -150,16 +154,29 @@ class _OriginRow extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onEnableLocation;
 
+  String _label(AppI18n i18n) => switch ((place != null, status)) {
+    (true, _) => place!.name,
+    (false, OriginStatus.resolving) => i18n.goLocating,
+    _ => i18n.goChooseOrigin,
+  };
+
+  bool get _showLocationHint =>
+      place == null &&
+      status == OriginStatus.unavailable &&
+      onEnableLocation != null;
+
+  bool get _usesCurrentLocation => place?.isCurrentLocation ?? false;
+
+  Color _textColor(ColorScheme cs) =>
+      place != null ? cs.onSurface : cs.onSurfaceVariant;
+
+  FontWeight get _textWeight =>
+      place != null ? FontWeight.w600 : FontWeight.w400;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final filled = place != null;
-    final label = switch ((filled, status)) {
-      (true, _) => place!.name,
-      (false, OriginStatus.resolving) => AppI18n.of(context).goLocating,
-      _ => AppI18n.of(context).goChooseOrigin,
-    };
-    final denied = !filled && status == OriginStatus.unavailable;
+    final label = _label(AppI18n.of(context));
     return Pressable(
       onTap: onTap,
       semanticLabel: label,
@@ -177,16 +194,16 @@ class _OriginRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTextStyles.bodyLarge.copyWith(
-                      color: filled ? cs.onSurface : cs.onSurfaceVariant,
-                      fontWeight: filled ? FontWeight.w600 : FontWeight.w400,
+                      color: _textColor(cs),
+                      fontWeight: _textWeight,
                     ),
                   ),
-                  if (denied && onEnableLocation != null)
+                  if (_showLocationHint)
                     _LocationOffHint(onTap: onEnableLocation!),
                 ],
               ),
             ),
-            if (filled && place!.isCurrentLocation)
+            if (_usesCurrentLocation)
               Icon(
                 Icons.my_location_rounded,
                 size: 16,
@@ -249,10 +266,19 @@ class _PlannerHeader extends StatelessWidget {
   final VoidCallback onEditDest;
   final VoidCallback onSwap;
 
+  String _destinationLabel(AppI18n i18n) =>
+      dest?.name ?? i18n.goChooseDestination;
+
+  TextStyle _destinationStyle(ColorScheme cs) =>
+      AppTextStyles.bodyLarge.copyWith(
+        color: dest != null ? cs.onSurface : cs.onSurfaceVariant,
+        fontWeight: dest != null ? FontWeight.w600 : FontWeight.w400,
+      );
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final filled = dest != null;
+    final label = _destinationLabel(AppI18n.of(context));
     return _ODFields(
       origin: origin,
       onEditOrigin: onEditOrigin,
@@ -260,19 +286,14 @@ class _PlannerHeader extends StatelessWidget {
       floating: true,
       destination: Pressable(
         onTap: onEditDest,
-        semanticLabel: filled
-            ? dest!.name
-            : AppI18n.of(context).goChooseDestination,
+        semanticLabel: label,
         child: Align(
           alignment: Alignment.centerLeft,
           child: Text(
-            filled ? dest!.name : AppI18n.of(context).goChooseDestination,
+            label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTextStyles.bodyLarge.copyWith(
-              color: filled ? cs.onSurface : cs.onSurfaceVariant,
-              fontWeight: filled ? FontWeight.w600 : FontWeight.w400,
-            ),
+            style: _destinationStyle(cs),
           ),
         ),
       ),
@@ -380,15 +401,18 @@ class _SheetTitle extends StatelessWidget {
 
   final PlanState state;
 
+  String _subtitle(AppI18n i18n, int count) =>
+      state.status == PlanStatus.success && count > 0
+      ? i18n.suggestionCount(count)
+      : i18n.goPlanning;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final count = state.result?.routes.length ?? 0;
     // The departure time now lives in the header time chip, so the subtitle
     // just reports the result count.
-    final sub = state.status == PlanStatus.success && count > 0
-        ? AppI18n.of(context).suggestionCount(count)
-        : AppI18n.of(context).goPlanning;
+    final sub = _subtitle(AppI18n.of(context), count);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -482,90 +506,104 @@ class _PlannerBody extends StatelessWidget {
   final void Function(PlanRoute) onToggleSave;
   final void Function(String cursor) onPage;
 
+  VoidCallback? get _openLast =>
+      lastRoute == null ? null : () => onSelect(lastRoute!);
+
   @override
   Widget build(BuildContext context) {
-    // The empty/saved-routes state now lives on the plan-entry page; this body
-    // is only built once a destination exists, so it starts at the query state.
-    switch (state.status) {
-      case PlanStatus.initial:
-      case PlanStatus.loading:
-        return PlanWaitingPanel(
-          routeCount: routeCount,
-          lastRoute: lastRoute,
-          straightLineMeters: straightLineMeters,
-          onCancel: onCancel,
-          onOpenLast: lastRoute == null ? null : () => onSelect(lastRoute!),
-        );
-      case PlanStatus.failure:
-        final (title, hint) = switch (state.failure) {
-          PlanFailureKind.timeout => (
-            AppI18n.of(context).goPlannerSlowTitle,
-            AppI18n.of(context).goPlannerSlowBody,
-          ),
-          PlanFailureKind.noRoute => (
-            AppI18n.of(context).goNoRouteTitle,
-            AppI18n.of(context).goNoRouteBody,
-          ),
-          PlanFailureKind.unavailable => (
-            AppI18n.of(context).goUnavailableTitle,
-            AppI18n.of(context).goUnavailableBody,
-          ),
-          _ => (
-            AppI18n.of(context).goPlanFailedTitle,
-            AppI18n.of(context).goPlanFailedBody,
-          ),
-        };
-        return _GoMessage(
-          icon: state.failure == PlanFailureKind.noRoute
-              ? Icons.alt_route_rounded
-              : Icons.cloud_off_rounded,
-          title: title,
-          hint: hint,
-          actionLabel: AppI18n.of(context).commonRetryShort,
-          onAction: onRetry,
-        );
-      case PlanStatus.success:
-        final routes = state.result?.routes ?? const <PlanRoute>[];
-        if (routes.isEmpty) {
-          return _GoMessage(
-            icon: Icons.alt_route_rounded,
-            title: AppI18n.of(context).goNoRouteTitle,
-            hint: AppI18n.of(context).goNoRouteHint,
-          );
-        }
-        final earlier = state.result?.previousPageCursor ?? '';
-        final later = state.result?.nextPageCursor ?? '';
-        return ListView(
-          padding: const EdgeInsets.all(AppTheme.space16),
-          children: [
-            if (earlier.isNotEmpty) ...[
-              _PageAction(
-                label: AppI18n.of(context).goEarlierDepartures,
-                icon: Icons.keyboard_arrow_up_rounded,
-                onTap: () => onPage(earlier),
-              ),
-              const SizedBox(height: AppTheme.space10),
-            ],
-            for (final (i, route) in routes.indexed) ...[
-              if (i > 0) const SizedBox(height: AppTheme.space10),
-              RouteOptionCard(
-                route: route,
-                highlighted: i == 0,
-                isSaved: state.savedKeys.contains(route.savedKey),
-                onTap: () => onSelect(route),
-                onToggleSave: () => onToggleSave(route),
-              ),
-            ],
-            if (later.isNotEmpty) ...[
-              const SizedBox(height: AppTheme.space10),
-              _PageAction(
-                label: AppI18n.of(context).goLaterDepartures,
-                icon: Icons.keyboard_arrow_down_rounded,
-                onTap: () => onPage(later),
-              ),
-            ],
-          ],
-        );
-    }
+    // The entry page hosts the saved routes; this body represents a query.
+    if (state.status == PlanStatus.failure) return _failureView(context);
+    if (state.status == PlanStatus.success) return _successView(context);
+    return PlanWaitingPanel(
+      routeCount: routeCount,
+      lastRoute: lastRoute,
+      straightLineMeters: straightLineMeters,
+      onCancel: onCancel,
+      onOpenLast: _openLast,
+    );
   }
+
+  Widget _failureView(BuildContext context) {
+    final (title, hint) = switch (state.failure) {
+      PlanFailureKind.timeout => (
+        AppI18n.of(context).goPlannerSlowTitle,
+        AppI18n.of(context).goPlannerSlowBody,
+      ),
+      PlanFailureKind.noRoute => (
+        AppI18n.of(context).goNoRouteTitle,
+        AppI18n.of(context).goNoRouteBody,
+      ),
+      PlanFailureKind.unavailable => (
+        AppI18n.of(context).goUnavailableTitle,
+        AppI18n.of(context).goUnavailableBody,
+      ),
+      _ => (
+        AppI18n.of(context).goPlanFailedTitle,
+        AppI18n.of(context).goPlanFailedBody,
+      ),
+    };
+    return _GoMessage(
+      icon: state.failure == PlanFailureKind.noRoute
+          ? Icons.alt_route_rounded
+          : Icons.cloud_off_rounded,
+      title: title,
+      hint: hint,
+      action: (label: AppI18n.of(context).commonRetryShort, onTap: onRetry),
+    );
+  }
+
+  Widget _successView(BuildContext context) {
+    final routes = state.result?.routes ?? const <PlanRoute>[];
+    if (routes.isEmpty) {
+      return _GoMessage(
+        icon: Icons.alt_route_rounded,
+        title: AppI18n.of(context).goNoRouteTitle,
+        hint: AppI18n.of(context).goNoRouteHint,
+      );
+    }
+    return _routeList(context, routes);
+  }
+
+  String get _earlierCursor => state.result?.previousPageCursor ?? '';
+  String get _laterCursor => state.result?.nextPageCursor ?? '';
+
+  Widget _routeList(BuildContext context, List<PlanRoute> routes) {
+    final earlier = _earlierCursor;
+    final later = _laterCursor;
+    return ListView(
+      padding: const EdgeInsets.all(AppTheme.space16),
+      children: [
+        if (earlier.isNotEmpty) ...[
+          _PageAction(
+            label: AppI18n.of(context).goEarlierDepartures,
+            icon: Icons.keyboard_arrow_up_rounded,
+            onTap: () => onPage(earlier),
+          ),
+          const SizedBox(height: AppTheme.space10),
+        ],
+        ..._routeCards(routes),
+        if (later.isNotEmpty) ...[
+          const SizedBox(height: AppTheme.space10),
+          _PageAction(
+            label: AppI18n.of(context).goLaterDepartures,
+            icon: Icons.keyboard_arrow_down_rounded,
+            onTap: () => onPage(later),
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<Widget> _routeCards(List<PlanRoute> routes) => [
+    for (final (i, route) in routes.indexed) ...[
+      if (i > 0) const SizedBox(height: AppTheme.space10),
+      RouteOptionCard(
+        route: route,
+        highlighted: i == 0,
+        isSaved: state.savedKeys.contains(route.savedKey),
+        onTap: () => onSelect(route),
+        onToggleSave: () => onToggleSave(route),
+      ),
+    ],
+  ];
 }

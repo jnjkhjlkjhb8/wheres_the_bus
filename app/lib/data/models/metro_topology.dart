@@ -38,13 +38,7 @@ abstract final class MetroTopology {
     required String boardCode,
     required String terminalCode,
   }) {
-    if (boardCode.isEmpty || terminalCode.isEmpty) return const [];
-    final adjacency = _adjacency(line);
-    if (!adjacency.containsKey(boardCode) ||
-        !adjacency.containsKey(terminalCode)) {
-      return const [];
-    }
-    final path = _bfsPath(adjacency, boardCode, terminalCode);
+    final path = _bfsPath(_adjacency(line), boardCode, terminalCode);
     if (path.length < 2) return const [];
     return [
       for (final code in path.skip(1))
@@ -70,21 +64,18 @@ abstract final class MetroTopology {
             .toList()
           ..sort((a, b) => _numberOf(a).compareTo(_numberOf(b)));
 
-    final graph = <String, Set<String>>{};
-    void link(String a, String b) {
-      graph.putIfAbsent(a, () => <String>{}).add(b);
-      graph.putIfAbsent(b, () => <String>{}).add(a);
-    }
-
-    for (var i = 0; i < trunk.length; i++) {
-      graph.putIfAbsent(trunk[i], () => <String>{});
-      if (i > 0) link(trunk[i - 1], trunk[i]);
-    }
-    for (final branch in _branches[line] ?? const <_Branch>[]) {
-      var prev = branch.connect;
-      for (final node in branch.chain) {
-        link(prev, node);
-        prev = node;
+    final chains = [
+      trunk,
+      for (final branch in _branches[line] ?? const <_Branch>[])
+        [branch.connect, ...branch.chain],
+    ];
+    final graph = <String, Set<String>>{
+      for (final code in trunk) code: <String>{},
+    };
+    for (final chain in chains) {
+      for (var i = 1; i < chain.length; i++) {
+        (graph[chain[i - 1]] ??= <String>{}).add(chain[i]);
+        (graph[chain[i]] ??= <String>{}).add(chain[i - 1]);
       }
     }
     return graph;
@@ -103,13 +94,36 @@ abstract final class MetroTopology {
     while (queue.isNotEmpty) {
       final node = queue.removeAt(0);
       if (node == to) break;
-      for (final next in graph[node] ?? const <String>{}) {
-        if (visited.add(next)) {
-          previous[next] = node;
-          queue.add(next);
-        }
-      }
+      _enqueueNeighbors(
+        graph[node] ?? const {},
+        node,
+        visited,
+        previous,
+        queue,
+      );
     }
+    return _reconstructPath(previous, from, to);
+  }
+
+  static void _enqueueNeighbors(
+    Set<String> neighbors,
+    String node,
+    Set<String> visited,
+    Map<String, String> previous,
+    List<String> queue,
+  ) {
+    for (final next in neighbors) {
+      if (!visited.add(next)) continue;
+      previous[next] = node;
+      queue.add(next);
+    }
+  }
+
+  static List<String> _reconstructPath(
+    Map<String, String> previous,
+    String from,
+    String to,
+  ) {
     if (from != to && !previous.containsKey(to)) return const [];
     final path = <String>[to];
     var cursor = to;
@@ -132,8 +146,8 @@ abstract final class MetroTopology {
 
   /// Leading letters of a code, e.g. `BL12` → `BL`, `G03A` → `G`.
   static String _lineOf(String code) {
-    final match = RegExp('^([A-Za-z]+)').firstMatch(code);
-    return match?.group(1) ?? code;
+    final match = RegExp('^[A-Z]+').firstMatch(code);
+    return match?.group(0) ?? code;
   }
 
   /// The numeric run of a code, used to order the trunk. `R22A` yields 22, but

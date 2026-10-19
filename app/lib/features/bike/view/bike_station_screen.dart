@@ -10,6 +10,7 @@ import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
+import 'package:wheres_the_bus/data/repositories/bike_repository.dart';
 import 'package:wheres_the_bus/features/bike/bloc/bike_station_bloc.dart';
 import 'package:wheres_the_bus/features/bike/bloc/bike_station_state.dart';
 import 'package:wheres_the_bus/features/bike/view/bike_station_detail_view.dart';
@@ -30,9 +31,13 @@ class BikeStationScreen extends StatefulWidget {
     this.name,
     this.lat,
     this.lon,
+    this.repository,
+    this.reportError = CrashReporter.record,
     super.key,
   });
   final String stationUid;
+  final BikeRepository? repository;
+  final void Function(Object error, StackTrace stack) reportError;
 
   /// Caller-supplied station name and coordinates, when known. They seed the
   /// bloc so the title and camera are right on the first frame, with no
@@ -67,6 +72,7 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
     _sheetController = SheetController();
     _bloc = BikeStationBloc(
       stationUid: widget.stationUid,
+      repository: widget.repository,
       name: widget.name,
       lat: widget.lat,
       lon: widget.lon,
@@ -74,7 +80,7 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
     unawaited(_loadMarkerIcon());
     // With seeded coordinates the camera already opens on the station, so the
     // GPS fallback — and its permission/fix latency — is not needed at all.
-    if (_bloc.state.lat == 0 && _bloc.state.lon == 0) {
+    if (!_hasStation(_bloc.state)) {
       _initialPosition = LocationService.instance.currentPosition();
       unawaited(_moveToInitialLocation());
     }
@@ -99,39 +105,101 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
   Future<void> _moveToInitialLocation() async {
     final initial = _initialPosition;
     if (initial == null) return;
-    if (_bloc.state.lat != 0 || _bloc.state.lon != 0) return;
+    if (_hasStation(_bloc.state)) return;
+    await _panToGps(initial);
+  }
+
+  Future<void> _panToGps(Future<Position> fix) async {
     try {
-      final pos = await initial;
+      final position = await fix;
+      // Station coordinates can arrive while the initial GPS fix is pending.
+      if (!mounted || _hasStation(_bloc.state)) return;
       unawaited(
         _controller?.animateCamera(
-          CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
+          CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
         ),
       );
-    } on Object catch (e, s) {
-      CrashReporter.record(e, s);
+    } on Object catch (error, stack) {
+      widget.reportError(error, stack);
     }
   }
 
   /// User-triggered recenter: always requests a fresh fix, unlike the shared
   /// one-shot [_initialPosition] used during map init.
   Future<void> _moveToLocation() async {
-    if (mounted) setState(() => _locating = true);
+    _setLocating(true);
     try {
       final pos = await LocationService.instance.currentPosition();
+      // A GPS request may finish after the map has been disposed.
+      if (!mounted) return;
       unawaited(
         _controller?.animateCamera(
           CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
         ),
       );
     } on Object catch (e, s) {
-      CrashReporter.record(e, s);
+      widget.reportError(e, s);
     } finally {
-      if (mounted) setState(() => _locating = false);
+      _setLocating(false);
     }
+  }
+
+  void _setLocating(bool value) {
+    if (mounted) setState(() => _locating = value);
   }
 
   void _recenterMap() {
     unawaited(_moveToLocation());
+  }
+
+  bool _hasStation(BikeStationState state) => state.lat != 0 || state.lon != 0;
+
+  bool _stationArrived(BikeStationState previous, BikeStationState next) =>
+      !_hasStation(previous) && _hasStation(next);
+
+  bool _stationMoved(BikeStationState previous, BikeStationState next) =>
+      previous.lat != next.lat || previous.lon != next.lon;
+
+  void _moveToStation(BikeStationState state) {
+    unawaited(
+      _controller?.animateCamera(
+        CameraUpdate.newLatLng(LatLng(state.lat, state.lon)),
+      ),
+    );
+  }
+
+  Widget _stationMap(BuildContext context, BikeStationState state) {
+    final hasStation = _hasStation(state);
+    final target = hasStation ? LatLng(state.lat, state.lon) : _kDefaultPos;
+    return GoogleMap(
+      style: mapStyleOf(context),
+      initialCameraPosition: CameraPosition(target: target, zoom: 16),
+      markers: _stationMarkers(state, target),
+      myLocationEnabled: true,
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: false,
+      // Keep map gestures from dragging the enclosing sheet.
+      gestureRecognizers: const {
+        Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
+      },
+      onMapCreated: (controller) {
+        _controller = controller;
+        if (!hasStation) unawaited(_moveToInitialLocation());
+      },
+    );
+  }
+
+  Set<Marker> _stationMarkers(BikeStationState state, LatLng target) {
+    if (!_hasStation(state)) return {};
+    return {
+      Marker(
+        markerId: MarkerId(widget.stationUid),
+        position: target,
+        icon: _bikeIcon ?? BitmapDescriptor.defaultMarker,
+        anchor: const Offset(0.5, 0.5),
+        infoWindow: InfoWindow(title: state.name),
+      ),
+    };
   }
 
   @override
@@ -144,56 +212,10 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
           Positioned.fill(
             child: BlocConsumer<BikeStationBloc, BikeStationState>(
               bloc: _bloc,
-              listenWhen: (prev, next) =>
-                  (prev.lat == 0 && prev.lon == 0) &&
-                  (next.lat != 0 || next.lon != 0),
-              listener: (context, state) {
-                unawaited(
-                  _controller?.animateCamera(
-                    CameraUpdate.newLatLng(LatLng(state.lat, state.lon)),
-                  ),
-                );
-              },
-              buildWhen: (prev, next) =>
-                  prev.lat != next.lat || prev.lon != next.lon,
-              builder: (context, state) {
-                final hasStation = state.lat != 0 || state.lon != 0;
-                final target = hasStation
-                    ? LatLng(state.lat, state.lon)
-                    : _kDefaultPos;
-                return GoogleMap(
-                  style: mapStyleOf(context),
-                  initialCameraPosition: CameraPosition(
-                    target: target,
-                    zoom: 16,
-                  ),
-                  markers: {
-                    if (hasStation)
-                      Marker(
-                        markerId: MarkerId(widget.stationUid),
-                        position: target,
-                        icon: _bikeIcon ?? BitmapDescriptor.defaultMarker,
-                        anchor: const Offset(0.5, 0.5),
-                        infoWindow: InfoWindow(title: state.name),
-                      ),
-                  },
-                  myLocationEnabled: true,
-                  myLocationButtonEnabled: false,
-                  zoomControlsEnabled: false,
-                  // Keep map gestures from dragging the enclosing sheet.
-                  gestureRecognizers: const {
-                    Factory<OneSequenceGestureRecognizer>(
-                      EagerGestureRecognizer.new,
-                    ),
-                  },
-                  onMapCreated: (c) {
-                    _controller = c;
-                    if (!hasStation) {
-                      unawaited(_moveToInitialLocation());
-                    }
-                  },
-                );
-              },
+              listenWhen: _stationArrived,
+              listener: (_, state) => _moveToStation(state),
+              buildWhen: _stationMoved,
+              builder: _stationMap,
             ),
           ),
           const FloatingAppBar(),

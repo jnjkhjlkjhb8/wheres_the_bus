@@ -15,7 +15,8 @@ enum MrtTrackStatus {
 
   static MrtTrackStatus fromWire(String value) => switch (value) {
     'tracking' => MrtTrackStatus.tracking,
-    'lead_fired' => MrtTrackStatus.leadFired,
+    // Older cached sessions used the enum name; keep those reminders live.
+    'lead_fired' || 'leadFired' => MrtTrackStatus.leadFired,
     'arrived' => MrtTrackStatus.arrived,
     'lost' => MrtTrackStatus.lost,
     'stale' => MrtTrackStatus.stale,
@@ -111,7 +112,7 @@ class MrtTrackSession extends Equatable {
     'nextStationId': nextStationId,
     'nextStationName': nextStationName,
     'progress': progress,
-    'status': status.name,
+    'status': status == MrtTrackStatus.leadFired ? 'lead_fired' : status.name,
     'leadStops': leadStops,
     'system': system,
   };

@@ -2,18 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 
+const _mrtLineColors = <String, Color>{
+  'BR': AppTheme.mrtBR,
+  'BL': AppTheme.mrtBL,
+  'R': AppTheme.mrtR,
+  'G': AppTheme.mrtG,
+  'O': AppTheme.mrtO,
+  'Y': AppTheme.mrtY,
+  'A': AppTheme.mrtAM,
+  'C': AppTheme.mrtKG,
+  'KO': AppTheme.mrtKO,
+  'KR': AppTheme.mrtKR,
+};
+
 Color mrtLineColor(String lineCode, ColorScheme cs) {
   final code = lineCode.toUpperCase();
-  if (code.startsWith('BR')) return AppTheme.mrtBR;
-  if (code.startsWith('BL')) return AppTheme.mrtBL;
-  if (code.startsWith('R')) return AppTheme.mrtR;
-  if (code.startsWith('G')) return AppTheme.mrtG;
-  if (code.startsWith('O')) return AppTheme.mrtO;
-  if (code.startsWith('Y')) return AppTheme.mrtY;
-  if (code.startsWith('A')) return AppTheme.mrtAM;
-  if (code.startsWith('C')) return AppTheme.mrtKG;
-  if (code.startsWith('KO')) return AppTheme.mrtKO;
-  if (code.startsWith('KR')) return AppTheme.mrtKR;
+  for (final entry in _mrtLineColors.entries) {
+    if (code.startsWith(entry.key)) return entry.value;
+  }
   return cs.onSurfaceVariant;
 }
 

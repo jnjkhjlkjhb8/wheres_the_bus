@@ -21,13 +21,8 @@ type busStaticMapCacheEntry struct {
 }
 
 func CachedStaticMapFrom(cache *sync.Map, prefix, generation string, now time.Time) ([]busmodel.StationMap, bool) {
-	v, ok := cache.Load(prefix)
+	entry, ok := staticMapEntry(cache, prefix, now)
 	if !ok {
-		return nil, false
-	}
-	entry, ok := v.(busStaticMapCacheEntry)
-	if !ok || now.Sub(entry.loadedAt) >= _busStaticMapCacheTTL {
-		cache.Delete(prefix)
 		return nil, false
 	}
 	// A non-empty durable generation is authoritative. During a Redis outage
@@ -38,6 +33,19 @@ func CachedStaticMapFrom(cache *sync.Map, prefix, generation string, now time.Ti
 		return nil, false
 	}
 	return entry.stops, true
+}
+
+func staticMapEntry(cache *sync.Map, prefix string, now time.Time) (busStaticMapCacheEntry, bool) {
+	v, ok := cache.Load(prefix)
+	if !ok {
+		return busStaticMapCacheEntry{}, false
+	}
+	entry, ok := v.(busStaticMapCacheEntry)
+	if !ok || now.Sub(entry.loadedAt) >= _busStaticMapCacheTTL {
+		cache.Delete(prefix)
+		return busStaticMapCacheEntry{}, false
+	}
+	return entry, true
 }
 
 // storeBusStaticMap caches a city prefix's station map for reuse by later ETA ticks.
@@ -81,10 +89,8 @@ type stopOffsetCacheEntry struct {
 func cachedStopOffsets(cache *sync.Map, uids []string, now time.Time, out map[StopOffsetKey]int) []string {
 	var missing []string
 	for _, uid := range uids {
-		v, ok := cache.Load(uid)
-		entry, typed := v.(stopOffsetCacheEntry)
-		if !ok || !typed || now.Sub(entry.loadedAt) >= _stopOffsetCacheTTL {
-			cache.Delete(uid)
+		entry, ok := stopOffsetsFromCache(cache, uid, now)
+		if !ok {
 			missing = append(missing, uid)
 			continue
 		}
@@ -93,6 +99,16 @@ func cachedStopOffsets(cache *sync.Map, uids []string, now time.Time, out map[St
 		}
 	}
 	return missing
+}
+
+func stopOffsetsFromCache(cache *sync.Map, uid string, now time.Time) (stopOffsetCacheEntry, bool) {
+	v, ok := cache.Load(uid)
+	entry, typed := v.(stopOffsetCacheEntry)
+	if !ok || !typed || now.Sub(entry.loadedAt) >= _stopOffsetCacheTTL {
+		cache.Delete(uid)
+		return stopOffsetCacheEntry{}, false
+	}
+	return entry, true
 }
 
 func storeStopOffsets(cache *sync.Map, fetched map[string][]stopOffset, now time.Time) {

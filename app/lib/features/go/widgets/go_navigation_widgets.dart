@@ -76,17 +76,8 @@ class _NavHeader extends StatelessWidget {
     final walk = isWalk(section);
     // Turn-by-turn takes over whenever OSRM resolved steps for this walk;
     // otherwise fall back to the coarse 「步行前往X」 title layout.
-    final steps = section.walkSteps;
-    final hasSteps = walk && steps.isNotEmpty;
-    final index = hasSteps ? walkStepIndex.clamp(0, steps.length - 1) : 0;
-    final step = hasSteps ? steps[index] : null;
-    final announced = hasSteps
-        ? steps[(index + 1).clamp(0, steps.length - 1)]
-        : null;
-    final arrived = hasSteps && index == steps.length - 1;
-    final nextStep = hasSteps && index + 2 < steps.length
-        ? steps[index + 2]
-        : null;
+    final progress = _walkProgress(section, walkStepIndex);
+    final (step, announced, nextStep, index, arrived) = progress;
 
     return Container(
       // Clip so the tinted 「接著」 strip honours the card's bottom corners.
@@ -108,15 +99,16 @@ class _NavHeader extends StatelessWidget {
                 _leading(context, section, announced, reduce),
                 const SizedBox(width: AppTheme.space12),
                 Expanded(
-                  child: step != null
-                      ? _stepPrimary(
-                          context,
-                          announced!,
-                          arrived ? null : step.distanceMeters,
-                          index,
-                          reduce,
-                        )
-                      : _titlePrimary(context, section, walk),
+                  child: _primary(
+                    context,
+                    section,
+                    walk,
+                    step,
+                    announced,
+                    arrived,
+                    index,
+                    reduce,
+                  ),
                 ),
                 BlocBuilder<JourneySessionBloc, JourneySessionState>(
                   buildWhen: (p, c) => p.phase != c.phase || p.eta != c.eta,
@@ -145,11 +137,46 @@ class _NavHeader extends StatelessWidget {
             _NextStrip(
               step: nextStep,
               // Distance to reach that maneuver = the announced step's length.
-              distanceMeters: steps[index + 1].distanceMeters,
+              distanceMeters: announced!.distanceMeters,
               reduce: reduce,
             ),
         ],
       ),
+    );
+  }
+
+  Widget _primary(
+    BuildContext context,
+    PlanSection section,
+    bool walk,
+    PlanWalkStep? step,
+    PlanWalkStep? announced,
+    bool arrived,
+    int index,
+    bool reduce,
+  ) => step != null
+      ? _stepPrimary(
+          context,
+          announced!,
+          arrived ? null : step.distanceMeters,
+          index,
+          reduce,
+        )
+      : _titlePrimary(context, section, walk);
+
+  (PlanWalkStep?, PlanWalkStep?, PlanWalkStep?, int, bool) _walkProgress(
+    PlanSection section,
+    int stepIndex,
+  ) {
+    final steps = section.walkSteps;
+    if (!isWalk(section) || steps.isEmpty) return (null, null, null, 0, false);
+    final index = stepIndex.clamp(0, steps.length - 1);
+    return (
+      steps[index],
+      steps[(index + 1).clamp(0, steps.length - 1)],
+      index + 2 < steps.length ? steps[index + 2] : null,
+      index,
+      index == steps.length - 1,
     );
   }
 
@@ -320,34 +347,7 @@ class _NavHeader extends StatelessWidget {
     bool reduce,
   ) {
     final cs = Theme.of(context).colorScheme;
-    final waiting = js.phase == JourneyPhase.waiting;
-    String value;
-    String label;
-    // Only the live bus countdown claims the biggest weight; clocks stay 24px.
-    var big = false;
-    if (waiting &&
-        _isBusLeg(section) &&
-        section.identity.supported &&
-        js.eta != null) {
-      // Ceil seconds to minutes (project rule); a due bus reads 進站中.
-      final secs = js.eta!.inSeconds;
-      value = secs <= 0
-          ? AppI18n.of(context).etaArriving
-          : AppI18n.of(context).minutesValue((secs / 60).ceil());
-      label = AppI18n.of(context).goBusArriving;
-      big = true;
-    } else if (waiting && _isRailLeg(section)) {
-      value = formatClock(section.departure.time);
-      label = AppI18n.of(context).busDeparture;
-    } else {
-      // The active section's own arrival time; legs missing a time (e.g. a
-      // trailing walk TDX left blank) fall back to the whole-route arrival.
-      final sectionArrival = formatClock(section.arrival.time);
-      value = sectionArrival.isNotEmpty
-          ? sectionArrival
-          : formatClock(route.endTime);
-      label = AppI18n.of(context).goExpectedArrival;
-    }
+    final (value, label, big) = _trailingValue(context, section, js);
     if (value.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(left: AppTheme.space12),
@@ -360,12 +360,7 @@ class _NavHeader extends StatelessWidget {
           children: [
             Text(
               value,
-              style: AppTextStyles.timeValue(
-                size: big ? 28 : 24,
-                weight: FontWeight.w700,
-                height: 1.1,
-                color: cs.onSurface,
-              ),
+              style: _trailingStyle(cs, big),
             ),
             Text(
               label,
@@ -378,6 +373,59 @@ class _NavHeader extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  TextStyle _trailingStyle(ColorScheme cs, bool big) => AppTextStyles.timeValue(
+    size: big ? 28 : 24,
+    weight: FontWeight.w700,
+    height: 1.1,
+    color: cs.onSurface,
+  );
+  bool _supportedBus(PlanSection section) =>
+      _isBusLeg(section) && section.identity.supported;
+
+  bool _liveBusCountdown(PlanSection section, JourneySessionState js) =>
+      js.phase == JourneyPhase.waiting &&
+      _supportedBus(section) &&
+      js.eta != null;
+
+  bool _waitingRail(PlanSection section, bool waiting) =>
+      waiting && _isRailLeg(section);
+  String _busCountdown(BuildContext context, int secs) => secs <= 0
+      ? AppI18n.of(context).etaArriving
+      : AppI18n.of(context).minutesValue((secs / 60).ceil());
+  String _plannedArrival(PlanSection section) {
+    final sectionArrival = formatClock(section.arrival.time);
+    return sectionArrival.isNotEmpty
+        ? sectionArrival
+        : formatClock(route.endTime);
+  }
+
+  (String, String, bool) _trailingValue(
+    BuildContext context,
+    PlanSection section,
+    JourneySessionState js,
+  ) {
+    final waiting = js.phase == JourneyPhase.waiting;
+    String value;
+    String label;
+    // Only the live bus countdown claims the biggest weight; clocks stay 24px.
+    var big = false;
+    if (_liveBusCountdown(section, js)) {
+      // Ceil seconds to minutes (project rule); a due bus reads 進站中.
+      value = _busCountdown(context, js.eta!.inSeconds);
+      label = AppI18n.of(context).goBusArriving;
+      big = true;
+    } else if (_waitingRail(section, waiting)) {
+      value = formatClock(section.departure.time);
+      label = AppI18n.of(context).busDeparture;
+    } else {
+      // The active section's own arrival time; legs missing a time (e.g. a
+      // trailing walk TDX left blank) fall back to the whole-route arrival.
+      value = _plannedArrival(section);
+      label = AppI18n.of(context).goExpectedArrival;
+    }
+    return (value, label, big);
   }
 }
 

@@ -31,6 +31,10 @@ func ComputeSegmentTimesFromEstimates(ctx context.Context, db *pgxpool.Pool, his
 		zap.S().Warnw("skipped", "component", "segment_time_eta", "reason", "history_disabled")
 		return nil
 	}
+	return computeObservedSegmentTimes(ctx, db, hist)
+}
+
+func computeObservedSegmentTimes(ctx context.Context, db *pgxpool.Pool, hist Reader) error {
 	zap.S().Infow("start", "component", "segment_time_eta")
 	started := time.Now()
 	segs, err := hist.segmentsByEstimate(ctx, _segmentDiffWindow)

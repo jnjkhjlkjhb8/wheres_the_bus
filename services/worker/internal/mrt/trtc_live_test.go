@@ -309,3 +309,55 @@ func (s *captureLiveSink) setFor(key string) *setWrite {
 	}
 	return nil
 }
+
+func TestTrtcWenhuCongestionMatchesNextStationAndDirection(t *testing.T) {
+	names := map[string][]string{"起點": {"BR17"}, "終點": {"BR24"}}
+	tracks := []TrtcTrack{{StationName: "起點站", DestinationName: "終點站", CountDown: "00:30"}}
+	weights := []trtcWeightBR{
+		{StationID: "invalid", DU: "上行", CN1: "ignored"},
+		{StationID: "BR16", DU: "下行", CN1: "opposite"},
+		{StationID: "BR16", DU: "上行", CN1: "7,26", Car1: "1", Car2: "2", Car3: "3", Car4: "4"},
+	}
+	sink := &captureLiveSink{}
+	if err := TrtcPublish(context.Background(), sink, names, nil, time.Now(), tracks, nil, weights); err != nil {
+		t.Fatal(err)
+	}
+	write := sink.setFor(shared.MrtLiveKey("TRTC", "BR17", "BR", "BR24"))
+	if write == nil {
+		t.Fatalf("missing Wenhu arrival: %v", setKeys(sink))
+	}
+	var got models.MrtLive
+	if err := proto.Unmarshal(write.value, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EstimateTime != 30 || got.CN1 != "7,26" || got.Weight == nil || got.Weight.Cart1L != "1" || got.Weight.Cart2L != "2" || got.Weight.Cart3L != "3" || got.Weight.Cart4L != "4" || got.Weight.Cart5L != "" {
+		t.Fatalf("Wenhu payload=%+v", &got)
+	}
+	sink = &captureLiveSink{}
+	if err := TrtcPublish(context.Background(), sink, names, nil, time.Now(), tracks, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := proto.Unmarshal(sink.sets[0].value, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Weight != nil || got.CN1 != "" {
+		t.Fatalf("unpaired Wenhu congestion=%+v", &got)
+	}
+}
+
+func TestTrtcInvalidAndOutsideServiceArrivalsDoNotPublish(t *testing.T) {
+	sink := &captureLiveSink{}
+	tracks := []TrtcTrack{
+		{StationName: "unknown", DestinationName: "南港展覽館站", CountDown: "01:00"},
+		{StationName: "台北車站", DestinationName: "南港展覽館站", CountDown: "01:00"},
+		{StationName: "台北車站", DestinationName: "頂埔站", CountDown: "資料擷取中"},
+	}
+	windows := map[string][]ServiceWindow{WindowKey("TRTC", "BL12", "BL", "BL23"): {{first: 360, last: 1440}}}
+	now := time.Date(2026, 1, 1, 3, 0, 0, 0, pipeline.Taipei)
+	if err := TrtcPublish(context.Background(), sink, _trtcTestNames, windows, now, tracks, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.sets) != 0 || len(sink.publishs) != 0 || len(sink.owned[shared.LiveOwnedKeysKey("mrt", "TRTC")]) != 0 {
+		t.Fatalf("filtered publication: sets=%v publishes=%v owned=%v", sink.sets, sink.publishs, sink.owned)
+	}
+}

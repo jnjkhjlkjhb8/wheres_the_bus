@@ -15,22 +15,15 @@ final RegExp _mapDigits = RegExp(r'\d+');
 /// Interchange ids combine codes (e.g. 'BL15_BR10'); the first wins.
 Color metroLineColor(String id) {
   final code = id.split('_').first.replaceAll(_mapDigits, '');
-  switch (code) {
-    case 'BL':
-      return AppTheme.mrtBL;
-    case 'R':
-      return AppTheme.mrtR;
-    case 'G':
-      return AppTheme.mrtG;
-    case 'O':
-      return AppTheme.mrtO;
-    case 'BR':
-      return AppTheme.mrtBR;
-    case 'Y':
-      return AppTheme.mrtY;
-    default:
-      return AppTheme.mrtBL;
-  }
+  return switch (code) {
+    'BL' => AppTheme.mrtBL,
+    'R' => AppTheme.mrtR,
+    'G' => AppTheme.mrtG,
+    'O' => AppTheme.mrtO,
+    'BR' => AppTheme.mrtBR,
+    'Y' => AppTheme.mrtY,
+    _ => AppTheme.mrtBL,
+  };
 }
 
 class MetroSvgMap extends StatefulWidget {
@@ -120,6 +113,39 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
     super.dispose();
   }
 
+  MetroMapStation? get _selectedStation {
+    final id = widget.selectedStationId;
+    if (id == null) return null;
+    return metroMapStations.firstWhere(
+      (station) => station.id == id,
+      orElse: () => metroMapStations.first,
+    );
+  }
+
+  int _stationDelay(MetroMapStation station, MetroMapStation? selected) {
+    if (selected == null) return 0;
+    final dx = station.x - selected.x;
+    final dy = station.y - selected.y;
+    final distance = math.sqrt(dx * dx + dy * dy);
+    return (distance * 0.25).toInt().clamp(0, 600);
+  }
+
+  bool _showPickRing(String id, Set<String> ahead) =>
+      ahead.contains(id) || id == widget.pickBoardId;
+
+  Color _pickRingColor(String id, ColorScheme scheme) =>
+      id == widget.pickedStationId || id == widget.pickBoardId
+      ? scheme.onSurface
+      : metroLineColor(id);
+
+  List<MetroMapStation> get _hitStations {
+    final ahead = widget.pickAheadIds;
+    if (ahead == null) return metroMapStations;
+    return metroMapStations
+        .where((station) => ahead.contains(station.id))
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
@@ -139,20 +165,7 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
       final cs = Theme.of(context).colorScheme;
       final selectedStationId = widget.selectedStationId;
 
-      final selectedStation = selectedStationId != null
-          ? metroMapStations.firstWhere(
-              (st) => st.id == selectedStationId,
-              orElse: () => metroMapStations.first,
-            )
-          : null;
-
-      int getDelayMs(MetroMapStation station) {
-        if (selectedStation == null) return 0;
-        final dx = station.x - selectedStation.x;
-        final dy = station.y - selectedStation.y;
-        final dist = math.sqrt(dx * dx + dy * dy);
-        return (dist * 0.25).toInt().clamp(0, 600);
-      }
+      final selectedStation = _selectedStation;
 
       return InteractiveViewer(
         transformationController: _transform,
@@ -192,16 +205,11 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
                   ),
                 if (widget.pickAheadIds case final ahead?)
                   for (final station in metroMapStations)
-                    if (ahead.contains(station.id) ||
-                        station.id == widget.pickBoardId)
+                    if (_showPickRing(station.id, ahead))
                       _PickRing(
                         x: station.x * s,
                         y: station.y * s,
-                        color:
-                            station.id == widget.pickedStationId ||
-                                station.id == widget.pickBoardId
-                            ? cs.onSurface
-                            : metroLineColor(station.id),
+                        color: _pickRingColor(station.id, cs),
                         doubleRing: station.id == widget.pickedStationId,
                         haloColor: cs.surface,
                       ),
@@ -219,11 +227,7 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
                   // In pick-mode only the stations this train still calls at
                   // answer a tap; everything else is scenery until the pick
                   // ends.
-                  stations: widget.pickAheadIds == null
-                      ? metroMapStations
-                      : metroMapStations
-                            .where((st) => widget.pickAheadIds!.contains(st.id))
-                            .toList(),
+                  stations: _hitStations,
                   scale: s,
                   onStationTap: widget.onStationTap,
                   semanticsReady: _semanticsReady,
@@ -238,7 +242,7 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
                         child: _AnimatedLabel(
                           key: ValueKey(station.id),
                           label: label,
-                          delayMs: getDelayMs(station),
+                          delayMs: _stationDelay(station, selectedStation),
                           animate: widget.animate,
                           isSelected: station.id == selectedStationId,
                           color: isDark ? Colors.white : Colors.black,

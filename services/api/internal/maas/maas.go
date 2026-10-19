@@ -83,14 +83,22 @@ func redisContextError(ctx context.Context, err error) error {
 	if contextErr := ctx.Err(); contextErr != nil {
 		return contextErr
 	}
-	deadline, hasDeadline := ctx.Deadline()
-	var timeoutError net.Error
-	if hasDeadline && !time.Now().Before(deadline) && errors.As(err, &timeoutError) && timeoutError.Timeout() {
+	if expiredRedisDeadline(ctx, err) {
 		// The socket deadline and context deadline are the same instant. The
 		// socket can wake just before the context timer goroutine records Err().
 		return context.DeadlineExceeded
 	}
 	return err
+}
+
+func expiredRedisDeadline(ctx context.Context, err error) bool {
+	deadline, hasDeadline := ctx.Deadline()
+	return hasDeadline && !time.Now().Before(deadline) && networkTimeout(err)
+}
+
+func networkTimeout(err error) bool {
+	var timeoutError net.Error
+	return errors.As(err, &timeoutError) && timeoutError.Timeout()
 }
 
 func (c *RedisMaasCache) Get(ctx context.Context, key string) ([]byte, error) {
@@ -127,11 +135,15 @@ const _maasCacheTTL = 90 * time.Second
 
 func shouldRetryMaas(resp *resty.Response, err error) bool {
 	if err != nil {
-		return !errors.Is(err, context.Canceled) &&
-			!errors.Is(err, context.DeadlineExceeded) &&
-			!shared.IsTDXAuthError(err)
+		return retryableMaasError(err)
 	}
 	return resp != nil && (resp.StatusCode() == http.StatusTooManyRequests || resp.StatusCode() == http.StatusServiceUnavailable)
+}
+
+func retryableMaasError(err error) bool {
+	return !errors.Is(err, context.Canceled) &&
+		!errors.Is(err, context.DeadlineExceeded) &&
+		!shared.IsTDXAuthError(err)
 }
 
 func NewMaasServerWithCache(cache MaasCache, db maasDB, tdx *shared.TDXClient, workConfig maasSharedWorkConfig) *MaasServer {
@@ -248,25 +260,33 @@ type tdxAPIResponse struct {
 func (s *MaasServer) Plan(ctx context.Context, req *pb.MaasPlanRequest) (*pb.MaasPlanResponse, error) {
 	cacheKey := maasKey(req)
 	result := s.sfGroup.DoChan(cacheKey, func() (any, error) {
-		if !s.beginSharedFlight() {
-			return nil, errMaasServerClosing
-		}
-		defer s.endSharedFlight()
-		return s.runSharedPlan(cacheKey, req)
+		return s.sharedPlan(cacheKey, req)
 	})
 	select {
 	case <-ctx.Done():
 		return nil, status.FromContextError(ctx.Err()).Err()
 	case completed := <-result:
-		if completed.Err != nil {
-			return nil, maasPlanError(completed.Err)
-		}
-		resp, ok := completed.Val.(*pb.MaasPlanResponse)
-		if !ok {
-			return nil, status.Error(codes.Internal, "unexpected plan result type")
-		}
-		return resp, nil
+		return completedPlan(completed)
 	}
+}
+
+func (s *MaasServer) sharedPlan(cacheKey string, req *pb.MaasPlanRequest) (*pb.MaasPlanResponse, error) {
+	if !s.beginSharedFlight() {
+		return nil, errMaasServerClosing
+	}
+	defer s.endSharedFlight()
+	return s.runSharedPlan(cacheKey, req)
+}
+
+func completedPlan(completed singleflight.Result) (*pb.MaasPlanResponse, error) {
+	if completed.Err != nil {
+		return nil, maasPlanError(completed.Err)
+	}
+	resp, ok := completed.Val.(*pb.MaasPlanResponse)
+	if !ok {
+		return nil, status.Error(codes.Internal, "unexpected plan result type")
+	}
+	return resp, nil
 }
 
 // maasPlanError maps a planning failure onto the gRPC status both plan entry
@@ -278,6 +298,10 @@ func maasPlanError(err error) error {
 		return status.Error(codes.NotFound, "no route for this origin/destination")
 	}
 	zap.S().Errorw("plan error", "component", "maas", "err", err)
+	return unavailablePlanError(err)
+}
+
+func unavailablePlanError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return status.FromContextError(err).Err()
 	}
@@ -300,24 +324,28 @@ func (s *MaasServer) PlanStream(req *pb.MaasPlanRequest, stream pb.MaasService_P
 	defer cancel()
 	defer context.AfterFunc(stream.Context(), cancel)()
 
-	select {
-	case s.workSlots <- struct{}{}:
-		defer func() { <-s.workSlots }()
-	default:
-		return status.Error(codes.ResourceExhausted, "MaaS concurrency limit exceeded")
+	return s.streamPlan(workCtx, req, stream)
+}
+
+func (s *MaasServer) streamPlan(workCtx context.Context, req *pb.MaasPlanRequest, stream pb.MaasService_PlanStreamServer) error {
+	release, err := s.acquireWorkSlot()
+	if err != nil {
+		return err
 	}
+	defer release()
 
 	cacheKey := maasKey(req)
-	if cached, err := s.cache.Get(workCtx, cacheKey); err == nil {
-		var response pb.MaasPlanResponse
-		if err := proto.Unmarshal(cached, &response); err == nil {
-			return stream.Send(&pb.MaasPlanUpdate{Plan: &response, Complete: true})
-		}
+	if response, ok := s.cachedPlan(workCtx, cacheKey); ok {
+		return stream.Send(&pb.MaasPlanUpdate{Plan: response, Complete: true})
 	}
 	if err := workCtx.Err(); err != nil {
 		return status.FromContextError(err).Err()
 	}
 
+	return s.streamFreshPlan(workCtx, req, cacheKey, stream)
+}
+
+func (s *MaasServer) streamFreshPlan(workCtx context.Context, req *pb.MaasPlanRequest, cacheKey string, stream pb.MaasService_PlanStreamServer) error {
 	useMotis := s.useMotis()
 	plan, err := s.planUpstream(workCtx, req, useMotis)
 	if err != nil {
@@ -344,6 +372,10 @@ func (s *MaasServer) cachePlan(ctx context.Context, cacheKey string, response *p
 	if err != nil {
 		return
 	}
+	s.cacheEncodedPlan(ctx, cacheKey, encoded)
+}
+
+func (s *MaasServer) cacheEncodedPlan(ctx context.Context, cacheKey string, encoded []byte) {
 	if err := s.cache.Set(ctx, cacheKey, encoded, _maasCacheTTL); err != nil && ctx.Err() == nil {
 		zap.S().Errorw("cache set failed", "component", "maas", "err", err)
 	}
@@ -355,53 +387,87 @@ func (s *MaasServer) runSharedPlan(cacheKey string, req *pb.MaasPlanRequest) (*p
 	// workTimeout while shutdown waits on sharedWork.
 	workCtx, cancel := context.WithTimeout(s.lifecycleCtx, s.workTimeout)
 	defer cancel()
-	select {
-	case s.workSlots <- struct{}{}:
-		defer func() { <-s.workSlots }()
-	default:
-		return nil, status.Error(codes.ResourceExhausted, "MaaS concurrency limit exceeded")
+	release, err := s.acquireWorkSlot()
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 
-	cached, err := s.cache.Get(workCtx, cacheKey)
-	if err == nil {
-		var response pb.MaasPlanResponse
-		if err := proto.Unmarshal(cached, &response); err == nil {
-			return &response, nil
-		}
+	if response, ok := s.cachedPlan(workCtx, cacheKey); ok {
+		return response, nil
 	}
 	if err := workCtx.Err(); err != nil {
 		return nil, err
 	}
 
+	return s.freshSharedPlan(workCtx, cacheKey, req)
+}
+
+func (s *MaasServer) freshSharedPlan(workCtx context.Context, cacheKey string, req *pb.MaasPlanRequest) (*pb.MaasPlanResponse, error) {
 	response, err := s.get(workCtx, req)
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := proto.Marshal(response)
-	if err != nil {
-		return response, nil
+	return s.persistSharedPlan(workCtx, cacheKey, response)
+}
+
+func (s *MaasServer) acquireWorkSlot() (func(), error) {
+	select {
+	case s.workSlots <- struct{}{}:
+		return func() { <-s.workSlots }, nil
+	default:
+		return nil, status.Error(codes.ResourceExhausted, "MaaS concurrency limit exceeded")
 	}
-	if err := s.cache.Set(workCtx, cacheKey, encoded, _maasCacheTTL); err != nil {
-		if contextErr := workCtx.Err(); contextErr != nil {
-			return nil, contextErr
+}
+
+func (s *MaasServer) persistSharedPlan(ctx context.Context, cacheKey string, response *pb.MaasPlanResponse) (*pb.MaasPlanResponse, error) {
+	if encoded, err := proto.Marshal(response); err == nil {
+		if err := s.persistEncodedPlan(ctx, cacheKey, encoded); err != nil {
+			return nil, err
+		}
+	}
+	return response, nil
+}
+
+func (s *MaasServer) persistEncodedPlan(ctx context.Context, cacheKey string, encoded []byte) error {
+	if err := s.cache.Set(ctx, cacheKey, encoded, _maasCacheTTL); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
 		}
 		zap.S().Errorw("cache set failed", "component", "maas", "err", err)
 	}
-	return response, nil
+	return nil
+}
+
+func (s *MaasServer) cachedPlan(ctx context.Context, key string) (*pb.MaasPlanResponse, bool) {
+	cached, err := s.cache.Get(ctx, key)
+	if err != nil {
+		return nil, false
+	}
+	var response pb.MaasPlanResponse
+	if err := proto.Unmarshal(cached, &response); err != nil {
+		return nil, false
+	}
+	return &response, true
 }
 
 func maasTimeParam(date, timeStr string, arriveBy bool, now time.Time) (depart, arrival string) {
 	if len(timeStr) == len("HH:mm") {
 		timeStr += ":00"
 	}
-	const layout = "2006-01-02T15:04:05"
 	value := fmt.Sprintf("%sT%s", date, timeStr)
 	if !arriveBy {
-		if t, err := time.ParseInLocation(layout, value, time.Local); err == nil && !t.After(now) {
-			value = now.Add(time.Minute).Format(layout)
-		}
+		value = futureDeparture(value, now)
 	}
 	return value, value
+}
+
+func futureDeparture(value string, now time.Time) string {
+	const layout = "2006-01-02T15:04:05"
+	if t, err := time.ParseInLocation(layout, value, time.Local); err == nil && !t.After(now) {
+		return now.Add(time.Minute).Format(layout)
+	}
+	return value
 }
 
 func (s *MaasServer) get(ctx context.Context, req *pb.MaasPlanRequest) (*pb.MaasPlanResponse, error) {
@@ -474,49 +540,8 @@ func (s *MaasServer) rank(out *pb.MaasPlanResponse, req *pb.MaasPlanRequest, use
 // fetch is the upstream TDX MaaS call on its own, so PlanStream can run the two
 // conversion stages around it instead of taking the whole thing as one step.
 func (s *MaasServer) fetch(ctx context.Context, req *pb.MaasPlanRequest) (*tdxAPIResponse, error) {
-	gc := req.Gc
-	if gc < 0 || gc > 1 {
-		gc = 0.0
-	}
-
-	transitModes := req.TransitModes
-	if len(transitModes) == 0 {
-		transitModes = []int32{3, 4, 5, 6, 7, 8, 9}
-	}
-	parts := make([]string, len(transitModes))
-	for i, m := range transitModes {
-		parts[i] = fmt.Sprintf("%d", m)
-	}
-	transitStr := strings.Join(parts, ",")
-
-	top := clampInt(req.Top, 1, 10, 5)
-	tMin := clampInt(req.TransferTimeMin, 0, 60, 15)
-	tMax := clampInt(req.TransferTimeMax, 0, 60, 60)
-	if tMin > tMax {
-		tMin, tMax = tMax, tMin
-	}
-	firstMode := clampInt(req.FirstMileMode, 0, 3, 0)
-	firstTime := clampInt(req.FirstMileTime, 1, 60, 10)
-	lastMode := clampInt(req.LastMileMode, 0, 3, 0)
-	lastTime := clampInt(req.LastMileTime, 1, 60, 10)
-
 	var apiResp tdxAPIResponse
-	r := s.maasClient.R().
-		SetContext(ctx).
-		SetQueryParam("origin", fmt.Sprintf("%.6f,%.6f", req.FromLat, req.FromLon)).
-		SetQueryParam("destination", fmt.Sprintf("%.6f,%.6f", req.ToLat, req.ToLon)).
-		SetQueryParam("gc", fmt.Sprintf("%.1f", gc)).
-		SetQueryParam("top", fmt.Sprintf("%d", top)).
-		SetQueryParam("transit", transitStr).
-		SetQueryParam("transfer_time", fmt.Sprintf("%d,%d", tMin, tMax)).
-		SetQueryParam("first_mile_mode", fmt.Sprintf("%d", firstMode)).
-		SetQueryParam("first_mile_time", fmt.Sprintf("%d", firstTime)).
-		SetQueryParam("last_mile_mode", fmt.Sprintf("%d", lastMode)).
-		SetQueryParam("last_mile_time", fmt.Sprintf("%d", lastTime)).
-		SetResult(&apiResp)
-	depart, arrival := maasTimeParam(req.Date, req.Time, req.ArriveBy, time.Now())
-	r.SetQueryParam("depart", depart)
-	r.SetQueryParam("arrival", arrival)
+	r := s.tdxRoutingRequest(ctx, req, &apiResp)
 	resp, err := r.Get("/routing")
 	if err != nil {
 		return nil, err
@@ -529,6 +554,40 @@ func (s *MaasServer) fetch(ctx context.Context, req *pb.MaasPlanRequest) (*tdxAP
 		return nil, err
 	}
 	return &apiResp, nil
+}
+
+func (s *MaasServer) tdxRoutingRequest(ctx context.Context, req *pb.MaasPlanRequest, apiResp *tdxAPIResponse) *resty.Request {
+	gc := validGeneralisedCost(req.Gc)
+	transitStr := tdxTransitModes(req.TransitModes)
+
+	top := clampInt(req.Top, 1, 10, 5)
+	tMin := clampInt(req.TransferTimeMin, 0, 60, 15)
+	tMax := clampInt(req.TransferTimeMax, 0, 60, 60)
+	if tMin > tMax {
+		tMin, tMax = tMax, tMin
+	}
+	firstMode := clampInt(req.FirstMileMode, 0, 3, 0)
+	firstTime := clampInt(req.FirstMileTime, 1, 60, 10)
+	lastMode := clampInt(req.LastMileMode, 0, 3, 0)
+	lastTime := clampInt(req.LastMileTime, 1, 60, 10)
+
+	r := s.maasClient.R().
+		SetContext(ctx).
+		SetQueryParam("origin", fmt.Sprintf("%.6f,%.6f", req.FromLat, req.FromLon)).
+		SetQueryParam("destination", fmt.Sprintf("%.6f,%.6f", req.ToLat, req.ToLon)).
+		SetQueryParam("gc", fmt.Sprintf("%.1f", gc)).
+		SetQueryParam("top", fmt.Sprintf("%d", top)).
+		SetQueryParam("transit", transitStr).
+		SetQueryParam("transfer_time", fmt.Sprintf("%d,%d", tMin, tMax)).
+		SetQueryParam("first_mile_mode", fmt.Sprintf("%d", firstMode)).
+		SetQueryParam("first_mile_time", fmt.Sprintf("%d", firstTime)).
+		SetQueryParam("last_mile_mode", fmt.Sprintf("%d", lastMode)).
+		SetQueryParam("last_mile_time", fmt.Sprintf("%d", lastTime)).
+		SetResult(apiResp)
+	depart, arrival := maasTimeParam(req.Date, req.Time, req.ArriveBy, time.Now())
+	r.SetQueryParam("depart", depart)
+	r.SetQueryParam("arrival", arrival)
+	return r
 }
 
 type maasSectionRef struct {
@@ -544,6 +603,17 @@ func convert(ctx context.Context, db maasDB, osrmClient *resty.Client, api *tdxA
 	return out
 }
 
+func tdxTransitModes(modes []int32) string {
+	if len(modes) == 0 {
+		modes = []int32{3, 4, 5, 6, 7, 8, 9}
+	}
+	parts := make([]string, len(modes))
+	for i, mode := range modes {
+		parts[i] = fmt.Sprintf("%d", mode)
+	}
+	return strings.Join(parts, ",")
+}
+
 func convertRoutes(ctx context.Context, db maasDB, api *tdxAPIResponse) (*pb.MaasPlanResponse, []maasSectionRef) {
 	out := &pb.MaasPlanResponse{}
 	refs := make([]maasSectionRef, 0)
@@ -555,18 +625,7 @@ func convertRoutes(ctx context.Context, db maasDB, api *tdxAPIResponse) (*pb.Maa
 			EndTime:    route.EndTime,
 			Transfers:  route.Transfers,
 		}
-		for _, sec := range route.Sections {
-			pbSec := convertSection(sec)
-			pbRoute.Sections = append(pbRoute.Sections, pbSec)
-			refs = append(refs, maasSectionRef{
-				index: int32(len(refs)), source: sec, target: pbSec, route: pbRoute,
-			})
-			for _, alt := range sec.Alternatives {
-				pbAlt := convertAlternative(alt)
-				pbSec.Alternatives = append(pbSec.Alternatives, pbAlt)
-				altRefs = append(altRefs, maasSectionRef{source: alt, target: pbAlt})
-			}
-		}
+		refs, altRefs = convertRouteSections(route, pbRoute, refs, altRefs)
 		out.Routes = append(out.Routes, pbRoute)
 	}
 	for i := range altRefs {
@@ -580,6 +639,22 @@ func convertRoutes(ctx context.Context, db maasDB, api *tdxAPIResponse) (*pb.Maa
 	// exists, not one the plan has priced.
 	batchSectionFares(ctx, db, refs)
 	return out, refs
+}
+
+func convertRouteSections(route tdxRoute, pbRoute *pb.Route, refs, altRefs []maasSectionRef) ([]maasSectionRef, []maasSectionRef) {
+	for _, sec := range route.Sections {
+		pbSec := convertSection(sec)
+		pbRoute.Sections = append(pbRoute.Sections, pbSec)
+		refs = append(refs, maasSectionRef{
+			index: int32(len(refs)), source: sec, target: pbSec, route: pbRoute,
+		})
+		for _, alt := range sec.Alternatives {
+			pbAlt := convertAlternative(alt)
+			pbSec.Alternatives = append(pbSec.Alternatives, pbAlt)
+			altRefs = append(altRefs, maasSectionRef{source: alt, target: pbAlt})
+		}
+	}
+	return refs, altRefs
 }
 
 func convertAlternative(sec tdxSection) *pb.Section {
@@ -672,10 +747,13 @@ func convertSection(sec tdxSection) *pb.Section {
 	return pbSec
 }
 
-func batchBusNotificationIdentities(ctx context.Context, db maasDB, refs []maasSectionRef) {
-	if db == nil {
-		return
-	}
+type busNotificationBatch struct {
+	indices                                          []int32
+	departures, arrivals, names, shortNames, numbers []string
+	byIndex                                          map[int32]*pb.Section
+}
+
+func collectBusNotificationBatch(refs []maasSectionRef) busNotificationBatch {
 	var indices []int32
 	var departures, arrivals, names, shortNames, numbers []string
 	byIndex := make(map[int32]*pb.Section)
@@ -691,9 +769,58 @@ func batchBusNotificationIdentities(ctx context.Context, db maasDB, refs []maasS
 		numbers = append(numbers, ref.source.Transport.Number)
 		byIndex[ref.index] = ref.target
 	}
-	if len(indices) == 0 {
+	return busNotificationBatch{indices: indices, departures: departures, arrivals: arrivals, names: names, shortNames: shortNames, numbers: numbers, byIndex: byIndex}
+}
+
+func applyBusNotificationRows(rows pgx.Rows, targets map[int32]*pb.Section) {
+	for rows.Next() {
+		var index, direction int32
+		var routeKey, departureStopKey, arrivalStopKey string
+		var matchCount int64
+		if err := rows.Scan(&index, &routeKey, &direction, &departureStopKey, &arrivalStopKey, &matchCount); err != nil {
+			zap.S().Errorw("scan error",
+				"component", "maas",
+				"action", "batch_notification_identity",
+				"event", "scan_error",
+				"err", err,
+			)
+			return
+		}
+		applyBusNotificationIdentity(targets[index], routeKey, direction, departureStopKey, arrivalStopKey, matchCount)
+	}
+	// A mid-stream failure leaves sections without an identity; enrichment is
+	// best-effort and has no error channel, so surface it in the log instead.
+	if err := rows.Err(); err != nil {
+		zap.S().Errorw("iterate error",
+			"component", "maas",
+			"action", "batch_notification_identity",
+			"event", "iterate_error",
+			"err", err,
+		)
+	}
+}
+
+func applyBusNotificationIdentity(target *pb.Section, routeKey string, direction int32, departureStopKey, arrivalStopKey string, matchCount int64) {
+	if target != nil && matchCount == 1 {
+		target.NotificationIdentity = &pb.NotificationIdentity{
+			RouteType: "bus", RouteKey: routeKey, Direction: fmt.Sprint(direction),
+			DepartureStopKey: departureStopKey, ArrivalStopKey: arrivalStopKey, Supported: true,
+		}
+	}
+}
+
+func batchBusNotificationIdentities(ctx context.Context, db maasDB, refs []maasSectionRef) {
+	if db == nil {
 		return
 	}
+	input := collectBusNotificationBatch(refs)
+	if len(input.indices) == 0 {
+		return
+	}
+	queryBusNotificationBatch(ctx, db, input)
+}
+
+func queryBusNotificationBatch(ctx context.Context, db maasDB, input busNotificationBatch) {
 	rows, err := db.Query(ctx, `
 		WITH input AS (
 			SELECT *
@@ -725,7 +852,7 @@ func batchBusNotificationIdentities(ctx context.Context, db maasDB, refs []maasS
 		)
 		SELECT section_index, sub_route_uid, direction, departure_stop_uid, arrival_stop_uid, match_count
 		FROM matches
-		WHERE match_rank = 1`, indices, departures, arrivals, names, shortNames, numbers)
+		WHERE match_rank = 1`, input.indices, input.departures, input.arrivals, input.names, input.shortNames, input.numbers)
 	if err != nil {
 		zap.S().Errorw("query error",
 			"component", "maas",
@@ -736,48 +863,22 @@ func batchBusNotificationIdentities(ctx context.Context, db maasDB, refs []maasS
 		return
 	}
 	defer rows.Close()
-	for rows.Next() {
-		var index, direction int32
-		var routeKey, departureStopKey, arrivalStopKey string
-		var matchCount int64
-		if err := rows.Scan(&index, &routeKey, &direction, &departureStopKey, &arrivalStopKey, &matchCount); err != nil {
-			zap.S().Errorw("scan error",
-				"component", "maas",
-				"action", "batch_notification_identity",
-				"event", "scan_error",
-				"err", err,
-			)
-			return
-		}
-		if target := byIndex[index]; target != nil && matchCount == 1 {
-			target.NotificationIdentity = &pb.NotificationIdentity{
-				RouteType: "bus", RouteKey: routeKey, Direction: fmt.Sprint(direction),
-				DepartureStopKey: departureStopKey, ArrivalStopKey: arrivalStopKey, Supported: true,
-			}
-		}
-	}
-	// A mid-stream failure leaves sections without an identity; enrichment is
-	// best-effort and has no error channel, so surface it in the log instead.
-	if err := rows.Err(); err != nil {
-		zap.S().Errorw("iterate error",
-			"component", "maas",
-			"action", "batch_notification_identity",
-			"event", "iterate_error",
-			"err", err,
-		)
-	}
+	applyBusNotificationRows(rows, input.byIndex)
 }
 
-func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
-	if db == nil {
-		return
-	}
+type sectionFareBatch struct {
+	indices                     []int32
+	modes, departures, arrivals []string
+	byIndex                     map[int32]maasSectionRef
+}
+
+func collectSectionFareBatch(refs []maasSectionRef) sectionFareBatch {
 	var indices []int32
 	var modes, departures, arrivals []string
 	byIndex := make(map[int32]maasSectionRef)
 	for _, ref := range refs {
 		mode := ref.source.Transport.Mode
-		if !isMetroMode(mode) && !isRailMode(mode) && !isThsrMode(mode) {
+		if !hasSectionFare(mode) {
 			continue
 		}
 		indices = append(indices, ref.index)
@@ -786,9 +887,25 @@ func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
 		arrivals = append(arrivals, ref.source.Arrival.Place.Name)
 		byIndex[ref.index] = ref
 	}
-	if len(indices) == 0 {
+	return sectionFareBatch{indices: indices, modes: modes, departures: departures, arrivals: arrivals, byIndex: byIndex}
+}
+
+func hasSectionFare(mode string) bool {
+	return isMetroMode(mode) || isRailMode(mode) || isThsrMode(mode)
+}
+
+func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
+	if db == nil {
 		return
 	}
+	input := collectSectionFareBatch(refs)
+	if len(input.indices) == 0 {
+		return
+	}
+	querySectionFareBatch(ctx, db, input)
+}
+
+func querySectionFareBatch(ctx context.Context, db maasDB, input sectionFareBatch) {
 	rows, err := db.Query(ctx, `
 		WITH input AS (
 			SELECT *
@@ -820,7 +937,7 @@ func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
 		SELECT section_index, MIN(fare)::integer AS fare
 		FROM fare_matches
 		WHERE fare > 0
-		GROUP BY section_index`, indices, modes, departures, arrivals)
+		GROUP BY section_index`, input.indices, input.modes, input.departures, input.arrivals)
 	if err != nil {
 		zap.S().Errorw("query error",
 			"component", "maas",
@@ -831,6 +948,32 @@ func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
 		return
 	}
 	defer rows.Close()
+	fares, ok := readSectionFares(rows, input.byIndex)
+	if !ok {
+		return
+	}
+	applySectionFares(fares, input.byIndex)
+}
+
+func applySectionFares(fares map[int32]int32, byIndex map[int32]maasSectionRef) {
+	for index, fare := range fares {
+		ref := byIndex[index]
+		ref.target.Fare = fare
+		ref.route.TotalFare += fare
+	}
+}
+
+func recordSectionFare(fares map[int32]int32, byIndex map[int32]maasSectionRef, index, fare int32) {
+	if _, ok := byIndex[index]; !ok || fare <= 0 {
+		return
+	}
+	if current, ok := fares[index]; ok {
+		fare = min(fare, current)
+	}
+	fares[index] = fare
+}
+
+func readSectionFares(rows pgx.Rows, byIndex map[int32]maasSectionRef) (map[int32]int32, bool) {
 	fares := make(map[int32]int32, len(byIndex))
 	for rows.Next() {
 		var index, fare int32
@@ -841,14 +984,9 @@ func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
 				"event", "scan_error",
 				"err", err,
 			)
-			return
+			return nil, false
 		}
-		if _, ok := byIndex[index]; !ok || fare <= 0 {
-			continue
-		}
-		if current, ok := fares[index]; !ok || fare < current {
-			fares[index] = fare
-		}
+		recordSectionFare(fares, byIndex, index, fare)
 	}
 	// A mid-stream failure leaves fares partial, and applying it would understate
 	// TotalFare rather than leave it unset. Drop the batch, like the scan path.
@@ -859,13 +997,9 @@ func batchSectionFares(ctx context.Context, db maasDB, refs []maasSectionRef) {
 			"event", "iterate_error",
 			"err", err,
 		)
-		return
+		return nil, false
 	}
-	for index, fare := range fares {
-		ref := byIndex[index]
-		ref.target.Fare = fare
-		ref.route.TotalFare += fare
-	}
+	return fares, true
 }
 
 // clampInt returns v bounded to [lo,hi], or def when v is unset (0) and 0 is
@@ -875,13 +1009,7 @@ func clampInt(v, lo, hi, def int32) int32 {
 	if v == 0 && (0 < lo || 0 > hi) {
 		return def
 	}
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
 }
 
 func maasKey(req *pb.MaasPlanRequest) string {

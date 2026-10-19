@@ -275,3 +275,26 @@ func newRawLandingMock(t *testing.T) pgxmock.PgxPoolIface {
 	})
 	return db
 }
+
+func TestRawDatasetReaderFailsBeforeConsumingInvalidState(t *testing.T) {
+	if _, _, err := (rawTDXSource{}).DatasetJSON(context.Background(), "not_allowed", "", ""); err == nil {
+		t.Fatal("unregistered raw table accepted")
+	}
+	want := errors.New("raw read failed")
+	options := pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
+	for _, phase := range []string{"begin", "state"} {
+		t.Run(phase, func(t *testing.T) {
+			db := newRawLandingMock(t)
+			begin := db.ExpectBeginTx(options)
+			if phase == "begin" {
+				begin.WillReturnError(want)
+			} else {
+				db.ExpectQuery(_stateFreshnessPattern).WithArgs("bus_route", "city", "Taipei").WillReturnError(want)
+				db.ExpectRollback()
+			}
+			if _, _, err := (rawTDXSource{pool: db}).DatasetJSON(context.Background(), "bus_route", "city", "Taipei"); !errors.Is(err, want) {
+				t.Fatalf("failed %s = %v", phase, err)
+			}
+		})
+	}
+}

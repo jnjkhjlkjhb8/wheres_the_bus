@@ -91,7 +91,6 @@ String? trackedBusStopUid(JourneySessionState state, String? subRouteUid) {
   final leg = _waitingTrackLeg(state);
   if (leg == null ||
       leg.kind != JourneyLegKind.bus ||
-      subRouteUid == null ||
       leg.identity.routeKey != subRouteUid) {
     return null;
   }
@@ -105,7 +104,7 @@ bool isTrackingTrain(
 }) {
   final leg = _waitingTrackLeg(state);
   return leg != null &&
-      (leg.kind == JourneyLegKind.tra || leg.kind == JourneyLegKind.thsr) &&
+      _isRailLeg(leg) &&
       leg.identity.routeKey == trainNo &&
       leg.identity.direction == serviceDate;
 }
@@ -116,3 +115,6 @@ JourneyLeg? _waitingTrackLeg(JourneySessionState state) {
   if (!state.trackOnly || state.phase != JourneyPhase.waiting) return null;
   return state.currentLeg;
 }
+
+bool _isRailLeg(JourneyLeg leg) =>
+    leg.kind == JourneyLegKind.tra || leg.kind == JourneyLegKind.thsr;

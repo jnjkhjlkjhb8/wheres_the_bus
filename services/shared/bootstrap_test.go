@@ -12,7 +12,9 @@ func TestConnectRedis_WithPassword(t *testing.T) {
 	addr := envOrSkip(t, "REDIS_AUTH_TEST_ADDR")
 	password := envOrSkip(t, "REDIS_AUTH_TEST_PASSWORD")
 
-	client := redis.NewClient(&redis.Options{Addr: addr, Password: password})
+	t.Setenv("REDIS_ADDR", addr)
+	t.Setenv("REDIS_PASSWORD", password)
+	client := ConnectRedis()
 	t.Cleanup(func() { _ = client.Close() })
 
 	deadline := time.Now().Add(5 * time.Second)

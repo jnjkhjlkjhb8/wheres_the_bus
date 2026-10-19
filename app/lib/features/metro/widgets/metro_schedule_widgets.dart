@@ -92,17 +92,7 @@ class MetroScheduleSection extends StatelessWidget {
 
     final grouped = schedule.map((s) => s.line).toSet().length > 1;
 
-    final rows = <Widget>[];
-    String? currentLine;
-    for (final (i, entry) in schedule.indexed) {
-      if (grouped && entry.line != currentLine) {
-        currentLine = entry.line;
-        rows.add(_ScheduleLineHeader(line: entry.line, first: i == 0));
-      } else if (i > 0) {
-        rows.add(Divider(height: 1, thickness: 1, color: hairline));
-      }
-      rows.add(_ScheduleRow(schedule: entry, columnWidth: columnWidth));
-    }
+    final rows = _scheduleRows(grouped, columnWidth, hairline);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,6 +105,25 @@ class MetroScheduleSection extends StatelessWidget {
       ],
     );
   }
+
+  List<Widget> _scheduleRows(bool grouped, double columnWidth, Color hairline) {
+    final rows = <Widget>[];
+    String? currentLine;
+    for (final (i, entry) in schedule.indexed) {
+      if (_needsLineHeader(grouped, entry.line, currentLine)) {
+        currentLine = entry.line;
+        rows.add(_ScheduleLineHeader(line: entry.line, first: i == 0));
+      } else if (i > 0) {
+        rows.add(Divider(height: 1, thickness: 1, color: hairline));
+      }
+      rows.add(_ScheduleRow(schedule: entry, columnWidth: columnWidth));
+    }
+
+    return rows;
+  }
+
+  bool _needsLineHeader(bool grouped, String line, String? currentLine) =>
+      grouped && line != currentLine;
 }
 
 const MetroSchedule _skeletonSchedule = MetroSchedule(
@@ -334,20 +343,13 @@ class _MetroRoundel extends StatelessWidget {
 }
 
 Color _metroLineColor(String lineCode) {
-  switch (lineCode) {
-    case 'BL':
-      return AppTheme.mrtBL;
-    case 'R':
-      return AppTheme.mrtR;
-    case 'G':
-      return AppTheme.mrtG;
-    case 'O':
-      return AppTheme.mrtO;
-    case 'BR':
-      return AppTheme.mrtBR;
-    case 'Y':
-      return AppTheme.mrtY;
-    default:
-      return AppTheme.mrtBL;
-  }
+  return switch (lineCode) {
+    'BL' => AppTheme.mrtBL,
+    'R' => AppTheme.mrtR,
+    'G' => AppTheme.mrtG,
+    'O' => AppTheme.mrtO,
+    'BR' => AppTheme.mrtBR,
+    'Y' => AppTheme.mrtY,
+    _ => AppTheme.mrtBL,
+  };
 }

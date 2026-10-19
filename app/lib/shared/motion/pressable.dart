@@ -43,59 +43,58 @@ class _PressableState extends State<Pressable> {
 
   @override
   Widget build(BuildContext context) {
-    final onTap = widget.enabled ? widget.onTap : null;
-    final onLongPress = widget.enabled ? widget.onLongPress : null;
+    final onTap = _onTap;
+    final onLongPress = _onLongPress;
     final isInteractive = onTap != null || onLongPress != null;
-    final minTapSize = widget.minTapSize;
-    // Expand only the box the gesture detector sits in; the child paints at its
-    // own size, centred, so raising the hit area never changes the visuals.
-    final hitTarget = minTapSize == null
-        ? widget.child
-        : Center(
-            widthFactor: 1,
-            heightFactor: 1,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minWidth: minTapSize,
-                minHeight: minTapSize,
-              ),
-              child: Center(
-                widthFactor: 1,
-                heightFactor: 1,
-                child: widget.child,
-              ),
-            ),
-          );
-
     return Semantics(
       label: widget.semanticLabel,
       button: widget.onTap != null,
       enabled: widget.enabled,
       child: AnimatedScale(
-        scale: widget.enabled && _pressed ? AppMotion.pressedScale : 1,
+        scale: _pressedScale,
         duration: MediaQuery.disableAnimationsOf(context)
             ? Duration.zero
             : AppMotion.press,
         curve: AppMotion.easeOut,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: isInteractive ? (_) => _setPressed(true) : null,
-          onTapCancel: isInteractive ? () => _setPressed(false) : null,
-          onTapUp: isInteractive ? (_) => _setPressed(false) : null,
-          onTap: onTap == null
-              ? null
-              : () {
-                  _setPressed(false);
-                  onTap();
-                },
-          onLongPress: onLongPress == null
-              ? null
-              : () {
-                  _setPressed(false);
-                  onLongPress();
-                },
-          child: hitTarget,
+        child: _gestureDetector(onTap, onLongPress, isInteractive),
+      ),
+    );
+  }
+
+  VoidCallback? get _onTap => widget.enabled ? widget.onTap : null;
+  VoidCallback? get _onLongPress => widget.enabled ? widget.onLongPress : null;
+  double get _pressedScale =>
+      widget.enabled && _pressed ? AppMotion.pressedScale : 1;
+
+  Widget _gestureDetector(
+    VoidCallback? onTap,
+    VoidCallback? onLongPress,
+    bool isInteractive,
+  ) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: isInteractive ? (_) => _setPressed(true) : null,
+      onTapCancel: isInteractive ? () => _setPressed(false) : null,
+      onTapUp: isInteractive ? (_) => _setPressed(false) : null,
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: _hitTarget(),
+    );
+  }
+
+  Widget _hitTarget() {
+    final minTapSize = widget.minTapSize;
+    if (minTapSize == null) return widget.child;
+    // The child keeps its painted size while its gesture box grows.
+    return Center(
+      widthFactor: 1,
+      heightFactor: 1,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: minTapSize,
+          minHeight: minTapSize,
         ),
+        child: Center(widthFactor: 1, heightFactor: 1, child: widget.child),
       ),
     );
   }

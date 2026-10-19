@@ -323,7 +323,7 @@ func TestRedisMaasCacheCommandRetainsSharedPermitUntilTermination(t *testing.T) 
 	if _, err := server.Plan(context.Background(), other); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("shared permit released while Redis command was active: code=%v error=%v", status.Code(err), err)
 	}
-	if err := <-firstDone; status.Code(err) != codes.DeadlineExceeded {
+	if err := awaitMaasEvent(t, firstDone, "bounded Redis shared work"); status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("bounded shared Redis work code = %v, want %v (error=%v)", status.Code(err), codes.DeadlineExceeded, err)
 	}
 	select {
@@ -517,6 +517,8 @@ func TestMaasResourceInterceptorChecksCancellationBeforeAndAfterRateAccounting(t
 func TestMaasSharedFlightSurvivesLeaderCancellationAndOwnsPermit(t *testing.T) {
 	upstreamStarted := make(chan struct{})
 	releaseUpstream := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseUpstream) }) }
 	var hits, active, peak atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -538,6 +540,7 @@ func TestMaasSharedFlightSurvivesLeaderCancellationAndOwnsPermit(t *testing.T) {
 		_, _ = io.WriteString(w, `{"result":"success","data":{"routes":[]}}`)
 	}))
 	defer upstream.Close()
+	defer release()
 
 	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
 	cache := newControlledMaasCache()
@@ -553,12 +556,13 @@ func TestMaasSharedFlightSurvivesLeaderCancellationAndOwnsPermit(t *testing.T) {
 	}
 
 	leaderCtx, cancelLeader := context.WithCancel(limiterContext("203.0.113.50:1234"))
+	defer cancelLeader()
 	leaderDone := make(chan error, 1)
 	go func() {
 		_, err := interceptor(leaderCtx, req, info, planHandler)
 		leaderDone <- err
 	}()
-	<-upstreamStarted
+	awaitMaasEvent(t, upstreamStarted, "upstream request")
 
 	followerJoined := make(chan struct{})
 	followerCtx := &doneObservedContext{
@@ -570,35 +574,35 @@ func TestMaasSharedFlightSurvivesLeaderCancellationAndOwnsPermit(t *testing.T) {
 		_, err := interceptor(followerCtx, req, info, planHandler)
 		followerDone <- err
 	}()
-	<-followerJoined
+	awaitMaasEvent(t, followerJoined, "shared-flight follower")
 	cancelLeader()
 
 	select {
 	case err := <-leaderDone:
 		if status.Code(err) != codes.Canceled {
-			close(releaseUpstream)
+			release()
 			t.Fatalf("leader code = %v, want %v", status.Code(err), codes.Canceled)
 		}
 	case <-time.After(250 * time.Millisecond):
-		close(releaseUpstream)
+		release()
 		t.Fatal("canceled leader did not return promptly")
 	}
 
 	otherReq := proto.Clone(req).(*pb.MaasPlanRequest)
 	otherReq.ToLat += 0.01
 	if _, err := interceptor(limiterContext("203.0.113.52:1234"), otherReq, info, planHandler); status.Code(err) != codes.ResourceExhausted {
-		close(releaseUpstream)
+		release()
 		t.Fatalf("leader cancellation released active shared-work permit: code=%v error=%v", status.Code(err), err)
 	}
 
 	select {
 	case err := <-followerDone:
-		close(releaseUpstream)
+		release()
 		t.Fatalf("follower finished before shared work release: %v", err)
 	default:
 	}
-	close(releaseUpstream)
-	if err := <-followerDone; err != nil {
+	release()
+	if err := awaitMaasEvent(t, followerDone, "completed shared-flight follower"); err != nil {
 		t.Fatalf("valid follower failed after leader cancellation: %v", err)
 	}
 	if got := cache.getCalls.Load(); got != 1 {
@@ -638,7 +642,7 @@ func TestMaasSharedCacheGetAndSetHonorContexts(t *testing.T) {
 			_, err := server.Plan(ctx, request)
 			done <- err
 		}()
-		<-getStarted
+		awaitMaasEvent(t, getStarted, "shared cache Get")
 		cancel()
 		select {
 		case err := <-done:
@@ -673,13 +677,13 @@ func TestMaasSharedCacheGetAndSetHonorContexts(t *testing.T) {
 			_, err := server.Plan(context.Background(), request)
 			done <- err
 		}()
-		<-setStarted
+		awaitMaasEvent(t, setStarted, "shared cache Set")
 		select {
 		case <-setCtxEnd:
 		case <-time.After(250 * time.Millisecond):
 			t.Fatal("cache Set outlived the shared timeout")
 		}
-		if err := <-done; status.Code(err) != codes.DeadlineExceeded {
+		if err := awaitMaasEvent(t, done, "completed cache Set"); status.Code(err) != codes.DeadlineExceeded {
 			t.Fatalf("cache Set timeout code = %v, want %v (error=%v)", status.Code(err), codes.DeadlineExceeded, err)
 		}
 		close(setRelease)
@@ -707,7 +711,7 @@ func TestMaasServerCloseJoinsFlightAfterCallerCancels(t *testing.T) {
 		_, err := server.Plan(callerCtx, request)
 		planDone <- err
 	}()
-	<-getStarted
+	awaitMaasEvent(t, getStarted, "shared cache Get")
 	cancelCaller()
 	select {
 	case err := <-planDone:

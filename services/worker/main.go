@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sync"
@@ -25,14 +26,19 @@ import (
 	"go.uber.org/zap"
 )
 
-func main() {
-	if err := run(); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "functions exited with error: %v\n", err)
-		os.Exit(1)
+func main() { os.Exit(commandExitCode(run(), os.Stderr)) }
+
+func commandExitCode(err error, output io.Writer) int {
+	if err == nil {
+		return 0
 	}
+	_, _ = fmt.Fprintf(output, "functions exited with error: %v\n", err)
+	return 1
 }
 
-func run() error {
+func run() error { return runWorker(os.Args, waitForShutdown) }
+
+func runWorker(args []string, waitShutdown func()) error {
 	defer obs.Init("functions")()
 	defer obs.Recover("main")
 
@@ -42,21 +48,13 @@ func run() error {
 	rc := shared.ConnectRedis()
 	db := shared.ConnectDB("FUNCTIONS_DB_MAX_CONNS", 10)
 	_health = newHealthFile(defaultHealthFilePath())
-	defer func(rc *redis.Client) {
-		if cerr := rc.Close(); cerr != nil {
-			zap.S().Errorw("failed", "component", "redis", "action", "close", "event", "failed", "err", cerr)
-		}
-	}(rc)
+	defer closeWorkerRedis(rc)
 	defer db.Close()
 	closeArchive, err := history.Init(context.Background(), os.Getenv("ARCHIVE_MYSQL_DSN"))
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if cerr := closeArchive(); cerr != nil {
-			zap.S().Errorw("failed", "component", "archive", "action", "close", "event", "failed", "err", cerr)
-		}
-	}()
+	defer closeWorkerArchive(closeArchive)
 	// Live fetches never fall back to a table's updated_at: that fallback only
 	// ever matched the static datasets, which the pipeline service lands.
 	tdx := shared.NewTDXClient(shared.TDXConfig{
@@ -66,35 +64,61 @@ func run() error {
 	})
 	// One-shot manual trigger: `functions run <job>` runs a live job once and
 	// exits, bypassing cron. Needs the same env as the scheduled run.
-	if len(os.Args) > 2 && os.Args[1] == "run" {
-		return runOnce(os.Args[2], tdx, rc, db)
+	if isManualWorkerRun(args) {
+		return runOnce(args[2], tdx, rc, db)
 	}
-	return runRealtime(r, tdx, rc, db)
+	return runRealtimeWithShutdown(r, tdx, rc, db, waitShutdown)
+}
+
+func isManualWorkerRun(args []string) bool { return len(args) > 2 && args[1] == "run" }
+
+func closeWorkerRedis(rc *redis.Client) {
+	if err := rc.Close(); err != nil {
+		zap.S().Errorw("failed", "component", "redis", "action", "close", "event", "failed", "err", err)
+	}
+}
+
+func closeWorkerArchive(closeArchive func() error) {
+	if err := closeArchive(); err != nil {
+		zap.S().Errorw("failed", "component", "archive", "action", "close", "event", "failed", "err", err)
+	}
 }
 
 // _manualRunTimeout bounds a `functions run <job>` one-shot.
 const _manualRunTimeout = 2 * time.Hour
 
 func runOnce(job string, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) error {
-	switch job {
-	case "gtfs-rt":
-		ctx, cancel := context.WithTimeout(context.Background(), gtfs.RTIndexTimeout)
-		defer cancel()
-		builder := gtfs.NewRTBuilder(db, rc)
-		if err := builder.Run(ctx, time.Now().In(pipeline.Taipei)); err != nil {
-			return _oops.Wrapf(err, "gtfs-rt failed")
-		}
-	case "bikeeta", "traeta", "buseta":
-		ctx, cancel := context.WithTimeout(context.Background(), _manualRunTimeout)
-		defer cancel()
-		name := map[string]string{"bikeeta": "bike", "traeta": "tra", "buseta": "bus"}[job]
-		var pool *pgxpool.Pool
-		if name == "bus" {
-			pool = db
-		}
-		pipeline.RunLive(ctx, pipeline.NewRESTLiveSource(tdx), pipeline.NewRedisLiveSink(rc), liveRegistry(pool, nil), []string{name})
-	default:
+	if job == "gtfs-rt" {
+		return runManualGTFS(db, rc)
+	}
+	name, ok := map[string]string{"bikeeta": "bike", "traeta": "tra", "buseta": "bus"}[job]
+	if !ok {
 		return _oops.With("args", job).Errorf("unknown job")
+	}
+	runManualLive(name, tdx, rc, db)
+	return nil
+}
+
+func runManualGTFS(db *pgxpool.Pool, rc *redis.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), gtfs.RTIndexTimeout)
+	defer cancel()
+	if err := gtfs.NewRTBuilder(db, rc).Run(ctx, time.Now().In(pipeline.Taipei)); err != nil {
+		return _oops.Wrapf(err, "gtfs-rt failed")
+	}
+	return nil
+}
+
+func runManualLive(name string, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) {
+	ctx, cancel := context.WithTimeout(context.Background(), _manualRunTimeout)
+	defer cancel()
+	pipeline.RunLive(ctx, pipeline.NewRESTLiveSource(tdx), pipeline.NewRedisLiveSink(rc), liveRegistry(manualLivePool(name, db), nil), []string{name})
+}
+
+// manualLivePool hands the database only to the bus job; every other manual
+// run must stay free of it so a one-shot cannot touch the archive tables.
+func manualLivePool(name string, db *pgxpool.Pool) *pgxpool.Pool {
+	if name == "bus" {
+		return db
 	}
 	return nil
 }
@@ -107,7 +131,24 @@ func addStaticCron(r *cron.Cron, spec string, job func()) (cron.EntryID, error) 
 	return r.AddJob(spec, guarded)
 }
 
-func runRealtime(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) error {
+func runRealtimeWithShutdown(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool, waitShutdown func()) error {
+	refreshBootHoliday()
+	predict.Install()
+	refreshBootWeather(rc)
+	registerWorkerCrons(r, tdx, rc, db)
+	r.Start()
+	_health.touch()
+	mqttClient := mqtt.StartMQTT(rc, db, history.ArchiveMQTTMessage)
+	waitShutdown()
+	// Stop intake before draining jobs so shutdown cannot dispatch more work.
+	if mqttClient != nil {
+		mqttClient.Disconnect(500)
+	}
+	drainShutdown(r.Stop(), &sync.WaitGroup{}, _shutdownGrace)
+	return nil
+}
+
+func refreshBootHoliday() {
 	holidayCtx, holidayCancel := context.WithTimeout(context.Background(), holiday.HTTPTimeout)
 	if err := holiday.Load(holidayCtx); err != nil {
 		zap.S().Warnw("initial refresh failed; weekend/last-good fallback active",
@@ -116,7 +157,9 @@ func runRealtime(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxp
 		)
 	}
 	holidayCancel()
-	predict.Install()
+}
+
+func refreshBootWeather(rc *redis.Client) {
 	weatherCtx, weatherCancel := context.WithTimeout(context.Background(), weather.HTTPTimeout)
 	if err := weather.Sync(weatherCtx, rc); err != nil {
 		zap.S().Warnw("initial sync failed; keeping last good Redis snapshot",
@@ -125,6 +168,9 @@ func runRealtime(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxp
 		)
 	}
 	weatherCancel()
+}
+
+func registerWorkerCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) {
 	// Arrival events go to rider, which owns reminders and push delivery.
 	registerLiveCrons(r, tdx, rc, db, riderevent.Publisher{RC: rc})
 	registerGTFSRTCron(r, db, rc)
@@ -147,22 +193,11 @@ func runRealtime(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxp
 	})
 	// Daily upkeep of the archive this service writes.
 	_, _ = addStaticCron(r, "0 30 4 * * *", func() {
-		pipeline.RunDaily("maintainArchivePartitions", 10*time.Minute, func(ctx context.Context) error {
+		pipeline.RunDaily("maintainArchivePartitions", _archiveMaintenanceTimeout, func(ctx context.Context) error {
 			return history.MaintainPartitions(ctx, history.AdminTarget(), time.Now())
 		})
 		history.ReportGaps()
 	})
-	r.Start()
-	_health.touch()
-	mqttClient := mqtt.StartMQTT(rc, db, history.ArchiveMQTTMessage)
-	waitForShutdown()
-	// Stop intake first: MQTT (no more messages dispatched) then cron (no
-	// more ticks fired). Only then wait for whatever is already in flight.
-	if mqttClient != nil {
-		mqttClient.Disconnect(500)
-	}
-	drainShutdown(r.Stop(), &sync.WaitGroup{}, _shutdownGrace)
-	return nil
 }
 
 func waitForShutdown() {
@@ -173,6 +208,8 @@ func waitForShutdown() {
 }
 
 const _shutdownGrace = 30 * time.Second
+
+const _archiveMaintenanceTimeout = 10 * time.Minute
 
 func drainShutdown(cronDone context.Context, boot *sync.WaitGroup, grace time.Duration) {
 	done := make(chan struct{})

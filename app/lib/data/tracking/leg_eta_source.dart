@@ -13,56 +13,80 @@ typedef RouteEtaStream =
 
 /// Live per-stop ETA/vehicle stream for a route, used to track a pinned
 /// vehicle's stop-by-stop progress toward the alight stop.
-Stream<List<BusStopEtaViewModel>> defaultRouteEtaStream(String routeKey) =>
-    resilientStream(
-      () => BusRepository.instance.routeEta(routeKey),
-      foreground: alwaysForeground,
-    );
+Stream<List<BusStopEtaViewModel>> defaultRouteEtaStream(
+  String routeKey, {
+  BusRepository? repository,
+}) => resilientStream(
+  () => (repository ?? BusRepository.instance).routeEta(routeKey),
+  foreground: alwaysForeground,
+);
 
 /// Live ETA for bus legs whose notification identity resolved; every other
 /// leg counts down from its scheduled departure. Non-bus legs will gain live
 /// sources once the planner emits supported identities for them.
-Stream<Duration?> defaultLegEtaStream(JourneyLeg leg) {
+Stream<Duration?> defaultLegEtaStream(
+  JourneyLeg leg, {
+  BusRepository? repository,
+}) {
+  final bus = repository ?? BusRepository.instance;
   final stopKey = leg.identity.departureStopKey;
-  if (leg.kind == JourneyLegKind.bus &&
-      leg.identity.supported &&
-      stopKey.isNotEmpty) {
+  if (_hasStationFeed(leg, stopKey)) {
     return resilientStream(
-      () => BusRepository.instance.stationEta('', stopKey),
+      () => bus.stationEta('', stopKey),
       foreground: alwaysForeground,
-    ).map((arrivals) {
-      for (final a in arrivals) {
-        if (leg.routeLabel.startsWith(a.routeName) && a.minutes != null) {
-          return Duration(minutes: a.minutes!);
-        }
-        if (leg.routeLabel.startsWith(a.routeName) && a.isArriving) {
-          return Duration.zero;
-        }
-      }
-      return null;
-    });
+    ).map((arrivals) => _stationEta(leg, arrivals));
   }
-  if (leg.kind == JourneyLegKind.bus &&
-      leg.identity.routeKey.isNotEmpty &&
-      stopKey.isNotEmpty) {
+  if (_hasRouteFeed(leg, stopKey)) {
     return resilientStream(
-      () => BusRepository.instance.routeEta(leg.identity.routeKey),
+      () => bus.routeEta(leg.identity.routeKey),
       foreground: alwaysForeground,
-    ).map((etas) {
-      for (final e in etas) {
-        if (e.stopUid != stopKey) continue;
-        if (leg.identity.direction.isNotEmpty &&
-            '${e.direction}' != leg.identity.direction) {
-          continue;
-        }
-        if (e.stopStatus == 0 && e.estimateSeconds == 0) return Duration.zero;
-        if (e.estimateSeconds > 0) return Duration(seconds: e.estimateSeconds);
-        return null;
-      }
-      return null;
-    });
+    ).map((etas) => _routeStopEta(leg, etas));
   }
   return scheduledCountdown(leg.scheduledDeparture);
+}
+
+bool _hasStationFeed(JourneyLeg leg, String stopKey) =>
+    leg.kind == JourneyLegKind.bus &&
+    leg.identity.supported &&
+    stopKey.isNotEmpty;
+
+bool _hasRouteFeed(JourneyLeg leg, String stopKey) =>
+    leg.kind == JourneyLegKind.bus &&
+    leg.identity.routeKey.isNotEmpty &&
+    stopKey.isNotEmpty;
+
+Duration? _stationEta(JourneyLeg leg, List<BusStopArrival> arrivals) {
+  for (final arrival in arrivals) {
+    if (!leg.routeLabel.startsWith(arrival.routeName)) continue;
+    final eta = _arrivalEta(arrival);
+    if (eta != null) return eta;
+  }
+  return null;
+}
+
+Duration? _arrivalEta(BusStopArrival arrival) {
+  if (arrival.minutes != null) return Duration(minutes: arrival.minutes!);
+  return arrival.isArriving ? Duration.zero : null;
+}
+
+Duration? _routeStopEta(JourneyLeg leg, List<BusStopEtaViewModel> etas) {
+  for (final eta in etas) {
+    if (_matchesRouteStop(leg, eta)) return _stopEta(eta);
+  }
+  return null;
+}
+
+bool _matchesRouteStop(JourneyLeg leg, BusStopEtaViewModel eta) {
+  if (eta.stopUid != leg.identity.departureStopKey) return false;
+  return leg.identity.direction.isEmpty ||
+      '${eta.direction}' == leg.identity.direction;
+}
+
+Duration? _stopEta(BusStopEtaViewModel eta) {
+  if (eta.stopStatus == 0 && eta.estimateSeconds == 0) return Duration.zero;
+  return eta.estimateSeconds > 0
+      ? Duration(seconds: eta.estimateSeconds)
+      : null;
 }
 
 /// Emits the remaining time until [departure] once per 30s, clamped at zero.
@@ -96,16 +120,12 @@ railProgress(List<RailStopSchedule> schedule, Duration delay, DateTime now) {
   final n = schedule.length;
   DateTime eff(int i) => schedule[i].scheduledArrival.add(delay);
 
-  // Stops whose effective time has passed (train has reached them).
-  var passed = 0;
-  for (var i = 0; i < n; i++) {
-    if (!eff(i).isAfter(now)) passed++;
-  }
+  final passed = _passedRailStops(schedule, delay, now);
   final currentPos = passed == 0 ? 0 : passed - 1; // clamp to the board stop
   final remaining = ((n - 1) - currentPos).clamp(0, n - 1);
 
   final etaRaw = eff(n - 1).difference(now);
-  final eta = etaRaw.isNegative ? Duration.zero : etaRaw;
+  final eta = _nonNegative(etaRaw);
 
   // Continuous position along the line. A delayed run keeps the same total
   // span, shifted later — so the denominator is the scheduled span and the
@@ -114,12 +134,10 @@ railProgress(List<RailStopSchedule> schedule, Duration delay, DateTime now) {
     schedule.first.scheduledArrival,
   );
   final elapsed = now.difference(schedule.first.scheduledArrival.add(delay));
-  final progress = total.inSeconds <= 0
-      ? 1.0
-      : (elapsed.inSeconds / total.inSeconds).clamp(0.0, 1.0);
+  final progress = _railFraction(total, elapsed);
 
   // The stop the train is heading to (the alight once it's the last hop).
-  final nextIdx = passed >= n ? n - 1 : (passed == 0 ? 0 : passed);
+  final nextIdx = _nextRailStop(passed, n);
 
   final aboard = passed > 0;
   final toBoardRaw = eff(0).difference(now);
@@ -130,12 +148,32 @@ railProgress(List<RailStopSchedule> schedule, Duration delay, DateTime now) {
     progress: progress,
     nextStop: schedule[nextIdx].name,
     aboard: aboard,
-    etaToBoard: toBoardRaw.isNegative ? Duration.zero : toBoardRaw,
+    etaToBoard: _nonNegative(toBoardRaw),
     // Handed back rather than only folded into the times: the waiting card
     // names the slip ("08:20 開 · 誤點 5 分") instead of quietly restating the
     // timetable, because a rider compares it against the printed board.
     delay: delay,
   );
+}
+
+int _passedRailStops(
+  List<RailStopSchedule> schedule,
+  Duration delay,
+  DateTime now,
+) => schedule
+    .where((stop) => !stop.scheduledArrival.add(delay).isAfter(now))
+    .length;
+
+Duration _nonNegative(Duration duration) =>
+    duration.isNegative ? Duration.zero : duration;
+
+double _railFraction(Duration total, Duration elapsed) => total.inSeconds <= 0
+    ? 1.0
+    : (elapsed.inSeconds / total.inSeconds).clamp(0.0, 1.0);
+
+int _nextRailStop(int passed, int stopCount) {
+  if (passed >= stopCount) return stopCount - 1;
+  return passed == 0 ? 0 : passed;
 }
 
 /// The record [defaultRailTrackStream] emits, mirroring [railProgress].
@@ -154,11 +192,12 @@ typedef RailTrackStream = Stream<RailTrackFrame> Function(JourneyLeg leg);
 Stream<RailTrackFrame> defaultRailTrackStream(
   JourneyLeg leg, {
   Stream<Duration>? delaySource,
+  TraRepository? repository,
   Duration tick = const Duration(seconds: 30),
   DateTime Function() now = DateTime.now,
 }) {
   final schedule = leg.railSchedule;
-  final delays = delaySource ?? _railDelayStream(leg);
+  final delays = delaySource ?? _railDelayStream(leg, repository);
 
   var delay = Duration.zero;
   late StreamController<RailTrackFrame> controller;
@@ -190,7 +229,10 @@ Stream<RailTrackFrame> defaultRailTrackStream(
 
 /// TRA → the O/D-segment delay stream filtered to this train; THSR → constant
 /// zero (no live feed). Board/alight names come from the carried schedule.
-Stream<Duration> _railDelayStream(JourneyLeg leg) {
+Stream<Duration> _railDelayStream(
+  JourneyLeg leg,
+  TraRepository? repository,
+) {
   if (leg.kind != JourneyLegKind.tra || leg.railSchedule.length < 2) {
     return const Stream<Duration>.empty(); // THSR / no segment: no live feed
   }
@@ -199,7 +241,7 @@ Stream<Duration> _railDelayStream(JourneyLeg leg) {
   final origin = leg.railSchedule.first.name;
   final dest = leg.railSchedule.last.name;
   return resilientStream(
-    () => TraRepository.instance.delay(date, origin, dest),
+    () => (repository ?? TraRepository.instance).delay(date, origin, dest),
     foreground: alwaysForeground,
   ).map((m) => Duration(minutes: m[trainNo] ?? 0));
 }

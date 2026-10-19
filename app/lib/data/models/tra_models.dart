@@ -43,11 +43,10 @@ class TraFare extends Equatable {
 }
 
 String traTrainClassSuffix(String trainTypeName) {
-  if (trainTypeName.contains('普快')) return '普';
-  if (trainTypeName.contains('區間') || trainTypeName.contains('復興')) {
-    return '復';
+  const classes = {'普快': '普', '區間': '復', '復興': '復', '莒光': '莒'};
+  for (final entry in classes.entries) {
+    if (trainTypeName.contains(entry.key)) return entry.value;
   }
-  if (trainTypeName.contains('莒光')) return '莒';
   return '自';
 }
 
@@ -58,14 +57,20 @@ ResolvedFare? traFareFor(
 ) {
   final suffix = traTrainClassSuffix(trainTypeName);
   for (final prefix in type.traPrefixes) {
-    for (final fare in fares) {
-      if (fare.ticketType == '$prefix$suffix' && fare.price > 0) {
-        return (
-          price: fare.price,
-          matched: type.matchedWhen(isFullFare: prefix == '成'),
-        );
-      }
+    final fare = _ticketFare(fares, '$prefix$suffix');
+    if (fare != null) {
+      return (
+        price: fare.price,
+        matched: type.matchedWhen(isFullFare: prefix == '成'),
+      );
     }
+  }
+  return null;
+}
+
+TraFare? _ticketFare(List<TraFare> fares, String ticketType) {
+  for (final fare in fares) {
+    if (fare.ticketType == ticketType && fare.price > 0) return fare;
   }
   return null;
 }

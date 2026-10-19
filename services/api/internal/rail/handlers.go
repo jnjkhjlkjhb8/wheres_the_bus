@@ -32,34 +32,15 @@ func (s *TraTimetableServer) Fare(ctx context.Context, in *pb.AskStaiton) (*pb.T
 	if err != nil {
 		return nil, err
 	}
-	items := &pb.TraFareItems{}
-	if err := proto.Unmarshal(resp.Data, items); err != nil {
-		return nil, status.Errorf(codes.Internal, "decode fare: %v", err)
-	}
-	if len(items.Items) == 0 {
-		return nil, status.Error(codes.NotFound, "fare not found")
-	}
-	return items, nil
+	return decodeTRAFare(resp.Data)
 }
-
-// Timetable returns the TRA timetable between two stations for the requested
-// date. It decodes the cached payload from traTimetable and returns NotFound
-// when the decoded set is empty.
 func (s *TraTimetableServer) Timetable(ctx context.Context, in *pb.AskRoute) (*pb.TraTimetables, error) {
 	resp, err := s.traTimetable(ctx, in)
 	if err != nil {
 		return nil, err
 	}
-	items := &pb.TraTimetables{}
-	if err := proto.Unmarshal(resp.Data, items); err != nil {
-		return nil, status.Errorf(codes.Internal, "decode timetable: %v", err)
-	}
-	if len(items.Items) == 0 {
-		return nil, status.Error(codes.NotFound, "timetable not found")
-	}
-	return items, nil
+	return decodeTRATimetable(resp.Data)
 }
-
 func (s *TraTimetableServer) traDelay(stream pb.TRATimetableService_DelayServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "tra_delay", "event", "call")
 	return livestream.StreamLive(stream.Context(), s.live, livestream.LiveStreamSpec{
@@ -87,13 +68,8 @@ func (s *TraDetainServer) Stops(ctx context.Context, in *pb.AskDetain) (*pb.TraS
 	if err != nil {
 		return nil, err
 	}
-	items := &pb.TraStoptimes{}
-	if err := proto.Unmarshal(resp.Data, items); err != nil {
-		return nil, status.Errorf(codes.Internal, "decode stops: %v", err)
-	}
-	return items, nil
+	return decodeTRAStops(resp.Data)
 }
-
 func (s *TraDetainServer) traDdelay(in *pb.AskDetain, stream pb.TRA_DetainService_DelayServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "tra_train_delay", "event", "call", "trainno", in.Trainno)
 	// The realtime TRA job sets and publishes this key per train (traEta), so a
@@ -121,16 +97,8 @@ func (s *ThsrServer) Fare(ctx context.Context, in *pb.Ask_Thsr) (*pb.ThsaFares, 
 	if err != nil {
 		return nil, err
 	}
-	items := &pb.ThsaFares{}
-	if err := proto.Unmarshal(resp.Data, items); err != nil {
-		return nil, status.Errorf(codes.Internal, "decode fare: %v", err)
-	}
-	if len(items.Items) == 0 {
-		return nil, status.Error(codes.NotFound, "fare not found")
-	}
-	return items, nil
+	return decodeTHSRFare(resp.Data)
 }
-
 func (s *ThsrServer) AvailableSeats(in *pb.Ask_Thsr, stream grpc.ServerStreamingServer[pb.RespThsrSeats]) error {
 	zap.S().Infow("log", "component", "grpc", "action", "thsr_available_seats", "date", in.Date)
 	date := parseRailDate(in.Date).Format(time.DateOnly)
@@ -158,22 +126,67 @@ func (s *ThsrServer) Timetable(ctx context.Context, in *pb.Ask_Thsr) (*pb.ThsrTi
 	if err != nil {
 		return nil, err
 	}
-	items := &pb.ThsrTimetables{}
-	if err := proto.Unmarshal(resp.Data, items); err != nil {
-		return nil, status.Errorf(codes.Internal, "decode timetable: %v", err)
-	}
-	return items, nil
+	return decodeTHSRTimetable(resp.Data)
 }
-
-// Stops returns the stop times for one THSR train, decoding the cached payload
-// produced by thsrStops.
 func (s *ThsrDetainServer) Stops(ctx context.Context, in *pb.ThsrAskDetain) (*pb.ThsrStoptimes, error) {
 	resp, err := s.thsrStops(ctx, in)
 	if err != nil {
 		return nil, err
 	}
+	return decodeTHSRStops(resp.Data)
+}
+func decodeTRAFare(data []byte) (*pb.TraFareItems, error) {
+	items := &pb.TraFareItems{}
+	if err := proto.Unmarshal(data, items); err != nil {
+		return nil, status.Errorf(codes.Internal, "decode fare: %v", err)
+	}
+	if len(items.Items) == 0 {
+		return nil, status.Error(codes.NotFound, "fare not found")
+	}
+	return items, nil
+}
+
+func decodeTRATimetable(data []byte) (*pb.TraTimetables, error) {
+	items := &pb.TraTimetables{}
+	if err := proto.Unmarshal(data, items); err != nil {
+		return nil, status.Errorf(codes.Internal, "decode timetable: %v", err)
+	}
+	if len(items.Items) == 0 {
+		return nil, status.Error(codes.NotFound, "timetable not found")
+	}
+	return items, nil
+}
+
+func decodeTRAStops(data []byte) (*pb.TraStoptimes, error) {
+	items := &pb.TraStoptimes{}
+	if err := proto.Unmarshal(data, items); err != nil {
+		return nil, status.Errorf(codes.Internal, "decode stops: %v", err)
+	}
+	return items, nil
+}
+
+func decodeTHSRFare(data []byte) (*pb.ThsaFares, error) {
+	items := &pb.ThsaFares{}
+	if err := proto.Unmarshal(data, items); err != nil {
+		return nil, status.Errorf(codes.Internal, "decode fare: %v", err)
+	}
+	if len(items.Items) == 0 {
+		return nil, status.Error(codes.NotFound, "fare not found")
+	}
+	return items, nil
+}
+
+func decodeTHSRTimetable(data []byte) (*pb.ThsrTimetables, error) {
+	items := &pb.ThsrTimetables{}
+	if err := proto.Unmarshal(data, items); err != nil {
+		return nil, status.Errorf(codes.Internal, "decode timetable: %v", err)
+	}
+	return items, nil
+}
+
+func decodeTHSRStops(data []byte) (*pb.ThsrStoptimes, error) {
 	items := &pb.ThsrStoptimes{}
-	if err := proto.Unmarshal(resp.Data, items); err != nil {
+	if err := proto.Unmarshal(data, items); err != nil {
 		return nil, status.Errorf(codes.Internal, "decode stops: %v", err)
 	}
 	return items, nil

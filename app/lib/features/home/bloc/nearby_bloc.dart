@@ -88,23 +88,34 @@ class NearbyBloc extends Bloc<NearbyEvent, NearbyState> {
     emit(state.copyWith(loading: true, clearError: true));
     final double lat;
     final double lon;
-    if (event.lat == null || event.lon == null) {
-      try {
-        final position = await LocationService.instance.currentPosition();
-        lat = position.latitude;
-        lon = position.longitude;
-      } on Object catch (e) {
-        if (issue != _issued) return;
-        emit(state.copyWith(loading: false, error: AppError.from(e)));
-        return;
-      }
+    if (_needsPosition(event)) {
+      final position = await _readPosition(issue, emit);
+      if (position == null) return;
       if (issue != _issued) return;
+      (lat, lon) = position;
     } else {
       lat = event.lat!;
       lon = event.lon!;
     }
     _attachStream();
     _queries?.add(NearQuery(lat: lat, lon: lon, radius: event.radius));
+  }
+
+  bool _needsPosition(NearbyRequested event) =>
+      event.lat == null || event.lon == null;
+
+  Future<(double, double)?> _readPosition(
+    int issue,
+    Emitter<NearbyState> emit,
+  ) async {
+    try {
+      final position = await LocationService.instance.currentPosition();
+      return (position.latitude, position.longitude);
+    } on Object catch (error) {
+      if (issue != _issued) return null;
+      emit(state.copyWith(loading: false, error: AppError.from(error)));
+      return null;
+    }
   }
 
   void _attachStream() {

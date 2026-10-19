@@ -17,7 +17,38 @@ void main() {
   ];
   const date = '2026-07-19';
 
+  test(
+    'stop clock keeps arrival precedence and validates each numeric part',
+    () {
+      expect(
+        stopDateTime(date, _stop('A', '18:12:55', '19:30')),
+        DateTime(2026, 7, 19, 18, 12),
+      );
+      expect(
+        stopDateTime(date, _stop('A', '', '19:30')),
+        DateTime(2026, 7, 19, 19, 30),
+      );
+      for (final invalid in ['2026-07', 'x-07-19', '2026-x-19', '2026-07-x']) {
+        expect(stopDateTime(invalid, _stop('A', '18:12')), isNull);
+      }
+      for (final invalid in ['', '18', 'x:12', '18:x']) {
+        expect(stopDateTime(date, _stop('A', invalid)), isNull);
+      }
+      expect(
+        stopDateTime('2026-13-32', _stop('A', '25:61')),
+        DateTime(2026, 13, 32, 25, 61),
+      );
+    },
+  );
+
   group('railPositionIndex', () {
+    test('empty and singleton runs have no intermediate position', () {
+      final now = DateTime(2026, 7, 19, 18, 12);
+      expect(railPositionIndex(const [], date, 0, now), isNull);
+      expect(railPositionIndex([stops[1]], date, 0, now), isNull);
+      expect(railPositionIndex(stops, date, 0, now), 1);
+    });
+
     test('is null before the run starts', () {
       expect(
         railPositionIndex(stops, date, 0, DateTime(2026, 7, 19, 17, 30)),
@@ -73,6 +104,16 @@ void main() {
   });
 
   group('dwellMinutes', () {
+    test('malformed clocks retain per-field zero fallback and clamp', () {
+      expect(dwellMinutes(_stop('A', '18', '18:02')), 0);
+      expect(dwellMinutes(_stop('A', '18:00', '18')), 0);
+      expect(dwellMinutes(_stop('A', 'x:10', '0:12')), 2);
+      expect(dwellMinutes(_stop('A', '1:x', '1:02')), 2);
+      expect(dwellMinutes(_stop('A', ':', '00:10')), 10);
+      expect(dwellMinutes(_stop('A', '18:10', '18:10')), 0);
+      expect(dwellMinutes(_stop('A', '18:10', '18:09')), 0);
+    });
+
     test('is 1 at an ordinary TRA stop — the value not worth printing', () {
       expect(dwellMinutes(stops[1]), 1);
     });

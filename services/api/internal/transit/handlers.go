@@ -39,14 +39,8 @@ func (s *BusRouteserver) Eta(in *pb.Bus_Ask_Route, stream pb.Bus_Route_Service_E
 func (s *BusRouteserver) BusRouteStatic(ctx context.Context, in *pb.Bus_Ask_Route) (*pb.Resp_BusStatic, error) {
 	zap.S().Infow("call", "component", "grpc", "action", "bus_static", "event", "call", "sub_route_uid", in.SubRouteUID)
 	route := in.SubRouteUID
-	if s.cache != nil {
-		if data, ok := s.cache.Get("bus_static:" + route); ok {
-			sub, err := livestream.DecodePayload(data, &pb.BusSubroute{})
-			if err != nil {
-				return nil, err
-			}
-			return &pb.Resp_BusStatic{Data: sub}, nil
-		}
+	if data, ok := s.cachedBusStatic(route); ok {
+		return busStaticResponse(data)
 	}
 	data, err := store.BusStaticPayload(ctx, s.db, route)
 	if err != nil {
@@ -58,9 +52,24 @@ func (s *BusRouteserver) BusRouteStatic(ctx context.Context, in *pb.Bus_Ask_Rout
 		)
 		return nil, store.GRPCStatusFor(err, "route not found")
 	}
+	s.cacheBusStatic(route, data)
+	return busStaticResponse(data)
+}
+
+func (s *BusRouteserver) cachedBusStatic(route string) ([]byte, bool) {
+	if s.cache == nil {
+		return nil, false
+	}
+	return s.cache.Get("bus_static:" + route)
+}
+
+func (s *BusRouteserver) cacheBusStatic(route string, data []byte) {
 	if s.cache != nil {
 		s.cache.Set("bus_static:"+route, data, time.Hour)
 	}
+}
+
+func busStaticResponse(data []byte) (*pb.Resp_BusStatic, error) {
 	sub, err := livestream.DecodePayload(data, &pb.BusSubroute{})
 	if err != nil {
 		return nil, err
@@ -88,17 +97,9 @@ func (s *BusRouteserver) BusRouteEta(in *pb.Bus_Ask_Route, stream pb.Bus_Route_S
 func streamBusStationEta(db store.DB, live livestream.LiveSource, in *pb.Bus_Ask_StationGroup, stream pb.Bus_Station_Service_EtaServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "bus_station_eta", "event", "call", "city", in.City, "group_uid", in.GroupUid)
 	groupUID := in.GroupUid
-	if groupUID == "" {
-		return status.Error(codes.InvalidArgument, "station eta key must include group_uid")
-	}
-	city := in.City
-	if city == "" && db != nil {
-		if dbCity, err := store.BusStationGroupCity(stream.Context(), db, groupUID); err == nil {
-			city = dbCity
-		}
-	}
-	if city == "" {
-		return status.Error(codes.InvalidArgument, "station eta key must include city or known group_uid")
+	city, err := stationEtaCity(stream.Context(), db, in)
+	if err != nil {
+		return err
 	}
 	key := shared.BusStationEtaKey(city, groupUID)
 	return livestream.StreamLive(stream.Context(), live, livestream.LiveStreamSpec{
@@ -113,6 +114,28 @@ func streamBusStationEta(db store.DB, live livestream.LiveSource, in *pb.Bus_Ask
 		}
 		return stream.Send(&pb.Resp_BusStationEta{Data: arrival})
 	})
+}
+
+func stationEtaCity(ctx context.Context, db store.DB, in *pb.Bus_Ask_StationGroup) (string, error) {
+	if in.GroupUid == "" {
+		return "", status.Error(codes.InvalidArgument, "station eta key must include group_uid")
+	}
+	city := resolveStationEtaCity(ctx, db, in)
+	if city == "" {
+		return "", status.Error(codes.InvalidArgument, "station eta key must include city or known group_uid")
+	}
+	return city, nil
+}
+
+func resolveStationEtaCity(ctx context.Context, db store.DB, in *pb.Bus_Ask_StationGroup) string {
+	if in.City != "" || db == nil {
+		return in.City
+	}
+	city, err := store.BusStationGroupCity(ctx, db, in.GroupUid)
+	if err != nil {
+		return ""
+	}
+	return city
 }
 
 func (s *BusRouteserver) BusDailytable(ctx context.Context, in *pb.Bus_Ask_Route) (*pb.Resp_BusDailyTimetable, error) {
@@ -149,7 +172,11 @@ func (s *BusStationserver) Group(ctx context.Context, in *pb.Bus_Ask_StationGrou
 	if groupUID == "" {
 		return nil, status.Error(codes.InvalidArgument, "group_uid required")
 	}
-	header, err := store.BusStationGroupHeader(ctx, s.db, groupUID)
+	return busStationGroup(ctx, s.db, groupUID)
+}
+
+func busStationGroup(ctx context.Context, db store.DB, groupUID string) (*pb.Bus_StationGroup, error) {
+	header, err := store.BusStationGroupHeader(ctx, db, groupUID)
 	if err != nil {
 		zap.S().Errorw("query failed",
 			"component", "grpc",
@@ -159,7 +186,7 @@ func (s *BusStationserver) Group(ctx context.Context, in *pb.Bus_Ask_StationGrou
 		)
 		return nil, store.GRPCStatusFor(err, "station group not found")
 	}
-	members, err := store.BusStationGroupMembers(ctx, s.db, groupUID)
+	members, err := store.BusStationGroupMembers(ctx, db, groupUID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "station group members: %v", err)
 	}
@@ -185,13 +212,8 @@ func (s *BikeServer) Eta(in *pb.BikeRequest, stream pb.Bike_Service_EtaServer) e
 
 func (s *BikeServer) BikeStatic(ctx context.Context, in *pb.BikeRequest) (*pb.BikeStatic, error) {
 	zap.S().Infow("call", "component", "grpc", "action", "bike_static", "event", "call", "station_uid", in.StationUID)
-	if s.cache != nil {
-		if data, ok := s.cache.Get("bike_static:" + in.StationUID); ok {
-			var resp pb.BikeStatic
-			if proto.Unmarshal(data, &resp) == nil {
-				return &resp, nil
-			}
-		}
+	if resp, ok := s.cachedBikeStatic(in.StationUID); ok {
+		return resp, nil
 	}
 	row, err := store.BikeStaticData(ctx, s.db, in.StationUID)
 	if err != nil {
@@ -203,8 +225,37 @@ func (s *BikeServer) BikeStatic(ctx context.Context, in *pb.BikeRequest) (*pb.Bi
 		)
 		return nil, store.GRPCStatusFor(err, "bike station not found")
 	}
+	resp := bikeStaticResponse(in.StationUID, row)
+	s.cacheBikeStatic(in.StationUID, resp)
+	return resp, nil
+}
+
+func (s *BikeServer) cacheBikeStatic(uid string, resp *pb.BikeStatic) {
+	if s.cache != nil {
+		if data, err := proto.Marshal(resp); err == nil {
+			s.cache.Set("bike_static:"+uid, data, time.Hour)
+		}
+	}
+}
+
+func (s *BikeServer) cachedBikeStatic(uid string) (*pb.BikeStatic, bool) {
+	if s.cache == nil {
+		return nil, false
+	}
+	data, ok := s.cache.Get("bike_static:" + uid)
+	if !ok {
+		return nil, false
+	}
+	var resp pb.BikeStatic
+	if err := proto.Unmarshal(data, &resp); err != nil {
+		return nil, false
+	}
+	return &resp, true
+}
+
+func bikeStaticResponse(uid string, row store.BikeStaticRow) *pb.BikeStatic {
 	resp := &pb.BikeStatic{
-		StationUID:  in.StationUID,
+		StationUID:  uid,
 		Name:        row.Name,
 		Capacity:    row.Capacity,
 		ServiceType: row.ServiceType,
@@ -216,12 +267,7 @@ func (s *BikeServer) BikeStatic(ctx context.Context, in *pb.BikeRequest) (*pb.Bi
 		resp.Lat = strconv.FormatFloat(*row.Lat, 'f', 6, 64)
 		resp.Lon = strconv.FormatFloat(*row.Lon, 'f', 6, 64)
 	}
-	if s.cache != nil {
-		if data, err := proto.Marshal(resp); err == nil {
-			s.cache.Set("bike_static:"+in.StationUID, data, time.Hour)
-		}
-	}
-	return resp, nil
+	return resp
 }
 
 func (s *BikeServer) bikeEta(in *pb.BikeRequest, stream pb.Bike_Service_EtaServer) error {
@@ -255,24 +301,35 @@ func latestNearRequest(stream pb.Near_Station_Service_NearServer) (<-chan *pb.As
 	var recvErr error
 	go func() {
 		defer close(requests)
-		for {
-			in, err := stream.Recv()
-			if err != nil {
-				if !errors.Is(err, io.EOF) {
-					recvErr = err
-				}
-				return
-			}
-			// Sole producer, so the slot cannot refill between the drain and
-			// the send and the send cannot block.
-			select {
-			case <-requests:
-			default:
-			}
-			requests <- in
-		}
+		recvErr = queueNearRequests(stream, requests)
 	}()
 	return requests, &recvErr
+}
+
+func queueNearRequests(stream pb.Near_Station_Service_NearServer, requests chan *pb.Ask_Near) error {
+	for {
+		in, err := stream.Recv()
+		if err != nil {
+			return nearReceiveError(err)
+		}
+		queueLatestNearRequest(requests, in)
+	}
+}
+
+func nearReceiveError(err error) error {
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
+
+func queueLatestNearRequest(requests chan *pb.Ask_Near, in *pb.Ask_Near) {
+	// Sole producer, so the slot cannot refill between the drain and the send.
+	select {
+	case <-requests:
+	default:
+	}
+	requests <- in
 }
 
 func (s *NearServer) FindNear(stream pb.Near_Station_Service_NearServer) error {
@@ -280,75 +337,116 @@ func (s *NearServer) FindNear(stream pb.Near_Station_Service_NearServer) error {
 	requests, recvErr := latestNearRequest(stream)
 	var lastQueryAt time.Time
 	for {
-		var in *pb.Ask_Near
-		select {
-		case <-ctx.Done():
-			// The drain goroutine's only exit signal is requests closing; wait
-			// for it here rather than returning while it is still running, per
-			// "Wait for goroutines to exit" (docs/go-style/goroutine-exit.md).
-			for range requests {
-			}
-			return ctx.Err()
-		case next, ok := <-requests:
-			if !ok {
-				return *recvErr
-			}
-			in = next
+		in, err := receiveNearRequest(ctx, requests, recvErr)
+		if nearRequestEnded(in, err) {
+			return err
 		}
-		lon := in.PositionLon
-		lat := in.PositionLat
-		r := in.Radius
 		// Enforce a per-stream work cadence regardless of how far the client
 		// jumps. The receiver keeps only the latest queued value, so waiting
 		// here still delivers the newest position without allowing a flood.
-		if !lastQueryAt.IsZero() {
-			wait := 100*time.Millisecond - time.Since(lastQueryAt)
-			if wait > 0 {
-				timer := time.NewTimer(wait)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-					return ctx.Err()
-				}
-			}
-		}
-		lastQueryAt = time.Now()
-		zap.S().Infow("received nearby query", "component", "grpc", "radius", r)
-		started := time.Now()
-		resp, err := s.discovery.Discover(ctx, nearby.NearbyQuery{
-			Origin: nearby.GeoPoint{Lon: lon, Lat: lat}, RadiusMeters: int(r),
-		})
-		// Server-side cost of one nearby query, so a slow first paint can be
-		// attributed to the router or ruled out without a second round of logs.
-		zap.S().Infow("done",
-			"component", "near",
-			"action", "discover",
-			"event", "done",
-			"elapsed_ms", time.Since(started).Milliseconds(),
-		)
-		if err != nil {
-			if errors.Is(err, nearby.ErrInvalidNearbyQuery) {
-				zap.S().Warnw("invalid",
-					"component", "grpc",
-					"action", "nearby_discovery",
-					"event", "invalid",
-					"err", err,
-				)
-				return status.Error(codes.InvalidArgument, err.Error())
-			}
-			zap.S().Errorw("failed", "component", "grpc", "action", "nearby_discovery", "err", err)
-			if errors.Is(err, nearby.ErrNearbyUnavailable) {
-				return status.Error(codes.Unavailable, "nearby discovery unavailable")
-			}
+		if err := s.sendNearRequest(stream, in, &lastQueryAt); err != nil {
 			return err
 		}
-		if err := stream.Send(resp); err != nil {
-			zap.S().Errorw("failed", "component", "grpc", "action", "send_newdata", "err", err)
-			return err
-		}
-		zap.S().Infow("success", "component", "grpc", "action", "send_newdata", "event", "success")
 	}
+}
+
+func nearRequestEnded(in *pb.Ask_Near, err error) bool {
+	return err != nil || in == nil
+}
+
+func (s *NearServer) sendNearRequest(stream pb.Near_Station_Service_NearServer, in *pb.Ask_Near, lastQueryAt *time.Time) error {
+	if err := waitNearCadence(stream.Context(), *lastQueryAt); err != nil {
+		return err
+	}
+	*lastQueryAt = time.Now()
+	resp, err := s.discoverNearRequest(stream.Context(), in)
+	if err != nil {
+		return nearbyRPCError(err)
+	}
+	return sendDiscoveredNear(stream, resp)
+}
+
+func sendDiscoveredNear(stream pb.Near_Station_Service_NearServer, resp *pb.RespNear) error {
+	if err := stream.Send(resp); err != nil {
+		zap.S().Errorw("failed", "component", "grpc", "action", "send_newdata", "err", err)
+		return err
+	}
+	zap.S().Infow("success", "component", "grpc", "action", "send_newdata", "event", "success")
+	return nil
+}
+
+func (s *NearServer) discoverNearRequest(ctx context.Context, in *pb.Ask_Near) (*pb.RespNear, error) {
+	zap.S().Infow("received nearby query", "component", "grpc", "radius", in.Radius)
+	started := time.Now()
+	resp, err := s.discovery.Discover(ctx, nearby.NearbyQuery{
+		Origin: nearby.GeoPoint{Lon: in.PositionLon, Lat: in.PositionLat}, RadiusMeters: int(in.Radius),
+	})
+	// Server-side cost lets a slow first paint be attributed to the router.
+	zap.S().Infow("done", "component", "near", "action", "discover", "event", "done",
+		"elapsed_ms", time.Since(started).Milliseconds())
+	return resp, err
+}
+
+func receiveNearRequest(ctx context.Context, requests <-chan *pb.Ask_Near, recvErr *error) (*pb.Ask_Near, error) {
+	select {
+	case <-ctx.Done():
+		// Channel closure joins the receiver before reading its final error.
+		drainNearRequests(requests)
+		return nil, ctx.Err()
+	case in, ok := <-requests:
+		return receivedNearRequest(in, ok, recvErr)
+	}
+}
+
+func receivedNearRequest(in *pb.Ask_Near, ok bool, recvErr *error) (*pb.Ask_Near, error) {
+	if !ok {
+		return nil, *recvErr
+	}
+	return in, nil
+}
+
+func drainNearRequests(requests <-chan *pb.Ask_Near) {
+	for range requests {
+	}
+}
+
+func waitNearCadence(ctx context.Context, lastQueryAt time.Time) error {
+	if lastQueryAt.IsZero() {
+		return nil
+	}
+	wait := 100*time.Millisecond - time.Since(lastQueryAt)
+	if wait <= 0 {
+		return nil
+	}
+	return waitNearTimer(ctx, wait)
+}
+
+func waitNearTimer(ctx context.Context, wait time.Duration) error {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func nearbyRPCError(err error) error {
+	if errors.Is(err, nearby.ErrInvalidNearbyQuery) {
+		zap.S().Warnw("invalid",
+			"component", "grpc",
+			"action", "nearby_discovery",
+			"event", "invalid",
+			"err", err,
+		)
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	zap.S().Errorw("failed", "component", "grpc", "action", "nearby_discovery", "err", err)
+	if errors.Is(err, nearby.ErrNearbyUnavailable) {
+		return status.Error(codes.Unavailable, "nearby discovery unavailable")
+	}
+	return err
 }
 
 func busEtaDemandKey(city string) string {

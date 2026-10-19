@@ -27,6 +27,11 @@ func TestLoadBikeStationsRejectsInvalidIdentityOrPosition(t *testing.T) {
 		want string
 	}{
 		{
+			name: "missing station id",
+			body: `[{"StationUID":"TPE001","StationPosition":{"PositionLon":121.5,"PositionLat":25.0}}]`,
+			want: "StationID",
+		},
+		{
 			name: "missing station uid",
 			body: `[{"StationID":"001","StationPosition":{"PositionLon":121.5,"PositionLat":25.0},"ServiceType":2}]`,
 			want: "StationUID",

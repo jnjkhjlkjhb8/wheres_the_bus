@@ -172,3 +172,20 @@ func TestPropagateDelay(t *testing.T) {
 		}
 	})
 }
+
+func TestUpstreamDelayPreservesFirstObservationAtEqualSequenceAndFreshnessBoundary(t *testing.T) {
+	now := time.Date(2026, 7, 6, 8, 0, 0, 0, time.UTC)
+	obs := []UpstreamObs{
+		{StopSequence: 2, DelaySeconds: 30, ObservedAt: now.Add(-3 * time.Minute)},
+		{StopSequence: 2, DelaySeconds: 99, ObservedAt: now.Add(-time.Minute)},
+	}
+	delay, seq, ok := latestUpstreamDelay(obs, 3, now)
+	if !ok || seq != 2 || delay != 30 {
+		t.Fatalf("upstream delay=%v/%d/%v", delay, seq, ok)
+	}
+	obs[0].ObservedAt = now.Add(-3*time.Minute - time.Nanosecond)
+	delay, seq, ok = latestUpstreamDelay(obs, 3, now)
+	if !ok || seq != 2 || delay != 99 {
+		t.Fatalf("stale boundary delay=%v/%d/%v", delay, seq, ok)
+	}
+}

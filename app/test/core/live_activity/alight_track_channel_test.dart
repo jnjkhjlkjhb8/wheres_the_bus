@@ -7,7 +7,7 @@ import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channel = MethodChannel('com.wheres.bus/live_activity');
+  const channel = MethodChannel('me.rabbitsayhello.wheresthebus/live_activity');
   final calls = <MethodCall>[];
 
   setUp(() {
@@ -165,4 +165,78 @@ void main() {
     await la.stopAny();
     expect(calls.single.method, 'stop');
   });
+  test(
+    'notification settings stay safe without native support',
+    () async {
+      Object? result;
+      Exception? failure;
+      final received = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            received.add(call.method);
+            if (failure != null) throw failure;
+            return result;
+          });
+      result = false;
+      expect(await AlightTrackChannel.notificationsEnabled(), isFalse);
+      result = true;
+      expect(await AlightTrackChannel.notificationsEnabled(), isTrue);
+      result = null;
+      expect(await AlightTrackChannel.notificationsEnabled(), isTrue);
+      await AlightTrackChannel.openNotificationSettings();
+      for (final error in [
+        PlatformException(code: 'unsupported'),
+        MissingPluginException(),
+      ]) {
+        failure = error;
+        expect(await AlightTrackChannel.notificationsEnabled(), isTrue);
+        await AlightTrackChannel.openNotificationSettings();
+        await AlightTrackChannel.requestNotificationPermission();
+      }
+      expect(
+        received.where((method) => method == 'openNotificationSettings'),
+        hasLength(3),
+      );
+    },
+  );
+
+  test(
+    'failed updates retry platform errors but release absent native sessions',
+    () async {
+      for (final failure in [
+        PlatformException(code: 'unavailable'),
+        MissingPluginException(),
+      ]) {
+        String? failingMethod;
+        final methods = <String>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              methods.add(call.method);
+              if (call.method == failingMethod) throw failure;
+              return call.method == 'start' ? 'activity' : null;
+            });
+        final activity = AlightTrackChannel();
+        final lease = await activity.start(content);
+        failingMethod = 'update';
+        await activity.update(lease, content);
+        failingMethod = null;
+        await activity.update(lease, content);
+        expect(
+          methods.where((method) => method == 'update'),
+          failure is MissingPluginException ? hasLength(1) : hasLength(2),
+        );
+        final next = await activity.start(content);
+        failingMethod = 'stop';
+        await activity.stop(next);
+        failingMethod = null;
+        await activity.stop(next);
+        expect(methods.where((method) => method == 'stop'), hasLength(1));
+        failingMethod = 'start';
+        final rejected = await activity.start(content);
+        await activity.update(rejected, content);
+        await activity.stop(rejected);
+        expect(methods.where((method) => method == 'stop'), hasLength(1));
+      }
+    },
+  );
 }

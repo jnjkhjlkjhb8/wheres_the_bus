@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/robfig/cron/v3"
 )
@@ -136,6 +137,11 @@ func TestLiveTickDeadlineStaysUnderCadence(t *testing.T) {
 			}
 		})
 	}
+	for _, cadence := range []string{"@every 0s", "@every -5s", "@every nonsense"} {
+		if got := liveTickDeadline(cadence); got != _liveJobTimeout {
+			t.Fatalf("liveTickDeadline(%q) = %v, want fallback %v for a cadence with no positive period", cadence, got, _liveJobTimeout)
+		}
+	}
 	if got := liveTickDeadline("@every 30s"); got != _liveJobTimeout {
 		t.Fatalf("liveTickDeadline(@every 30s) = %v, want liveJobTimeout %v (unchanged bus/bike behavior)", got, _liveJobTimeout)
 	}
@@ -168,3 +174,15 @@ func TestLiveTickDeadlineStaysUnderCadence(t *testing.T) {
 
 // Vector-refresh redis fake. The vector package keeps its own copy for the
 // refresh itself; this one drives the cron job wrapper.
+
+func TestManualLivePoolOnlyForBus(t *testing.T) {
+	db := &pgxpool.Pool{}
+	if got := manualLivePool("bus", db); got != db {
+		t.Fatalf("manualLivePool(bus) = %p, want the supplied pool %p", got, db)
+	}
+	for _, name := range []string{"bike", "mrt", "tra", ""} {
+		if got := manualLivePool(name, db); got != nil {
+			t.Fatalf("manualLivePool(%q) = %p, want nil so only bus gets the database", name, got)
+		}
+	}
+}

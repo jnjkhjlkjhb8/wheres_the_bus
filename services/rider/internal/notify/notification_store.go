@@ -40,15 +40,7 @@ func (s Store) subscribedTokens(ctx context.Context, routeType, routeKey string)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []deviceToken
-	for rows.Next() {
-		var v deviceToken
-		if err := rows.Scan(&v.token); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return readDeviceTokenRows(rows)
 }
 
 func (s Store) activeRemindersForArrivals(ctx context.Context, events []ArrivalEvent, now time.Time) ([]arrivalMatch, error) {
@@ -59,6 +51,10 @@ func (s Store) activeRemindersForArrivals(ctx context.Context, events []ArrivalE
 	if err != nil {
 		return nil, err
 	}
+	return s.queryArrivalMatches(ctx, payload, now)
+}
+
+func (s Store) queryArrivalMatches(ctx context.Context, payload []byte, now time.Time) ([]arrivalMatch, error) {
 	rows, err := s.db.Query(ctx, `WITH arrivals AS (
 		SELECT * FROM jsonb_to_recordset($1::jsonb) AS a(
 			route_type text, route_key text, stop_key text, direction text,
@@ -81,21 +77,7 @@ func (s Store) activeRemindersForArrivals(ctx context.Context, events []ArrivalE
 		return nil, err
 	}
 	defer rows.Close()
-	var matches []arrivalMatch
-	for rows.Next() {
-		var match arrivalMatch
-		if err := rows.Scan(
-			&match.reminder.id, &match.reminder.token, &match.reminder.routeType, &match.reminder.routeKey,
-			&match.reminder.stopKey, &match.reminder.direction, &match.reminder.leadMinutes, &match.reminder.plate,
-			&match.reminder.alightEvent,
-			&match.arrival.RouteType, &match.arrival.RouteKey, &match.arrival.StopKey, &match.arrival.Direction,
-			&match.arrival.ETASeconds, &match.arrival.ArrivingPlate,
-		); err != nil {
-			return nil, err
-		}
-		matches = append(matches, match)
-	}
-	return matches, rows.Err()
+	return readArrivalMatchRows(rows)
 }
 
 func (s Store) dueScheduledReminders(ctx context.Context, now time.Time) ([]arrivalReminder, error) {
@@ -104,15 +86,7 @@ func (s Store) dueScheduledReminders(ctx context.Context, now time.Time) ([]arri
 		return nil, err
 	}
 	defer rows.Close()
-	var out []arrivalReminder
-	for rows.Next() {
-		var v arrivalReminder
-		if err := rows.Scan(&v.id, &v.token, &v.routeType, &v.routeKey, &v.stopKey, &v.direction, &v.leadMinutes, &v.alightEvent); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return readArrivalReminderRows(rows)
 }
 
 type MrtTrackReminder struct {
@@ -130,15 +104,7 @@ func (s Store) ActiveMrtTracks(ctx context.Context, now time.Time) ([]MrtTrackRe
 		return nil, err
 	}
 	defer rows.Close()
-	var out []MrtTrackReminder
-	for rows.Next() {
-		var v MrtTrackReminder
-		if err := rows.Scan(&v.ID, &v.Token, &v.LeadStops); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return readMrtTrackReminderRows(rows)
 }
 
 func (s Store) ExpireMrtTrack(ctx context.Context, id string) error {
@@ -190,4 +156,58 @@ func NewStore(db notificationDB) Store { return Store{db: db} }
 func (s Store) PruneReminders(ctx context.Context, before time.Time) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM firebase_arrival_reminder WHERE status IN ('cancelled','fired','expired') AND updated_at < $1`, before)
 	return err
+}
+
+func readDeviceTokenRows(rows pgx.Rows) ([]deviceToken, error) {
+	var out []deviceToken
+	for rows.Next() {
+		var v deviceToken
+		if err := rows.Scan(&v.token); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func readArrivalReminderRows(rows pgx.Rows) ([]arrivalReminder, error) {
+	var out []arrivalReminder
+	for rows.Next() {
+		var v arrivalReminder
+		if err := rows.Scan(&v.id, &v.token, &v.routeType, &v.routeKey, &v.stopKey, &v.direction, &v.leadMinutes, &v.alightEvent); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func readArrivalMatchRows(rows pgx.Rows) ([]arrivalMatch, error) {
+	var matches []arrivalMatch
+	for rows.Next() {
+		var match arrivalMatch
+		if err := rows.Scan(
+			&match.reminder.id, &match.reminder.token, &match.reminder.routeType, &match.reminder.routeKey,
+			&match.reminder.stopKey, &match.reminder.direction, &match.reminder.leadMinutes, &match.reminder.plate,
+			&match.reminder.alightEvent,
+			&match.arrival.RouteType, &match.arrival.RouteKey, &match.arrival.StopKey, &match.arrival.Direction,
+			&match.arrival.ETASeconds, &match.arrival.ArrivingPlate,
+		); err != nil {
+			return nil, err
+		}
+		matches = append(matches, match)
+	}
+	return matches, rows.Err()
+}
+
+func readMrtTrackReminderRows(rows pgx.Rows) ([]MrtTrackReminder, error) {
+	var out []MrtTrackReminder
+	for rows.Next() {
+		var v MrtTrackReminder
+		if err := rows.Scan(&v.ID, &v.Token, &v.LeadStops); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }

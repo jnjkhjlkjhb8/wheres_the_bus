@@ -71,47 +71,41 @@ func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db
 	sink := pipeline.NewRedisLiveSink(rc)
 	specs := liveRegistry(db, notifier)
 
-	// Group specs by cadence, keeping registry order within each group so the
-	// 30s tick still runs bike before bus.
-	order := []string{}
-	byCadence := map[string][]pipeline.LiveSpec{}
-	for _, s := range specs {
-		if _, seen := byCadence[s.Cadence]; !seen {
-			order = append(order, s.Cadence)
-		}
-		byCadence[s.Cadence] = append(byCadence[s.Cadence], s)
-	}
+	order, byCadence := groupLiveCadences(specs)
 
 	for _, cadence := range order {
 		group := byCadence[cadence]
 		deadline := liveTickDeadline(cadence)
-		_, _ = addStaticCron(r, cadence, func() {
-			zap.S().Infow("start",
-				"component", "live",
-				"action", "tick",
-				"event", "start",
-				"cadence", cadence,
-				"jobs", len(group),
-				"deadline", deadline,
-			)
-			pipeline.WithTimeout(deadline, func(ctx context.Context) {
-				for _, spec := range group {
-					if ctx.Err() != nil {
-						zap.S().Warnw("overrun",
-							"component", "live",
-							"action", "tick",
-							"event", "overrun",
-							"cadence", cadence,
-							"deadline", deadline,
-							"job", spec.Key,
-						)
-						break
-					}
-					pipeline.RunLiveSpec(ctx, src, sink, spec)
-				}
-			})
-			zap.S().Infow("end", "component", "live", "action", "tick", "event", "end", "cadence", cadence)
-		})
+		_, _ = addStaticCron(r, cadence, func() { runLiveCadence(src, sink, cadence, group, deadline) })
 	}
 
+}
+
+func groupLiveCadences(specs []pipeline.LiveSpec) ([]string, map[string][]pipeline.LiveSpec) {
+	// Retain registry order so the shared 30-second tick still runs bike before bus.
+	order := []string{}
+	byCadence := map[string][]pipeline.LiveSpec{}
+	for _, spec := range specs {
+		if _, seen := byCadence[spec.Cadence]; !seen {
+			order = append(order, spec.Cadence)
+		}
+		byCadence[spec.Cadence] = append(byCadence[spec.Cadence], spec)
+	}
+	return order, byCadence
+}
+
+func runLiveCadence(src pipeline.LiveSource, sink pipeline.LiveSink, cadence string, group []pipeline.LiveSpec, deadline time.Duration) {
+	zap.S().Infow("start", "component", "live", "action", "tick", "event", "start", "cadence", cadence, "jobs", len(group), "deadline", deadline)
+	pipeline.WithTimeout(deadline, func(ctx context.Context) { runLiveCadenceJobs(ctx, src, sink, cadence, group, deadline) })
+	zap.S().Infow("end", "component", "live", "action", "tick", "event", "end", "cadence", cadence)
+}
+
+func runLiveCadenceJobs(ctx context.Context, src pipeline.LiveSource, sink pipeline.LiveSink, cadence string, group []pipeline.LiveSpec, deadline time.Duration) {
+	for _, spec := range group {
+		if ctx.Err() != nil {
+			zap.S().Warnw("overrun", "component", "live", "action", "tick", "event", "overrun", "cadence", cadence, "deadline", deadline, "job", spec.Key)
+			break
+		}
+		pipeline.RunLiveSpec(ctx, src, sink, spec)
+	}
 }

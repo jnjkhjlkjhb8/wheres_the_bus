@@ -81,27 +81,34 @@ class PlanState extends Equatable {
     return PlanState(
       status: status ?? this.status,
       result: result ?? this.result,
-      error: clearError ? null : error ?? this.error,
+      error: _clearable(clearError, error, this.error),
       selectedRouteIndex: selectedRouteIndex ?? this.selectedRouteIndex,
       previewing: previewing ?? this.previewing,
       previewFromSaved: previewFromSaved ?? this.previewFromSaved,
-      activeLegIndex: clearNavigation
-          ? null
-          : activeLegIndex ?? this.activeLegIndex,
-      activeStopIndex: clearNavigation
-          ? null
-          : activeStopIndex ?? this.activeStopIndex,
-      activeWalkStepIndex: clearNavigation
-          ? 0
-          : activeWalkStepIndex ?? this.activeWalkStepIndex,
+      activeLegIndex: _clearable(
+        clearNavigation,
+        activeLegIndex,
+        this.activeLegIndex,
+      ),
+      activeStopIndex: _clearable(
+        clearNavigation,
+        activeStopIndex,
+        this.activeStopIndex,
+      ),
+      activeWalkStepIndex: _walkIndex(clearNavigation, activeWalkStepIndex),
       savedRoutes: savedRoutes ?? this.savedRoutes,
       savedRoutesReady: savedRoutesReady ?? this.savedRoutesReady,
-      savedRoutesLoadError:
-          savedRoutesLoadError ?? this.savedRoutesLoadError,
+      savedRoutesLoadError: savedRoutesLoadError ?? this.savedRoutesLoadError,
       geometryPending: geometryPending ?? this.geometryPending,
-      failure: clearError ? null : failure ?? this.failure,
+      failure: _clearable(clearError, failure, this.failure),
     );
   }
+
+  T? _clearable<T>(bool clear, T? update, T? current) =>
+      clear ? null : update ?? current;
+
+  int _walkIndex(bool clear, int? update) =>
+      clear ? 0 : update ?? activeWalkStepIndex;
 
   @override
   List<Object?> get props => [

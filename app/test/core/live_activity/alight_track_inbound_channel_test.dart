@@ -5,7 +5,7 @@ import 'package:wheres_the_bus/core/live_activity/alight_track_inbound_channel.d
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channel = MethodChannel('com.wheres.bus/live_activity');
+  const channel = MethodChannel('me.rabbitsayhello.wheresthebus/live_activity');
 
   Future<void> fireCancel() async {
     await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

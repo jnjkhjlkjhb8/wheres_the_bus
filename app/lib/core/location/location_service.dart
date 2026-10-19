@@ -19,26 +19,8 @@ class LocationService {
   static final denial = ValueNotifier<LocationDenial?>(null);
 
   Future<Position> currentPosition() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      denial.value = LocationDenial.serviceDisabled;
-      throw const LocationServiceDisabledException();
-    }
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        denial.value = LocationDenial.permission;
-        throw const PermissionDeniedException('Location permission denied');
-      }
-    }
-    if (permission == LocationPermission.deniedForever) {
-      denial.value = LocationDenial.permission;
-      throw const PermissionDeniedException(
-        'Location permission permanently denied',
-      );
-    }
+    await _ensureServiceEnabled();
+    await _ensurePermission();
 
     final position = await Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(
@@ -54,6 +36,31 @@ class LocationService {
 
   void prefetchLastKnown() {
     _prefetchedLastKnown ??= _readLastKnown();
+  }
+
+  Future<void> _ensureServiceEnabled() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      denial.value = LocationDenial.serviceDisabled;
+      throw const LocationServiceDisabledException();
+    }
+  }
+
+  Future<void> _ensurePermission() async {
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        denial.value = LocationDenial.permission;
+        throw const PermissionDeniedException('Location permission denied');
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+      denial.value = LocationDenial.permission;
+      throw const PermissionDeniedException(
+        'Location permission permanently denied',
+      );
+    }
   }
 
   Future<Position?> lastKnownPosition() {

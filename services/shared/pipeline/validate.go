@@ -16,5 +16,13 @@ func ValidClock(value string) bool {
 }
 
 func ValidPosition(lon, lat float64) bool {
-	return !math.IsNaN(lon) && !math.IsNaN(lat) && !math.IsInf(lon, 0) && !math.IsInf(lat, 0) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90 && (lon != 0 || lat != 0)
+	return validCoordinate(lon, 180) && validCoordinate(lat, 90) && (lon != 0 || lat != 0)
 }
+
+func validCoordinate(value, limit float64) bool {
+	return finiteCoordinate(value) && coordinateInBounds(value, limit)
+}
+
+func finiteCoordinate(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
+
+func coordinateInBounds(value, limit float64) bool { return value >= -limit && value <= limit }

@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart';
 
 abstract final class AlightTrackInboundChannel {
-  static const _channel = MethodChannel('com.wheres.bus/live_activity');
+  static const _channel = MethodChannel('me.rabbitsayhello.wheresthebus/live_activity');
 
   static final _cancelListeners = <void Function()>[];
   static final _tokenListeners = <void Function(String token)>[];
@@ -23,19 +23,26 @@ abstract final class AlightTrackInboundChannel {
     _channel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'onCancelTrack':
-          for (final listener in List.of(_cancelListeners)) {
-            listener();
-          }
+          _dispatchCancel();
         case 'onPushToken':
-          final token = call.arguments as String?;
-          if (token != null && token.isNotEmpty) {
-            for (final listener in List.of(_tokenListeners)) {
-              listener(token);
-            }
-          }
+          _dispatchPushToken(call.arguments as String?);
       }
       return null;
     });
+  }
+
+  static void _dispatchCancel() {
+    for (final listener in List.of(_cancelListeners)) {
+      listener();
+    }
+  }
+
+  static void _dispatchPushToken(String? token) {
+    if (token != null && token.isNotEmpty) {
+      for (final listener in List.of(_tokenListeners)) {
+        listener(token);
+      }
+    }
   }
 
   /// Test seam: drops every binding so one test's listener cannot fire in the

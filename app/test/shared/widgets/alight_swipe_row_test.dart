@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_swipe_row.dart';
 
@@ -53,5 +54,64 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(swipes, 0);
+  });
+
+  testWidgets('the row is keyed by its rowKey', (tester) async {
+    await tester.pumpWidget(host(onSwiped: () {}));
+    expect(
+      find.byKey(const ValueKey('alight-swipe-KKA-1288')),
+      findsOneWidget,
+    );
+  });
+
+  group('latch haptic', () {
+    late List<String> clicks;
+
+    setUp(() {
+      clicks = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+            if (call.method == 'HapticFeedback.vibrate') {
+              clicks.add(call.arguments as String);
+            }
+            return null;
+          });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    testWidgets('fires once per crossing, not before and not while past it', (
+      tester,
+    ) async {
+      await tester.pumpWidget(host(onSwiped: () {}));
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('KKA-1288')),
+      );
+      await gesture.moveBy(const Offset(40, 0));
+      await tester.pump();
+      expect(clicks, isEmpty);
+
+      // The 800px test viewport puts the latch at 280px, and the move that
+      // crosses touch slop does not count toward the row's travel.
+      await gesture.moveBy(const Offset(300, 0));
+      await tester.pump();
+      expect(clicks, ['HapticFeedbackType.selectionClick']);
+
+      await gesture.moveBy(const Offset(50, 0));
+      await tester.pump();
+      expect(clicks, hasLength(1));
+
+      await gesture.moveBy(const Offset(-300, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(300, 0));
+      await tester.pump();
+      expect(clicks, hasLength(2));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
   });
 }

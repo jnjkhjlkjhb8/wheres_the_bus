@@ -82,15 +82,18 @@ class ResilientSubscription<T> {
   }
 
   void _onOnlineChanged() {
-    if (_closed || !_online.value || !_foreground.value) return;
-    if (_sub != null || _timer == null) return;
+    if (!_readyForOnlineRetry) return;
     _timer!.cancel();
     _timer = null;
     _listen();
   }
 
+  // A pending retry timer is cancelled on background and its listeners are
+  // removed on cancel, so "waiting" already implies active.
+  bool get _waitingToRetry => _sub == null && _timer != null;
+  bool get _readyForOnlineRetry => _online.value && _waitingToRetry;
+
   void _listen() {
-    if (_closed || !_foreground.value) return;
     final Stream<T> stream;
     try {
       stream = _source();
@@ -105,23 +108,27 @@ class ResilientSubscription<T> {
         _onData(data);
       },
       onError: _handleError,
-      onDone: () {
-        if (_closed) return;
-        _sub = null;
-        // A clean close only happens on a connection that was actually
-        // established, so it proves the endpoint is reachable just as a frame
-        // would.
-        _markRecovered();
-        if (_cleanCloses < 6) _cleanCloses++;
-        var delay = _baseDelay * (1 << (_cleanCloses - 1));
-        if (delay > _maxDelay) delay = _maxDelay;
-        _timer = Timer(_retryDelay(delay), _listen);
-      },
+      onDone: _onStreamDone,
     );
+    _startRecoveryGrace();
+  }
+
+  void _startRecoveryGrace() {
     if (_failures > 0 || _notified) {
       _graceTimer?.cancel();
       _graceTimer = Timer(_recoveryGrace, _markRecovered);
     }
+  }
+
+  void _onStreamDone() {
+    if (_closed) return;
+    _sub = null;
+    // A clean close proves the endpoint was reachable even without a frame.
+    _markRecovered();
+    if (_cleanCloses < 6) _cleanCloses++;
+    var delay = _baseDelay * (1 << (_cleanCloses - 1));
+    if (delay > _maxDelay) delay = _maxDelay;
+    _timer = Timer(_retryDelay(delay), _listen);
   }
 
   /// Clears the failure state and tells the caller, once, that the feed is
@@ -141,10 +148,7 @@ class ResilientSubscription<T> {
     _reportError(e, s);
     final terminal = _isTerminal(e);
     _failures = terminal ? _maxFailures : _failures + 1;
-    if (_failures >= _maxFailures && !_notified) {
-      _notified = true;
-      _onFailure(AppError.from(e));
-    }
+    _notifyFailure(e);
     if (terminal) {
       // No retry is scheduled, so the loop stops here — until the next resume
       // re-listens (see [_onForegroundChanged]).
@@ -153,6 +157,12 @@ class ResilientSubscription<T> {
       return;
     }
     _scheduleRetry();
+  }
+
+  void _notifyFailure(Object error) {
+    if (_failures < _maxFailures || _notified) return;
+    _notified = true;
+    _onFailure(AppError.from(error));
   }
 
   static bool _isTerminal(Object e) {
@@ -184,10 +194,16 @@ class ResilientSubscription<T> {
     await _sub?.cancel();
   }
 
-  static Duration _jitteredDelay(Duration delay) {
+  static Duration _jitteredDelay(Duration delay) =>
+      jitteredDelay(delay, _random);
+
+  /// A uniform pick between half of [delay] and one and a half times it, so
+  /// clients dropped together by a server restart do not all return together.
+  @visibleForTesting
+  static Duration jitteredDelay(Duration delay, Random random) {
     final min = delay.inMilliseconds ~/ 2;
     final max = delay.inMilliseconds + min;
-    return Duration(milliseconds: min + _random.nextInt(max - min + 1));
+    return Duration(milliseconds: min + random.nextInt(max - min + 1));
   }
 
   static final Random _random = Random();

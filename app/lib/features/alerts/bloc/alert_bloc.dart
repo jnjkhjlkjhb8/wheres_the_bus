@@ -16,19 +16,35 @@ import 'package:wheres_the_bus/features/alerts/bloc/alert_state.dart';
   final metro = <String>[];
   final bus = <String>[];
   for (final raw in csv.split(',')) {
-    final token = raw.trim();
-    final sep = token.indexOf(':');
-    if (sep <= 0) continue;
-    final value = token.substring(sep + 1).trim();
-    if (value.isEmpty) continue;
-    switch (token.substring(0, sep)) {
-      case 'metro':
-        metro.add(value);
-      case 'bus':
-        bus.add(value);
-    }
+    final parsed = _parseAlertSource(raw);
+    if (parsed == null) continue;
+    final (kind, value) = parsed;
+    _appendAlertSource(kind, value, metro, bus);
   }
   return (metro: metro, bus: bus);
+}
+
+(String, String)? _parseAlertSource(String raw) {
+  final token = raw.trim();
+  final separator = token.indexOf(':');
+  if (separator <= 0) return null;
+  final value = token.substring(separator + 1).trim();
+  if (value.isEmpty) return null;
+  return (token.substring(0, separator), value);
+}
+
+void _appendAlertSource(
+  String kind,
+  String value,
+  List<String> metro,
+  List<String> bus,
+) {
+  switch (kind) {
+    case 'metro':
+      metro.add(value);
+    case 'bus':
+      bus.add(value);
+  }
 }
 
 /// Default 訂閱範圍 source: the scope 收藏 currently resolves to, re-emitted
@@ -182,24 +198,37 @@ class AlertBloc extends Bloc<AlertEvent, AlertState> {
     final toAdd = desired.difference(current);
     if (toRemove.isEmpty && toAdd.isEmpty) return;
 
-    for (final source in toRemove) {
+    await _removeSources(toRemove);
+    _addSources(toAdd);
+    _clearRemovedHealth(toRemove, emit);
+  }
+
+  Future<void> _removeSources(Set<AlertSourceId> sources) async {
+    for (final source in sources) {
       final sub = _subs.remove(source);
       await sub?.cancel();
     }
-    for (final source in toAdd) {
+  }
+
+  void _addSources(Set<AlertSourceId> sources) {
+    for (final source in sources) {
       _listenSource(source, switch (source.kind) {
         AlertSourceKind.metro => () => _repository.metroAlert(source.code),
         _ => () => _repository.busAlert(source.code),
       });
     }
+  }
 
-    if (toRemove.isNotEmpty) {
-      // A source we intentionally unsubscribed shouldn't keep flagging as
-      // failed — drop any stale health entry it left behind.
-      final health = {...state.sourceHealth}
-        ..removeWhere((key, _) => toRemove.contains(key));
-      emit(state.copyWith(sourceHealth: health));
-    }
+  void _clearRemovedHealth(
+    Set<AlertSourceId> removed,
+    Emitter<AlertState> emit,
+  ) {
+    if (removed.isEmpty) return;
+    // A source we intentionally unsubscribed shouldn't keep flagging as
+    // failed — drop any stale health entry it left behind.
+    final health = {...state.sourceHealth}
+      ..removeWhere((key, _) => removed.contains(key));
+    emit(state.copyWith(sourceHealth: health));
   }
 
   void _onReceived(AlertReceived event, Emitter<AlertState> emit) {

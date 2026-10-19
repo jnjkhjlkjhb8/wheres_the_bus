@@ -4,7 +4,7 @@ import Flutter
 class LiveActivityPlugin: NSObject, FlutterPlugin {
     static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(
-            name: "com.wheres.bus/live_activity",
+            name: "me.rabbitsayhello.wheresthebus/live_activity",
             binaryMessenger: registrar.messenger()
         )
         registrar.addMethodCallDelegate(LiveActivityPlugin(channel: channel), channel: channel)

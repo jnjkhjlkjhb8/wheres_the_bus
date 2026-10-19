@@ -42,10 +42,10 @@ void main() {
     await repo.put('R1', 'S1', 'srv-1', soon);
     await repo.put('R1', 'S2', 'srv-2', soon);
 
-    await repo.remove('R1', 'S1');
+    await repo.remove(routeUid: 'R1', stopUid: 'S1');
     expect(repo.active('R1'), {'S2': 'srv-2'});
 
-    await repo.remove('R1', 'S2');
+    await repo.remove(routeUid: 'R1', stopUid: 'S2');
     expect(repo.active('R1'), isEmpty);
   });
 }

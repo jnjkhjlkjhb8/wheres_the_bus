@@ -21,18 +21,23 @@ type counterSet struct {
 }
 
 func (s *counterSet) record(label string, failed bool) {
-	v, ok := s.entries.Load(label)
-	if !ok {
-		v, _ = s.entries.LoadOrStore(label, &methodCounter{})
-	}
-	c, ok := v.(*methodCounter)
-	if !ok {
+	c := s.counter(label)
+	if c == nil {
 		return
 	}
 	c.requests.Add(1)
 	if failed {
 		c.errors.Add(1)
 	}
+}
+
+func (s *counterSet) counter(label string) *methodCounter {
+	v, ok := s.entries.Load(label)
+	if !ok {
+		v, _ = s.entries.LoadOrStore(label, &methodCounter{})
+	}
+	c, _ := v.(*methodCounter)
+	return c
 }
 
 // counterRow is one label's request/error totals at snapshot time.

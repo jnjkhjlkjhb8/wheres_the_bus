@@ -80,12 +80,17 @@ String _computeDuration(AppI18n i18n, String depart, String arrive) {
   final dParts = depart.split(':');
   final aParts = arrive.split(':');
   if (dParts.length != 2 || aParts.length != 2) return '';
-  final dMin =
-      (int.tryParse(dParts[0]) ?? 0) * 60 + (int.tryParse(dParts[1]) ?? 0);
-  var aMin =
-      (int.tryParse(aParts[0]) ?? 0) * 60 + (int.tryParse(aParts[1]) ?? 0);
+  final dMin = _durationMinutes(dParts);
+  var aMin = _durationMinutes(aParts);
   if (aMin < dMin) aMin += 24 * 60;
   final diff = aMin - dMin;
+  return _durationLabel(i18n, diff);
+}
+
+int _durationMinutes(List<String> parts) =>
+    (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
+
+String _durationLabel(AppI18n i18n, int diff) {
   final h = diff ~/ 60;
   final m = diff % 60;
   if (h == 0) return i18n.durationMinutes(m);
@@ -94,18 +99,20 @@ String _computeDuration(AppI18n i18n, String depart, String arrive) {
 }
 
 class RailScreen extends StatefulWidget {
-  const RailScreen({super.key, this.args});
+  const RailScreen({super.key, this.args, this.bloc, this.clock});
 
   /// The query carried by `/rail` — see [RailRouteArgs]. Null, or one with no
   /// origin, opens the empty form exactly as the nav entry point does.
   final RailRouteArgs? args;
+  final RailBloc? bloc;
+  final DateTime Function()? clock;
 
   @override
   State<RailScreen> createState() => _RailScreenState();
 }
 
 class _RailScreenState extends State<RailScreen> {
-  final _bloc = RailBloc();
+  late final RailBloc _bloc;
   RailSystem _system = RailSystem.tra;
   // Header + retry state, mirrored from the most recent O/D submission. The
   // query form itself lives in [RailQuerySheetContent]; these fields only feed
@@ -115,7 +122,7 @@ class _RailScreenState extends State<RailScreen> {
   String _destName = '';
   String _destId = '';
   late final SheetController _sheetController;
-  DateTime _selectedDate = DateTime.now();
+  late DateTime _selectedDate;
   bool _isDeparture = true;
   bool _hasSubmittedQuery = false;
   RailQueryPreset? _preset;
@@ -128,6 +135,8 @@ class _RailScreenState extends State<RailScreen> {
   @override
   void initState() {
     super.initState();
+    _bloc = widget.bloc ?? RailBloc();
+    _selectedDate = _now();
     _sheetController = SheetController();
     _ticker = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
@@ -135,41 +144,52 @@ class _RailScreenState extends State<RailScreen> {
     _applyRouteArgs();
   }
 
+  DateTime _now() => (widget.clock ?? DateTime.now)();
+
+  bool _hasOrigin(RailRouteArgs? args) =>
+      args != null && args.originName.isNotEmpty;
+
+  String _differentDestination(String origin, String destination) =>
+      origin == destination ? '' : destination;
+
+  bool _shouldSubmit(RailRouteArgs args) => args.submit && _destName.isNotEmpty;
+
   void _applyRouteArgs() {
     final args = widget.args;
     // No origin means a bare `/rail`: the empty form, with nothing to seed and
     // nothing to submit.
-    if (args == null || args.originName.isEmpty) return;
+    if (!_hasOrigin(args)) return;
+    final seeded = args!;
 
-    _system = args.system;
-    _originName = args.originName;
+    _system = seeded.system;
+    _originName = seeded.originName;
     // A near station's id is already a valid tra/thsr station_id, so carry it
     // directly rather than re-resolving by name.
-    _originId = args.originId;
-    _destName = args.destName;
+    _originId = seeded.originId;
+    _destName = seeded.destName;
     // A location can name the same station twice; clear the dest rather than
     // carry a zero-length trip into the form.
-    if (_originName == _destName) _destName = '';
-    _destId = args.destId;
+    _destName = _differentDestination(_originName, _destName);
+    _destId = seeded.destId;
     // Null means "now" — resolved here rather than in the location, so a
     // restored or shared link is not stuck at the time it was made.
-    _selectedDate = args.date ?? DateTime.now();
-    _isDeparture = args.isDeparture;
+    _selectedDate = seeded.date ?? _now();
+    _isDeparture = seeded.isDeparture;
     // Seed the form with the full effective query (not just the origin) so the
     // sheet and the auto-submitted results can't disagree.
     _preset = RailQueryPreset(
       system: _system,
       originName: _originName,
-      originId: args.originId,
+      originId: seeded.originId,
       destName: _destName,
-      destId: args.destId,
+      destId: seeded.destId,
       date: _selectedDate,
       isDeparture: _isDeparture,
     );
 
     // An origin-only location has nothing to submit: it opens the form with the
     // origin filled and waits for a destination.
-    if (!args.submit || _destName.isEmpty) return;
+    if (!_shouldSubmit(seeded)) return;
     // A full O/D location (from the home sheet): run it immediately and drop
     // the query sheet out of the way so results are the first thing shown.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -235,23 +255,28 @@ class _RailScreenState extends State<RailScreen> {
   }
 
   (int?, int?) _nextDeparture(List<_RailRow> rows, String date) {
-    final now = DateTime.now();
+    final now = _now();
     if (date != _dateFormat.format(now)) return (null, null);
     final nowMinutes = now.hour * 60 + now.minute;
     for (var i = 0; i < rows.length; i++) {
-      if (rows[i].isSuspended) continue;
-      final depart = _minutesOfDay(rows[i].depart);
-      if (depart == null || depart < nowMinutes) continue;
-      return (i, depart - nowMinutes);
+      final wait = _departureWait(rows[i], nowMinutes);
+      if (wait != null) return (i, wait);
     }
     return (null, null);
+  }
+
+  int? _departureWait(_RailRow row, int nowMinutes) {
+    if (row.isSuspended) return null;
+    final depart = _minutesOfDay(row.depart);
+    if (depart == null || depart < nowMinutes) return null;
+    return depart - nowMinutes;
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
     _sheetController.dispose();
-    unawaited(_bloc.close());
+    if (widget.bloc == null) unawaited(_bloc.close());
     super.dispose();
   }
 
@@ -320,11 +345,151 @@ class _RailScreenState extends State<RailScreen> {
     );
   }
 
+  Widget _timetableBody(BuildContext context, RailState state) {
+    final topPad = MediaQuery.paddingOf(context).top;
+
+    if (state is! RailTimetableLoaded) return _pendingTimetable(context, state);
+    final items = _rowsFor(state);
+    if (items.isEmpty) {
+      return ListView(
+        padding: EdgeInsets.fromLTRB(
+          AppTheme.space24,
+          topPad + 68,
+          AppTheme.space24,
+          AppTheme.space24,
+        ),
+        children: const [_NoTimetableEmpty()],
+      );
+    }
+    return _loadedTimetable(context, state, items);
+  }
+
+  Widget _loadedTimetable(
+    BuildContext context,
+    RailTimetableLoaded state,
+    List<_RailRow> items,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    final topPad = MediaQuery.paddingOf(context).top;
+    final (nextIndex, minutesUntil) = _nextDeparture(
+      items,
+      state.date,
+    );
+    return ValueListenableBuilder<double?>(
+      valueListenable: _sheetController,
+      child: SliverMainAxisGroup(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.only(
+                top: topPad + 68 + AppTheme.space12,
+              ),
+              child: const _TimetableHeader(),
+            ),
+          ),
+          SliverList.separated(
+            itemCount: items.length,
+            separatorBuilder: (context, i) => Divider(
+              height: 1,
+              thickness: 1,
+              indent: 16,
+              color: cs.outlineVariant.withValues(alpha: 0.4),
+            ),
+            itemBuilder: (context, i) => _TrainRow(
+              row: items[i],
+              system: _system,
+              date: state.date,
+              origin: state.originName,
+              destination: state.destName,
+              isNext: i == nextIndex,
+              minutesUntil: minutesUntil,
+            ),
+          ),
+        ],
+      ),
+      builder: (context, offset, listSliver) {
+        return RefreshIndicator(
+          onRefresh: () async => _dispatchSearch(),
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              listSliver!,
+              SliverToBoxAdapter(
+                child: SizedBox(height: (offset ?? 0.0) + 16),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _pendingTimetable(BuildContext context, RailState state) {
+    final cs = Theme.of(context).colorScheme;
+    final topPad = MediaQuery.paddingOf(context).top;
+    if (state is RailError) {
+      return ListView(
+        padding: EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          topPad + 68,
+          AppTheme.space16,
+          AppTheme.space16,
+        ),
+        children: [
+          ErrorStateView(
+            error: state.error,
+            onRetry: _dispatchSearch,
+          ),
+        ],
+      );
+    }
+    if (state is RailTimetableLoading) {
+      // Full-bleed and offset exactly like the loaded list
+      // below (topPad + 68 + 12), so the table doesn't shift
+      // when the trains arrive.
+      return ListView(
+        padding: EdgeInsets.only(
+          top: topPad + 68 + AppTheme.space12,
+          bottom: AppTheme.space16,
+        ),
+        children: const [_TimetableSkeleton()],
+      );
+    }
+    // No search run yet — prompt instead of auto-querying a
+    // placeholder O/D pair.
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppTheme.space24,
+        topPad + 68,
+        AppTheme.space24,
+        AppTheme.space24,
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.train_rounded,
+              size: 40,
+              color: cs.outline,
+            ),
+            const SizedBox(height: AppTheme.space16),
+            Text(
+              AppI18n.of(context).railPickStations,
+              textAlign: TextAlign.center,
+              style: AppTextStyles.bodyRegular.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final topPad = MediaQuery.paddingOf(context).top;
-
     return BlocProvider.value(
       value: _bloc,
       child: Scaffold(
@@ -334,131 +499,7 @@ class _RailScreenState extends State<RailScreen> {
               child: ColoredBox(
                 color: cs.surface,
                 child: BlocBuilder<RailBloc, RailState>(
-                  builder: (context, state) {
-                    if (state is RailError) {
-                      return ListView(
-                        padding: EdgeInsets.fromLTRB(
-                          AppTheme.space16,
-                          topPad + 68,
-                          AppTheme.space16,
-                          AppTheme.space16,
-                        ),
-                        children: [
-                          ErrorStateView(
-                            error: state.error,
-                            onRetry: _dispatchSearch,
-                          ),
-                        ],
-                      );
-                    }
-                    if (state is RailTimetableLoading) {
-                      // Full-bleed and offset exactly like the loaded list
-                      // below (topPad + 68 + 12), so the table doesn't shift
-                      // when the trains arrive.
-                      return ListView(
-                        padding: EdgeInsets.only(
-                          top: topPad + 68 + AppTheme.space12,
-                          bottom: AppTheme.space16,
-                        ),
-                        children: const [_TimetableSkeleton()],
-                      );
-                    }
-                    if (state is! RailTimetableLoaded) {
-                      // No search run yet — prompt instead of auto-querying a
-                      // placeholder O/D pair.
-                      return Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          AppTheme.space24,
-                          topPad + 68,
-                          AppTheme.space24,
-                          AppTheme.space24,
-                        ),
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.train_rounded,
-                                size: 40,
-                                color: cs.outline,
-                              ),
-                              const SizedBox(height: AppTheme.space16),
-                              Text(
-                                AppI18n.of(context).railPickStations,
-                                textAlign: TextAlign.center,
-                                style: AppTextStyles.bodyRegular.copyWith(
-                                  color: cs.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }
-                    final items = _rowsFor(state);
-                    if (items.isEmpty) {
-                      return ListView(
-                        padding: EdgeInsets.fromLTRB(
-                          AppTheme.space24,
-                          topPad + 68,
-                          AppTheme.space24,
-                          AppTheme.space24,
-                        ),
-                        children: const [_NoTimetableEmpty()],
-                      );
-                    }
-                    final (nextIndex, minutesUntil) = _nextDeparture(
-                      items,
-                      state.date,
-                    );
-                    return ValueListenableBuilder<double?>(
-                      valueListenable: _sheetController,
-                      child: SliverMainAxisGroup(
-                        slivers: [
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: EdgeInsets.only(
-                                top: topPad + 68 + AppTheme.space12,
-                              ),
-                              child: const _TimetableHeader(),
-                            ),
-                          ),
-                          SliverList.separated(
-                            itemCount: items.length,
-                            separatorBuilder: (context, i) => Divider(
-                              height: 1,
-                              thickness: 1,
-                              indent: 16,
-                              color: cs.outlineVariant.withValues(alpha: 0.4),
-                            ),
-                            itemBuilder: (context, i) => _TrainRow(
-                              row: items[i],
-                              system: _system,
-                              date: state.date,
-                              origin: state.originName,
-                              destination: state.destName,
-                              isNext: i == nextIndex,
-                              minutesUntil: minutesUntil,
-                            ),
-                          ),
-                        ],
-                      ),
-                      builder: (context, offset, listSliver) {
-                        return RefreshIndicator(
-                          onRefresh: () async => _dispatchSearch(),
-                          child: CustomScrollView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            slivers: [
-                              listSliver!,
-                              SliverToBoxAdapter(
-                                child: SizedBox(height: (offset ?? 0.0) + 16),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    );
-                  },
+                  builder: _timetableBody,
                 ),
               ),
             ),

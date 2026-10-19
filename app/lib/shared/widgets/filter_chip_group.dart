@@ -69,34 +69,40 @@ class _Chip extends StatelessWidget {
           height: 30,
           padding: const EdgeInsets.symmetric(horizontal: AppTheme.space10),
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected ? cs.surfaceContainerHighest : Colors.transparent,
-            borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-            border: Border.all(
-              color: selected ? cs.primary : cs.outlineVariant,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // The check keeps its slot when unselected so toggling a chip
-              // never reflows the row around it.
-              Opacity(
-                opacity: selected ? 1 : 0,
-                child: Icon(Icons.check_rounded, size: 14, color: cs.onSurface),
-              ),
-              const SizedBox(width: AppTheme.space4),
-              Text(
-                label,
-                style: AppTextStyles.bodySmall.copyWith(
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  color: selected ? cs.onSurface : cs.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
+          decoration: _decoration(cs),
+          child: _content(cs),
         ),
       ),
+    );
+  }
+
+  BoxDecoration _decoration(ColorScheme colors) => BoxDecoration(
+    color: selected ? colors.surfaceContainerHighest : Colors.transparent,
+    borderRadius: BorderRadius.circular(AppTheme.radiusButton),
+    border: Border.all(
+      color: selected ? colors.primary : colors.outlineVariant,
+    ),
+  );
+
+  Widget _content(ColorScheme cs) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // The check keeps its slot when unselected so toggling a chip
+        // never reflows the row around it.
+        Opacity(
+          opacity: selected ? 1 : 0,
+          child: Icon(Icons.check_rounded, size: 14, color: cs.onSurface),
+        ),
+        const SizedBox(width: AppTheme.space4),
+        Text(
+          label,
+          style: AppTextStyles.bodySmall.copyWith(
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            color: selected ? cs.onSurface : cs.onSurfaceVariant,
+          ),
+        ),
+      ],
     );
   }
 }

@@ -1,0 +1,3872 @@
+{
+  "@@locale": "zh",
+  "appName": "我公車呢",
+  "@appName": {
+    "description": "The app's own name, shown in the settings footer. Kept as a proper noun in every locale."
+  },
+  "appTitle": "我公車呢",
+  "@appTitle": {
+    "description": "MaterialApp title — the task-switcher label on Android."
+  },
+  "commonBack": "返回",
+  "@commonBack": {
+    "description": "Accessibility label for a back button."
+  },
+  "commonComingSoon": "即將推出",
+  "@commonComingSoon": {
+    "description": "Static marker on a row whose destination does not exist yet."
+  },
+  "commonComingSoonSemantics": "{label}，即將推出",
+  "@commonComingSoonSemantics": {
+    "description": "Accessibility label for a coming-soon row: the row's own label followed by the marker.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "常見問題 FAQ"
+      }
+    }
+  },
+  "busFareRange": "{fareType}範圍",
+  "@busFareRange": {
+    "description": "Heading over the fare table on a bus route, naming which ticket type the prices below are for.",
+    "placeholders": {
+      "fareType": {
+        "type": "String",
+        "example": "全票"
+      }
+    }
+  },
+  "busFareMissing": "{segment}（無{fareType}）",
+  "@busFareMissing": {
+    "description": "Fare row label when the operator publishes no price for the rider's ticket type, so a full fare is quoted instead and said to be one.",
+    "placeholders": {
+      "segment": {
+        "type": "String",
+        "example": "臺北 — 板橋"
+      },
+      "fareType": {
+        "type": "String",
+        "example": "敬老及愛心票"
+      }
+    }
+  },
+  "fareFallbackNote": "此區間未提供{requested}，顯示{shown}",
+  "@fareFallbackNote": {
+    "description": "Note under a quoted fare, stating that the rider's own ticket type is unpriced on this segment and which type the shown price belongs to.",
+    "placeholders": {
+      "requested": {
+        "type": "String",
+        "example": "敬老及愛心票"
+      },
+      "shown": {
+        "type": "String",
+        "example": "全票"
+      }
+    }
+  },
+  "settingsTitle": "設定",
+  "@settingsTitle": {
+    "description": "Title of the settings screen."
+  },
+  "settingsFollowSystem": "跟隨系統",
+  "@settingsFollowSystem": {
+    "description": "Picker option meaning 'use whatever the device is set to'. Shared by the appearance and language pickers."
+  },
+  "settingsSectionAppearance": "偏好設定",
+  "@settingsSectionAppearance": {
+    "description": ""
+  },
+  "settingsAppearance": "外觀",
+  "@settingsAppearance": {
+    "description": "Row that opens the light/dark/system theme picker."
+  },
+  "appearanceLight": "淺色模式",
+  "@appearanceLight": {
+    "description": "Appearance picker option: always light theme."
+  },
+  "appearanceDark": "深色模式",
+  "@appearanceDark": {
+    "description": "Appearance picker option: always dark theme."
+  },
+  "settingsLanguage": "語言",
+  "@settingsLanguage": {
+    "description": "Row that opens the app language picker."
+  },
+  "languageZh": "繁體中文",
+  "@languageZh": {
+    "description": "Language picker option for Traditional Chinese. Endonym — leave it in Traditional Chinese in every locale."
+  },
+  "languageZhCn": "简体中文",
+  "@languageZhCn": {
+    "description": "Language picker option for Simplified Chinese. Endonym — leave it in Simplified Chinese in every locale."
+  },
+  "languageEn": "English",
+  "@languageEn": {
+    "description": "Language picker option for English. Endonym — leave it in English in every locale."
+  },
+  "settingsSectionFare": "票價",
+  "@settingsSectionFare": {
+    "description": "Settings group holding the rider's ticket type."
+  },
+  "settingsFareFooter": "公車、台鐵與高鐵的票價都會以此票種顯示。未提供該票種的區間會顯示全票並註明。",
+  "@settingsFareFooter": {
+    "description": "Footnote under the fare group explaining that the ticket type is set once and read everywhere."
+  },
+  "settingsFareType": "我的票種",
+  "@settingsFareType": {
+    "description": "Row that opens the ticket type picker (adult, student, senior…)."
+  },
+  "fareFull": "全票",
+  "@fareFull": {
+    "description": "Ticket type: the undiscounted adult fare."
+  },
+  "fareStudent": "學生票",
+  "@fareStudent": {
+    "description": "Ticket type: student concession."
+  },
+  "fareChild": "孩童票",
+  "@fareChild": {
+    "description": "Ticket type: child concession."
+  },
+  "fareConcession": "敬老及愛心票",
+  "@fareConcession": {
+    "description": "Ticket type covering both the senior and the disability concession, which Taiwanese operators price identically."
+  },
+  "settingsLiveActivity": "即時動態",
+  "@settingsLiveActivity": {
+    "description": "Switch row for the iOS Live Activity."
+  },
+  "settingsPush": "推播通知",
+  "@settingsPush": {
+    "description": "Switch row for push notifications."
+  },
+  "settingsNotificationsBlocked": "系統通知已關閉",
+  "@settingsNotificationsBlocked": {
+    "description": "Row shown when the OS has notifications turned off for the app, so nothing it posts — push or the tracking card — can be seen. Taps through to the system settings screen."
+  },
+  "settingsOpenSystemSettings": "前往設定",
+  "@settingsOpenSystemSettings": {
+    "description": "Trailing value on the blocked-notifications row."
+  },
+  "settingsSectionAbout": "關於",
+  "@settingsSectionAbout": {
+    "description": "Settings group holding help, feedback and version rows."
+  },
+  "settingsFaq": "常見問題 FAQ",
+  "@settingsFaq": {
+    "description": "Row linking to frequently asked questions."
+  },
+  "settingsReportIssue": "回報問題",
+  "@settingsReportIssue": {
+    "description": "Row that opens the rider feedback page."
+  },
+  "settingsShakeToReport": "搖一搖回報問題",
+  "@settingsShakeToReport": {
+    "description": "Switch row for the shake-to-report gesture."
+  },
+  "shakeReportTitle": "有什麼要告訴開發者的？",
+  "@shakeReportTitle": {
+    "description": "Title of the sheet a shake opens, asking whether to report a problem with the current screen."
+  },
+  "shakeReportBody": "Bug需慢慢修 心急則迴歸 Bug有此雅興 我自然奉陪",
+  "@shakeReportBody": {
+    "description": "Body of the shake sheet: names the shake as the cause, then states what a report would attach."
+  },
+  "shakeReportOptOutHint": "覺得太敏感可以到「設定 › 搖一搖回報問題」關掉。",
+  "@shakeReportOptOutHint": {
+    "description": "Footnote on the shake sheet pointing at the settings switch that turns the gesture off."
+  },
+  "shakeReportDismiss": "不用了",
+  "@shakeReportDismiss": {
+    "description": "Button that closes the shake sheet without opening the report form."
+  },
+  "settingsPrivacyPolicy": "隱私權政策",
+  "@settingsPrivacyPolicy": {
+    "description": "Row linking to the privacy policy."
+  },
+  "settingsAppVersion": "目前版本",
+  "@settingsAppVersion": {
+    "description": "Row showing the running build's version number."
+  },
+  "settingsEnvironment": "環境",
+  "@settingsEnvironment": {
+    "description": "Row showing the build flavor (test/staging). Hidden in production."
+  },
+  "settingsUpdateCheck": "檢查更新",
+  "@settingsUpdateCheck": {
+    "description": "Update row label at rest — tapping checks for a newer release."
+  },
+  "settingsUpdateChecking": "檢查中⋯",
+  "@settingsUpdateChecking": {
+    "description": "Update row value while the check is in flight."
+  },
+  "settingsUpdateUpToDate": "已是最新版本",
+  "@settingsUpdateUpToDate": {
+    "description": "Update row value when the running build is the newest one."
+  },
+  "settingsUpdateFailed": "目前無法檢查",
+  "@settingsUpdateFailed": {
+    "description": "Update row value when the check could not run, e.g. offline."
+  },
+  "settingsUpdateAvailable": "有新版本",
+  "@settingsUpdateAvailable": {
+    "description": "Update row label when a release was found but there is no store link to open."
+  },
+  "settingsUpdateGo": "前往更新",
+  "@settingsUpdateGo": {
+    "description": "Update row label when a release was found and tapping opens the store."
+  },
+  "settingsSectionDataSource": "資料來源",
+  "@settingsSectionDataSource": {
+    "description": "Settings group listing the upstream transit data providers."
+  },
+  "settingsSource": "資料介接「交通部TDX平臺」與「臺北大眾捷運股份有限公司」",
+  "@settingsSource": {
+    "description": "Attribution line required by TDX's terms of use."
+  },
+  "settingsSyncNever": "尚未同步",
+  "@settingsSyncNever": {
+    "description": "Data freshness value when the device has never completed a sync."
+  },
+  "settingsSyncToday": "今日 {time}",
+  "@settingsSyncToday": {
+    "description": "Data freshness value for a sync that happened today; older syncs render as a date instead.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "09:41"
+      }
+    }
+  },
+  "commonRetry": "重試",
+  "@commonRetry": {
+    "description": "Button that re-runs whatever just failed."
+  },
+  "bootstrapFailedStorage": "本機儲存空間初始化失敗，請確認裝置儲存空間充足後再試一次。",
+  "@bootstrapFailedStorage": {
+    "description": "Startup failure: the local database could not be opened, usually because the device is out of space."
+  },
+  "bootstrapFailedNetwork": "連線設定初始化失敗，請檢查網路連線後再試一次。",
+  "@bootstrapFailedNetwork": {
+    "description": "Startup failure: the network/gRPC channel configuration could not be loaded."
+  },
+  "bootstrapFailedUnknown": "啟動失敗，請再試一次。",
+  "@bootstrapFailedUnknown": {
+    "description": "Startup failure with no identified cause."
+  },
+  "routeNotFound": "找不到頁面",
+  "@routeNotFound": {
+    "description": "Shown when a deep link points at a route the app does not have."
+  },
+  "routeGoHome": "回首頁",
+  "@routeGoHome": {
+    "description": "Button on the not-found page that returns to the home screen."
+  },
+  "errorOfflineTitle": "目前無法取得即時資訊",
+  "@errorOfflineTitle": {
+    "description": "Error heading when the device has no usable connection."
+  },
+  "errorOfflineHint": "已離線,已儲存的資料仍可查看,連上網路後可取得即時資訊",
+  "@errorOfflineHint": {
+    "description": "Error detail for being offline: cached data still works, live data needs a connection."
+  },
+  "errorTimeoutTitle": "連線逾時",
+  "@errorTimeoutTitle": {
+    "description": "Error heading when a request exceeded its deadline."
+  },
+  "errorTimeoutHint": "網路回應太慢,請稍後再試",
+  "@errorTimeoutHint": {
+    "description": "Error detail for a timeout."
+  },
+  "errorNotFoundTitle": "找不到符合的資料",
+  "@errorNotFoundTitle": {
+    "description": "Error heading when a query matched nothing on the server."
+  },
+  "errorNotFoundHint": "可能是站名、路線或日期有誤,換個條件再查一次",
+  "@errorNotFoundHint": {
+    "description": "Error detail for an empty result: the stop name, route or date may be wrong."
+  },
+  "errorServerTitle": "服務暫時無法使用",
+  "@errorServerTitle": {
+    "description": "Error heading for a server-side failure."
+  },
+  "errorServerHint": "系統暫時出了狀況,請稍後再試",
+  "@errorServerHint": {
+    "description": "Error detail for a server-side failure."
+  },
+  "errorUnknownTitle": "這裡出了點問題",
+  "@errorUnknownTitle": {
+    "description": "Error heading for an unclassified failure."
+  },
+  "errorUnknownHint": "重新整理看看,問題持續請稍後再試",
+  "@errorUnknownHint": {
+    "description": "Error detail for an unclassified failure."
+  },
+  "maintenanceTitle": "系統維護中",
+  "@maintenanceTitle": {
+    "description": "Title on the blocking screen shown while ops have a maintenance window open."
+  },
+  "maintenanceBody": "服務正在維護，稍後再回來看看。",
+  "@maintenanceBody": {
+    "description": "Body on the maintenance blocking screen, used when ops left the Remote Config message empty."
+  },
+  "updateRequiredTitle": "請更新至最新版本",
+  "@updateRequiredTitle": {
+    "description": "Heading on the forced-update screen that blocks an unsupported build."
+  },
+  "updateRequiredBody": "這個版本已不再支援。更新後就能繼續查詢即時到站。",
+  "@updateRequiredBody": {
+    "description": "Body of the forced-update screen."
+  },
+  "updateVersionLine": "目前 {current}    需要 {required}",
+  "@updateVersionLine": {
+    "description": "Version line on the forced-update screen: the running build and the minimum supported one.",
+    "placeholders": {
+      "current": {
+        "type": "String",
+        "example": "1.2.0"
+      },
+      "required": {
+        "type": "String",
+        "example": "1.4.0"
+      }
+    }
+  },
+  "updateStoreHintIos": "請至 App Store 搜尋「我公車呢」並更新。",
+  "@updateStoreHintIos": {
+    "description": "Fallback instruction when no App Store deep link is configured. 「我公車呢」 is the app's name and stays as-is."
+  },
+  "updateStoreHintAndroid": "請至 Google Play 搜尋「我公車呢」並更新。",
+  "@updateStoreHintAndroid": {
+    "description": "Fallback instruction when no Google Play deep link is configured. 「我公車呢」 is the app's name and stays as-is."
+  },
+  "feedbackErrorRateLimited": "今天的回報次數已達上限，明天再試",
+  "@feedbackErrorRateLimited": {
+    "description": "Rider feedback rejected: the per-device daily report quota is spent."
+  },
+  "feedbackErrorUnverified": "這台裝置驗證沒過，重新開啟 App 後再試一次",
+  "@feedbackErrorUnverified": {
+    "description": "Rider feedback rejected: App Check / device attestation failed."
+  },
+  "feedbackErrorRejected": "這則內容伺服器不收，換個寫法再試一次",
+  "@feedbackErrorRejected": {
+    "description": "Rider feedback rejected: the server refused the body as invalid."
+  },
+  "commonUndo": "復原",
+  "@commonUndo": {
+    "description": "Snackbar action that reverses the change just made."
+  },
+  "commonClear": "清除",
+  "@commonClear": {
+    "description": "Accessibility label for a button that empties a text field."
+  },
+  "commonSave": "儲存",
+  "@commonSave": {
+    "description": "Button that commits an entry."
+  },
+  "commonCancel": "取消",
+  "@commonCancel": {
+    "description": "Button that abandons an entry."
+  },
+  "commonDone": "完成",
+  "@commonDone": {
+    "description": "Button that closes a finished flow."
+  },
+  "commonTapForDetails": "點擊看詳情",
+  "@commonTapForDetails": {
+    "description": "Hint on a collapsed notice: tapping opens the full alert."
+  },
+  "commonJustNow": "剛剛",
+  "@commonJustNow": {
+    "description": "Relative time for something that happened less than a minute ago."
+  },
+  "commonYesterday": "昨天",
+  "@commonYesterday": {
+    "description": "Relative time for the previous calendar day."
+  },
+  "alertsTitle": "通知",
+  "@alertsTitle": {
+    "description": "Title of the notification inbox sheet."
+  },
+  "alertsGroupOngoing": "進行中",
+  "@alertsGroupOngoing": {
+    "description": "Inbox group heading for disruptions still in effect."
+  },
+  "alertsGroupMessages": "訊息",
+  "@alertsGroupMessages": {
+    "description": "Inbox group heading for one-off messages."
+  },
+  "alertsClearAll": "清除全部",
+  "@alertsClearAll": {
+    "description": "Button that empties the notification inbox."
+  },
+  "alertsClearAllSemantics": "清除全部通知",
+  "@alertsClearAllSemantics": {
+    "description": "Accessibility label for the clear-all button."
+  },
+  "alertsCleared": "已清除通知",
+  "@alertsCleared": {
+    "description": "Confirmation after clearing a single notification."
+  },
+  "alertsDisruption": "服務中斷",
+  "@alertsDisruption": {
+    "description": "Heading on an alert reporting a service disruption."
+  },
+  "alertsEmpty": "目前沒有通知",
+  "@alertsEmpty": {
+    "description": "Empty state of the notification inbox."
+  },
+  "alertsEmptyHint": "路線或班次有異常時會通知你",
+  "@alertsEmptyHint": {
+    "description": "Empty-state detail explaining when notifications arrive."
+  },
+  "alertsLocationOff": "定位服務已關閉，地圖顯示預設位置。",
+  "@alertsLocationOff": {
+    "description": "Notice rail: location services are switched off device-wide, so the map is centred on a default."
+  },
+  "alertsLocationDenied": "未取得定位權限，地圖顯示預設位置。",
+  "@alertsLocationDenied": {
+    "description": "Notice rail: the app has no location permission, so the map is centred on a default."
+  },
+  "alertsOpenLocationService": "開啟定位服務",
+  "@alertsOpenLocationService": {
+    "description": "Notice rail action that opens the device's location settings."
+  },
+  "alertsOpenLocationPermission": "開啟定位權限",
+  "@alertsOpenLocationPermission": {
+    "description": "Notice rail action that opens the app's permission settings."
+  },
+  "bikePlanRoute": "規劃路線",
+  "@bikePlanRoute": {
+    "description": "Button that plans a journey to this bike station."
+  },
+  "bikeStationFallbackName": "自行車站",
+  "@bikeStationFallbackName": {
+    "description": "Placeholder title when a bike station carries no name."
+  },
+  "commonLocateMe": "定位目前位置",
+  "@commonLocateMe": {
+    "description": "Accessibility label for the map button that recentres on the rider."
+  },
+  "favoritesTitle": "我的收藏",
+  "@favoritesTitle": {
+    "description": "Title of the favorites screen."
+  },
+  "favoritesRemoved": "已移除收藏",
+  "@favoritesRemoved": {
+    "description": "Confirmation after removing a favorite."
+  },
+  "favoritesUnpin": "取消釘選",
+  "@favoritesUnpin": {
+    "description": "Action that unpins a favorite from the home screen."
+  },
+  "favoritesPin": "釘選至首頁",
+  "@favoritesPin": {
+    "description": "Action that pins a favorite to the home screen."
+  },
+  "favoritesEmpty": "尚無收藏",
+  "@favoritesEmpty": {
+    "description": "Empty state of the favorites screen."
+  },
+  "favoritesEmptyHint": "在站牌或路線頁點收藏即可加入，釘選後會顯示在首頁",
+  "@favoritesEmptyHint": {
+    "description": "Empty-state detail explaining how to add and pin a favorite."
+  },
+  "commonAll": "全部",
+  "@commonAll": {
+    "description": "Filter option meaning no filter is applied."
+  },
+  "commonClose": "關閉",
+  "@commonClose": {
+    "description": "Accessibility label for a button that dismisses a sheet."
+  },
+  "commonReload": "重新載入",
+  "@commonReload": {
+    "description": "Button that re-requests data after a failure."
+  },
+  "commonSettings": "設定",
+  "@commonSettings": {
+    "description": "Accessibility label for the button that opens Settings."
+  },
+  "commonNotifications": "通知",
+  "@commonNotifications": {
+    "description": "Accessibility label for the button that opens the notification inbox."
+  },
+  "commonDecrease": "減少",
+  "@commonDecrease": {
+    "description": "Accessibility label for a stepper's minus button."
+  },
+  "commonIncrease": "增加",
+  "@commonIncrease": {
+    "description": "Accessibility label for a stepper's plus button."
+  },
+  "modeMetro": "捷運",
+  "@modeMetro": {
+    "description": "Transit mode: metro / MRT."
+  },
+  "modeBus": "公車",
+  "@modeBus": {
+    "description": ""
+  },
+  "modeBike": "公共自行車",
+  "modeTra": "台鐵",
+  "@modeTra": {
+    "description": "Transit mode: Taiwan Railway (TRA) conventional rail."
+  },
+  "modeThsr": "高鐵",
+  "@modeThsr": {
+    "description": "Transit mode: Taiwan High Speed Rail (THSR)."
+  },
+  "modeRailPair": "雙鐵",
+  "@modeRailPair": {
+    "description": "Accessibility label for the control covering both rail systems, TRA and THSR together."
+  },
+  "homeSearchHint": "搜尋公車路線或全台站點",
+  "@homeSearchHint": {
+    "description": "Placeholder in the home search field."
+  },
+  "homeSeeAllFavorites": "查看全部收藏",
+  "@homeSeeAllFavorites": {
+    "description": "Link from the home screen to the full favorites list."
+  },
+  "homeNoPinned": "尚無釘選的收藏",
+  "@homeNoPinned": {
+    "description": "Home empty state when nothing is pinned."
+  },
+  "homeNoPinnedBody": "在收藏頁釘選常用站點或路線，就會顯示在這",
+  "@homeNoPinnedBody": {
+    "description": "Home empty-state detail explaining how to pin a stop or route."
+  },
+  "homeGoToFavorites": "前往收藏頁",
+  "@homeGoToFavorites": {
+    "description": "Home empty-state button that opens the favorites screen."
+  },
+  "homeNoNearby": "附近沒有站點",
+  "@homeNoNearby": {
+    "description": "Nearby empty state when no stop is within range."
+  },
+  "homeNoNearbyBody": "移動地圖或拉大範圍，看看附近有什麼",
+  "@homeNoNearbyBody": {
+    "description": "Nearby empty-state detail suggesting panning or zooming out."
+  },
+  "homeNoNearbyFilteredBody": "附近還有其他類型的站點",
+  "@homeNoNearbyFilteredBody": {
+    "description": "Nearby empty-state detail when the active mode filter is what hides the results."
+  },
+  "homeShowAllStops": "顯示全部站點",
+  "@homeShowAllStops": {
+    "description": "Action that clears the nearby mode filter."
+  },
+  "homeBackToMap": "返回地圖",
+  "@homeBackToMap": {
+    "description": "Button that collapses the nearby list back to the map."
+  },
+  "homePlanRoute": "路線規劃",
+  "@homePlanRoute": {
+    "description": "Accessibility label for the button that opens the journey planner."
+  },
+  "homeTabFavorites": "我的收藏",
+  "@homeTabFavorites": {
+    "description": "Home tab showing the rider's saved stops and routes."
+  },
+  "homeTabNearby": "附近站點",
+  "@homeTabNearby": {
+    "description": "Home tab showing stops near the rider."
+  },
+  "metroSearchHint": "搜尋站名，例如：忠孝復興",
+  "@metroSearchHint": {
+    "description": "Placeholder in the metro station search field. 忠孝復興 is a Taipei station name used as an example."
+  },
+  "metroSearchNoMatchHint": "試試站名的前兩個字",
+  "@metroSearchNoMatchHint": {
+    "description": "Hint after an empty metro station search: try the first couple of characters."
+  },
+  "metroFavoriteStations": "我的收藏",
+  "@metroFavoriteStations": {
+    "description": "Heading over the rider's saved metro stations."
+  },
+  "metroNoFavoriteStations": "尚無收藏的車站\n先點選地圖上的車站，再點面板右上的書籤圖示加入收藏",
+  "@metroNoFavoriteStations": {
+    "description": "Metro favorites empty state, with the two steps to add one. Keep the line break."
+  },
+  "metroCrowding": "車廂擁擠度",
+  "@metroCrowding": {
+    "description": "Heading over the per-carriage crowding readout."
+  },
+  "metroCrowdingUnavailable": "暫無擁擠度資料",
+  "@metroCrowdingUnavailable": {
+    "description": "Crowding heading when the operator is publishing no crowding data."
+  },
+  "metroCrowdingUnavailableShort": "暫無資料",
+  "@metroCrowdingUnavailableShort": {
+    "description": "Short form shown in the crowding tile itself when no data is available."
+  },
+  "metroAlightReminderSet": "設定下車提醒",
+  "@metroAlightReminderSet": {
+    "description": "Accessibility label for the control that arms an alight reminder."
+  },
+  "metroAlightReminderCancel": "取消下車提醒",
+  "@metroAlightReminderCancel": {
+    "description": "Accessibility label for the control that disarms an alight reminder."
+  },
+  "metroFirstLastTrain": "首末班車",
+  "@metroFirstLastTrain": {
+    "description": "Heading over the first/last departure table."
+  },
+  "metroFirstLastUnavailable": "暫無首末班車資料",
+  "@metroFirstLastUnavailable": {
+    "description": "Shown when the operator publishes no first/last train times for this station."
+  },
+  "metroFirstTrain": "首班",
+  "@metroFirstTrain": {
+    "description": "Column heading for the first departure of the day."
+  },
+  "metroLastTrain": "末班",
+  "@metroLastTrain": {
+    "description": "Column heading for the last departure of the day."
+  },
+  "metroEtaUnavailable": "收不到即時到站資料",
+  "@metroEtaUnavailable": {
+    "description": "Heading when the live arrival feed is unreachable."
+  },
+  "metroEtaUnavailableBody": "目前無法取得資料，請聯絡開發者",
+  "@metroEtaUnavailableBody": {
+    "description": "Detail reassuring the rider that service continues even though ETAs are missing."
+  },
+  "metroServiceEnded": "今日已收班",
+  "@metroServiceEnded": {
+    "description": "Status when the last train of the day has already departed."
+  },
+  "metroServiceNotStarted": "尚未發車",
+  "@metroServiceNotStarted": {
+    "description": "Status before the first train of the day."
+  },
+  "metroSwitchSystem": "切換捷運系統",
+  "@metroSwitchSystem": {
+    "description": "Accessibility label for the metro-system switcher."
+  },
+  "metroSystemTrtc": "台北捷運",
+  "@metroSystemTrtc": {
+    "description": "Metro operator: Taipei Rapid Transit."
+  },
+  "metroSystemKrtc": "高雄捷運",
+  "@metroSystemKrtc": {
+    "description": "Metro operator: Kaohsiung Rapid Transit."
+  },
+  "metroSystemTymc": "桃園機捷",
+  "@metroSystemTymc": {
+    "description": "Metro operator: Taoyuan Airport MRT."
+  },
+  "metroSystemKlrt": "高雄輕軌",
+  "@metroSystemKlrt": {
+    "description": "Metro operator: Kaohsiung Light Rail."
+  },
+  "mrtAlightTitle": "下車提醒",
+  "@mrtAlightTitle": {
+    "description": "Title of the sheet that sets an alight reminder."
+  },
+  "mrtAlightNoStops": "這班車前方沒有可設定的停靠站",
+  "@mrtAlightNoStops": {
+    "description": "Shown when the tracked train has no remaining stops to pick."
+  },
+  "mrtAlightStopLabel": "下車站（前方停靠）",
+  "@mrtAlightStopLabel": {
+    "description": "Label over the picker listing the train's remaining stops."
+  },
+  "mrtAlightNotReachable": "這班車不到該站",
+  "@mrtAlightNotReachable": {
+    "description": "Error: the chosen station is not on this train's remaining route."
+  },
+  "mrtAlightNotFound": "查無此車，請確認車廂號",
+  "@mrtAlightNotFound": {
+    "description": "Error: no train matched the entered carriage number."
+  },
+  "mrtAlightGenericError": "設定失敗，請稍後再試",
+  "@mrtAlightGenericError": {
+    "description": "Error: the reminder could not be created for an unspecified reason."
+  },
+  "mrtAlightBound": "已綁定",
+  "@mrtAlightBound": {
+    "description": "Marker that the reminder is attached to a specific train."
+  },
+  "mrtAlightAutoDetected": "· 由擁擠度資料自動判定",
+  "@mrtAlightAutoDetected": {
+    "description": "Note that the carriage was inferred from crowding data rather than entered."
+  },
+  "mrtAlightCarNumberLabel": "輸入車廂號（含前導零）",
+  "@mrtAlightCarNumberLabel": {
+    "description": "Label for the carriage-number field, noting that leading zeros are part of the number."
+  },
+  "mrtAlightCarNumberHint": "車廂號，如 1163",
+  "@mrtAlightCarNumberHint": {
+    "description": "Placeholder showing the shape of a carriage number."
+  },
+  "mrtAlightLeadLabel": "提前提醒",
+  "@mrtAlightLeadLabel": {
+    "description": "Label for how many stops ahead the reminder fires."
+  },
+  "mrtAlightStart": "開始追蹤",
+  "@mrtAlightStart": {
+    "description": "Button that arms the alight reminder."
+  },
+  "homeNoNearbyFiltered": "附近沒有{mode}站點",
+  "@homeNoNearbyFiltered": {
+    "description": "Nearby empty state naming the mode filter that is hiding everything, e.g. no metro stations nearby.",
+    "placeholders": {
+      "mode": {
+        "type": "String",
+        "example": "捷運"
+      }
+    }
+  },
+  "commonRetryShort": "重試",
+  "@commonRetryShort": {
+    "description": "Button that retries the failed request."
+  },
+  "commonSearch": "搜尋",
+  "@commonSearch": {
+    "description": "Default placeholder for a search field."
+  },
+  "commonMoreOptions": "更多選項",
+  "@commonMoreOptions": {
+    "description": "Tooltip for an overflow menu."
+  },
+  "commonSelectTime": "選擇時間",
+  "@commonSelectTime": {
+    "description": "Title of the time picker sheet."
+  },
+  "commonDragToResize": "拖曳調整",
+  "@commonDragToResize": {
+    "description": "Accessibility label for a bottom sheet's drag handle."
+  },
+  "commonYourLocation": "您的位置",
+  "@commonYourLocation": {
+    "description": "Map label for the rider's own position."
+  },
+  "favoriteAdd": "加入收藏",
+  "@favoriteAdd": {
+    "description": "Action that saves a stop or route to favorites."
+  },
+  "favoriteRemove": "取消收藏",
+  "@favoriteRemove": {
+    "description": "Action that removes a stop or route from favorites."
+  },
+  "etaArriving": "進站中",
+  "@etaArriving": {
+    "description": "ETA state: the vehicle is pulling in now."
+  },
+  "etaApproaching": "即將進站",
+  "@etaApproaching": {
+    "description": "ETA state: the vehicle is about to arrive."
+  },
+  "etaArrivingSoon": "即將抵達",
+  "@etaArrivingSoon": {
+    "description": "Banner on the stop the rider is about to reach."
+  },
+  "bikeWaitingLive": "等待即時資料…",
+  "@bikeWaitingLive": {
+    "description": "Bike dock status before the first live reading arrives."
+  },
+  "bikeSuspended": "暫停服務",
+  "@bikeSuspended": {
+    "description": "Bike station status: out of service."
+  },
+  "bikeNoBikes": "目前無車可借",
+  "@bikeNoBikes": {
+    "description": "Bike station status: every dock is empty."
+  },
+  "bikeNoDocks": "車柱已滿，無法還車",
+  "@bikeNoDocks": {
+    "description": "Bike station status: every dock is occupied, so a bike cannot be returned."
+  },
+  "bikeFewBikes": "車輛偏少",
+  "@bikeFewBikes": {
+    "description": "Bike station status: only a few bikes left."
+  },
+  "bikeUnitBikes": "輛",
+  "@bikeUnitBikes": {
+    "description": "Counter unit for bikes available to borrow."
+  },
+  "bikeUnitDocks": "位",
+  "@bikeUnitDocks": {
+    "description": "Counter unit for empty docks available for returns."
+  },
+  "bikeReturnSpaces": "可還車位",
+  "@bikeReturnSpaces": {
+    "description": "Caption over the empty-dock count."
+  },
+  "bikeAvailable": "可借",
+  "@bikeAvailable": {
+    "description": "Caption over the count of bikes available to borrow."
+  },
+  "searchCloseSemantics": "關閉搜尋",
+  "@searchCloseSemantics": {
+    "description": "Accessibility label for the button that leaves search."
+  },
+  "searchClearSemantics": "清除搜尋",
+  "@searchClearSemantics": {
+    "description": "Accessibility label for the button that empties the search field."
+  },
+  "searchHint": "搜尋路線、站點",
+  "@searchHint": {
+    "description": "Placeholder in the main search field."
+  },
+  "searchResults": "搜尋結果",
+  "@searchResults": {
+    "description": "Heading over the search result list."
+  },
+  "searchCityFilter": "縣市篩選",
+  "@searchCityFilter": {
+    "description": "Accessibility label for the row of city filter chips shown when search results span more than one city."
+  },
+  "searchNoMatchHint": "試試公車路線號碼、站牌名稱或捷運站名",
+  "@searchNoMatchHint": {
+    "description": "Hint after an empty search, listing what can be searched."
+  },
+  "searchRecent": "最近搜尋",
+  "@searchRecent": {
+    "description": "Heading over recently searched stops and routes."
+  },
+  "searchRecentClearTitle": "清除所有搜尋紀錄？",
+  "@searchRecentClearTitle": {
+    "description": "Confirmation dialog title before wiping search history."
+  },
+  "searchRecentClearBody": "這個動作無法復原。",
+  "@searchRecentClearBody": {
+    "description": "Confirmation dialog body warning the wipe is permanent."
+  },
+  "searchRecentKeep": "保留紀錄",
+  "@searchRecentKeep": {
+    "description": "Dialog button that cancels the wipe."
+  },
+  "searchRecentClear": "清除紀錄",
+  "@searchRecentClear": {
+    "description": "Dialog button that confirms the wipe."
+  },
+  "searchRecentClearSemantics": "清除所有搜尋紀錄",
+  "@searchRecentClearSemantics": {
+    "description": "Accessibility label for the clear-history button."
+  },
+  "searchRecentEmpty": "開始輸入路線或站點",
+  "@searchRecentEmpty": {
+    "description": "Empty state before the rider has typed anything."
+  },
+  "searchRecentRemoveOne": "移除這筆紀錄",
+  "@searchRecentRemoveOne": {
+    "description": "Custom accessibility action that removes one history entry."
+  },
+  "genuiAskInvite": "Ai 模式",
+  "@genuiAskInvite": {
+    "description": "Invitation above the search results offering to answer a plain-language question."
+  },
+  "genuiAskExample1": "從台北車站怎麼去淡水",
+  "@genuiAskExample1": {
+    "description": "First tappable example question, a door-to-door journey."
+  },
+  "genuiAskExample2": "南港展覽館附近有 YouBike 嗎",
+  "@genuiAskExample2": {
+    "description": "Second tappable example question, finding a service near a place."
+  },
+  "genuiAskQuery": "問「{query}」",
+  "@genuiAskQuery": {
+    "description": "Row offering to ask what is currently in the search field.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "從台北車站怎麼去淡水"
+      }
+    }
+  },
+  "genuiCollapse": "收起",
+  "@genuiCollapse": {
+    "description": "Clears the answer and gives the space back to the search results."
+  },
+  "genuiStop": "停止",
+  "@genuiStop": {
+    "description": "Cancels an in-flight AI answer. The answer already on screen is kept."
+  },
+  "genuiThinking": "AI 思考中…",
+  "@genuiThinking": {
+    "description": "AI assistant status: the model is reasoning."
+  },
+  "genuiComposing": "整理結果中…",
+  "@genuiComposing": {
+    "description": "AI assistant status: the model is formatting its answer."
+  },
+  "genuiOffline": "沒有網路連線,問句需要連線才能回答",
+  "@genuiOffline": {
+    "description": "AI assistant error: offline. Names the question as the part that needs the network, since keyword search still works."
+  },
+  "genuiUnavailable": "AI 暫時無法使用",
+  "@genuiUnavailable": {
+    "description": "AI assistant error: the service could not be reached."
+  },
+  "genuiNoResults": "這個問題我找不到對應的站或路線",
+  "@genuiNoResults": {
+    "description": "AI assistant returned nothing to render."
+  },
+  "genuiNoResultsHint": "試試站名、路線號碼,或「A 到 B 怎麼走」",
+  "@genuiNoResultsHint": {
+    "description": "States what the assistant can actually answer, after it found nothing."
+  },
+  "bikeGeneralCount": "一般 {count}",
+  "@bikeGeneralCount": {
+    "description": "Count of standard (non-electric) bikes available at a station.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "7"
+      }
+    }
+  },
+  "bikeElectricCount": "電輔 {count}",
+  "@bikeElectricCount": {
+    "description": "Count of electric-assist bikes available at a station.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "etaMinutes": "{minutes}分",
+  "@etaMinutes": {
+    "description": "Live countdown to a vehicle's arrival, in whole minutes. Tight to the number — this renders inside a narrow ETA column.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "etaNotDeparted": "尚未發車",
+  "@etaNotDeparted": {
+    "description": "Service state: the first vehicle of the day has not left the terminus yet."
+  },
+  "etaTrafficControl": "交管不停靠",
+  "@etaTrafficControl": {
+    "description": "Service state: traffic control means vehicles are skipping this stop."
+  },
+  "etaLastBusPassed": "末班已過",
+  "@etaLastBusPassed": {
+    "description": "Service state: the last vehicle of the day has already passed."
+  },
+  "etaLastBusTag": "末班車",
+  "@etaLastBusTag": {
+    "description": "Mark on an arrival row: TDX confirmed this is the route's last bus of the day."
+  },
+  "etaNotOperating": "今日未營運",
+  "@etaNotOperating": {
+    "description": "Service state: this route is not running today."
+  },
+  "commonFavorite": "收藏",
+  "@commonFavorite": {
+    "description": "Accessibility label for the favorite toggle."
+  },
+  "commonSkip": "略過",
+  "@commonSkip": {
+    "description": "Button that dismisses a step without acting on it."
+  },
+  "busNextDepartures": "接下來發車",
+  "@busNextDepartures": {
+    "description": "Heading over the next scheduled departures of a route."
+  },
+  "busNoDepartures": "今日尚無發車資料",
+  "@busNoDepartures": {
+    "description": "Shown when the operator published no departures for today."
+  },
+  "busOperatingCities": "營運縣市",
+  "@busOperatingCities": {
+    "description": "Heading over the counties and cities a route runs through."
+  },
+  "busEndpoints": "起迄站",
+  "@busEndpoints": {
+    "description": "Heading over a route's first and last stops."
+  },
+  "busOperators": "營運業者",
+  "@busOperators": {
+    "description": "Heading over the companies running a route."
+  },
+  "busNoOperators": "尚無營運業者資料",
+  "@busNoOperators": {
+    "description": "Shown when no operator is published for a route."
+  },
+  "busFareInfo": "票價資訊",
+  "@busFareInfo": {
+    "description": "Heading over a route's fare table."
+  },
+  "busNoFare": "尚無票價資料",
+  "@busNoFare": {
+    "description": "Shown when no fare is published for a route."
+  },
+  "busFarePricingType": "票價型態",
+  "@busFarePricingType": {
+    "description": "Row naming how a route charges: flat, two-section, or by distance."
+  },
+  "busFareChargingMethod": "收費方式",
+  "@busFareChargingMethod": {
+    "description": "Row naming the payment arrangement for a route."
+  },
+  "busFareFree": "免費",
+  "@busFareFree": {
+    "description": "Fare value for a route that charges nothing."
+  },
+  "busSearchStops": "搜尋站牌",
+  "@busSearchStops": {
+    "description": "Label for the fare-table stop search field."
+  },
+  "busSearchStopsHint": "輸入起站或迄站名稱",
+  "@busSearchStopsHint": {
+    "description": "Placeholder telling the rider to type an origin or destination stop."
+  },
+  "busTimetable": "時刻表",
+  "@busTimetable": {
+    "description": "Heading over a route's timetable."
+  },
+  "busNoTimetable": "尚無班表資料",
+  "@busNoTimetable": {
+    "description": "Shown when no timetable is published for a route."
+  },
+  "busNotRunningToday": "本日未行駛",
+  "@busNotRunningToday": {
+    "description": "Timetable state: this route does not run on the selected day."
+  },
+  "busDepart": "出發",
+  "@busDepart": {
+    "description": "Column heading for departure times."
+  },
+  "busNextRun": "下一班",
+  "@busNextRun": {
+    "description": "Tag marking the next departure in the timetable."
+  },
+  "busLowFloor": "低地板",
+  "@busLowFloor": {
+    "description": "Tag marking a wheelchair-accessible low-floor vehicle."
+  },
+  "busBufferZone": "緩衝區",
+  "@busBufferZone": {
+    "description": "Timeline label for the stops between two fare sections, where either section's fare may apply."
+  },
+  "busStopList": "站牌列表",
+  "@busStopList": {
+    "description": "Tab showing every stop on a route."
+  },
+  "busRouteDetails": "詳細資訊",
+  "@busRouteDetails": {
+    "description": "Tab showing a route's operator, fares and timetable."
+  },
+  "busDirectionOutbound": "去程",
+  "@busDirectionOutbound": {
+    "description": "Route direction: outbound, used when the operator names no destination."
+  },
+  "busDirectionInbound": "返程",
+  "@busDirectionInbound": {
+    "description": "Route direction: inbound, used when the operator names no destination."
+  },
+  "busSetLeadReminder": "設定提前提醒",
+  "@busSetLeadReminder": {
+    "description": "Title once an alight stop is chosen: set how many stops ahead to be warned."
+  },
+  "busPickAlightStop": "選你要下車的站",
+  "@busPickAlightStop": {
+    "description": "Title prompting the rider to choose where they get off."
+  },
+  "busCancelStopPick": "取消選站",
+  "@busCancelStopPick": {
+    "description": "Accessibility label for clearing the chosen alight stop."
+  },
+  "busLeadLabel": "提前",
+  "@busLeadLabel": {
+    "description": "Label before the number of stops of advance warning."
+  },
+  "busServiceEndedToday": "今日已收班",
+  "@busServiceEndedToday": {
+    "description": "Collapsed banner replacing a per-stop repeat when the whole direction has finished for the day."
+  },
+  "busVehicleHere": "公車在這",
+  "@busVehicleHere": {
+    "description": "Timeline marker showing where the bus currently is."
+  },
+  "busTerminus": "終點",
+  "@busTerminus": {
+    "description": "Timeline tag for a route's final stop."
+  },
+  "busDeparture": "發車",
+  "@busDeparture": {
+    "description": "Timeline tag for the departure of a run."
+  },
+  "busStopNoRoutes": "此站目前無路線資訊",
+  "@busStopNoRoutes": {
+    "description": "Empty state for a stop the server lists no routes for."
+  },
+  "busStopNoRoutesHint": "稍後再試，或確認站牌是否正確",
+  "@busStopNoRoutesHint": {
+    "description": "Detail suggesting the stop may be wrong or the data late."
+  },
+  "busStopNoData": "目前沒有任何資料",
+  "@busStopNoData": {
+    "description": "Empty state when a stop returns nothing at all."
+  },
+  "busStopNoDataHint": "稍後再試,或下拉重新整理",
+  "@busStopNoDataHint": {
+    "description": "Detail suggesting a retry or pull-to-refresh."
+  },
+  "busStopFallbackTitle": "公車站牌",
+  "@busStopFallbackTitle": {
+    "description": "Placeholder title for a stop sheet with no freshness timestamp yet."
+  },
+  "busLiveActivityOn": "開啟站牌即時動態",
+  "@busLiveActivityOn": {
+    "description": "Accessibility label for the control that starts the stop's Live Activity."
+  },
+  "busLiveActivityOff": "關閉站牌即時動態",
+  "@busLiveActivityOff": {
+    "description": "Accessibility label for the control that stops the stop's Live Activity."
+  },
+  "busScheduledDeparture": "預計 {time} 發車",
+  "@busScheduledDeparture": {
+    "description": "Accessibility phrasing for a scheduled departure clock, as opposed to a live countdown.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "20:40"
+      }
+    }
+  },
+  "commonApply": "套用",
+  "@commonApply": {
+    "description": "Button that commits the chosen filter or option values."
+  },
+  "commonDate": "日期",
+  "@commonDate": {
+    "description": "Label for a date field."
+  },
+  "commonTime": "時間",
+  "@commonTime": {
+    "description": "Label for a time field."
+  },
+  "commonName": "名稱",
+  "@commonName": {
+    "description": "Label for a name field."
+  },
+  "commonIcon": "圖示",
+  "@commonIcon": {
+    "description": "Label for an icon picker."
+  },
+  "goSwapEndpoints": "對調起訖點",
+  "@goSwapEndpoints": {
+    "description": "Accessibility label for the button that swaps origin and destination."
+  },
+  "goLocating": "定位中…",
+  "@goLocating": {
+    "description": "Origin field state while the device is getting a fix."
+  },
+  "goChooseOrigin": "選擇出發地",
+  "@goChooseOrigin": {
+    "description": "Origin field placeholder and picker title."
+  },
+  "goChooseDestination": "選擇目的地",
+  "@goChooseDestination": {
+    "description": "Destination field placeholder and picker title."
+  },
+  "goNoLocation": "未取得定位 · ",
+  "@goNoLocation": {
+    "description": "Origin field prefix when no location fix is available. Keep the trailing separator."
+  },
+  "goEnableLocation": "開啟定位",
+  "@goEnableLocation": {
+    "description": "Action that opens the location permission settings."
+  },
+  "goPlanning": "規劃中",
+  "@goPlanning": {
+    "description": "Status while routes are still being computed."
+  },
+  "goSuggestedRoutes": "建議路線",
+  "@goSuggestedRoutes": {
+    "description": "Heading over the planned route options."
+  },
+  "goPlannerSlowTitle": "路線服務沒有回應",
+  "@goPlannerSlowTitle": {
+    "description": "Planner error heading: the upstream routing service did not answer in time."
+  },
+  "goPlannerSlowBody": "交通部的路線規劃這次沒有在時間內回覆，再試一次通常就好了",
+  "@goPlannerSlowBody": {
+    "description": "Planner error detail: the ministry's routing service timed out and a retry usually works."
+  },
+  "goNoRouteTitle": "找不到合適路線",
+  "@goNoRouteTitle": {
+    "description": "Planner error heading: no public-transport route connects the two points."
+  },
+  "goNoRouteBody": "這兩點之間目前沒有大眾運輸班次",
+  "@goNoRouteBody": {
+    "description": "Planner error detail for an unreachable pair."
+  },
+  "goNoRouteHint": "試試調整出發地或目的地",
+  "@goNoRouteHint": {
+    "description": "Suggestion to change one of the endpoints."
+  },
+  "goUnavailableTitle": "暫時無法規劃路線",
+  "@goUnavailableTitle": {
+    "description": "Planner error heading: the routing service is busy."
+  },
+  "goUnavailableBody": "路線服務忙碌中，稍後再試",
+  "@goUnavailableBody": {
+    "description": "Planner error detail for a busy routing service."
+  },
+  "goPlanFailedTitle": "無法取得路線",
+  "@goPlanFailedTitle": {
+    "description": "Planner error heading for an unclassified failure."
+  },
+  "goPlanFailedBody": "請確認網路後再試一次",
+  "@goPlanFailedBody": {
+    "description": "Planner error detail suggesting a network check."
+  },
+  "goBadgeFastest": "最快",
+  "@goBadgeFastest": {
+    "description": "Badge on the quickest route option."
+  },
+  "goWaitingUpstream": "還在等交通部資料回覆",
+  "@goWaitingUpstream": {
+    "description": "Long-wait status naming the upstream data source."
+  },
+  "goComparingTransfers": "正在比較轉乘組合…",
+  "@goComparingTransfers": {
+    "description": "Planner status while transfer combinations are being compared."
+  },
+  "goPlanningRoute": "正在規劃路線…",
+  "@goPlanningRoute": {
+    "description": "Planner status while the first results are being computed."
+  },
+  "goCancelPlanning": "取消規劃",
+  "@goCancelPlanning": {
+    "description": "Accessibility label for the button that abandons an in-flight plan."
+  },
+  "goStraightLine": "直線 ",
+  "@goStraightLine": {
+    "description": "Prefix before a straight-line distance. Keep the trailing space."
+  },
+  "goKilometresSuffix": " 公里",
+  "@goKilometresSuffix": {
+    "description": "Kilometre unit appended to a distance. Keep the leading space."
+  },
+  "goKilometres": "公里",
+  "@goKilometres": {
+    "description": "Kilometre unit shown beside a distance figure."
+  },
+  "goMetres": "公尺",
+  "@goMetres": {
+    "description": "Metre unit shown beside a distance figure."
+  },
+  "goLastRouteSemantics": "上次這段路的路線",
+  "@goLastRouteSemantics": {
+    "description": "Accessibility label for the recall of a previously taken route."
+  },
+  "goLastRouteTitle": "上次這段路你走的是",
+  "@goLastRouteTitle": {
+    "description": "Heading over the route the rider took last time between the same two points."
+  },
+  "goRouteOptions": "路線選項",
+  "@goRouteOptions": {
+    "description": "Title of the sheet holding the planner's tuning options."
+  },
+  "goOptions": "選項",
+  "@goOptions": {
+    "description": "Button that opens the planner options sheet."
+  },
+  "goPrefCheapest": "省錢",
+  "@goPrefCheapest": {
+    "description": "Routing preference: minimise fare."
+  },
+  "goPrefCheaperLeaning": "偏省錢",
+  "@goPrefCheaperLeaning": {
+    "description": "Routing preference leaning towards fare over time."
+  },
+  "goPrefBalanced": "平衡",
+  "@goPrefBalanced": {
+    "description": "Routing preference balancing fare and time."
+  },
+  "goPrefFasterLeaning": "偏省時",
+  "@goPrefFasterLeaning": {
+    "description": "Routing preference leaning towards time over fare."
+  },
+  "goPrefFastest": "省時",
+  "@goPrefFastest": {
+    "description": "Routing preference: minimise travel time."
+  },
+  "goPrefRow": "時間 / 價格偏好",
+  "@goPrefRow": {
+    "description": "Row label for the time-versus-fare slider."
+  },
+  "goRouteCount": "路線數量",
+  "@goRouteCount": {
+    "description": "Row label for how many route options to return."
+  },
+  "goModes": "搭乘運具",
+  "@goModes": {
+    "description": "Row label for which transit modes the planner may use."
+  },
+  "goTransferTime": "轉乘時間",
+  "@goTransferTime": {
+    "description": "Row label for the acceptable transfer window."
+  },
+  "goFirstMile": "第一哩路（分鐘）",
+  "@goFirstMile": {
+    "description": "Row label for how long the rider will walk to the first stop."
+  },
+  "goLastMile": "最後一哩路（分鐘）",
+  "@goLastMile": {
+    "description": "Row label for how long the rider will walk from the last stop."
+  },
+  "goRouteBox": "路線箱",
+  "@goRouteBox": {
+    "description": "Title of the saved-routes drawer."
+  },
+  "goSearchDestination": "搜尋目的地",
+  "@goSearchDestination": {
+    "description": "Placeholder in the destination search field."
+  },
+  "goSearchDestinationHint": "輸入目的地，或往右滑任一列把它存成常去地點",
+  "@goSearchDestinationHint": {
+    "description": "Hint explaining that a swipe saves a destination as a frequent place."
+  },
+  "goPlanRoute": "規劃路線",
+  "@goPlanRoute": {
+    "description": "Button that runs the planner."
+  },
+  "goDepartSuffix": " 出發",
+  "@goDepartSuffix": {
+    "description": "Suffix after a chosen departure time. Keep the leading space."
+  },
+  "goArriveSuffix": " 抵達",
+  "@goArriveSuffix": {
+    "description": "Suffix after a chosen arrival time. Keep the leading space."
+  },
+  "goChooseDepartTime": "選擇出發時間",
+  "@goChooseDepartTime": {
+    "description": "Accessibility label for the departure time control."
+  },
+  "goLeaveNow": "立即出發",
+  "@goLeaveNow": {
+    "description": "Time mode: depart as soon as possible."
+  },
+  "goDepartAt": "出發時間",
+  "@goDepartAt": {
+    "description": "Time mode: depart at a chosen time."
+  },
+  "goArriveBy": "抵達時間",
+  "@goArriveBy": {
+    "description": "Time mode: arrive by a chosen time."
+  },
+  "goDepartTimeTitle": "出發時間",
+  "@goDepartTimeTitle": {
+    "description": "Title of the departure time sheet."
+  },
+  "goArrived": "已抵達目的地",
+  "@goArrived": {
+    "description": "Confirmation shown when the rider reaches their destination."
+  },
+  "goCurrentLocation": "目前位置",
+  "@goCurrentLocation": {
+    "description": "Label for the rider's own position as a journey endpoint."
+  },
+  "goSearchPlace": "搜尋地點",
+  "@goSearchPlace": {
+    "description": "Default placeholder in the place search field."
+  },
+  "goLocationUnavailable": "無法取得目前位置",
+  "@goLocationUnavailable": {
+    "description": "Error when the device could not produce a fix."
+  },
+  "goPlaceUnavailable": "無法取得地點資訊",
+  "@goPlaceUnavailable": {
+    "description": "Error when place details could not be fetched."
+  },
+  "goRecentRemoved": "已移除搜尋紀錄",
+  "@goRecentRemoved": {
+    "description": "Confirmation after removing one search history entry."
+  },
+  "goPlaceSaved": "已儲存地點",
+  "@goPlaceSaved": {
+    "description": "Confirmation after saving a place."
+  },
+  "goSavedPlaceRemoved": "已移除儲存地點",
+  "@goSavedPlaceRemoved": {
+    "description": "Confirmation after removing a saved place."
+  },
+  "goSavedPlaces": "儲存地點",
+  "@goSavedPlaces": {
+    "description": "Heading over the rider's saved places, and the title of the save dialog."
+  },
+  "goUseCurrentLocation": "使用目前位置",
+  "@goUseCurrentLocation": {
+    "description": "Accessibility label for the button that picks the rider's position."
+  },
+  "goNoPlaceMatch": "找不到符合的地點",
+  "@goNoPlaceMatch": {
+    "description": "Empty state for a place search that matched nothing."
+  },
+  "goDestinationFallback": "目的地",
+  "@goDestinationFallback": {
+    "description": "Placeholder when a journey's destination has no name."
+  },
+  "goOriginFallback": "出發地",
+  "@goOriginFallback": {
+    "description": "Placeholder when a journey's origin has no name."
+  },
+  "goArrivingSoon": "即將抵達",
+  "@goArrivingSoon": {
+    "description": "Navigation status: the next stop is imminent."
+  },
+  "goNext": "接著",
+  "@goNext": {
+    "description": "Heading over the following step of a journey."
+  },
+  "goBoarded": "我上車了",
+  "@goBoarded": {
+    "description": "Button confirming the rider is on board."
+  },
+  "goAlighted": "我下車了",
+  "@goAlighted": {
+    "description": "Button confirming the rider has got off."
+  },
+  "goVehicleArrived": "車來了——上車了嗎？",
+  "@goVehicleArrived": {
+    "description": "Prompt asking whether the rider boarded the vehicle that just arrived."
+  },
+  "goArriveSuffix": " 抵達",
+  "@goArriveSuffix": {
+    "description": "Suffix after an arrival time on a route card, e.g. \"07:50 抵達\". The leading space separates it from the time."
+  },
+  "goArriveLabel": "抵達 ",
+  "@goArriveLabel": {
+    "description": "Prefix before an arrival time. Keep the trailing space."
+  },
+  "goEndNavigation": "結束導航",
+  "@goEndNavigation": {
+    "description": "Button that stops turn-by-turn guidance."
+  },
+  "goFinishJourney": "完成行程",
+  "@goFinishJourney": {
+    "description": "Button that closes the final leg of a journey."
+  },
+  "goFinishLeg": "完成此段，前往下一段",
+  "@goFinishLeg": {
+    "description": "Button that closes the current leg and advances to the next."
+  },
+  "goArriveDestination": "抵達目的地",
+  "@goArriveDestination": {
+    "description": "Final step of a journey."
+  },
+  "goWalk": "步行",
+  "@goWalk": {
+    "description": "Journey step: walk."
+  },
+  "goBusArriving": "公車進站",
+  "@goBusArriving": {
+    "description": "Label over the countdown to a bus pulling in."
+  },
+  "goExpectedArrival": "預計抵達",
+  "@goExpectedArrival": {
+    "description": "Label over the expected arrival time."
+  },
+  "goBackToRouteList": "返回路線列表",
+  "@goBackToRouteList": {
+    "description": "Accessibility label for the button back to the route options."
+  },
+  "goSaveRoute": "保存路線",
+  "@goSaveRoute": {
+    "description": "Accessibility label for the button that saves a planned route."
+  },
+  "goUnsaveRoute": "取消保存路線",
+  "@goUnsaveRoute": {
+    "description": "Accessibility label for the button that unsaves a planned route."
+  },
+  "goStartNavigation": "開始導航",
+  "@goStartNavigation": {
+    "description": "Button that begins turn-by-turn guidance."
+  },
+  "goDirect": "直達",
+  "@goDirect": {
+    "description": "Route summary: no transfers needed."
+  },
+  "goMinutesUnit": "分",
+  "@goMinutesUnit": {
+    "description": "Minute unit shown beside a duration figure."
+  },
+  "modeFerry": "渡輪",
+  "@modeFerry": {
+    "description": "Transit mode: ferry."
+  },
+  "modeCableCar": "纜車",
+  "@modeCableCar": {
+    "description": "Transit mode: cable car / gondola."
+  },
+  "modeLightRail": "輕軌",
+  "@modeLightRail": {
+    "description": "Transit mode: light rail."
+  },
+  "modeWalking": "走路",
+  "@modeWalking": {
+    "description": "Journey mode: on foot."
+  },
+  "modeBicycle": "腳踏車",
+  "@modeBicycle": {
+    "description": "Journey mode: the rider's own bicycle."
+  },
+  "modeCar": "開車",
+  "@modeCar": {
+    "description": "Journey mode: private car."
+  },
+  "modeSharedBike": "公共自行車",
+  "@modeSharedBike": {
+    "description": "Journey mode: a docked share bike such as YouBike."
+  },
+  "commonQuery": "查詢",
+  "@commonQuery": {
+    "description": "Button that runs a search."
+  },
+  "commonNote": "備註",
+  "@commonNote": {
+    "description": "Heading over free-text notes."
+  },
+  "railTimetableTitle": "列車時刻查詢",
+  "@railTimetableTitle": {
+    "description": "Title of the rail timetable search screen."
+  },
+  "railPickStations": "選擇起訖站查詢班次",
+  "@railPickStations": {
+    "description": "Prompt before an origin and destination have been chosen."
+  },
+  "railNoTrains": "這個時段沒有班次",
+  "@railNoTrains": {
+    "description": "Empty state when no train runs in the selected window."
+  },
+  "railNoTrainsHint": "試試更換時間、日期或方向",
+  "@railNoTrainsHint": {
+    "description": "Suggestion to widen the time, date or direction."
+  },
+  "railChooseStation": "選擇車站",
+  "@railChooseStation": {
+    "description": "Placeholder in an unset station field."
+  },
+  "railModeOd": "起訖查詢",
+  "@railModeOd": {
+    "description": "Search mode: by origin and destination."
+  },
+  "railModeTrain": "車次查詢",
+  "@railModeTrain": {
+    "description": "Search mode: by train number."
+  },
+  "railOrigin": "起點站",
+  "@railOrigin": {
+    "description": "Label for the departure station field."
+  },
+  "railDestination": "終點站",
+  "@railDestination": {
+    "description": "Label for the arrival station field."
+  },
+  "railTrainNumber": "車次號碼",
+  "@railTrainNumber": {
+    "description": "Label for the train-number field."
+  },
+  "railTrainNumberHint": "例：152",
+  "@railTrainNumberHint": {
+    "description": "Placeholder showing the shape of a train number."
+  },
+  "railRecentQueries": "最近查詢",
+  "@railRecentQueries": {
+    "description": "Heading over recent rail searches."
+  },
+  "railTrainNumberPrompt": "輸入車次號碼後即可查詢",
+  "@railTrainNumberPrompt": {
+    "description": "Prompt shown before a train number has been entered."
+  },
+  "railStationBoard": "站別發車看板",
+  "@railStationBoard": {
+    "description": "Name of the departure board on a rail station's detail sheet."
+  },
+  "railDirectionForward": "順行",
+  "@railDirectionForward": {
+    "description": "TRA direction 0, the operator's own wording."
+  },
+  "railDirectionReverse": "逆行",
+  "@railDirectionReverse": {
+    "description": "TRA direction 1, the operator's own wording."
+  },
+  "railDirectionSouthbound": "南下",
+  "@railDirectionSouthbound": {
+    "description": "THSR direction 0."
+  },
+  "railDirectionNorthbound": "北上",
+  "@railDirectionNorthbound": {
+    "description": "THSR direction 1."
+  },
+  "railBoardNextDay": "明日",
+  "@railBoardNextDay": {
+    "description": "Marks where a departure board crosses into the next service day."
+  },
+  "railBoardDayOver": "今日{direction}班次已結束",
+  "@railBoardDayOver": {
+    "description": "The requested service day is landed and its trains have all departed.",
+    "placeholders": {
+      "direction": {
+        "type": "String",
+        "example": "順行"
+      }
+    }
+  },
+  "railBoardDayOverHint": "末班車已經發出。明日班次要到清晨才會提供。",
+  "@railBoardDayOverHint": {
+    "description": "Why the board is empty when the service day is over."
+  },
+  "railBoardNotLanded": "該日時刻表尚未提供",
+  "@railBoardNotLanded": {
+    "description": "The requested service day has no timetable data at all."
+  },
+  "railBoardNotLandedHint": "{system}每日凌晨才釋出當日時刻表。稍後再回來，或直接查詢起訖站。",
+  "@railBoardNotLandedHint": {
+    "description": "Explains that a missing timetable is data that has not arrived yet, not a fault.",
+    "placeholders": {
+      "system": {
+        "type": "String",
+        "example": "台鐵"
+      }
+    }
+  },
+  "railBoardLiveNotice": "台鐵動態約有 2 分鐘延遲，進站後請以站內看板為準",
+  "@railBoardLiveNotice": {
+    "description": "Footnote under the TRA station board: TDX's live train data lags the platform displays by about two minutes, and the in-station boards take precedence."
+  },
+  "railBoardQueryOd": "指定目的地查詢",
+  "@railBoardQueryOd": {
+    "description": "Secondary action under the board opening the origin/destination query."
+  },
+  "railServiceWheelchair": "無障礙座位",
+  "@railServiceWheelchair": {
+    "description": "Service mark: accessible seating is available on this train."
+  },
+  "railServiceBike": "可帶自行車",
+  "@railServiceBike": {
+    "description": "Service mark: bicycles may be carried."
+  },
+  "railServiceDining": "有餐車",
+  "@railServiceDining": {
+    "description": "Service mark: a dining car is attached."
+  },
+  "railServiceNursing": "哺（集）乳室",
+  "@railServiceNursing": {
+    "description": "Service mark: a nursing room is available."
+  },
+  "railServiceDaily": "每日行駛",
+  "@railServiceDaily": {
+    "description": "Service mark: this train runs every day."
+  },
+  "railServiceOvernight": "跨日行駛",
+  "@railServiceOvernight": {
+    "description": "Service mark: this train's run crosses midnight."
+  },
+  "railSuspended": "本班次停駛",
+  "@railSuspended": {
+    "description": "This service is cancelled."
+  },
+  "railSuspendedShort": "停駛",
+  "@railSuspendedShort": {
+    "description": "Short footnote marking a cancelled service."
+  },
+  "railExtraService": "加班車",
+  "@railExtraService": {
+    "description": "An extra train added on top of the published timetable."
+  },
+  "railDepartingSoon": "即將出發",
+  "@railDepartingSoon": {
+    "description": "The next train is about to leave."
+  },
+  "railColDepart": "出發",
+  "@railColDepart": {
+    "description": "Timetable column heading for departure time."
+  },
+  "railColArrive": "抵達",
+  "@railColArrive": {
+    "description": "Timetable column heading for arrival time."
+  },
+  "railColTrainNo": "車次",
+  "@railColTrainNo": {
+    "description": "Timetable column heading for the train number."
+  },
+  "railColStation": "車站",
+  "@railColStation": {
+    "description": "Stop-list column heading for the station name."
+  },
+  "railColTime": "時刻",
+  "@railColTime": {
+    "description": "Stop-list column heading for the scheduled time."
+  },
+  "railColElapsed": "歷時",
+  "@railColElapsed": {
+    "description": "Stop-list column heading for elapsed running time."
+  },
+  "railBoard": "上車",
+  "@railBoard": {
+    "description": "Timeline tag marking where the rider boards."
+  },
+  "railAlight": "下車",
+  "@railAlight": {
+    "description": "Timeline tag marking where the rider gets off."
+  },
+  "railOnboardServices": "車上服務",
+  "@railOnboardServices": {
+    "description": "Heading over the amenities carried by this train."
+  },
+  "railTrainAndType": "車次 / 車種",
+  "@railTrainAndType": {
+    "description": "Row naming the train number and its class."
+  },
+  "railEndpoints": "起迄站",
+  "@railEndpoints": {
+    "description": "Row naming a train's first and last stations."
+  },
+  "railRunningTime": "行駛時間",
+  "@railRunningTime": {
+    "description": "Row naming how long the run takes."
+  },
+  "railFareInfo": "票價資訊",
+  "@railFareInfo": {
+    "description": "Heading over a train's fares."
+  },
+  "railNoFare": "尚無票價資料",
+  "@railNoFare": {
+    "description": "Shown when no fare is published for this pair."
+  },
+  "railBook": "訂購",
+  "@railBook": {
+    "description": "Button that opens the operator's booking flow."
+  },
+  "railTrainHere": "列車在此",
+  "@railTrainHere": {
+    "description": "Timeline marker for the train's current position."
+  },
+  "railNextStop": "下一站",
+  "@railNextStop": {
+    "description": "Label over the train's next station."
+  },
+  "railTracking": "追蹤中",
+  "@railTracking": {
+    "description": "State: this train is being tracked."
+  },
+  "railTrack": "追蹤",
+  "@railTrack": {
+    "description": "Action: start tracking this train."
+  },
+  "railTabTimetable": "時刻表",
+  "@railTabTimetable": {
+    "description": "Tab showing a train's stop times."
+  },
+  "railTabDetails": "詳細資訊",
+  "@railTabDetails": {
+    "description": "Tab showing a train's class, amenities and notes."
+  },
+  "railBookingNotes": "注意事項",
+  "@railBookingNotes": {
+    "description": "Heading over booking terms the rider should read."
+  },
+  "railBookingPayNote": "訂位成功後請於期限內完成付款，逾期自動取消。",
+  "@railBookingPayNote": {
+    "description": "Booking term: pay within the window or the reservation is released."
+  },
+  "railBookingIdNote": "愛心、長者、學生票需於乘車時出示相關證件。",
+  "@railBookingIdNote": {
+    "description": "Booking term: concession tickets require ID on board."
+  },
+  "railBookingThsrFareNote": "實際票價與座位由高鐵訂票系統計算，本頁不代收費用。",
+  "@railBookingThsrFareNote": {
+    "description": "Booking term: THSR computes the final fare and seat; this app takes no payment."
+  },
+  "railBookingTraFareNote": "實際票價與座位由台鐵訂票系統計算，本頁不代收費用。",
+  "@railBookingTraFareNote": {
+    "description": "Booking term: TRA computes the final fare and seat; this app takes no payment."
+  },
+  "railBookingTraCategoryNote": "票種（孩童、敬老、愛心）請於台鐵訂票頁選擇，本頁只帶入張數。",
+  "@railBookingTraCategoryNote": {
+    "description": "Booking term: ticket type is chosen on TRA's own page; only the count is carried over."
+  },
+  "railBookingOpenWith": "開啟方式",
+  "@railBookingOpenWith": {
+    "description": "Heading over the choice of app or website for booking."
+  },
+  "railBookingAppNoCount": "App 不接受帶入張數，開啟後需重新選擇",
+  "@railBookingAppNoCount": {
+    "description": "Note that the operator's app cannot receive a pre-filled ticket count."
+  },
+  "railBookingCarClass": "車廂",
+  "@railBookingCarClass": {
+    "description": "Heading over standard versus business carriage."
+  },
+  "railBookingStandard": "標準車廂",
+  "@railBookingStandard": {
+    "description": "Standard carriage."
+  },
+  "railBookingBusiness": "商務車廂",
+  "@railBookingBusiness": {
+    "description": "Business carriage."
+  },
+  "railBookingTicketCount": "票數",
+  "@railBookingTicketCount": {
+    "description": "Heading over how many tickets to book."
+  },
+  "railBookingCategory": "訂票類別",
+  "@railBookingCategory": {
+    "description": "Heading over the kind of TRA booking: standard, Tengyun, or bicycle-onboard."
+  },
+  "railBookingQuantity": "張數",
+  "@railBookingQuantity": {
+    "description": "Heading over the number of tickets."
+  },
+  "railBookingTicketNoun": "車票",
+  "@railBookingTicketNoun": {
+    "description": "The noun used in the ticket stepper's accessibility labels."
+  },
+  "railBookingChildNote": "未滿 12 歲",
+  "@railBookingChildNote": {
+    "description": "Eligibility for the child fare: under 12."
+  },
+  "railBookingIdRequired": "需出示證件",
+  "@railBookingIdRequired": {
+    "description": "Eligibility note: ID must be shown."
+  },
+  "railBookingSeniorNote": "65 歲以上",
+  "@railBookingSeniorNote": {
+    "description": "Eligibility for the senior fare: 65 and over."
+  },
+  "railBookingTengyunNote": "EMU3000 商務車廂",
+  "@railBookingTengyunNote": {
+    "description": "What the Tengyun booking class is: the EMU3000's business carriage."
+  },
+  "railBookingBikeNote": "人車同行，需可載運車廂",
+  "@railBookingBikeNote": {
+    "description": "What the bicycle-onboard class is: rider and bike together, on a train with a carriage that takes bikes."
+  },
+  "railBookingNoTrainNote": "目前無法帶入車次，將開啟未預填的訂票頁，需自行輸入。",
+  "@railBookingNoTrainNote": {
+    "description": "Warning that the booking page will open blank and the train must be entered by hand."
+  },
+  "railBookingOpenAnyway": "仍要前往訂票頁",
+  "@railBookingOpenAnyway": {
+    "description": "Button that opens the booking page despite the missing pre-fill."
+  },
+  "railBookingGoSemantics": "前往訂票",
+  "@railBookingGoSemantics": {
+    "description": "Button that opens the operator's booking site, and its accessibility label."
+  },
+  "railBookingPreparing": "準備訂票連結",
+  "@railBookingPreparing": {
+    "description": "Status while the booking deep link is being assembled."
+  },
+  "ticketAdult": "成人",
+  "@ticketAdult": {
+    "description": "Booking passenger type: adult."
+  },
+  "ticketChild": "兒童",
+  "@ticketChild": {
+    "description": "Booking passenger type: child."
+  },
+  "ticketDisabled": "愛心",
+  "@ticketDisabled": {
+    "description": "Booking passenger type: the disability concession, called 愛心 by Taiwanese operators."
+  },
+  "ticketSenior": "長者",
+  "@ticketSenior": {
+    "description": "Booking passenger type: senior."
+  },
+  "ticketStudent": "學生",
+  "@ticketStudent": {
+    "description": "Booking passenger type: student."
+  },
+  "railBookingClassStandard": "一般訂票",
+  "@railBookingClassStandard": {
+    "description": "TRA booking class: an ordinary reservation."
+  },
+  "railBookingClassTengyun": "騰雲座艙",
+  "@railBookingClassTengyun": {
+    "description": "TRA booking class: the Tengyun premium cabin. A product name."
+  },
+  "railBookingClassBike": "兩鐵訂票",
+  "@railBookingClassBike": {
+    "description": "TRA booking class: the rider travels with their bicycle."
+  },
+  "trainTypeNewTzeChiang": "新自強",
+  "@trainTypeNewTzeChiang": {
+    "description": "TRA train class: the EMU3000 'New Tze-Chiang' express."
+  },
+  "trainTypeLocalExpress": "區間快",
+  "@trainTypeLocalExpress": {
+    "description": "TRA train class: fast local (limited-stop commuter) service."
+  },
+  "trainTypeLocal": "區間車",
+  "@trainTypeLocal": {
+    "description": "TRA train class: local commuter service stopping everywhere."
+  },
+  "trainTypePuyuma": "普悠瑪",
+  "@trainTypePuyuma": {
+    "description": "TRA train class: the Puyuma tilting express. A product name."
+  },
+  "trainTypeTaroko": "太魯閣",
+  "@trainTypeTaroko": {
+    "description": "TRA train class: the Taroko tilting express. A product name."
+  },
+  "trainTypeTzeChiang": "自強號",
+  "@trainTypeTzeChiang": {
+    "description": "TRA train class: the Tze-Chiang limited express."
+  },
+  "trainTypeChuKuang": "莒光號",
+  "@trainTypeChuKuang": {
+    "description": "TRA train class: the Chu-Kuang express."
+  },
+  "trainTypeNewTzeChiangShort": "新自強",
+  "@trainTypeNewTzeChiangShort": {
+    "description": "Compact chip form of the EMU3000 class, for dense timetable rows."
+  },
+  "trainTypeLocalExpressShort": "區間快",
+  "@trainTypeLocalExpressShort": {
+    "description": "Compact chip form of the fast-local class."
+  },
+  "trainTypeLocalShort": "區間",
+  "@trainTypeLocalShort": {
+    "description": "Compact chip form of the local class, dropping the 車 suffix."
+  },
+  "trainTypeTzeChiangShort": "自強",
+  "@trainTypeTzeChiangShort": {
+    "description": "Compact chip form of the Tze-Chiang class, dropping the 號 suffix."
+  },
+  "trainTypeChuKuangShort": "莒光",
+  "@trainTypeChuKuangShort": {
+    "description": "Compact chip form of the Chu-Kuang class, dropping the 號 suffix."
+  },
+  "cityTaipei": "台北市",
+  "@cityTaipei": {
+    "description": "TDX county code display name: Taipei City."
+  },
+  "cityNewTaipei": "新北市",
+  "@cityNewTaipei": {
+    "description": "TDX county code display name: New Taipei City."
+  },
+  "cityTaoyuan": "桃園市",
+  "@cityTaoyuan": {
+    "description": "TDX county code display name: Taoyuan City."
+  },
+  "cityTaichung": "台中市",
+  "@cityTaichung": {
+    "description": "TDX county code display name: Taichung City."
+  },
+  "cityTainan": "台南市",
+  "@cityTainan": {
+    "description": "TDX county code display name: Tainan City."
+  },
+  "cityKaohsiung": "高雄市",
+  "@cityKaohsiung": {
+    "description": "TDX county code display name: Kaohsiung City."
+  },
+  "cityKeelung": "基隆市",
+  "@cityKeelung": {
+    "description": "TDX county code display name: Keelung City."
+  },
+  "cityHsinchuCity": "新竹市",
+  "@cityHsinchuCity": {
+    "description": "TDX county code display name: Hsinchu City."
+  },
+  "cityHsinchuCounty": "新竹縣",
+  "@cityHsinchuCounty": {
+    "description": "TDX county code display name: Hsinchu County."
+  },
+  "cityMiaoli": "苗栗縣",
+  "@cityMiaoli": {
+    "description": "TDX county code display name: Miaoli County."
+  },
+  "cityChanghua": "彰化縣",
+  "@cityChanghua": {
+    "description": "TDX county code display name: Changhua County."
+  },
+  "cityNantou": "南投縣",
+  "@cityNantou": {
+    "description": "TDX county code display name: Nantou County."
+  },
+  "cityYunlin": "雲林縣",
+  "@cityYunlin": {
+    "description": "TDX county code display name: Yunlin County."
+  },
+  "cityChiayiCounty": "嘉義縣",
+  "@cityChiayiCounty": {
+    "description": "TDX county code display name: Chiayi County."
+  },
+  "cityChiayiCity": "嘉義市",
+  "@cityChiayiCity": {
+    "description": "TDX county code display name: Chiayi City."
+  },
+  "cityPingtung": "屏東縣",
+  "@cityPingtung": {
+    "description": "TDX county code display name: Pingtung County."
+  },
+  "cityYilan": "宜蘭縣",
+  "@cityYilan": {
+    "description": "TDX county code display name: Yilan County."
+  },
+  "cityHualien": "花蓮縣",
+  "@cityHualien": {
+    "description": "TDX county code display name: Hualien County."
+  },
+  "cityTaitung": "台東縣",
+  "@cityTaitung": {
+    "description": "TDX county code display name: Taitung County."
+  },
+  "cityPenghu": "澎湖縣",
+  "@cityPenghu": {
+    "description": "TDX county code display name: Penghu County."
+  },
+  "cityKinmen": "金門縣",
+  "@cityKinmen": {
+    "description": "TDX county code display name: Kinmen County."
+  },
+  "cityLienchiang": "連江縣",
+  "@cityLienchiang": {
+    "description": "TDX county code display name: Lienchiang County."
+  },
+  "cityInterCity": "公路客運",
+  "@cityInterCity": {
+    "description": "TDX county code display name: the intercity coach network, which TDX files under the same county field as a city."
+  },
+  "busFareByOd": "依起訖站計費",
+  "@busFareByOd": {
+    "description": "Fare model: the price depends on which pair of stops you ride between."
+  },
+  "busFareUnknownType": "未知",
+  "@busFareUnknownType": {
+    "description": "Fare model the operator did not declare."
+  },
+  "busFareFlat": "一段票",
+  "@busFareFlat": {
+    "description": "Fare model: one flat fare for the whole route."
+  },
+  "busFareTwoSection": "兩段票",
+  "@busFareTwoSection": {
+    "description": "Fare model: the route is split into two fare sections."
+  },
+  "busFareByDistance": "里程計費",
+  "@busFareByDistance": {
+    "description": "Fare model: the price is charged by distance travelled."
+  },
+  "busStatusEndingDuty": "收班中",
+  "@busStatusEndingDuty": {
+    "description": "Bus vehicle state: this bus is on its way out of service."
+  },
+  "busStatusOperating": "營運中",
+  "@busStatusOperating": {
+    "description": "Bus vehicle state: running normally."
+  },
+  "busStatusAccident": "車禍",
+  "@busStatusAccident": {
+    "description": "Bus vehicle state: involved in a collision."
+  },
+  "busStatusBreakdown": "故障",
+  "@busStatusBreakdown": {
+    "description": "Bus vehicle state: mechanical failure."
+  },
+  "busStatusTraffic": "塞車",
+  "@busStatusTraffic": {
+    "description": "Bus vehicle state: held up in traffic."
+  },
+  "busStatusEmergency": "緊急",
+  "@busStatusEmergency": {
+    "description": "Bus vehicle state: emergency."
+  },
+  "busStatusRefuelling": "加油",
+  "@busStatusRefuelling": {
+    "description": "Bus vehicle state: refuelling."
+  },
+  "busStatusOffRoute": "偏移路線",
+  "@busStatusOffRoute": {
+    "description": "Bus vehicle state: off its published route."
+  },
+  "busStatusNotInService": "非營運",
+  "@busStatusNotInService": {
+    "description": "Bus vehicle state: not carrying passengers."
+  },
+  "busStatusFull": "客滿",
+  "@busStatusFull": {
+    "description": "Bus vehicle state: at capacity."
+  },
+  "busStatusChartered": "包車",
+  "@busStatusChartered": {
+    "description": "Bus vehicle state: running as a charter."
+  },
+  "busGpsNone": "無定位",
+  "@busGpsNone": {
+    "description": "The vehicle reported no GPS fix at all."
+  },
+  "busGpsStale": "定位延遲",
+  "@busGpsStale": {
+    "description": "The vehicle's last GPS fix is more than three minutes old."
+  },
+  "busFareOtherType": "類型 {type}",
+  "@busFareOtherType": {
+    "description": "Fallback label for a fare model code the app has no name for.",
+    "placeholders": {
+      "type": {
+        "type": "int",
+        "example": "7"
+      }
+    }
+  },
+  "busGpsSecondsAgo": "{seconds}秒前",
+  "@busGpsSecondsAgo": {
+    "description": "How long ago the vehicle's GPS fix was taken, under a minute. Tight to the number — this renders in a small map bubble.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "22"
+      }
+    }
+  },
+  "busGpsMinutesAgo": "{minutes}分前",
+  "@busGpsMinutesAgo": {
+    "description": "How long ago the vehicle's GPS fix was taken, in whole minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "fareClassFull": "全票",
+  "@fareClassFull": {
+    "description": "TDX bus fare class 1: the full adult fare."
+  },
+  "fareClassHalf": "半票",
+  "@fareClassHalf": {
+    "description": "TDX bus fare class 10: half fare, which child, senior and disability riders all pay."
+  },
+  "fareClassStudent": "學生票",
+  "@fareClassStudent": {
+    "description": "TDX bus fare class 2: student fare."
+  },
+  "fareClassChild": "兒童票",
+  "@fareClassChild": {
+    "description": "TDX bus fare class 7: child fare."
+  },
+  "fareClassSenior": "敬老票",
+  "@fareClassSenior": {
+    "description": "TDX bus fare class 3: senior fare."
+  },
+  "fareClassDisabled": "愛心票",
+  "@fareClassDisabled": {
+    "description": "TDX bus fare class 4: the disability concession, called 愛心 by Taiwanese operators."
+  },
+  "fareClassCompanion": "愛心陪伴票",
+  "@fareClassCompanion": {
+    "description": "TDX bus fare class 5: the fare for someone accompanying a disabled rider."
+  },
+  "fareClassGroup": "團體票",
+  "@fareClassGroup": {
+    "description": "TDX bus fare class 6: group fare."
+  },
+  "fareClassOtherConcession": "其他優待",
+  "@fareClassOtherConcession": {
+    "description": "TDX bus fare class 9: an unspecified concession."
+  },
+  "fareClassUnknown": "票種 {code}",
+  "@fareClassUnknown": {
+    "description": "Fallback for a TDX fare class code the app has no name for.",
+    "placeholders": {
+      "code": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "fareSectionNumbered": "第{index}段",
+  "@fareSectionNumbered": {
+    "description": "Heading for one fare section of a multi-section route.",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "fareSmartCard": " · 電子票證",
+  "@fareSmartCard": {
+    "description": "Suffix marking a fare that applies only when paying by stored-value card. Keep the leading separator."
+  },
+  "alertMinutesAgo": "{minutes} 分鐘前",
+  "@alertMinutesAgo": {
+    "description": "Relative time: whole minutes since an alert was published.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "alertHoursAgo": "{hours} 小時前",
+  "@alertHoursAgo": {
+    "description": "Relative time: whole hours since an alert was published.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "operatorTrtc": "北捷",
+  "@operatorTrtc": {
+    "description": "Short name for Taipei Rapid Transit, as it appears on an alert chip."
+  },
+  "operatorTymc": "桃捷",
+  "@operatorTymc": {
+    "description": "Short name for Taoyuan Metro."
+  },
+  "operatorKrtc": "高捷",
+  "@operatorKrtc": {
+    "description": "Short name for Kaohsiung Rapid Transit."
+  },
+  "operatorTmrt": "中捷",
+  "@operatorTmrt": {
+    "description": "Short name for Taichung Metro."
+  },
+  "operatorBusTaipei": "北市公車",
+  "@operatorBusTaipei": {
+    "description": "Short name for the Taipei City bus network."
+  },
+  "operatorBusNewTaipei": "新北公車",
+  "@operatorBusNewTaipei": {
+    "description": "Short name for the New Taipei City bus network."
+  },
+  "operatorBusTaoyuan": "桃園公車",
+  "@operatorBusTaoyuan": {
+    "description": "Short name for the Taoyuan bus network."
+  },
+  "operatorBusTaichung": "中市公車",
+  "@operatorBusTaichung": {
+    "description": "Short name for the Taichung City bus network."
+  },
+  "operatorBusTainan": "南市公車",
+  "@operatorBusTainan": {
+    "description": "Short name for the Tainan City bus network."
+  },
+  "operatorBusKaohsiung": "高市公車",
+  "@operatorBusKaohsiung": {
+    "description": "Short name for the Kaohsiung City bus network."
+  },
+  "alertTimeAndDetails": "{time} · 點擊看詳情",
+  "@alertTimeAndDetails": {
+    "description": "Collapsed notice footer: how long ago the alert was published, then the hint that tapping opens it.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "5 分鐘前"
+      }
+    }
+  },
+  "commonConfirm": "確定",
+  "@commonConfirm": {
+    "description": "Button that accepts a picker's current selection."
+  },
+  "commonSearchStation": "搜尋車站",
+  "@commonSearchStation": {
+    "description": "Placeholder in a station search field."
+  },
+  "commonChooseStation": "選擇車站",
+  "@commonChooseStation": {
+    "description": "Title of the station picker sheet, and its barrier label."
+  },
+  "feedbackTitle": "回報問題",
+  "@feedbackTitle": {
+    "description": "Title of the rider feedback sheet."
+  },
+  "feedbackBodyLabel": "狀況說明",
+  "@feedbackBodyLabel": {
+    "description": "Label for the free-text field describing what went wrong."
+  },
+  "feedbackCategoryPrompt": "這是哪一種問題",
+  "@feedbackCategoryPrompt": {
+    "description": "Prompt above the category chips."
+  },
+  "feedbackAttached": "這些資訊會一併送出（不含位置）",
+  "@feedbackAttached": {
+    "description": "Heading over the diagnostics that travel with the report. Names what is attached and, just as importantly, that location is not."
+  },
+  "feedbackReadingDevice": "正在讀取裝置資訊…",
+  "@feedbackReadingDevice": {
+    "description": "Placeholder while device diagnostics are still being gathered."
+  },
+  "feedbackSubmitSemantics": "送出回報",
+  "@feedbackSubmitSemantics": {
+    "description": "Accessibility label for the submit button."
+  },
+  "feedbackSubmit": "送出",
+  "@feedbackSubmit": {
+    "description": "Button that sends the report."
+  },
+  "feedbackSent": "已送出",
+  "@feedbackSent": {
+    "description": "Heading confirming the report was received."
+  },
+  "feedbackThanks": "謝謝。這則回報已經存下來了，我會讀到。",
+  "@feedbackThanks": {
+    "description": "Thank-you line after a successful submission."
+  },
+  "feedbackReceiptLabel": "回報編號",
+  "@feedbackReceiptLabel": {
+    "description": "Label over the receipt id of a submitted report."
+  },
+  "feedbackNoReplyNote": "這個版本還沒有 App 內回覆，所以不會收到個別回信抱歉。",
+  "@feedbackNoReplyNote": {
+    "description": "Note that this version has no in-app replies; anything worth sharing is announced in-app instead."
+  },
+  "feedbackCopyReceiptSemantics": "複製回報編號",
+  "@feedbackCopyReceiptSemantics": {
+    "description": "Accessibility label for the button that copies the receipt id."
+  },
+  "feedbackCopyReceipt": "複製編號",
+  "@feedbackCopyReceipt": {
+    "description": "Button that copies the receipt id."
+  },
+  "feedbackReceiptCopied": "已複製回報編號",
+  "@feedbackReceiptCopied": {
+    "description": "Toast confirming the receipt id was copied to the clipboard."
+  },
+  "metroLineBannan": "板南線",
+  "@metroLineBannan": {
+    "description": "Taipei Metro line BL, the Bannan line."
+  },
+  "metroLineTamsuiXinyi": "淡水信義線",
+  "@metroLineTamsuiXinyi": {
+    "description": "Taipei Metro line R, the Tamsui–Xinyi line."
+  },
+  "metroLineSongshanXindian": "松山新店線",
+  "@metroLineSongshanXindian": {
+    "description": "Taipei Metro line G, the Songshan–Xindian line."
+  },
+  "metroLineWenhu": "文湖線",
+  "@metroLineWenhu": {
+    "description": "Taipei Metro line BR, the Wenhu line."
+  },
+  "metroLineZhongheXinlu": "中和新蘆線",
+  "@metroLineZhongheXinlu": {
+    "description": "Taipei Metro line O, the Zhonghe–Xinlu line."
+  },
+  "metroLineCircular": "環狀線",
+  "@metroLineCircular": {
+    "description": "Taipei Metro line Y, the Circular line."
+  },
+  "lineBadgeWenhu": "文湖",
+  "@lineBadgeWenhu": {
+    "description": "Two-character badge for the Wenhu line, dropping the 線 suffix."
+  },
+  "lineBadgeBannan": "板南",
+  "@lineBadgeBannan": {
+    "description": "Two-character badge for the Bannan line."
+  },
+  "lineBadgeTamsui": "淡水",
+  "@lineBadgeTamsui": {
+    "description": "Two-character badge for the Tamsui–Xinyi line."
+  },
+  "lineBadgeSongshan": "松山",
+  "@lineBadgeSongshan": {
+    "description": "Two-character badge for the Songshan–Xindian line."
+  },
+  "lineBadgeZhonghe": "中和",
+  "@lineBadgeZhonghe": {
+    "description": "Two-character badge for the Zhonghe–Xinlu line."
+  },
+  "lineBadgeCircular": "環狀",
+  "@lineBadgeCircular": {
+    "description": "Two-character badge for the Circular line."
+  },
+  "lineBadgeAirport": "機捷",
+  "@lineBadgeAirport": {
+    "description": "Badge for the Taoyuan Airport MRT."
+  },
+  "lineBadgeLightRail": "輕軌",
+  "@lineBadgeLightRail": {
+    "description": "Badge for a light rail line."
+  },
+  "lineBadgeKaohsiung": "高捷",
+  "@lineBadgeKaohsiung": {
+    "description": "Badge for the Kaohsiung MRT."
+  },
+  "etaNoInfo": "目前無到站資訊",
+  "@etaNoInfo": {
+    "description": "Shown when no arrival estimate is available for a stop."
+  },
+  "etaSecondsUnit": "秒",
+  "@etaSecondsUnit": {
+    "description": "Second unit shown beside a countdown figure."
+  },
+  "onTime": "準點",
+  "@onTime": {
+    "description": "A service running to schedule."
+  },
+  "favoriteAdded": "已加入收藏",
+  "@favoriteAdded": {
+    "description": "Confirmation after adding to favorites."
+  },
+  "favoriteRemoved": "已取消收藏",
+  "@favoriteRemoved": {
+    "description": "Confirmation after removing from favorites."
+  },
+  "minutesValue": "{minutes} 分",
+  "@minutesValue": {
+    "description": "A duration in whole minutes, spaced. Used wherever a figure and its unit sit side by side.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "hoursValue": "{hours}時",
+  "@hoursValue": {
+    "description": "A duration in whole hours, tight to the number.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "hoursMinutesValue": "{hours}時{minutes}分",
+  "@hoursMinutesValue": {
+    "description": "A duration of hours and minutes.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "2"
+      },
+      "minutes": {
+        "type": "int",
+        "example": "35"
+      }
+    }
+  },
+  "towards": "往{destination}",
+  "@towards": {
+    "description": "Names where a service is headed, tight to the name — this renders in narrow route labels.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "淡水"
+      }
+    }
+  },
+  "routeTowards": "{route} 往{destination}",
+  "@routeTowards": {
+    "description": "A route number and where that run is headed.",
+    "placeholders": {
+      "route": {
+        "type": "String",
+        "example": "307"
+      },
+      "destination": {
+        "type": "String",
+        "example": "板橋"
+      }
+    }
+  },
+  "walkMinutes": "步行 {minutes} 分",
+  "@walkMinutes": {
+    "description": "How long a walking leg takes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "transferWaitMinutes": "等 {minutes} 分",
+  "@transferWaitMinutes": {
+    "description": "How long the rider waits at the boarding place before this leg departs, stated separately from the walk that got them there.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "walkTo": "步行至 {place}",
+  "@walkTo": {
+    "description": "A walking step naming where it ends.",
+    "placeholders": {
+      "place": {
+        "type": "String",
+        "example": "捷運市政府站"
+      }
+    }
+  },
+  "walkToward": "步行前往{place}",
+  "@walkToward": {
+    "description": "A walking instruction naming its destination.",
+    "placeholders": {
+      "place": {
+        "type": "String",
+        "example": "台北車站"
+      }
+    }
+  },
+  "rideVehicle": "搭乘{line}",
+  "@rideVehicle": {
+    "description": "An instruction to board a named route or line.",
+    "placeholders": {
+      "line": {
+        "type": "String",
+        "example": "板南線"
+      }
+    }
+  },
+  "aboutMinutes": "約 {minutes} 分",
+  "@aboutMinutes": {
+    "description": "An approximate duration in minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "stopsRemaining": "剩 {stops} 站",
+  "@stopsRemaining": {
+    "description": "How many stops are left before the rider gets off.",
+    "placeholders": {
+      "stops": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "stopsCount": "{stops} 站",
+  "@stopsCount": {
+    "description": "A count of stops.",
+    "placeholders": {
+      "stops": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "transfersCount": "轉乘 {count} 次",
+  "@transfersCount": {
+    "description": "How many transfers a route involves.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "arriveAtTime": "預計 {time} 抵達",
+  "@arriveAtTime": {
+    "description": "The expected arrival clock time.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "18:42"
+      }
+    }
+  },
+  "boardAt": "{stop} 上車 · {stops} 站",
+  "@boardAt": {
+    "description": "Where to board and how many stops the ride lasts.",
+    "placeholders": {
+      "stop": {
+        "type": "String",
+        "example": "忠孝復興"
+      },
+      "stops": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "alightAtRemaining": "於 {stop} 下車  剩 {stops} 站",
+  "@alightAtRemaining": {
+    "description": "Where to get off and how many stops remain. The double space is a deliberate visual gap.",
+    "placeholders": {
+      "stop": {
+        "type": "String",
+        "example": "市政府"
+      },
+      "stops": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "boardAtStop": "於 {stop} 上車",
+  "@boardAtStop": {
+    "description": "Where the rider boards, for the live-activity card.",
+    "placeholders": {
+      "stop": {
+        "type": "String",
+        "example": "台北車站"
+      }
+    }
+  },
+  "nextStopIs": "下一站 {stop}",
+  "@nextStopIs": {
+    "description": "Names the train or bus's next stop.",
+    "placeholders": {
+      "stop": {
+        "type": "String",
+        "example": "南港"
+      }
+    }
+  },
+  "nextRunIs": "下一班 {route}",
+  "@nextRunIs": {
+    "description": "Names the next run the rider is waiting for.",
+    "placeholders": {
+      "route": {
+        "type": "String",
+        "example": "307 往板橋"
+      }
+    }
+  },
+  "legProgress": "第 {current} / {total} 段",
+  "@legProgress": {
+    "description": "Which leg of a multi-leg journey the rider is on.",
+    "placeholders": {
+      "current": {
+        "type": "int",
+        "example": "2"
+      },
+      "total": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "suggestionCount": "{count} 個建議",
+  "@suggestionCount": {
+    "description": "How many route suggestions the planner returned.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "minutesRange": "{min} - {max} 分",
+  "@minutesRange": {
+    "description": "An acceptable range of minutes, for the transfer-window slider.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "2"
+      },
+      "max": {
+        "type": "int",
+        "example": "10"
+      }
+    }
+  },
+  "aboutDistance": "約 {distance}",
+  "@aboutDistance": {
+    "description": "An approximate distance, already formatted with its unit.",
+    "placeholders": {
+      "distance": {
+        "type": "String",
+        "example": "450 公尺"
+      }
+    }
+  },
+  "nearbyWalkAndDistance": "步行 {minutes} 分 · {distance}",
+  "@nearbyWalkAndDistance": {
+    "description": "How far a nearby stop is, by time and by distance.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "4"
+      },
+      "distance": {
+        "type": "String",
+        "example": "約 320 公尺"
+      }
+    }
+  },
+  "unreadNotifications": "通知，{count} 則未讀",
+  "@unreadNotifications": {
+    "description": "Accessibility label for the inbox button when unread alerts are waiting.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "alertsClearedCount": "已清除 {count} 則通知",
+  "@alertsClearedCount": {
+    "description": "Confirmation after clearing several notifications at once.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "alertPlusMoreAndDetails": "{message}，還有 {count} 則通知，點擊看詳情",
+  "@alertPlusMoreAndDetails": {
+    "description": "Accessibility label for the collapsed alert capsule when more alerts are stacked behind it.",
+    "placeholders": {
+      "message": {
+        "type": "String",
+        "example": "板南線延誤"
+      },
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "alertAndDetails": "{message}，點擊看詳情",
+  "@alertAndDetails": {
+    "description": "Accessibility label for the collapsed alert capsule.",
+    "placeholders": {
+      "message": {
+        "type": "String",
+        "example": "板南線延誤"
+      }
+    }
+  },
+  "updateAvailableVersion": "新版本 {version} 已經可以更新。",
+  "@updateAvailableVersion": {
+    "description": "Notice rail message announcing a downloadable release.",
+    "placeholders": {
+      "version": {
+        "type": "String",
+        "example": "1.4.0"
+      }
+    }
+  },
+  "bikeDockCount": "共 {count} 柱",
+  "@bikeDockCount": {
+    "description": "How many docks a bike station has in total.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "30"
+      }
+    }
+  },
+  "comingSoonValue": "{name} 即將推出",
+  "@comingSoonValue": {
+    "description": "Toast naming a feature that is not available yet.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "高雄捷運"
+      }
+    }
+  },
+  "minutesTight": "{minutes}分",
+  "@minutesTight": {
+    "description": "A duration in whole minutes with no space, for dense rows where the gap would cost a column.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "settingsSectionPlanner": "路線規劃",
+  "@settingsSectionPlanner": {
+    "description": "Settings section holding the routing preferences that belong to the rider rather than to one journey."
+  },
+  "settingsStepFree": "無障礙路線",
+  "@settingsStepFree": {
+    "description": "Settings switch: plan every walking segment step-free."
+  },
+  "settingsWalkPace": "步行速度",
+  "@settingsWalkPace": {
+    "description": "Settings row opening the walking-pace picker."
+  },
+  "settingsPlannerFooter": "設定一次，之後每趟路線規劃都會套用。",
+  "@settingsPlannerFooter": {
+    "description": "Explains that the planner settings are persistent, not per-journey."
+  },
+  "settingsWalkPaceSlower": "較慢",
+  "@settingsWalkPaceSlower": {
+    "description": "Walking pace option, roughly 1 m/s."
+  },
+  "settingsWalkPaceStandard": "標準",
+  "@settingsWalkPaceStandard": {
+    "description": "Walking pace option that leaves the planner's own default alone."
+  },
+  "settingsWalkPaceFaster": "較快",
+  "@settingsWalkPaceFaster": {
+    "description": "Walking pace option, roughly 1.8 m/s."
+  },
+  "goMaxTransfers": "最多轉乘",
+  "@goMaxTransfers": {
+    "description": "Route options control capping the number of interchanges."
+  },
+  "goMaxTransfersAny": "不限",
+  "@goMaxTransfersAny": {
+    "description": "Max-transfers option meaning no cap is sent at all."
+  },
+  "goMaxTransfersDirect": "直達",
+  "@goMaxTransfersDirect": {
+    "description": "Max-transfers option meaning zero interchanges — direct connections only."
+  },
+  "goMaxTransfersCount": "{count} 次",
+  "@goMaxTransfersCount": {
+    "description": "Max-transfers option for a specific number of interchanges.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "goAvoidReservation": "避開需訂位班次",
+  "@goAvoidReservation": {
+    "description": "Route options switch excluding services that require a seat reservation."
+  },
+  "goCarryBike": "攜帶自行車",
+  "@goCarryBike": {
+    "description": "Route options switch requiring every transit leg to accept a bicycle."
+  },
+  "goEarlierDepartures": "更早班次",
+  "@goEarlierDepartures": {
+    "description": "Action above the results list asking the planner for earlier departures."
+  },
+  "goLaterDepartures": "更晚班次",
+  "@goLaterDepartures": {
+    "description": "Action below the results list asking the planner for later departures."
+  },
+  "goWaitMinutes": "等待 {minutes} 分",
+  "@goWaitMinutes": {
+    "description": "Accessibility label for the scheduled wait between two legs on a route card.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "goWalkLegSemantics": "步行 {minutes} 分",
+  "@goWalkLegSemantics": {
+    "description": "Accessibility label for a walking leg on a route card.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "towardsAndRemaining": "往{destination} · 剩 {stops} 站",
+  "@towardsAndRemaining": {
+    "description": "Where a run is headed and how many stops the rider has left on it.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "南港"
+      },
+      "stops": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "rideStops": "搭 {stops} 站",
+  "@rideStops": {
+    "description": "How many stops a ride covers.",
+    "placeholders": {
+      "stops": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "rideStopsTowards": "搭 {stops} 站 · 往{destination}",
+  "@rideStopsTowards": {
+    "description": "How many stops a ride covers and where that run is headed.",
+    "placeholders": {
+      "stops": {
+        "type": "int",
+        "example": "6"
+      },
+      "destination": {
+        "type": "String",
+        "example": "淡水"
+      }
+    }
+  },
+  "routeSummarySemantics": "{minutes} 分，抵達 {arrival}，往 {destination}",
+  "@routeSummarySemantics": {
+    "description": "Accessibility summary of a route option: how long it takes, when it lands, and where it ends.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "34"
+      },
+      "arrival": {
+        "type": "String",
+        "example": "18:42"
+      },
+      "destination": {
+        "type": "String",
+        "example": "台北101"
+      }
+    }
+  },
+  "legLabelWithMinutes": "{line} · {minutes}分",
+  "@legLabelWithMinutes": {
+    "description": "A journey leg's line and how long it takes.",
+    "placeholders": {
+      "line": {
+        "type": "String",
+        "example": "板南線"
+      },
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "callOperator": "撥打 {operator} 電話",
+  "@callOperator": {
+    "description": "Accessibility label for the button that phones a bus operator.",
+    "placeholders": {
+      "operator": {
+        "type": "String",
+        "example": "大都會客運"
+      }
+    }
+  },
+  "operatorWebsite": "{operator} 官方網站",
+  "@operatorWebsite": {
+    "description": "Accessibility label for the link to a bus operator's website.",
+    "placeholders": {
+      "operator": {
+        "type": "String",
+        "example": "大都會客運"
+      }
+    }
+  },
+  "busAllFareClasses": "全部票種（{count} 種）",
+  "@busAllFareClasses": {
+    "description": "Expander title for the full fare-class table and how many classes it holds.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "busAllOdFares": "完整起迄票價（{count} 筆）",
+  "@busAllOdFares": {
+    "description": "Expander title for the full origin-destination fare table and how many rows it holds.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "128"
+      }
+    }
+  },
+  "busNoStopMatch": "查無「{query}」相關站牌",
+  "@busNoStopMatch": {
+    "description": "Empty state for a fare-table stop search that matched nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "忠孝"
+      }
+    }
+  },
+  "busFareTruncated": "僅顯示前 {count} 筆，輸入站牌以查詢其餘起訖票價",
+  "@busFareTruncated": {
+    "description": "Note that the fare table is capped and a stop search reaches the rest.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "50"
+      }
+    }
+  },
+  "busWeekday": "週{day}",
+  "@busWeekday": {
+    "description": "A weekday, as 週 plus its single-character name.",
+    "placeholders": {
+      "day": {
+        "type": "String",
+        "example": "三"
+      }
+    }
+  },
+  "busRunCount": "{count} 班次",
+  "@busRunCount": {
+    "description": "How many runs a timetable day holds.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "busHeadwayFixed": "每 {minutes} 分",
+  "@busHeadwayFixed": {
+    "description": "A fixed service interval.",
+    "placeholders": {
+      "minutes": {
+        "type": "String",
+        "example": "15"
+      }
+    }
+  },
+  "busHeadwayRange": "每 {min}–{max} 分",
+  "@busHeadwayRange": {
+    "description": "A service interval that varies within a range. The dash is an en dash.",
+    "placeholders": {
+      "min": {
+        "type": "String",
+        "example": "10"
+      },
+      "max": {
+        "type": "String",
+        "example": "20"
+      }
+    }
+  },
+  "busOneWayRoute": "單向路線 {name}",
+  "@busOneWayRoute": {
+    "description": "Accessibility label for a route that runs in one direction only.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "紅5"
+      }
+    }
+  },
+  "busSecondSectionFrom": "{stop} 起第二段票",
+  "@busSecondSectionFrom": {
+    "description": "Marks where the second fare section begins on a two-section route.",
+    "placeholders": {
+      "stop": {
+        "type": "String",
+        "example": "公館"
+      }
+    }
+  },
+  "busRouteCount": "{count} 條路線",
+  "@busRouteCount": {
+    "description": "How many routes serve a stop.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "7"
+      }
+    }
+  },
+  "commonUpdatedAt": "更新於",
+  "@commonUpdatedAt": {
+    "description": "Prefix on a freshness stamp; the clock reading follows it in mono and is not part of this string."
+  },
+  "busUpdatedAt": "更新於 {time}",
+  "@busUpdatedAt": {
+    "description": "When the stop's arrivals were last refreshed.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "18:42"
+      }
+    }
+  },
+  "favoritesSummary": "{count} 個收藏 · {pinned} 已釘選",
+  "@favoritesSummary": {
+    "description": "How many favorites there are and how many are pinned to the home screen.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      },
+      "pinned": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "feedbackCharsLeft": "{count} / 200",
+  "@feedbackCharsLeft": {
+    "description": "How many characters the rider has left in the report field.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "180"
+      }
+    }
+  },
+  "weekdayMon": "一",
+  "@weekdayMon": {
+    "description": "Single-character weekday: Monday."
+  },
+  "weekdayTue": "二",
+  "@weekdayTue": {
+    "description": "Single-character weekday: Tuesday."
+  },
+  "weekdayWed": "三",
+  "@weekdayWed": {
+    "description": "Single-character weekday: Wednesday."
+  },
+  "weekdayThu": "四",
+  "@weekdayThu": {
+    "description": "Single-character weekday: Thursday."
+  },
+  "weekdayFri": "五",
+  "@weekdayFri": {
+    "description": "Single-character weekday: Friday."
+  },
+  "weekdaySat": "六",
+  "@weekdaySat": {
+    "description": "Single-character weekday: Saturday."
+  },
+  "weekdaySun": "日",
+  "@weekdaySun": {
+    "description": "Single-character weekday: Sunday."
+  },
+  "towardsPrefix": "往 ",
+  "@towardsPrefix": {
+    "description": "Prefix before a destination name, rendered in a lighter style than the name. Keep the trailing space."
+  },
+  "railDelayMinutes": "誤點 {minutes} 分",
+  "@railDelayMinutes": {
+    "description": "How many minutes late a train is running.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "railDepartsIn": "{minutes} 分後出發",
+  "@railDepartsIn": {
+    "description": "How long until the next train leaves.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "railInMinutes": "{minutes} 分後",
+  "@railInMinutes": {
+    "description": "A short countdown footnote on the next departure.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "railDepartsFrom": "{station} {time} 開",
+  "@railDepartsFrom": {
+    "description": "Where and when a train departs.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "臺北"
+      },
+      "time": {
+        "type": "String",
+        "example": "08:15"
+      }
+    }
+  },
+  "railArrivesAt": "{station} {time} 到",
+  "@railArrivesAt": {
+    "description": "Where and when a train arrives.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "臺中"
+      },
+      "time": {
+        "type": "String",
+        "example": "09:47"
+      }
+    }
+  },
+  "railRunsFor": "行駛 {duration}",
+  "@railRunsFor": {
+    "description": "How long a run takes, with the duration already formatted.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1時32分"
+      }
+    }
+  },
+  "railBookTicketSemantics": "訂購 {trainNo} 車票",
+  "@railBookTicketSemantics": {
+    "description": "Accessibility label for the button that books a seat on a given train.",
+    "placeholders": {
+      "trainNo": {
+        "type": "String",
+        "example": "152"
+      }
+    }
+  },
+  "railStopsPassed": "已過 {count} 站，點按展開",
+  "@railStopsPassed": {
+    "description": "Accessibility label for the collapsed group of stops the train has already left.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "railStopsPassedPreview": "已過 {count} 站（{preview}）",
+  "@railStopsPassedPreview": {
+    "description": "Collapsed label for passed stops, with the first few named.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      },
+      "preview": {
+        "type": "String",
+        "example": "臺北、板橋、桃園…"
+      }
+    }
+  },
+  "railDwellMinutes": "停 {minutes} 分",
+  "@railDwellMinutes": {
+    "description": "How long a train waits at a station.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "railElapsedPlus": "+{minutes}分",
+  "@railElapsedPlus": {
+    "description": "Minutes elapsed since departure, shown against a stop.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "47"
+      }
+    }
+  },
+  "railAlightAtSemantics": "在 {station} 下車",
+  "@railAlightAtSemantics": {
+    "description": "Accessibility label for choosing a station to get off at.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "臺中"
+      }
+    }
+  },
+  "railFullRun": "本班車全程 {origin} → {destination}",
+  "@railFullRun": {
+    "description": "The train's complete run, beyond the segment the rider searched.",
+    "placeholders": {
+      "origin": {
+        "type": "String",
+        "example": "基隆"
+      },
+      "destination": {
+        "type": "String",
+        "example": "潮州"
+      }
+    }
+  },
+  "railRunPair": "{origin} → {destination}（全程）",
+  "@railRunPair": {
+    "description": "A station pair marked as the train's whole run.",
+    "placeholders": {
+      "origin": {
+        "type": "String",
+        "example": "基隆"
+      },
+      "destination": {
+        "type": "String",
+        "example": "潮州"
+      }
+    }
+  },
+  "railNoFareForPair": "無法取得 {origin} → {destination} 的票價",
+  "@railNoFareForPair": {
+    "description": "Shown when no fare is published for the pair the rider chose.",
+    "placeholders": {
+      "origin": {
+        "type": "String",
+        "example": "臺北"
+      },
+      "destination": {
+        "type": "String",
+        "example": "花蓮"
+      }
+    }
+  },
+  "railTrainTowards": "{trainLabel} {trainNo} 往{destination}",
+  "@railTrainTowards": {
+    "description": "A train's class, number and where it is headed.",
+    "placeholders": {
+      "trainLabel": {
+        "type": "String",
+        "example": "自強號"
+      },
+      "trainNo": {
+        "type": "String",
+        "example": "152"
+      },
+      "destination": {
+        "type": "String",
+        "example": "臺東"
+      }
+    }
+  },
+  "railTrackingSemantics": "{trainLabel} {trainNo} 追蹤中，點按取消追蹤",
+  "@railTrackingSemantics": {
+    "description": "Accessibility label when a train is being tracked; tapping stops it.",
+    "placeholders": {
+      "trainLabel": {
+        "type": "String",
+        "example": "自強號"
+      },
+      "trainNo": {
+        "type": "String",
+        "example": "152"
+      }
+    }
+  },
+  "railTrackSemantics": "追蹤 {trainLabel} {trainNo} 班次",
+  "@railTrackSemantics": {
+    "description": "Accessibility label for starting to track a train.",
+    "placeholders": {
+      "trainLabel": {
+        "type": "String",
+        "example": "自強號"
+      },
+      "trainNo": {
+        "type": "String",
+        "example": "152"
+      }
+    }
+  },
+  "railOpenOperatorApp": "用{operator} App 開啟",
+  "@railOpenOperatorApp": {
+    "description": "Option to hand the booking off to the operator's own app.",
+    "placeholders": {
+      "operator": {
+        "type": "String",
+        "example": "台鐵"
+      }
+    }
+  },
+  "railMaxTicketsHint": "每筆訂單最多 {count} 張",
+  "@railMaxTicketsHint": {
+    "description": "The per-order ticket cap.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "railTicketTotal": "共 {count} 張",
+  "@railTicketTotal": {
+    "description": "How many tickets are in the booking.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "stepperDecrease": "減少{name}",
+  "@stepperDecrease": {
+    "description": "Accessibility label for a stepper's minus button, naming what it counts.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "車票"
+      }
+    }
+  },
+  "stepperIncrease": "增加{name}",
+  "@stepperIncrease": {
+    "description": "Accessibility label for a stepper's plus button, naming what it counts.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "車票"
+      }
+    }
+  },
+  "metroNoStationMatch": "找不到「{query}」",
+  "@metroNoStationMatch": {
+    "description": "Empty state for a metro station search that matched nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "忠孝"
+      }
+    }
+  },
+  "metroLastTrainDeparted": "末班車已於 {time} 發出",
+  "@metroLastTrainDeparted": {
+    "description": "The last train of the day has already left, at this time.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "00:12"
+      }
+    }
+  },
+  "metroFirstTrainTomorrow": "明日首班",
+  "@metroFirstTrainTomorrow": {
+    "description": "Label before tomorrow's first departure."
+  },
+  "metroFirstTrainToday": "今日首班",
+  "@metroFirstTrainToday": {
+    "description": "Label before today's first departure."
+  },
+  "metroFirstTrainTowards": "{prefix} · 往 {destination}",
+  "@metroFirstTrainTowards": {
+    "description": "A first-departure label and where that train is headed.",
+    "placeholders": {
+      "prefix": {
+        "type": "String",
+        "example": "明日首班"
+      },
+      "destination": {
+        "type": "String",
+        "example": "南港展覽館"
+      }
+    }
+  },
+  "metroTrainChip": "列車 {number}",
+  "@metroTrainChip": {
+    "description": "Chip naming which train the reminder is bound to.",
+    "placeholders": {
+      "number": {
+        "type": "String",
+        "example": "1163"
+      }
+    }
+  },
+  "metroCarChip": "車廂 {half}",
+  "@metroCarChip": {
+    "description": "Chip naming which half of the train the rider is in.",
+    "placeholders": {
+      "half": {
+        "type": "String",
+        "example": "前段"
+      }
+    }
+  },
+  "metroAlightStopSemantics": "下車站 {station}",
+  "@metroAlightStopSemantics": {
+    "description": "Accessibility label for choosing an alight station.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "市政府"
+      }
+    }
+  },
+  "metroMapModeTime": "時間 · 分",
+  "@metroMapModeTime": {
+    "description": "Map overlay mode showing journey time in minutes."
+  },
+  "metroMapModeFare": "票價 · 元",
+  "@metroMapModeFare": {
+    "description": "Map overlay mode showing fares in NT dollars."
+  },
+  "alertPublishedAt": "發布 {time}{suffix}",
+  "@alertPublishedAt": {
+    "description": "When an alert was published; the suffix carries a date when it was not today.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "14:05"
+      },
+      "suffix": {
+        "type": "String",
+        "example": " · 7/26"
+      }
+    }
+  },
+  "alertJustNowDisruption": "剛剛 · 服務中斷",
+  "@alertJustNowDisruption": {
+    "description": "Toast preview line: a disruption reported moments ago."
+  },
+  "goZeroMinutes": "0 分",
+  "@goZeroMinutes": {
+    "description": "Lower end label of the walking-time slider."
+  },
+  "goSixtyMinutes": "60 分",
+  "@goSixtyMinutes": {
+    "description": "Upper end label of the walking-time slider."
+  },
+  "railRemainingPrefix": "還剩 ",
+  "@railRemainingPrefix": {
+    "description": "Prefix before a count of remaining stops. Keep the trailing space."
+  },
+  "railStopsSuffix": " 站",
+  "@railStopsSuffix": {
+    "description": "Suffix after a count of remaining stops. Keep the leading space."
+  },
+  "railTrainNotFound": "找不到 {trainLabel} {trainNo}（{date}）的停靠資訊，這班車可能不在此日期行駛，試試更換日期查詢",
+  "@railTrainNotFound": {
+    "description": "Shown when a train has no stop times on the chosen date, suggesting the train may not run that day.",
+    "placeholders": {
+      "trainLabel": {
+        "type": "String",
+        "example": "自強號"
+      },
+      "trainNo": {
+        "type": "String",
+        "example": "152"
+      },
+      "date": {
+        "type": "String",
+        "example": "07/28 (一)"
+      }
+    }
+  },
+  "railFullRunInline": "全程（{origin} → {destination}） ",
+  "@railFullRunInline": {
+    "description": "Inline note naming the train's whole run. Keep the trailing space — a figure follows it.",
+    "placeholders": {
+      "origin": {
+        "type": "String",
+        "example": "基隆"
+      },
+      "destination": {
+        "type": "String",
+        "example": "潮州"
+      }
+    }
+  },
+  "durationMinutes": "{minutes}分",
+  "@durationMinutes": {
+    "description": "A duration under an hour.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "45"
+      }
+    }
+  },
+  "busDirectionOutboundFallback": "去程",
+  "@busDirectionOutboundFallback": {
+    "description": "Direction shown in place of a terminal name the server does not know: the outbound run."
+  },
+  "busDirectionInboundFallback": "返程",
+  "@busDirectionInboundFallback": {
+    "description": "Direction shown in place of a terminal name the server does not know: the inbound run."
+  },
+  "feedbackCatRouteData": "路線資料",
+  "@feedbackCatRouteData": {
+    "description": "Feedback category: the route, stop or timetable data is wrong."
+  },
+  "feedbackCatRouteDataHint": "哪一條路線、哪一站？",
+  "@feedbackCatRouteDataHint": {
+    "description": "Prompt asking which route or stop, and what disagrees with reality."
+  },
+  "feedbackCatEta": "到站時間",
+  "@feedbackCatEta": {
+    "description": "Feedback category: arrival times are wrong."
+  },
+  "feedbackCatEtaHint": "哪一條路線、哪一站？",
+  "@feedbackCatEtaHint": {
+    "description": "Prompt asking which route or stop, and how the times are off."
+  },
+  "feedbackCatCrash": "閃退卡住",
+  "@feedbackCatCrash": {
+    "description": "Feedback category: the app crashed or froze."
+  },
+  "feedbackCatCrashHint": "在哪個畫面、做了什麼之後發生的",
+  "@feedbackCatCrashHint": {
+    "description": "Prompt asking which screen and what the rider did before it happened."
+  },
+  "feedbackCatSuggestion": "建議",
+  "@feedbackCatSuggestion": {
+    "description": "Feedback category: a suggestion."
+  },
+  "feedbackCatSuggestionHint": "你希望它有什麼樣的新功能或有什麼改進的地方？",
+  "@feedbackCatSuggestionHint": {
+    "description": "Prompt asking how the rider would like it to work."
+  },
+  "favoriteSubtitleMetro": "捷運",
+  "@favoriteSubtitleMetro": {
+    "description": "Subtitle on a favorited metro station, naming the mode."
+  },
+  "placeFallbackName": "地點",
+  "@placeFallbackName": {
+    "description": "Placeholder name for a saved place with no name of its own."
+  },
+  "metroFirstLastSemantics": "往{destination}，首班車 {first}，末班車 {last}",
+  "@metroFirstLastSemantics": {
+    "description": "Accessibility label for a first/last train row: where the trains go and when the first and last run.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "南港展覽館"
+      },
+      "first": {
+        "type": "String",
+        "example": "06:02"
+      },
+      "last": {
+        "type": "String",
+        "example": "00:14"
+      }
+    }
+  },
+  "searchNoMatch": "找不到「{query}」",
+  "@searchNoMatch": {
+    "description": "Empty state for a search that matched nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "淡水"
+      }
+    }
+  },
+  "searchRecentRemoved": "已移除「{name}」",
+  "@searchRecentRemoved": {
+    "description": "Confirmation after removing one search history entry, naming it.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "台北車站"
+      }
+    }
+  },
+  "navBackSemantics": "返回導航，往{destination}",
+  "@navBackSemantics": {
+    "description": "Accessibility label for the mini bar that returns to turn-by-turn guidance.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "市政府"
+      }
+    }
+  },
+  "pageNumberSemantics": "第 {page} 頁",
+  "@pageNumberSemantics": {
+    "description": "Accessibility label for a pagination control's page number.",
+    "placeholders": {
+      "page": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "segmentNoService": "{label}　無班次",
+  "@segmentNoService": {
+    "description": "Accessibility label for a disabled segment: nothing runs on that option. The wide space is an ideographic space.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "週日"
+      }
+    }
+  },
+  "chipSelectedSemantics": "{label}，已選取",
+  "@chipSelectedSemantics": {
+    "description": "Accessibility label for a selected filter chip.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "捷運"
+      }
+    }
+  },
+  "bikeGaugeSemantics": "共 {total} 柱，可借 {available} 輛，可還 {docks} 位",
+  "@bikeGaugeSemantics": {
+    "description": "Accessibility summary of a bike station: total docks, bikes to borrow, spaces to return.",
+    "placeholders": {
+      "total": {
+        "type": "int",
+        "example": "30"
+      },
+      "available": {
+        "type": "int",
+        "example": "12"
+      },
+      "docks": {
+        "type": "int",
+        "example": "18"
+      }
+    }
+  },
+  "bikeGaugeNoLiveSemantics": "共 {total} 柱，尚未取得即時資料",
+  "@bikeGaugeNoLiveSemantics": {
+    "description": "Accessibility summary when only the dock count is known.",
+    "placeholders": {
+      "total": {
+        "type": "int",
+        "example": "30"
+      }
+    }
+  },
+  "etaTowardsSemantics": "{route} 往 {destination}",
+  "@etaTowardsSemantics": {
+    "description": "Accessibility label for an arrival row: which route, and where it is headed.",
+    "placeholders": {
+      "route": {
+        "type": "String",
+        "example": "307"
+      },
+      "destination": {
+        "type": "String",
+        "example": "板橋"
+      }
+    }
+  },
+  "genuiSearching": "正在查詢「{query}」…",
+  "@genuiSearching": {
+    "description": "AI assistant status naming what it is looking up.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "淡水"
+      }
+    }
+  },
+  "metroFirstLastSemanticsFull": "往{destination}，首班車 {first}，末班車 {last}",
+  "@metroFirstLastSemanticsFull": {
+    "description": "Accessibility label for a first/last train row.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "南港展覽館"
+      },
+      "first": {
+        "type": "String",
+        "example": "06:02"
+      },
+      "last": {
+        "type": "String",
+        "example": "00:14"
+      }
+    }
+  },
+  "towardsSpaced": "往 {destination}",
+  "@towardsSpaced": {
+    "description": "Names where a service is headed, with a space after 往. The arrival row has the width for it; the tighter `towards` is for narrow route labels.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "板橋"
+      }
+    }
+  },
+  "alightPickTitle": "選擇下車站",
+  "@alightPickTitle": {
+    "description": "Capsule shown while the rider picks an alight stop on a map, timeline or timetable."
+  },
+  "alightBoundVehicle": "你在這台車",
+  "@alightBoundVehicle": {
+    "description": "Screen-reader label for the vehicle marker a running alight reminder is bound to."
+  },
+  "alightTargetStopHint": "下車站",
+  "@alightTargetStopHint": {
+    "description": "Screen-reader label for the chosen alight stop in a stop list."
+  },
+  "alightLeadStopHint": "提前提醒站",
+  "@alightLeadStopHint": {
+    "description": "Screen-reader label for the stop where the early reminder will vibrate."
+  },
+  "alightSwipeHint": "向右滑設定下車提醒",
+  "@alightSwipeHint": {
+    "description": "Screen-reader hint on a swipeable vehicle marker row."
+  },
+  "alightNoLead": "{station} 不提前提醒",
+  "@alightNoLead": {
+    "description": "Lead stepper sentence at zero: the reminder fires only when the alight stop is next.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "大安"
+      }
+    }
+  },
+  "alightVibrateBoth": "下一站是下車站時長震動",
+  "@alightVibrateBoth": {
+    "description": "Sub-line under the lead stepper at zero lead."
+  },
+  "alightVibrateLead": "提前站短震動，下車站長震動",
+  "@alightVibrateLead": {
+    "description": "Sub-line under the lead stepper above zero lead."
+  },
+  "alightPickedStop": "下車站 {station}",
+  "@alightPickedStop": {
+    "description": "Confirm bar line naming the chosen alight stop.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "大安"
+      }
+    }
+  },
+  "alightFromSearch": "· 來自你的查詢",
+  "@alightFromSearch": {
+    "description": "Suffix noting the alight stop came from the rider's own O/D search."
+  },
+  "alightRepick": "改選",
+  "@alightRepick": {
+    "description": "Button that returns to picking a different alight stop."
+  },
+  "alightArmedSummary": "往 {station} · 前 {stops} 站提醒",
+  "@alightArmedSummary": {
+    "description": "Summary of a running alight reminder.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "大安"
+      },
+      "stops": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "alightCancelReminder": "取消提醒",
+  "@alightCancelReminder": {
+    "description": "Button that ends a running alight reminder."
+  },
+  "alightReminderSet": "設定下車提醒",
+  "@alightReminderSet": {
+    "description": "Accessibility label for the idle alight-reminder bell."
+  },
+  "alightReminderArmed": "下車提醒已設定",
+  "@alightReminderArmed": {
+    "description": "Accessibility label for the armed alight-reminder bell."
+  },
+  "alightPickStopSemantics": "在 {station} 下車",
+  "@alightPickStopSemantics": {
+    "description": "Accessibility label for a station that can be chosen as the alight stop.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "臺北車站"
+      }
+    }
+  },
+  "alightBoardStopSemantics": "上車站 {station}",
+  "@alightBoardStopSemantics": {
+    "description": "Accessibility label for the boarding station marked on the picker map.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "大安"
+      }
+    }
+  }
+}

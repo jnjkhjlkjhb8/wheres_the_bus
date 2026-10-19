@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/data/models/journey_info.dart';
 import 'package:wheres_the_bus/data/repositories/mrt_repository.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_bloc.dart';
@@ -14,6 +15,45 @@ const _info = JourneyInfo(
 );
 
 void main() {
+  test('a failed old matrix cannot replace the newer station result', () async {
+    final a = Completer<Map<String, JourneyInfo>>();
+    final b = Completer<Map<String, JourneyInfo>>();
+    final bloc = MetroBloc(
+      repository: _ControlledMrtRepository({'A': a, 'B': b}),
+    );
+    addTearDown(bloc.close);
+    bloc.add(const MetroStationTapped(stationId: 'A'));
+    await pumpEventQueue();
+    bloc.add(const MetroStationTapped(stationId: 'B'));
+    await pumpEventQueue();
+    b.complete({'BL02': _info});
+    await pumpEventQueue();
+    a.completeError(StateError('old request failed'));
+    await pumpEventQueue();
+    expect(bloc.state.activeStationId, 'B');
+    expect(bloc.state.error, isNull);
+    expect(bloc.state.journeyMatrix, {'BL02': _info});
+  });
+
+  test(
+    'current matrix failure surfaces an error and dismissal clears it',
+    () async {
+      final result = Completer<Map<String, JourneyInfo>>();
+      final bloc = MetroBloc(
+        repository: _ControlledMrtRepository({'A': result}),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const MetroStationTapped(stationId: 'A'));
+      await pumpEventQueue();
+      result.completeError(StateError('local data unavailable'));
+      await pumpEventQueue();
+      expect(bloc.state.error, isA<AppError>());
+      bloc.add(const MetroStationDismissed());
+      await pumpEventQueue();
+      expect(bloc.state.error, isNull);
+      expect(bloc.state.activeStationId, isNull);
+    },
+  );
   test('matrix loaded stores journey matrix', () async {
     final bloc = MetroBloc();
     addTearDown(bloc.close);
@@ -65,6 +105,31 @@ void main() {
 
       expect(bloc.state.activeStationId, 'B');
       expect(bloc.state.journeyMatrix, {'BL02': _info});
+    },
+  );
+
+  test(
+    'a new tap shows its station at once, without the previous matrix',
+    () async {
+      final a = Completer<Map<String, JourneyInfo>>();
+      final b = Completer<Map<String, JourneyInfo>>();
+      final bloc = MetroBloc(
+        repository: _ControlledMrtRepository({'A': a, 'B': b}),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const MetroStationTapped(stationId: 'A'));
+      await pumpEventQueue();
+      expect(bloc.state.activeStationId, 'A');
+      expect(bloc.state.journeyMatrix, isNull);
+      a.complete({'BL02': _info});
+      await pumpEventQueue();
+      expect(bloc.state.journeyMatrix, {'BL02': _info});
+
+      bloc.add(const MetroStationTapped(stationId: 'B'));
+      await pumpEventQueue();
+      expect(bloc.state.activeStationId, 'B');
+      expect(bloc.state.journeyMatrix, isNull);
+      expect(bloc.state.error, isNull);
     },
   );
 }

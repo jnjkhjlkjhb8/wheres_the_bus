@@ -108,6 +108,17 @@ func NewDataTaipeiFeed(city string) *dataTaipeiFeed {
 // the body changed. It reports whether anything was decoded, so the caller can
 // keep its last copy.
 func (f *dataTaipeiFeed) getEnvelope(ctx context.Context, name string, out any) (bool, error) {
+	resp, err := f.requestEnvelope(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	if resp.StatusCode() == http.StatusNotModified {
+		return false, nil
+	}
+	return f.decodeEnvelope(name, resp, out)
+}
+
+func (f *dataTaipeiFeed) requestEnvelope(ctx context.Context, name string) (*resty.Response, error) {
 	f.mu.Lock()
 	prior := f.etag[name]
 	f.mu.Unlock()
@@ -115,23 +126,15 @@ func (f *dataTaipeiFeed) getEnvelope(ctx context.Context, name string, out any) 
 	if prior != "" {
 		req.SetHeader("If-None-Match", prior)
 	}
-	resp, err := req.Get(name + ".gz")
+	return req.Get(name + ".gz")
+}
+
+func (f *dataTaipeiFeed) decodeEnvelope(name string, resp *resty.Response, out any) (bool, error) {
+	body, err := dataTaipeiResponseBody(name, resp)
 	if err != nil {
 		return false, err
 	}
-	if resp.StatusCode() == http.StatusNotModified {
-		return false, nil
-	}
-	if resp.StatusCode() != http.StatusOK {
-		return false, _oops.With("name", name).With("status_code", resp.StatusCode()).Errorf("HTTP")
-	}
-	body, err := gunzipIfCompressed(resp.Body())
-	if err != nil {
-		return false, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
-	}
-	if history.IsLiveDataTaipeiBlob(name) {
-		history.ArchiveLivePayload(history.DatasetBusFast, f.city+"/"+name, time.Now(), body)
-	}
+	f.archiveEnvelope(name, body)
 	if err := json.Unmarshal(body, out); err != nil {
 		return false, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
 	}
@@ -139,6 +142,23 @@ func (f *dataTaipeiFeed) getEnvelope(ctx context.Context, name string, out any) 
 	f.etag[name] = resp.Header().Get("ETag")
 	f.mu.Unlock()
 	return true, nil
+}
+
+func dataTaipeiResponseBody(name string, resp *resty.Response) ([]byte, error) {
+	if resp.StatusCode() != http.StatusOK {
+		return nil, _oops.With("name", name).With("status_code", resp.StatusCode()).Errorf("HTTP")
+	}
+	body, err := gunzipIfCompressed(resp.Body())
+	if err != nil {
+		return nil, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
+	}
+	return body, nil
+}
+
+func (f *dataTaipeiFeed) archiveEnvelope(name string, body []byte) {
+	if history.IsLiveDataTaipeiBlob(name) {
+		history.ArchiveLivePayload(history.DatasetBusFast, f.city+"/"+name, time.Now(), body)
+	}
 }
 
 // getRows fetches one of the blobs that wrap their rows in
@@ -159,7 +179,7 @@ func (f *dataTaipeiFeed) getRows(ctx context.Context, name string, out any) (boo
 }
 
 func gunzipIfCompressed(body []byte) ([]byte, error) {
-	if len(body) < 2 || body[0] != 0x1f || body[1] != 0x8b {
+	if !gzipMagicPresent(body) {
 		return body, nil
 	}
 	zr, err := gzip.NewReader(bytes.NewReader(body))
@@ -169,6 +189,8 @@ func gunzipIfCompressed(body []byte) ([]byte, error) {
 	defer func() { _ = zr.Close() }()
 	return io.ReadAll(zr)
 }
+
+func gzipMagicPresent(body []byte) bool { return len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b }
 
 // positions fetches both blobs and returns them as TDX-shaped position rows.
 func (f *dataTaipeiFeed) positions(ctx context.Context) ([]busmodel.RawPosition, error) {
@@ -181,7 +203,13 @@ func (f *dataTaipeiFeed) positions(ctx context.Context) ([]busmodel.RawPosition,
 	if err := errors.Join(busErr, eventErr, seatErr); err != nil {
 		return nil, err
 	}
+	buses, events, seats = f.cachePositionRows(buses, events, seats, freshBuses, freshEvents, freshSeats)
+	return dataTaipeiRawPositions(f.prefix, buses, events, seats), nil
+}
+
+func (f *dataTaipeiFeed) cachePositionRows(buses []dataTaipeiBus, events []dataTaipeiEvent, seats []dataTaipeiSeat, freshBuses, freshEvents, freshSeats bool) ([]dataTaipeiBus, []dataTaipeiEvent, []dataTaipeiSeat) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	if freshBuses {
 		f.buses = buses
 	}
@@ -191,52 +219,74 @@ func (f *dataTaipeiFeed) positions(ctx context.Context) ([]busmodel.RawPosition,
 	if freshSeats {
 		f.seats = seats
 	}
-	buses, events, seats = f.buses, f.events, f.seats
-	f.mu.Unlock()
-	return dataTaipeiRawPositions(f.prefix, buses, events, seats), nil
+	return f.buses, f.events, f.seats
 }
 
 func dataTaipeiRawPositions(prefix string, buses []dataTaipeiBus, events []dataTaipeiEvent, seats []dataTaipeiSeat) []busmodel.RawPosition {
+	atStop := dataTaipeiStops(prefix, events)
+	crowd := dataTaipeiCrowd(seats)
+	out := make([]busmodel.RawPosition, 0, len(buses))
+	for _, b := range buses {
+		if p, ok := dataTaipeiRawPosition(prefix, b, atStop, crowd); ok {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func dataTaipeiRawPosition(prefix string, b dataTaipeiBus, atStop map[string]string, crowd map[string]models.BusCrowdLevel) (busmodel.RawPosition, bool) {
+	direction, ok := dataTaipeiDirection(b.GoBack)
+	if !usableDataTaipeiBus(ok, b.RouteID) {
+		return busmodel.RawPosition{}, false
+	}
+	lon, lat, valid := dataTaipeiCoordinates(b.Longitude, b.Latitude)
+	if !valid {
+		return busmodel.RawPosition{}, false
+	}
+	p := busmodel.RawPosition{
+		PlateNumb:   b.BusID,
+		SubRouteUID: prefix + b.RouteID,
+		StopUID:     atStop[b.BusID],
+		Direction:   direction,
+		Azimuth:     dataTaipeiFloat(b.Azimuth),
+		Speed:       dataTaipeiFloat(b.Speed),
+		DutyStatus:  dataTaipeiUint8(b.DutyStatus),
+		BusStatus:   dataTaipeiUint8(b.BusStatus),
+		GPSTime:     b.DataTime,
+		CrowdLevel:  crowd[b.BusID],
+	}
+	p.BusPosition.PositionLon = lon
+	p.BusPosition.PositionLat = lat
+	return p, true
+}
+
+func usableDataTaipeiBus(directionKnown bool, routeID string) bool {
+	return directionKnown && routeID != ""
+}
+func dataTaipeiCoordinates(longitude, latitude string) (float64, float64, bool) {
+	lon, lonErr := strconv.ParseFloat(longitude, 64)
+	lat, latErr := strconv.ParseFloat(latitude, 64)
+	return lon, lat, lonErr == nil && latErr == nil
+}
+
+func dataTaipeiStops(prefix string, events []dataTaipeiEvent) map[string]string {
 	atStop := make(map[string]string, len(events))
 	for _, e := range events {
 		if e.CarOnStop == "1" && e.StopID != "" {
 			atStop[e.BusID] = prefix + e.StopID
 		}
 	}
+	return atStop
+}
+
+func dataTaipeiCrowd(seats []dataTaipeiSeat) map[string]models.BusCrowdLevel {
 	crowd := make(map[string]models.BusCrowdLevel, len(seats))
 	for _, s := range seats {
 		if level, ok := dataTaipeiCrowdLevel(s.Level); ok {
 			crowd[s.BusID] = level
 		}
 	}
-	out := make([]busmodel.RawPosition, 0, len(buses))
-	for _, b := range buses {
-		direction, ok := dataTaipeiDirection(b.GoBack)
-		if !ok || b.RouteID == "" {
-			continue
-		}
-		lon, lonErr := strconv.ParseFloat(b.Longitude, 64)
-		lat, latErr := strconv.ParseFloat(b.Latitude, 64)
-		if lonErr != nil || latErr != nil {
-			continue
-		}
-		p := busmodel.RawPosition{
-			PlateNumb:   b.BusID,
-			SubRouteUID: prefix + b.RouteID,
-			StopUID:     atStop[b.BusID],
-			Direction:   direction,
-			Azimuth:     dataTaipeiFloat(b.Azimuth),
-			Speed:       dataTaipeiFloat(b.Speed),
-			DutyStatus:  dataTaipeiUint8(b.DutyStatus),
-			BusStatus:   dataTaipeiUint8(b.BusStatus),
-			GPSTime:     b.DataTime,
-			CrowdLevel:  crowd[b.BusID],
-		}
-		p.BusPosition.PositionLon = lon
-		p.BusPosition.PositionLat = lat
-		out = append(out, p)
-	}
-	return out
+	return crowd
 }
 
 // dataTaipeiCrowdLevel maps the feed's 0/1/2 banding onto the wire enum, which
@@ -246,16 +296,9 @@ func dataTaipeiCrowdLevel(level *int) (models.BusCrowdLevel, bool) {
 	if level == nil {
 		return models.BusCrowdLevel_BUS_CROWD_UNKNOWN, false
 	}
-	switch *level {
-	case 0:
-		return models.BusCrowdLevel_BUS_CROWD_COMFORTABLE, true
-	case 1:
-		return models.BusCrowdLevel_BUS_CROWD_NORMAL, true
-	case 2:
-		return models.BusCrowdLevel_BUS_CROWD_CROWDED, true
-	default:
-		return models.BusCrowdLevel_BUS_CROWD_UNKNOWN, false
-	}
+	levels := map[int]models.BusCrowdLevel{0: models.BusCrowdLevel_BUS_CROWD_COMFORTABLE, 1: models.BusCrowdLevel_BUS_CROWD_NORMAL, 2: models.BusCrowdLevel_BUS_CROWD_CROWDED}
+	crowd, ok := levels[*level]
+	return crowd, ok
 }
 
 // dataTaipeiDirection maps GoBack onto the TDX Direction. "2" is the feed's
@@ -346,12 +389,14 @@ func dataTaipeiStopStatus(estimateTime string) (status uint8, seconds int32, ok 
 	if v > 0 {
 		return 0, int32(v), true
 	}
-	switch v {
-	case -1, -2, -3, -4:
+	return dataTaipeiUnavailableStatus(v)
+}
+
+func dataTaipeiUnavailableStatus(v int) (uint8, int32, bool) {
+	if v >= -4 && v <= -1 {
 		return uint8(-v), 0, true
-	default:
-		return 0, 0, false
 	}
+	return 0, 0, false
 }
 
 func dataTaipeiEstimateDirection(goBack string) uint8 {
@@ -373,6 +418,10 @@ func mergeDataTaipeiPositions(tdx, dataTaipei []busmodel.RawPosition) []busmodel
 	for _, p := range dataTaipei {
 		covered[busPositionIdentity(p.SubRouteUID, p.Direction)] = struct{}{}
 	}
+	return mergeUncoveredTDXPositions(tdx, dataTaipei, covered)
+}
+
+func mergeUncoveredTDXPositions(tdx, dataTaipei []busmodel.RawPosition, covered map[string]struct{}) []busmodel.RawPosition {
 	merged := make([]busmodel.RawPosition, 0, len(tdx)+len(dataTaipei))
 	merged = append(merged, dataTaipei...)
 	for _, p := range tdx {

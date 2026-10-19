@@ -31,8 +31,10 @@ Future<void> _slAwaitRouteReload(BuildContext context) async {
       .timeout(const Duration(seconds: 8), onTimeout: () => bloc.state);
 }
 
-class _StopListTab extends StatelessWidget {
-  const _StopListTab({
+// Public only so tests can mount the list from stop fixtures instead of the
+// whole route screen.
+class StopListTab extends StatelessWidget {
+  const StopListTab({
     required this.stops,
     required this.scrollController,
     required this.flashStopUid,
@@ -45,6 +47,7 @@ class _StopListTab extends StatelessWidget {
     this.onSwipeVehicle,
     this.onTapStop,
     this.onTapVehicle,
+    super.key,
   });
 
   final List<TimelineStop> stops;
@@ -87,94 +90,24 @@ class _StopListTab extends StatelessWidget {
     // cannot see on its own.
     final markers = busVehicleMarkerIndices(stops);
 
-    final children = <Widget>[];
-    for (var i = 0; i < stops.length; i++) {
-      final stop = stops[i];
-      if (markers.contains(i)) {
-        final plate = stop.plate;
-        final marker = TimelineVehicleMarker(
-          semanticLabel: plate == boundPlate && plate.isNotEmpty
-              ? AppI18n.of(context).alightBoundVehicle
-              : AppI18n.of(context).busVehicleHere,
-          // The marker stands for the bus this stop is counting down to, so
-          // its plate is the one to print. Empty when the feed sent none.
-          label: plate.isEmpty ? null : plate,
-          badge: plate.isNotEmpty && plate == boundPlate
-              ? Icons.airline_seat_recline_extra_rounded
-              : null,
-        );
-        // A marker the feed gave no plate for can neither be selected nor
-        // swiped: both bind to a plate, and there is none here.
-        final tappableMarker = plate.isEmpty || picking || onTapVehicle == null
-            ? marker
-            : Pressable(
-                onTap: () => onTapVehicle!(plate),
-                semanticLabel: AppI18n.of(context).busVehicleHere,
-                child: marker,
-              );
-        children.add(
-          // A marker the feed gave no plate for is not swipeable: the flow
-          // binds to a plate, and there is nothing here to bind to.
-          plate.isEmpty || onSwipeVehicle == null || picking
-              ? tappableMarker
-              : AlightSwipeRow(
-                  rowKey: plate,
-                  onSwiped: () => onSwipeVehicle!(plate, i),
-                  child: tappableMarker,
-                ),
-        );
-      }
-      // 兩段票 boundary. It changes what the ride costs, so it earns a line of
-      // its own; the section data was already derived and then never shown.
-      if (i > 0 &&
-          stop.fareSection == 2 &&
-          stops[i - 1].fareSection == 1 &&
-          !stop.isBuffer) {
-        children.add(_FareSectionDivider(stopName: stop.name));
-      }
-      children.add(
-        _StopListItem(
-          stop: stop,
-          isFirst: i == 0,
-          isLast: i == stops.length - 1,
-          // The spine reads as "a bus is actually on its way to these stops":
-          // solid where the ETA is a live countdown, hollow where it is only a
-          // scheduled departure that has not happened yet.
-          liveAbove: i > 0 && stops[i - 1].isLiveEta && stop.isLiveEta,
-          liveBelow:
-              i < stops.length - 1 && stop.isLiveEta && stops[i + 1].isLiveEta,
-          isFlashed: stop.uid == flashStopUid,
-          // Both marks outlive picking: mid-ride the list is what answers
-          // "which stop do I get off at, and where will it buzz".
-          isAlightTarget: targetStopUid == stop.uid,
-          isLeadStop: leadStopUid == stop.uid,
-          dimmedForPick: picking && i < firstPickableIndex,
-          onPick: picking
-              ? (i >= firstPickableIndex
-                    ? () => onPickStop?.call(stop.uid)
-                    : null)
-              : (onTapStop == null ? null : () => onTapStop!(stop.uid)),
-          suppressEtaLabel: allStopsEnded,
+    final children = _stopRows(context, markers, allStopsEnded)
+      // Last row of the list rather than a fixed footer: it dates the ETAs
+      // above it, and pinning it would cost a strip of height on a sheet whose
+      // whole job is showing as many stops as it can.
+      ..add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            kTimelineGutter,
+            AppTheme.space12,
+            AppTheme.space16,
+            AppTheme.space16,
+          ),
+          child: BlocSelector<BusRouteBloc, BusRouteState, DateTime?>(
+            selector: (state) => state.updatedAt,
+            builder: (context, updatedAt) => FreshnessStamp(at: updatedAt),
+          ),
         ),
       );
-    }
-    // Last row of the list rather than a fixed footer: it dates the ETAs
-    // above it, and pinning it would cost a strip of height on a sheet whose
-    // whole job is showing as many stops as it can.
-    children.add(
-      Padding(
-        padding: const EdgeInsets.fromLTRB(
-          kTimelineGutter,
-          AppTheme.space12,
-          AppTheme.space16,
-          AppTheme.space16,
-        ),
-        child: BlocSelector<BusRouteBloc, BusRouteState, DateTime?>(
-          selector: (state) => state.updatedAt,
-          builder: (context, updatedAt) => FreshnessStamp(at: updatedAt),
-        ),
-      ),
-    );
 
     return RefreshIndicator(
       onRefresh: () => _slAwaitRouteReload(context),
@@ -191,6 +124,101 @@ class _StopListTab extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  List<Widget> _stopRows(
+    BuildContext context,
+    Set<int> markers,
+    bool allEnded,
+  ) => [
+    for (var index = 0; index < stops.length; index++) ...[
+      if (markers.contains(index)) _vehicleRow(context, index, stops[index]),
+      if (_isFareBoundary(index))
+        _FareSectionDivider(stopName: stops[index].name),
+      _stopRow(index, allEnded),
+    ],
+  ];
+
+  bool _isFareBoundary(int index) =>
+      index > 0 &&
+      stops[index].fareSection == 2 &&
+      stops[index - 1].fareSection == 1 &&
+      !stops[index].isBuffer;
+
+  Widget _vehicleRow(BuildContext context, int index, TimelineStop stop) {
+    final plate = stop.plate;
+    final tappableMarker = _tappableVehicle(context, plate);
+    return plate.isEmpty || onSwipeVehicle == null || picking
+        ? tappableMarker
+        : AlightSwipeRow(
+            rowKey: plate,
+            onSwiped: () => onSwipeVehicle!(plate, index),
+            child: tappableMarker,
+          );
+  }
+
+  Widget _tappableVehicle(BuildContext context, String plate) {
+    final marker = _vehicleMarker(context, plate);
+    return !_canSelectVehicle(plate) || onTapVehicle == null
+        ? marker
+        : Pressable(
+            onTap: () => onTapVehicle!(plate),
+            semanticLabel: AppI18n.of(context).busVehicleHere,
+            child: marker,
+          );
+  }
+
+  bool _canSelectVehicle(String plate) => plate.isNotEmpty && !picking;
+
+  Widget _vehicleMarker(BuildContext context, String plate) {
+    return TimelineVehicleMarker(
+      semanticLabel: _vehicleSemantics(AppI18n.of(context), plate),
+      // The marker stands for the bus this stop is counting down to, so
+      // its plate is the one to print. Empty when the feed sent none.
+      label: plate.isEmpty ? null : plate,
+      badge: _vehicleBadge(plate),
+    );
+  }
+
+  bool _boundVehicle(String plate) => plate.isNotEmpty && plate == boundPlate;
+  String _vehicleSemantics(AppI18n i18n, String plate) =>
+      _boundVehicle(plate) ? i18n.alightBoundVehicle : i18n.busVehicleHere;
+  IconData? _vehicleBadge(String plate) =>
+      _boundVehicle(plate) ? Icons.airline_seat_recline_extra_rounded : null;
+
+  bool _liveConnection(int index, int neighbor) {
+    if (neighbor < 0 || neighbor >= stops.length) return false;
+    return stops[index].isLiveEta && stops[neighbor].isLiveEta;
+  }
+
+  VoidCallback? _stopAction(int index, TimelineStop stop) {
+    if (picking) return _pickAction(index, stop);
+    return onTapStop == null ? null : () => onTapStop!(stop.uid);
+  }
+
+  VoidCallback? _pickAction(int index, TimelineStop stop) =>
+      index >= firstPickableIndex ? () => onPickStop?.call(stop.uid) : null;
+
+  Widget _stopRow(int i, bool allStopsEnded) {
+    final stop = stops[i];
+    return _StopListItem(
+      stop: stop,
+      isFirst: i == 0,
+      isLast: i == stops.length - 1,
+      // The spine reads as "a bus is actually on its way to these stops":
+      // solid where the ETA is a live countdown, hollow where it is only a
+      // scheduled departure that has not happened yet.
+      liveAbove: _liveConnection(i, i - 1),
+      liveBelow: _liveConnection(i, i + 1),
+      isFlashed: stop.uid == flashStopUid,
+      // Both marks outlive picking: mid-ride the list is what answers
+      // "which stop do I get off at, and where will it buzz".
+      isAlightTarget: targetStopUid == stop.uid,
+      isLeadStop: leadStopUid == stop.uid,
+      dimmedForPick: picking && i < firstPickableIndex,
+      onPick: _stopAction(i, stop),
+      suppressEtaLabel: allStopsEnded,
     );
   }
 }
@@ -277,43 +305,10 @@ class _StopListItem extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     // A marker-tap flash reuses the live/approaching row treatment (bold +
     // tint) so a tapped stop reads the same as the active one.
-    final isHighlighted = stop.active || isFlashed || isAlightTarget;
-    final highlightFill = cs.brightness == Brightness.light
-        ? cs.onSurface.withValues(alpha: 0.06)
-        : cs.surfaceContainerHigh;
+    final isHighlighted = _highlighted;
+    final highlightFill = _highlightFill(cs);
 
-    Widget nameWidget = Text(
-      stop.name,
-      style: AppTextStyles.bodyRegular.copyWith(
-        fontWeight: isHighlighted ? FontWeight.w700 : FontWeight.w400,
-        color: cs.onSurface,
-      ),
-      overflow: TextOverflow.ellipsis,
-    );
-
-    if (stop.secondaryLabel != null && stop.secondaryLabel != 'TERMINUS') {
-      nameWidget = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          nameWidget,
-          const SizedBox(height: AppTheme.space2),
-          Text(
-            stop.secondaryLabel!,
-            style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
-          ),
-        ],
-      );
-    } else if (stop.secondaryLabel == 'TERMINUS') {
-      nameWidget = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(child: nameWidget),
-          const SizedBox(width: AppTheme.space6),
-          TimelineStopTag(AppI18n.of(context).busTerminus, solid: false),
-        ],
-      );
-    }
+    final nameWidget = _stopName(context, cs, isHighlighted);
 
     final row = Pressable(
       // Picking a 下車站 is a once-per-trip act, so the whole row carries it
@@ -330,9 +325,7 @@ class _StopListItem extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TimelineSpine(
-                kind: isFirst || isLast
-                    ? TimelineNodeKind.terminus
-                    : TimelineNodeKind.intermediate,
+                kind: _nodeKind,
                 lineAbove: !isFirst,
                 lineBelow: !isLast,
                 travelledAbove: liveAbove,
@@ -401,6 +394,54 @@ class _StopListItem extends StatelessWidget {
     return row;
   }
 
+  bool get _highlighted => stop.active || isFlashed || isAlightTarget;
+  Color _highlightFill(ColorScheme colors) =>
+      colors.brightness == Brightness.light
+      ? colors.onSurface.withValues(alpha: 0.06)
+      : colors.surfaceContainerHigh;
+  TimelineNodeKind get _nodeKind => isFirst || isLast
+      ? TimelineNodeKind.terminus
+      : TimelineNodeKind.intermediate;
+
+  Widget _stopName(BuildContext context, ColorScheme cs, bool isHighlighted) {
+    final nameWidget = Text(
+      stop.name,
+      style: AppTextStyles.bodyRegular.copyWith(
+        fontWeight: isHighlighted ? FontWeight.w700 : FontWeight.w400,
+        color: cs.onSurface,
+      ),
+      overflow: TextOverflow.ellipsis,
+    );
+
+    return switch (stop.secondaryLabel) {
+      null => nameWidget,
+      'TERMINUS' => _terminusName(context, nameWidget),
+      _ => _secondaryName(cs, nameWidget),
+    };
+  }
+
+  Widget _secondaryName(ColorScheme cs, Widget name) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      name,
+      const SizedBox(height: AppTheme.space2),
+      Text(
+        stop.secondaryLabel!,
+        style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
+      ),
+    ],
+  );
+
+  Widget _terminusName(BuildContext context, Widget name) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Flexible(child: name),
+      const SizedBox(width: AppTheme.space6),
+      TimelineStopTag(AppI18n.of(context).busTerminus, solid: false),
+    ],
+  );
+
   String _semanticLabel(AppI18n i18n) {
     final eta = stop.primaryTime;
     final parts = <String>[
@@ -417,37 +458,43 @@ class _StopListItem extends StatelessWidget {
     final label = stop.primaryTime;
     if (label == null) return const SizedBox.shrink();
 
-    if (!stop.isLiveEta) {
-      // A clock is a departure time and is prefixed as such; a service-state
-      // word ('末班已過') already reads as one and takes no prefix.
-      final isClock = label.contains(':');
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (isClock)
-            Padding(
-              padding: const EdgeInsets.only(right: 5),
-              child: Text(
-                i18n.busDeparture,
-                style: AppTextStyles.bodyVerySmall.copyWith(
-                  fontSize: 11,
-                  color: cs.onSurfaceVariant,
-                ),
+    return stop.isLiveEta
+        ? _liveEta(cs, label)
+        : _scheduledEta(i18n, cs, label);
+  }
+
+  Widget _scheduledEta(AppI18n i18n, ColorScheme cs, String label) {
+    // A clock is a departure time and is prefixed as such; a service-state
+    // word ('末班已過') already reads as one and takes no prefix.
+    final isClock = label.contains(':');
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isClock)
+          Padding(
+            padding: const EdgeInsets.only(right: 5),
+            child: Text(
+              i18n.busDeparture,
+              style: AppTextStyles.bodyVerySmall.copyWith(
+                fontSize: 11,
+                color: cs.onSurfaceVariant,
               ),
             ),
-          Text(
-            label,
-            style: (isClock ? AppTextStyles.memo : AppTextStyles.bodySmall)
-                .copyWith(
-                  fontSize: 13,
-                  color: cs.onSurfaceVariant,
-                  fontFeatures: isClock ? AppTextStyles.tabularFigures : null,
-                ),
           ),
-        ],
-      );
-    }
+        Text(
+          label,
+          style: (isClock ? AppTextStyles.memo : AppTextStyles.bodySmall)
+              .copyWith(
+                fontSize: 13,
+                color: cs.onSurfaceVariant,
+                fontFeatures: isClock ? AppTextStyles.tabularFigures : null,
+              ),
+        ),
+      ],
+    );
+  }
 
+  Widget _liveEta(ColorScheme cs, String label) {
     final arriving = stop.state == TimelineStopState.arriving;
     return Text(
       label,
@@ -468,7 +515,7 @@ class _ShimmerStopList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Skeletonizer(
-      child: _StopListTab(
+      child: StopListTab(
         stops: _skeletonStops,
         scrollController: scrollController,
         flashStopUid: null,

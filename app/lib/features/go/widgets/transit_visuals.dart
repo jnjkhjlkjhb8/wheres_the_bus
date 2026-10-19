@@ -21,24 +21,39 @@ IconData transitIcon(String mode) => switch (mode.toLowerCase()) {
 };
 
 Color transitColor(PlanTransport t, ColorScheme cs) {
-  final raw = t.routeColor.trim().replaceAll('#', '');
-  if (raw.isNotEmpty) {
-    final padded = raw.length == 6 ? 'FF$raw' : raw;
-    final value = int.tryParse(padded, radix: 16);
-    if (value != null) return Color(value);
-  }
+  final explicit = _routeColor(t.routeColor);
+  if (explicit != null) return explicit;
+  return _modeColor(t, cs);
+}
+
+Color? _routeColor(String color) {
+  final raw = color.trim().replaceAll('#', '');
+  if (raw.isEmpty) return null;
+  final padded = raw.length == 6 ? 'FF$raw' : raw;
+  final value = int.tryParse(padded, radix: 16);
+  return value == null ? null : Color(value);
+}
+
+Color _modeColor(PlanTransport t, ColorScheme cs) {
   // Same mode vocabulary as transitIcon; THSR is matched before the rail
   // aliases so it keeps its own color instead of the TRA fallback.
   return switch (t.mode.toLowerCase()) {
     'walk' || 'pedestrian' => cs.onSurfaceVariant,
     'subway' || 'metro' || 'mrt' || 'tram' => AppTheme.mrtBL,
     'thsr' || 'hsr' => AppTheme.trainThsr,
-    'rail' || 'tra' || 'train' =>
-      t.category.toUpperCase() == 'HSR'
-          ? AppTheme.trainThsr
-          : AppTheme.trainRangecar,
+    'rail' || 'tra' || 'train' => _railColor(t.category),
     _ => cs.onSurface,
   };
+}
+
+Color _railColor(String category) => category.toUpperCase() == 'HSR'
+    ? AppTheme.trainThsr
+    : AppTheme.trainRangecar;
+
+Color _shiftedColor(HSLColor hsl, double shift, {required bool darken}) {
+  final lightness = (darken ? hsl.lightness - shift : hsl.lightness + shift)
+      .clamp(0.0, 1.0);
+  return hsl.withLightness(lightness).toColor();
 }
 
 Color legibleLineColor(Color line, Color background) {
@@ -50,13 +65,12 @@ Color legibleLineColor(Color line, Color background) {
   // coarse enough to settle in a couple of dozen iterations at worst.
   for (var step = 1; step <= 50; step++) {
     final shift = step * 0.02;
-    final lightness = (darken ? hsl.lightness - shift : hsl.lightness + shift)
-        .clamp(0.0, 1.0);
-    final candidate = hsl.withLightness(lightness).toColor();
+    final candidate = _shiftedColor(hsl, shift, darken: darken);
     if (_contrast(candidate, background) >= minimumContrast) return candidate;
   }
-  // Black or white is the last resort, and it always clears the bar.
-  return darken ? Colors.black : Colors.white;
+  // Darkening reaches black at step 50, which always clears the bar, so only
+  // the lightening direction can exhaust the loop.
+  return Colors.white;
 }
 
 double _contrast(Color a, Color b) {

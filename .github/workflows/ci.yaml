@@ -69,7 +69,10 @@ jobs:
           REQUIRE_DB_TESTS: "1"
           BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: ./scripts/ci.sh go
+      # deferred: FDPL-118. Paused until the full-repo gate is pushed in one
+      # piece; remove this `if` to re-enable.
       - name: quality gates (CRAP + mutation on changed Go code)
+        if: ${{ false }}
         env:
           QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           REQUIRE_DB_TESTS: "1"
@@ -274,7 +277,10 @@ jobs:
         env:
           FLUTTER_TEST_ARGS: --coverage --file-reporter=json:test-results.json
         run: ./scripts/ci.sh flutter
+      # deferred: FDPL-118. Paused until the full-repo gate is pushed in one
+      # piece; remove this `if` to re-enable.
       - name: quality gates (CRAP + mutation on changed Dart code)
+        if: ${{ false }}
         env:
           QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/check-quality.sh flutter

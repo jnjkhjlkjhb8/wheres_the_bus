@@ -89,6 +89,8 @@ spec:
               value: /secrets/firebase/firebase-sa.json
             - name: GOMEMLIMIT
               value: 460MiB
+            - name: ROUTER_ASSETS_DIR
+              value: /srv/assets
           ports:
             - containerPort: 8080
             - containerPort: 50051
@@ -134,6 +136,9 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            - name: assets
+              mountPath: /srv/assets
+              readOnly: true
       volumes:
         # sslrootcert for the database URL; only the CA certificate,
         # the bus-ca Secret also holds its private key.
@@ -156,6 +161,13 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        # Agency icons and hand-drawn maps, kept out of the public repo and the
+        # image; rsync'd onto the single node. DirectoryOrCreate so a fresh
+        # node still starts, serving 404s until the first upload.
+        - name: assets
+          hostPath:
+            path: /srv/bus-assets
+            type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
 kind: Deployment

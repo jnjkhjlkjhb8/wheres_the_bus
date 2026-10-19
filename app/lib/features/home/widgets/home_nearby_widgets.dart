@@ -11,20 +11,14 @@ enum NearbyFilter {
   thsr;
 
   String labelOf(AppI18n i18n) {
-    switch (this) {
-      case NearbyFilter.all:
-        return i18n.commonAll;
-      case NearbyFilter.mrt:
-        return i18n.modeMetro;
-      case NearbyFilter.bus:
-        return i18n.modeBus;
-      case NearbyFilter.youbike:
-        return i18n.modeBike;
-      case NearbyFilter.tra:
-        return i18n.modeTra;
-      case NearbyFilter.thsr:
-        return i18n.modeThsr;
-    }
+    return switch (this) {
+      NearbyFilter.all => i18n.commonAll,
+      NearbyFilter.mrt => i18n.modeMetro,
+      NearbyFilter.bus => i18n.modeBus,
+      NearbyFilter.youbike => i18n.modeBike,
+      NearbyFilter.tra => i18n.modeTra,
+      NearbyFilter.thsr => i18n.modeThsr,
+    };
   }
 }
 
@@ -161,20 +155,14 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
   }
 
   bool _matches(NearStationViewModel s) {
-    switch (_selectedFilter) {
-      case NearbyFilter.all:
-        return true;
-      case NearbyFilter.mrt:
-        return s.type == NearStationType.mrt;
-      case NearbyFilter.bus:
-        return s.type == NearStationType.bus;
-      case NearbyFilter.youbike:
-        return s.type == NearStationType.bike;
-      case NearbyFilter.tra:
-        return s.type == NearStationType.tra;
-      case NearbyFilter.thsr:
-        return s.type == NearStationType.thsr;
-    }
+    return switch (_selectedFilter) {
+      NearbyFilter.all => true,
+      NearbyFilter.mrt => s.type == NearStationType.mrt,
+      NearbyFilter.bus => s.type == NearStationType.bus,
+      NearbyFilter.youbike => s.type == NearStationType.bike,
+      NearbyFilter.tra => s.type == NearStationType.tra,
+      NearbyFilter.thsr => s.type == NearStationType.thsr,
+    };
   }
 
   Widget _buildFilterRow(BuildContext context) {
@@ -190,9 +178,7 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
         final halfPx = viewport * AppSheetSnap.halfFrac;
         final offset = metrics?.offset ?? peekPx;
         final raw = ((offset - peekPx) / (halfPx - peekPx)).clamp(0.0, 1.0);
-        final reveal = reduceMotion
-            ? (raw >= 0.5 ? 1.0 : 0.0)
-            : AppMotion.easeInOut.transform(raw);
+        final reveal = _filterReveal(raw, reduceMotion);
         if (reveal == 0) return const SizedBox.shrink();
         return ClipRect(
           child: Align(
@@ -213,6 +199,99 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
     );
   }
 
+  double _filterReveal(double raw, bool reduced) =>
+      reduced ? (raw >= 0.5 ? 1.0 : 0.0) : AppMotion.easeInOut.transform(raw);
+
+  bool _waitingForStations(NearbyState state) =>
+      state.loading && state.stations.isEmpty;
+
+  (String, Widget) _nearbyBody(BuildContext context, NearbyState state) {
+    final String kind;
+    final Widget body;
+    if (_waitingForStations(state)) {
+      kind = 'loading';
+      body = LayoutBuilder(
+        builder: (context, constraints) {
+          // A row is 62 high at minimum; fill the viewport so the
+          // skeleton reads as a full list.
+          const rowExtent = 62.0;
+          final count = (constraints.maxHeight / rowExtent).ceil();
+          return Skeletonizer(
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: count,
+              itemBuilder: (context, i) => _NearbyStationRow(
+                station: _skeletonStations[i % 3],
+                onStationTap: (_) {},
+              ),
+            ),
+          );
+        },
+      );
+    } else if (state.error != null) {
+      kind = 'error';
+      body = ErrorStateView(
+        error: state.error!,
+        // Replays the exact failed query (dragged viewport or GPS,
+        // whichever it was) instead of falling back to device GPS.
+        onRetry: () => context.read<NearbyBloc>().add(const NearbyRetried()),
+      );
+    } else {
+      return _loadedNearbyBody(context, state);
+    }
+    return (kind, body);
+  }
+
+  (String, Widget) _loadedNearbyBody(BuildContext context, NearbyState state) {
+    final String kind;
+    final Widget body;
+    final items = _visibleStations(state.stations);
+    if (items.isEmpty) {
+      kind = 'empty';
+      body = _NearbyEmpty(
+        hasStationsNearby: state.stations.isNotEmpty,
+        filter: _selectedFilter,
+        onResetFilter: () => setState(() => _selectedFilter = NearbyFilter.all),
+      );
+    } else {
+      kind = 'loaded';
+      body = Stack(
+        children: [
+          NotificationListener<ScrollNotification>(
+            onNotification: _onScrollNotification,
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.zero,
+              itemCount: items.length,
+              itemBuilder: (context, i) => _NearbyStationRow(
+                // Composite key: stationId alone is not guaranteed
+                // unique across transit types in this mixed list.
+                key: ValueKey(
+                  '${items[i].type.name}:${items[i].stationId}',
+                ),
+                station: items[i],
+                onStationTap: widget.onStationTap,
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 40,
+            child: Center(
+              child: _ReturnMapPill(
+                visible: _showReturnMap,
+                onTap: _returnToMap,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return (kind, body);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -221,84 +300,7 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
         Expanded(
           child: BlocBuilder<NearbyBloc, NearbyState>(
             builder: (context, state) {
-              final String kind;
-              final Widget body;
-              if (state.loading && state.stations.isEmpty) {
-                kind = 'loading';
-                body = LayoutBuilder(
-                  builder: (context, constraints) {
-                    // A row is 62 high at minimum; fill the viewport so the
-                    // skeleton reads as a full list.
-                    const rowExtent = 62.0;
-                    final count = (constraints.maxHeight / rowExtent).ceil();
-                    return Skeletonizer(
-                      child: ListView.builder(
-                        padding: EdgeInsets.zero,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: count,
-                        itemBuilder: (context, i) => _NearbyStationRow(
-                          station: _skeletonStations[i % 3],
-                          onStationTap: (_) {},
-                        ),
-                      ),
-                    );
-                  },
-                );
-              } else if (state.error != null) {
-                kind = 'error';
-                body = ErrorStateView(
-                  error: state.error!,
-                  // Replays the exact failed query (dragged viewport or GPS,
-                  // whichever it was) instead of falling back to device GPS.
-                  onRetry: () =>
-                      context.read<NearbyBloc>().add(const NearbyRetried()),
-                );
-              } else {
-                final items = _visibleStations(state.stations);
-                if (items.isEmpty) {
-                  kind = 'empty';
-                  body = _NearbyEmpty(
-                    hasStationsNearby: state.stations.isNotEmpty,
-                    filter: _selectedFilter,
-                    onResetFilter: () =>
-                        setState(() => _selectedFilter = NearbyFilter.all),
-                  );
-                } else {
-                  kind = 'loaded';
-                  body = Stack(
-                    children: [
-                      NotificationListener<ScrollNotification>(
-                        onNotification: _onScrollNotification,
-                        child: ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: EdgeInsets.zero,
-                          itemCount: items.length,
-                          itemBuilder: (context, i) => _NearbyStationRow(
-                            // Composite key: stationId alone is not guaranteed
-                            // unique across transit types in this mixed list.
-                            key: ValueKey(
-                              '${items[i].type.name}:${items[i].stationId}',
-                            ),
-                            station: items[i],
-                            onStationTap: widget.onStationTap,
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 40,
-                        child: Center(
-                          child: _ReturnMapPill(
-                            visible: _showReturnMap,
-                            onTap: _returnToMap,
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                }
-              }
+              final (kind, body) = _nearbyBody(context, state);
               // 'loaded' stays keyed constant across refreshes so location
               // updates never re-fade the list.
               final reduceMotion = MediaQuery.disableAnimationsOf(context);
@@ -332,23 +334,23 @@ class _NearbyEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final filterHidesResults = hasStationsNearby && filter != NearbyFilter.all;
+    if (hasStationsNearby && filter != NearbyFilter.all) {
+      return _EmptyState(
+        icon: Icons.filter_alt_off_outlined,
+        heading: AppI18n.of(context).homeNoNearbyFiltered(
+          filter.labelOf(AppI18n.of(context)),
+        ),
+        body: AppI18n.of(context).homeNoNearbyFilteredBody,
+        action: (
+          label: AppI18n.of(context).homeShowAllStops,
+          onTap: onResetFilter,
+        ),
+      );
+    }
     return _EmptyState(
-      icon: filterHidesResults
-          ? Icons.filter_alt_off_outlined
-          : Icons.near_me_outlined,
-      heading: filterHidesResults
-          ? AppI18n.of(context).homeNoNearbyFiltered(
-              filter.labelOf(AppI18n.of(context)),
-            )
-          : AppI18n.of(context).homeNoNearby,
-      body: filterHidesResults
-          ? AppI18n.of(context).homeNoNearbyFilteredBody
-          : AppI18n.of(context).homeNoNearbyBody,
-      actionLabel: filterHidesResults
-          ? AppI18n.of(context).homeShowAllStops
-          : null,
-      onAction: filterHidesResults ? onResetFilter : null,
+      icon: Icons.near_me_outlined,
+      heading: AppI18n.of(context).homeNoNearby,
+      body: AppI18n.of(context).homeNoNearbyBody,
     );
   }
 }
@@ -438,6 +440,9 @@ class _ReturnMapPillState extends State<_ReturnMapPill>
     super.dispose();
   }
 
+  double _appearance(bool reduced) =>
+      reduced ? (widget.visible ? 1.0 : 0.0) : _appear.value;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -445,7 +450,7 @@ class _ReturnMapPillState extends State<_ReturnMapPill>
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (context, _) {
-        final appear = reduce ? (widget.visible ? 1.0 : 0.0) : _appear.value;
+        final appear = _appearance(reduce);
         if (appear == 0) return const SizedBox.shrink();
         final morph = reduce ? 1.0 : _morph.value;
         final pillWidth = _cachedPillWidth;
@@ -589,7 +594,7 @@ class _NearbyStationRow extends StatelessWidget {
         child: Row(
           children: [
             TransportIcon(
-              type: _nearbyIconType(station),
+              type: nearbyIconType(station),
             ),
             const SizedBox(width: AppTheme.space12),
             Expanded(

@@ -70,11 +70,7 @@ class PlanRoute extends Equatable {
 
   String get savedKey {
     final bytes = raw;
-    if (bytes == null) {
-      final origin = sections.isNotEmpty ? sections.first.departure.name : '';
-      final dest = sections.isNotEmpty ? sections.last.arrival.name : '';
-      return '$origin|$dest|$startTime';
-    }
+    if (bytes == null) return _namedSavedKey;
     // FNV-1a over the bytes: deterministic across app restarts (unlike
     // Object.hashCode), and collision-safe enough for a local bookmark id.
     var hash = 0x811c9dc5;
@@ -82,6 +78,13 @@ class PlanRoute extends Equatable {
       hash = ((hash ^ b) * 0x01000193) & 0xffffffff;
     }
     return 'r$hash';
+  }
+
+  String get _namedSavedKey {
+    if (sections.isEmpty) return '||$startTime';
+    final origin = sections.first.departure.name;
+    final destination = sections.last.arrival.name;
+    return '$origin|$destination|$startTime';
   }
 
   PlanPoint? firstPoint({int leg = 0}) {

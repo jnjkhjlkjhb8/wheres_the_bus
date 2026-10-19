@@ -19,6 +19,23 @@ void main() {
         ),
       );
 
+  testWidgets('an unchanged rack painter does not request another paint', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      const AvailabilityGauge(available: 5, docks: 15, capacity: 20),
+    );
+    await tester.pumpAndSettle();
+    final painting = tester.widget<CustomPaint>(
+      find.descendant(
+        of: find.byType(AvailabilityGauge),
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    expect(painting.painter!.shouldRepaint(painting.painter!), isFalse);
+  });
+
   testWidgets(
     'no live frame yet renders a dash, never a confident zero (F27)',
     (tester) async {

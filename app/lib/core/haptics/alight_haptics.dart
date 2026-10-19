@@ -17,17 +17,24 @@ Future<void> fireAlightHaptics(
   HapticService? haptics,
 }) async {
   if (sessionId.isEmpty) return;
-  final key = '$sessionId:${event.name}';
-  if (HiveStore.settingsReady && HiveStore.isAlightFired(key)) return;
-  if (HiveStore.settingsReady) await HiveStore.markAlightFired(key);
-  final h = haptics ?? HapticService.instance;
+  if (!await _markAlightOnce('$sessionId:${event.name}')) return;
+  await _pulse(haptics ?? HapticService.instance, event);
+}
+
+Future<bool> _markAlightOnce(String key) async {
+  if (!HiveStore.settingsReady) return true;
+  if (HiveStore.isAlightFired(key)) return false;
+  await HiveStore.markAlightFired(key);
+  return true;
+}
+
+Future<void> _pulse(HapticService haptics, AlightEvent event) async {
   switch (event) {
     case AlightEvent.lead:
-      await h.shortAlightPulse();
+      await haptics.shortAlightPulse();
     case AlightEvent.alight:
-      // Fire-and-forget: the long buzz runs on its own timer for 1.6 s and
-      // nothing downstream waits on it finishing.
-      h.longAlightPulse();
+      // The long buzz owns its timer; callers need not wait for it to finish.
+      haptics.longAlightPulse();
   }
 }
 
@@ -38,6 +45,8 @@ AlightEvent? alightEventFor({
 }) {
   if (previousRemaining == null || previousRemaining <= remaining) return null;
   if (remaining == 1) return AlightEvent.alight;
-  if (lead > 0 && remaining == lead + 1) return AlightEvent.lead;
-  return null;
+  return _leadEvent(remaining, lead);
 }
+
+AlightEvent? _leadEvent(int remaining, int lead) =>
+    lead > 0 && remaining == lead + 1 ? AlightEvent.lead : null;

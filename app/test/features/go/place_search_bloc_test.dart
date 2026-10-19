@@ -30,14 +30,23 @@ void main() {
   });
 
   test('rapid keystrokes coalesce into one autocomplete call', () async {
-    final places = _FakePlaces();
-    _bloc(places: places, debounce: _tick)
+    final requested = Completer<String>();
+    final places = _FakePlaces(onQuery: requested.complete);
+    final bloc = _bloc(places: places, debounce: _tick)
       ..add(const PlaceQueryChanged('t'))
       ..add(const PlaceQueryChanged('ta'))
       ..add(const PlaceQueryChanged('tai'));
 
-    await _settle();
+    expect(await requested.future.timeout(const Duration(seconds: 5)), 'tai');
     expect(places.queries, ['tai']);
+    final settled = expectLater(
+      bloc.stream,
+      emitsThrough(
+        isA<PlaceSearchState>().having((s) => s.loading, 'loading', isFalse),
+      ),
+    );
+    places.complete('tai', const []);
+    await settled;
   });
 
   test('a late response for a superseded query is dropped', () async {
@@ -57,6 +66,23 @@ void main() {
     expect(bloc.state.results.single.placeId, 'fast-1');
     expect(bloc.state.loading, isFalse);
   });
+
+  test(
+    'clearing during debounce removes results without a Places request',
+    () async {
+      final places = _FakePlaces();
+      final bloc = _bloc(places: places, debounce: _tick)
+        ..add(const PlaceQueryChanged('station'));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.loading, isTrue);
+      bloc.add(const PlaceQueryChanged('   '));
+      await _settle();
+      expect(bloc.state.query, isEmpty);
+      expect(bloc.state.results, isEmpty);
+      expect(bloc.state.loading, isFalse);
+      expect(places.queries, isEmpty);
+    },
+  );
 
   test('picking records a recent, saving does not', () async {
     final recents = _FakeRecents();
@@ -122,6 +148,26 @@ void main() {
     expect(bloc.state.saved.single.name, 'Home');
     expect(bloc.state.recents.single.name, 'Ximen');
   });
+  test('location progress and failure publish a distinct effect', () async {
+    final bloc = _bloc()..add(const LocationResolving(active: true));
+    await _settle();
+    expect(bloc.state.resolvingLocation, isTrue);
+    expect(bloc.state.effect, isNull);
+    bloc.add(const LocationResolving(active: false, failed: true));
+    await _settle();
+    expect(bloc.state.resolvingLocation, isFalse);
+    expect(bloc.state.effect?.error, PlaceSearchErrorKind.location);
+  });
+
+  test('saving a place persists its chosen name and icon', () async {
+    final saved = _FakeSaved();
+    final bloc = _bloc(saved: saved)
+      ..add(PlaceSaved(_place('original'), name: 'Home', iconKey: 'home'));
+    await _settle();
+    expect(saved.items.single.name, 'Home');
+    expect(saved.items.single.iconKey, 'home');
+    expect(bloc.state.saved, saved.items);
+  });
 }
 
 const _tick = Duration(milliseconds: 5);
@@ -152,6 +198,9 @@ PlaceSuggestion _suggestion(String id) =>
     PlaceSuggestion(placeId: id, primaryText: id, secondaryText: '');
 
 class _FakePlaces implements PlacesRepository {
+  _FakePlaces({this.onQuery});
+
+  final void Function(String)? onQuery;
   final queries = <String>[];
   final detailIds = <String>[];
   final detailsById = <String, PlannedPlace>{};
@@ -168,6 +217,7 @@ class _FakePlaces implements PlacesRepository {
   @override
   Future<List<PlaceSuggestion>> autocomplete(String query, {LatLng? bias}) {
     queries.add(query);
+    onQuery?.call(query);
     return (_pending[query] = Completer<List<PlaceSuggestion>>()).future;
   }
 

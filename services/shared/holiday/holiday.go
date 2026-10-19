@@ -36,21 +36,40 @@ func Load(ctx context.Context) error {
 }
 
 func refreshHolidays(ctx context.Context, client *http.Client, url string) error {
+	if err := validateHolidayRequest(ctx, client); err != nil {
+		return err
+	}
+	resp, err := fetchHolidayResponse(ctx, client, url)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return publishHolidayResponse(resp)
+}
+
+func fetchHolidayResponse(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, _oops.Wrapf(err, "create holiday request")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, _oops.Wrapf(err, "fetch holiday CSV")
+	}
+	return resp, nil
+}
+
+func validateHolidayRequest(ctx context.Context, client *http.Client) error {
 	if ctx == nil {
 		return errors.New("holiday refresh context is nil")
 	}
 	if client == nil {
 		return errors.New("holiday HTTP client is nil")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return _oops.Wrapf(err, "create holiday request")
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return _oops.Wrapf(err, "fetch holiday CSV")
-	}
-	defer func() { _ = resp.Body.Close() }()
+	return nil
+}
+
+func publishHolidayResponse(resp *http.Response) error {
 	if resp.StatusCode != http.StatusOK {
 		_, drainErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 		return errors.Join(_oops.With("status_code", resp.StatusCode).Errorf("fetch holiday CSV: HTTP status"), drainErr)
@@ -65,33 +84,67 @@ func refreshHolidays(ctx context.Context, client *http.Client, url string) error
 }
 
 func parseHolidayCSV(r io.Reader) (map[string]bool, error) {
-	csvReader := csv.NewReader(r)
-	if _, err := csvReader.Read(); err != nil {
+	csvReader, err := holidayCSVReader(r)
+	if err != nil {
+		return nil, err
+	}
+	dates, err := readHolidayRows(csvReader)
+	if err != nil {
+		return nil, err
+	}
+	return populatedHolidayDates(dates)
+}
+
+func holidayCSVReader(r io.Reader) (*csv.Reader, error) {
+	reader := csv.NewReader(r)
+	if _, err := reader.Read(); err != nil {
 		return nil, _oops.Wrapf(err, "read header")
 	}
-	dates := make(map[string]bool)
-	for {
-		record, err := csvReader.Read()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, _oops.Wrapf(err, "read row")
-		}
-		if len(record) < 4 {
-			return nil, _oops.With("record", len(record)).Errorf("row has columns, want at least 4")
-		}
-		rawDate := strings.TrimSpace(record[0])
-		date, err := time.Parse("20060102", rawDate)
-		if err != nil {
-			return nil, _oops.With("raw_date", rawDate).Wrapf(err, "date")
-		}
-		dates[date.Format(time.DateOnly)] = strings.TrimSpace(record[3]) == "是"
-	}
+	return reader, nil
+}
+
+func populatedHolidayDates(dates map[string]bool) (map[string]bool, error) {
 	if len(dates) == 0 {
 		return nil, errors.New("holiday CSV contains no data rows")
 	}
 	return dates, nil
+}
+
+func readHolidayRows(reader *csv.Reader) (map[string]bool, error) {
+	dates := make(map[string]bool)
+	for {
+		done, err := readHolidayRow(reader, dates)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return dates, nil
+		}
+	}
+}
+
+func readHolidayRow(reader *csv.Reader, dates map[string]bool) (bool, error) {
+	record, err := reader.Read()
+	if errors.Is(err, io.EOF) {
+		return true, nil
+	}
+	if err != nil {
+		return false, _oops.Wrapf(err, "read row")
+	}
+	return false, storeHolidayRow(dates, record)
+}
+
+func storeHolidayRow(dates map[string]bool, record []string) error {
+	if len(record) < 4 {
+		return _oops.With("record", len(record)).Errorf("row has columns, want at least 4")
+	}
+	rawDate := strings.TrimSpace(record[0])
+	date, err := time.Parse("20060102", rawDate)
+	if err != nil {
+		return _oops.With("raw_date", rawDate).Wrapf(err, "date")
+	}
+	dates[date.Format(time.DateOnly)] = strings.TrimSpace(record[3]) == "是"
+	return nil
 }
 
 func storeHolidaySnapshot(dates map[string]bool) {

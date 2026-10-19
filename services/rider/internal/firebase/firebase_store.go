@@ -115,7 +115,11 @@ func (s *firebaseStore) CreateArrivalReminder(ctx context.Context, reminder Fire
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, reminder.InstallID); err != nil {
+	return insertReminderTransaction(ctx, tx, reminder)
+}
+
+func insertReminderTransaction(ctx context.Context, tx pgx.Tx, reminder FirebaseArrivalReminder) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, reminder.InstallID); err != nil {
 		return err
 	}
 	result, err := tx.Exec(ctx, `INSERT INTO firebase_arrival_reminder
@@ -128,17 +132,25 @@ func (s *firebaseStore) CreateArrivalReminder(ctx context.Context, reminder Fire
 	if err != nil {
 		return err
 	}
+	return completeReminderTransaction(ctx, tx, reminder.InstallID, result)
+}
+
+func completeReminderTransaction(ctx context.Context, tx pgx.Tx, installID string, result pgconn.CommandTag) error {
 	if result.RowsAffected() == 0 {
-		var active int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM firebase_arrival_reminder WHERE install_id=$1 AND status IN ('pending','sending') AND expires_at > NOW()`, reminder.InstallID).Scan(&active); err != nil {
-			return err
-		}
-		if active >= 50 {
-			return ErrReminderLimitReached
-		}
-		return ErrReminderDuplicate
+		return rejectedReminderInsertion(ctx, tx, installID)
 	}
 	return tx.Commit(ctx)
+}
+
+func rejectedReminderInsertion(ctx context.Context, tx pgx.Tx, installID string) error {
+	var active int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM firebase_arrival_reminder WHERE install_id=$1 AND status IN ('pending','sending') AND expires_at > NOW()`, installID).Scan(&active); err != nil {
+		return err
+	}
+	if active >= 50 {
+		return ErrReminderLimitReached
+	}
+	return ErrReminderDuplicate
 }
 
 // CancelArrivalReminder marks a caller-owned pending reminder as cancelled. The

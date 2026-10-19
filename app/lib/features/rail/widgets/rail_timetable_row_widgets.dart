@@ -42,6 +42,20 @@ class _TrainRow extends StatelessWidget {
   /// countdown would be meaningless.
   final int? minutesUntil;
 
+  Color _surface(ColorScheme cs) =>
+      isNext ? cs.surfaceContainerHighest : cs.surfaceContainerLow;
+
+  double get _verticalPadding => isNext ? 13 : 11;
+
+  Color _arriveColor(ColorScheme cs) => row.isSuspended
+      ? AppTheme.inkTertiary(cs.brightness)
+      : cs.onSurfaceVariant;
+
+  TextDecoration? get _arriveDecoration =>
+      row.isSuspended ? TextDecoration.lineThrough : null;
+
+  int? get _countdownMinutes => isNext ? minutesUntil : null;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -84,10 +98,10 @@ class _TrainRow extends StatelessWidget {
       },
       semanticLabel: _semanticLabel(AppI18n.of(context)),
       child: Container(
-        color: isNext ? cs.surfaceContainerHighest : cs.surfaceContainerLow,
+        color: _surface(cs),
         padding: EdgeInsets.symmetric(
           horizontal: AppTheme.space16,
-          vertical: isNext ? 13 : 11,
+          vertical: _verticalPadding,
         ),
         child: Row(
           children: [
@@ -101,7 +115,7 @@ class _TrainRow extends StatelessWidget {
                 footnote: _Footnote.of(
                   AppI18n.of(context),
                   row,
-                  minutesUntil: isNext ? minutesUntil : null,
+                  minutesUntil: _countdownMinutes,
                 ),
               ),
             ),
@@ -122,10 +136,8 @@ class _TrainRow extends StatelessWidget {
                 style: AppTextStyles.timeValue(
                   size: 15,
                   weight: FontWeight.w500,
-                  color: suspended
-                      ? AppTheme.inkTertiary(cs.brightness)
-                      : cs.onSurfaceVariant,
-                  decoration: suspended ? TextDecoration.lineThrough : null,
+                  color: _arriveColor(cs),
+                  decoration: _arriveDecoration,
                 ),
               ),
             ),
@@ -227,16 +239,22 @@ class _Footnote {
         _FootnoteTone.critical,
       );
     }
+    return _scheduleNote(i18n, row, minutesUntil);
+  }
+
+  static _Footnote? _scheduleNote(
+    AppI18n i18n,
+    _RailRow row,
+    int? minutesUntil,
+  ) {
     // Past an hour the countdown stops being a countdown — "177 分後" is
     // arithmetic the departure time above it already answered better. The row
     // keeps its emphasis (it is still the next train) and drops the number.
-    if (minutesUntil != null && minutesUntil <= 60) {
+    if (_hasCountdown(minutesUntil)) {
       // Under a minute the countdown would flicker between "1 分後" and "0
       // 分後" while the train is effectively at the platform; say so instead.
       return _Footnote(
-        minutesUntil < 1
-            ? i18n.railDepartingSoon
-            : i18n.railInMinutes(minutesUntil),
+        _countdownLabel(i18n, minutesUntil!),
         _FootnoteTone.emphasis,
       );
     }
@@ -245,6 +263,14 @@ class _Footnote {
     }
     return null;
   }
+
+  static bool _hasCountdown(int? minutesUntil) =>
+      minutesUntil != null && minutesUntil <= 60;
+
+  static String _countdownLabel(AppI18n i18n, int minutesUntil) =>
+      minutesUntil < 1
+      ? i18n.railDepartingSoon
+      : i18n.railInMinutes(minutesUntil);
 }
 
 enum _FootnoteTone { critical, neutral, emphasis }
@@ -260,12 +286,14 @@ class _DurationConnector extends StatelessWidget {
   final bool emphasised;
   final bool dimmed;
 
+  Color _lineColor(ColorScheme cs) => dimmed
+      ? cs.outlineVariant
+      : (emphasised ? cs.onSurfaceVariant : cs.outlineVariant);
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final lineColor = dimmed
-        ? cs.outlineVariant
-        : (emphasised ? cs.onSurfaceVariant : cs.outlineVariant);
+    final lineColor = _lineColor(cs);
     final line = Expanded(child: Container(height: 1, color: lineColor));
 
     if (duration.isEmpty) return Row(children: [line]);

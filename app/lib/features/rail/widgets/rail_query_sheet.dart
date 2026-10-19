@@ -162,6 +162,11 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
   /// re-runs the query immediately, matching the old sheet's behaviour.
   bool _hasSubmittedOd = false;
 
+  bool get _needsLastQuery => _originName.isEmpty && _destName.isEmpty;
+
+  String _distinctDestination(String origin, String destination) =>
+      origin.isNotEmpty && origin == destination ? '' : destination;
+
   @override
   void initState() {
     super.initState();
@@ -173,7 +178,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
     // A hand-off can name the same station twice (a station detail whose stop
     // is also the preset destination); clear the dest rather than submit a
     // zero-length trip.
-    if (_originName.isNotEmpty && _originName == _destName) _destName = '';
+    _destName = _distinctDestination(_originName, _destName);
     _destId = preset?.destId ?? '';
     _selectedDate = preset?.date ?? DateTime.now();
     // Seed the time picker from the preset so a re-opened sheet shows the time
@@ -182,7 +187,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
       _selectedTime = TimeOfDay.fromDateTime(preset!.date!);
     }
     _isDepartureTime = preset?.isDeparture ?? true;
-    if (_originName.isEmpty && _destName.isEmpty) {
+    if (_needsLastQuery) {
       _seedOdFromLastQuery(_system);
     }
     _recentQueries = HiveStore.recentTrainQueries;

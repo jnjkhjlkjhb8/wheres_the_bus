@@ -7,15 +7,13 @@ class _GoMessage extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.hint,
-    this.actionLabel,
-    this.onAction,
+    this.action,
   });
 
   final IconData icon;
   final String title;
   final String hint;
-  final String? actionLabel;
-  final VoidCallback? onAction;
+  final ({String label, VoidCallback onTap})? action;
 
   @override
   Widget build(BuildContext context) {
@@ -50,11 +48,11 @@ class _GoMessage extends StatelessWidget {
                 color: cs.onSurfaceVariant,
               ),
             ),
-            if (actionLabel != null && onAction != null) ...[
+            if (action case final cta?) ...[
               const SizedBox(height: AppTheme.space20),
               Pressable(
-                onTap: onAction,
-                semanticLabel: actionLabel,
+                onTap: cta.onTap,
+                semanticLabel: cta.label,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppTheme.space20,
@@ -65,7 +63,7 @@ class _GoMessage extends StatelessWidget {
                     borderRadius: BorderRadius.circular(AppTheme.radiusButton),
                   ),
                   child: Text(
-                    actionLabel!,
+                    cta.label,
                     style: AppTextStyles.bodyRegular.copyWith(
                       fontWeight: FontWeight.w600,
                       color: cs.onSurface,
@@ -115,42 +113,48 @@ class _PlannerEntry extends StatelessWidget {
 
   // 路線箱: the saved-route cards. Kept out of PlaceSearchView (which only knows
   // places) by passing it in as the list header.
+  Widget _savedRoutesPending() =>
+      savedRoutesLoadError ? _savedRoutesFailure() : _savedRoutesLoading();
+
+  Widget _savedRoutesLoading() {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space16,
+        AppTheme.space20,
+        AppTheme.space12,
+      ),
+      child: SizedBox(
+        height: 24,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+
+  Widget _savedRoutesFailure() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space20,
+        AppTheme.space16,
+        AppTheme.space20,
+        AppTheme.space12,
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_outlined, size: 20),
+          const SizedBox(width: AppTheme.space8),
+          const Expanded(child: Text('路線箱暫時無法讀取')),
+          TextButton(onPressed: onRetrySavedRoutes, child: const Text('重試')),
+        ],
+      ),
+    );
+  }
+
   Widget? _savedRoutesHeader(BuildContext context) {
-    if (!savedRoutesReady && savedRoutesLoadError) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppTheme.space20,
-          AppTheme.space16,
-          AppTheme.space20,
-          AppTheme.space12,
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.cloud_off_outlined, size: 20),
-            const SizedBox(width: AppTheme.space8),
-            Expanded(child: Text('路線箱暫時無法讀取')),
-            TextButton(onPressed: onRetrySavedRoutes, child: const Text('重試')),
-          ],
-        ),
-      );
-    }
-    if (!savedRoutesReady) {
-      return const Padding(
-        padding: EdgeInsets.fromLTRB(
-          AppTheme.space20,
-          AppTheme.space16,
-          AppTheme.space20,
-          AppTheme.space12,
-        ),
-        child: SizedBox(
-          height: 24,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
+    if (!savedRoutesReady) return _savedRoutesPending();
     if (savedRoutes.isEmpty) return null;
     final cs = Theme.of(context).colorScheme;
     return Column(

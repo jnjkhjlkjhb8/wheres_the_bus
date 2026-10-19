@@ -42,19 +42,70 @@ const _schema = Schema([
 /// `path_provider`, which has no platform binding under `flutter test`.
 typedef PowerSyncDatabaseFactory = Future<PowerSyncDatabase> Function();
 
+abstract interface class PowerSyncConnection {
+  PowerSyncDatabase get database;
+  bool get connected;
+  Stream<SyncStatus> get statusStream;
+  Future<void> initialize();
+  Future<void> connect(PowerSyncBackendConnector connector);
+  Future<void> close();
+  Future<List<Map<String, dynamic>>> getAll(
+    String sql,
+    List<Object?> parameters,
+  );
+}
+
+typedef PowerSyncConnectionFactory = Future<PowerSyncConnection> Function();
+
+class _NativePowerSyncConnection implements PowerSyncConnection {
+  _NativePowerSyncConnection(this.database);
+  @override
+  final PowerSyncDatabase database;
+  @override
+  bool get connected => database.connected;
+  @override
+  Stream<SyncStatus> get statusStream => database.statusStream;
+  @override
+  Future<void> initialize() => database.initialize();
+  @override
+  Future<void> connect(PowerSyncBackendConnector connector) =>
+      database.connect(connector: connector);
+  @override
+  Future<void> close() => database.close();
+  @override
+  Future<List<Map<String, dynamic>>> getAll(
+    String sql,
+    List<Object?> parameters,
+  ) async {
+    final rows = await database.getAll(sql, parameters);
+    return [for (final row in rows) Map<String, dynamic>.of(row)];
+  }
+}
+
 class PowerSyncService implements LocalDb {
-  PowerSyncService._(this._dbFactory);
+  PowerSyncService({
+    PowerSyncDatabaseFactory? dbFactory,
+    PowerSyncConnectionFactory? connectionFactory,
+    PowerSyncBackendConnector Function()? connectorFactory,
+    String endpoint = _envPowersyncUrl,
+  }) : _connectionFactory =
+           connectionFactory ??
+           (() async => _NativePowerSyncConnection(
+             await (dbFactory ?? _defaultDbFactory)(),
+           )),
+       _connectorFactory =
+           connectorFactory ??
+           (() => CachedPowerSyncConnector(endpoint: endpoint)),
+       _endpoint = endpoint;
 
   /// Constructs an isolated instance for unit tests. Never share this with
   /// [instance]: it exists so tests can exercise the memoization/StateError
   /// contract without touching real platform channels.
   @visibleForTesting
   factory PowerSyncService.forTesting({PowerSyncDatabaseFactory? dbFactory}) =>
-      PowerSyncService._(dbFactory ?? _defaultDbFactory);
+      PowerSyncService(dbFactory: dbFactory);
 
-  static final PowerSyncService instance = PowerSyncService._(
-    _defaultDbFactory,
-  );
+  static final PowerSyncService instance = PowerSyncService();
 
   static Future<PowerSyncDatabase> _defaultDbFactory() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -64,7 +115,9 @@ class PowerSyncService implements LocalDb {
     );
   }
 
-  final PowerSyncDatabaseFactory _dbFactory;
+  final PowerSyncConnectionFactory _connectionFactory;
+  final PowerSyncBackendConnector Function() _connectorFactory;
+  final String _endpoint;
   final _health = PowerSyncHealth<SyncStatus>(
     errorOf: (status) => status.downloadError ?? status.uploadError,
     onError: CrashReporter.record,
@@ -76,7 +129,7 @@ class PowerSyncService implements LocalDb {
   /// in Settings instead of a hardcoded timestamp (F46).
   DateTime? get lastSyncedAt => _health.lastSyncedAt;
 
-  PowerSyncDatabase? _db;
+  PowerSyncConnection? _connection;
   Future<void>? _initFuture;
 
   Future<void> init() {
@@ -93,10 +146,10 @@ class PowerSyncService implements LocalDb {
   }
 
   Future<void> _doInit() async {
-    final db = await _dbFactory();
+    final db = await _connectionFactory();
     await db.initialize();
     _health.listen(db.statusStream);
-    _db = db;
+    _connection = db;
     AppForeground.value.addListener(_handleForeground);
     await _connect(db);
   }
@@ -104,27 +157,34 @@ class PowerSyncService implements LocalDb {
   /// Opens the sync connection, if it isn't open already. Doing nothing on a
   /// failed credential fetch is the offline case, and is why this has to be
   /// retryable rather than a one-shot step of [_doInit].
-  Future<void> _connect(PowerSyncDatabase db) async {
-    if (_envPowersyncUrl.isEmpty || db.connected) return;
+  Future<void> _connect(PowerSyncConnection db) async {
+    if (_endpoint.isEmpty || db.connected) return;
     try {
-      final connector = CachedPowerSyncConnector();
-      final creds = await connector.fetchCredentials();
-      if (creds != null) {
-        await db.connect(connector: connector);
-      }
+      await _connectWithCredentials(db);
     } on Object catch (e, s) {
       CrashReporter.record(e, s);
-      if (kDebugMode) {
-        debugPrint(
-          '[PowerSync] Connect: failed to fetch credentials, running offline',
-        );
-      }
+      _logOffline();
+    }
+  }
+
+  Future<void> _connectWithCredentials(PowerSyncConnection db) async {
+    final connector = _connectorFactory();
+    if (await connector.fetchCredentials() != null) {
+      await db.connect(connector);
+    }
+  }
+
+  void _logOffline() {
+    if (kDebugMode) {
+      debugPrint(
+        '[PowerSync] Connect: failed to fetch credentials, running offline',
+      );
     }
   }
 
   void _handleForeground() {
     if (!AppForeground.value.value) return;
-    final db = _db;
+    final db = _connection;
     if (db != null) unawaited(_connect(db));
   }
 
@@ -138,13 +198,15 @@ class PowerSyncService implements LocalDb {
 
   /// The initialized database. Guarded by an explicit [StateError] rather
   /// than `assert` (F15): `assert` is stripped in release builds, which
-  /// would otherwise let a release build dereference an unset `_db`.
-  PowerSyncDatabase get db {
-    final db = _db;
-    if (db == null) {
+  /// would otherwise let a release build dereference an unset database.
+  PowerSyncDatabase get db => _readyConnection.database;
+
+  PowerSyncConnection get _readyConnection {
+    final connection = _connection;
+    if (connection == null) {
       throw StateError('PowerSyncService.init() must complete before db');
     }
-    return db;
+    return connection;
   }
 
   @override
@@ -152,18 +214,16 @@ class PowerSyncService implements LocalDb {
     String sql, [
     List<Object?> parameters = const [],
   ]) async {
-    final result = await db.getAll(sql, parameters);
-    // Detach rows from the sqlite ResultSet so callers hold plain maps.
-    return [for (final row in result) Map<String, dynamic>.of(row)];
+    return _readyConnection.getAll(sql, parameters);
   }
 
   Future<void> close() async {
     AppForeground.value.removeListener(_handleForeground);
     await _health.cancel();
-    final db = _db;
+    final db = _connection;
     if (db != null) {
       await db.close();
-      _db = null;
+      _connection = null;
     }
     _initFuture = null;
   }
@@ -176,7 +236,8 @@ class CachedPowerSyncConnector extends PowerSyncBackendConnector {
   CachedPowerSyncConnector({
     PowerSyncCredentialFetch? fetch,
     PowerSyncClock? clock,
-  }) : _fetch = fetch ?? _fetchFromRouter,
+    String endpoint = _envPowersyncUrl,
+  }) : _fetch = fetch ?? (() => _fetchFromRouter(endpoint)),
        _clock = clock ?? DateTime.now;
 
   final PowerSyncCredentialFetch _fetch;
@@ -187,13 +248,8 @@ class CachedPowerSyncConnector extends PowerSyncBackendConnector {
 
   @override
   Future<PowerSyncCredentials?> fetchCredentials() async {
-    final cached = _credentials;
-    final expiresAt = _credentialsExpireAt;
-    if (cached != null &&
-        expiresAt != null &&
-        _clock().isBefore(expiresAt.subtract(const Duration(minutes: 1)))) {
-      return cached;
-    }
+    final cached = _freshCredentials;
+    if (cached != null) return cached;
 
     final fetching = _fetching;
     if (fetching != null) return fetching;
@@ -204,6 +260,15 @@ class CachedPowerSyncConnector extends PowerSyncBackendConnector {
     } finally {
       if (identical(_fetching, request)) _fetching = null;
     }
+  }
+
+  PowerSyncCredentials? get _freshCredentials {
+    final cached = _credentials;
+    final expiry = _credentialsExpireAt;
+    if (cached == null || expiry == null) return null;
+    return _clock().isBefore(expiry.subtract(const Duration(minutes: 1)))
+        ? cached
+        : null;
   }
 
   Future<PowerSyncCredentials?> _refreshCredentials() async {
@@ -228,19 +293,23 @@ class CachedPowerSyncConnector extends PowerSyncBackendConnector {
       final payload = jsonDecode(
         utf8.decode(base64Url.decode(base64Url.normalize(segments[1]))),
       );
-      if (payload is! Map) return null;
-      final expiry = payload['exp'];
-      if (expiry is! num) return null;
-      return DateTime.fromMillisecondsSinceEpoch(
-        expiry.toInt() * Duration.millisecondsPerSecond,
-      );
+      return _payloadExpiry(payload);
     } on FormatException {
       return null;
     }
   }
 
-  static Future<PowerSyncCredentials?> _fetchFromRouter() async {
-    if (_envPowersyncUrl.isEmpty) return null;
+  static DateTime? _payloadExpiry(Object? payload) {
+    if (payload is! Map) return null;
+    final expiry = payload['exp'];
+    if (expiry is! num) return null;
+    return DateTime.fromMillisecondsSinceEpoch(
+      expiry.toInt() * Duration.millisecondsPerSecond,
+    );
+  }
+
+  static Future<PowerSyncCredentials?> _fetchFromRouter(String endpoint) async {
+    if (endpoint.isEmpty) return null;
     try {
       final installId = await InstallIdentity.getOrCreate();
       final res = await HttpClient.instance.dio.get<Map<String, dynamic>>(
@@ -249,7 +318,7 @@ class CachedPowerSyncConnector extends PowerSyncBackendConnector {
       );
       final token = res.data?['token'] as String?;
       if (token == null) return null;
-      return PowerSyncCredentials(endpoint: _envPowersyncUrl, token: token);
+      return PowerSyncCredentials(endpoint: endpoint, token: token);
     } on Object catch (e, s) {
       CrashReporter.record(e, s);
       return null;

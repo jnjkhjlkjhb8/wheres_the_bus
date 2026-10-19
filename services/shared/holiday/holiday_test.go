@@ -96,3 +96,23 @@ func TestIsHolidayFromMap(t *testing.T) {
 	}
 	storeHolidaySnapshot(nil)
 }
+
+func TestRefreshHolidaysRejectsInvalidSnapshotWithoutReplacingGoodDates(t *testing.T) {
+	storeHolidaySnapshot(map[string]bool{"2026-01-01": true})
+	t.Cleanup(func() { storeHolidaySnapshot(nil) })
+	for _, body := range []string{
+		"date,a,b,holiday\ninvalid,x,x,是\n",
+		"date,a,b,holiday\n\"unterminated,x,x,是\n",
+		"date,a,b,holiday\n",
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+		err := refreshHolidays(context.Background(), server.Client(), server.URL)
+		server.Close()
+		if err == nil {
+			t.Fatalf("accepted invalid calendar %q", body)
+		}
+		if !IsHoliday(time.Date(2026, 1, 1, 12, 0, 0, 0, pipeline.Taipei)) {
+			t.Fatal("failed calendar replaced prior dates")
+		}
+	}
+}

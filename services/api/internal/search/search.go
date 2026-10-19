@@ -106,87 +106,126 @@ type searchResult struct {
 	Lon    *float64 `json:"lon"`
 }
 
+type searchQuery struct {
+	text  string
+	city  string
+	limit int
+}
+
+func parseSearchQuery(c *gin.Context) (searchQuery, error) {
+	query := searchQuery{text: strings.TrimSpace(c.Query("q")), city: strings.TrimSpace(c.Query("city")), limit: 20}
+	if err := validateSearchQuery(query); err != nil {
+		return query, err
+	}
+	query.limit = searchLimit(c.Query("limit"))
+	return query, nil
+}
+
+func validateSearchQuery(query searchQuery) error {
+	if query.text == "" {
+		return errors.New("q required")
+	}
+	if utf8.RuneCountInString(query.text) > _maxSearchQueryRunes {
+		return errors.New("q too long")
+	}
+	if utf8.RuneCountInString(query.city) > _maxSearchCityRunes {
+		return errors.New("city too long")
+	}
+	return nil
+}
+
+func searchLimit(raw string) int {
+	if limit, err := strconv.Atoi(raw); err == nil && limit > 0 && limit <= 50 {
+		return limit
+	}
+	return 20
+}
+
 func HandleSearch(db searchDB) gin.HandlerFunc {
-	// One cache per handler, built when the routes are wired.
-	cache := cache.NewBoundedTTLCache(_searchCacheMaxEntries)
+	responses := cache.NewBoundedTTLCache(_searchCacheMaxEntries)
 	return func(c *gin.Context) {
-		q := strings.TrimSpace(c.Query("q"))
-		if len(q) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "q required"})
+		query, err := parseSearchQuery(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if utf8.RuneCountInString(q) > _maxSearchQueryRunes {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "q too long"})
-			return
-		}
-		city := strings.TrimSpace(c.Query("city"))
-		if utf8.RuneCountInString(city) > _maxSearchCityRunes {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "city too long"})
-			return
-		}
-		limit := 20
-		if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 50 {
-			limit = l
-		}
-		key := searchCacheKey(q, city, limit)
-		if data, ok := cache.Get(key); ok {
+		key := searchCacheKey(query.text, query.city, query.limit)
+		if data, ok := responses.Get(key); ok {
 			c.Data(http.StatusOK, "application/json; charset=utf-8", data)
 			return
 		}
-		ctx, cancel := context.WithTimeout(c.Request.Context(), _searchRequestTimeout)
-		defer cancel()
-		var trainResults []searchResult
-		// A train number is not a city-scoped entity — search_vector carries
-		// no city for tra_train/thsr_train rows — so a city filter excludes
-		// trains rather than trying to place them in one.
-		if isNumericQuery(q) && city == "" {
-			var err error
-			trainResults, err = trainNumberSearch(ctx, q, db)
-			if err != nil {
-				zap.S().Errorw("train number search failed", "component", "search", "err", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
-				return
-			}
-		}
-		textResults, err := textSearch(ctx, q, city, limit, db)
-		if err != nil {
-			zap.S().Errorw("error", "component", "search", "err", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
-			return
-		}
-		results := mergeSearchResults(limit, trainResults, textResults)
-		if len(results) == 0 && city == "" && shouldUseVector(q) {
-			// the fallback is a bonus on an already-empty result, so a
-			// failing embedder or vector scan degrades to the empty
-			// result instead of turning "no match" into a 500.
-			vectorResults, err := vectorSearch(ctx, q, limit, db)
-			if err != nil {
-				zap.S().Errorw("vector search failed", "component", "search", "err", err)
-			} else {
-				results = mergeSearchResults(limit, results, vectorResults)
-			}
-		}
-		// Expansion can only add rows, and the response is already capped at
-		// limit, so a full page has no room for them — running the join
-		// would spend a second round trip on results that get dropped.
-		if len(results) < limit {
-			expandedResults, err := expandStationRoutes(ctx, results, db)
-			if err != nil {
-				zap.S().Errorw("route expansion failed", "component", "search", "err", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
-				return
-			}
-			results = mergeSearchResults(limit, expandedResults)
-		}
-		body, err := json.Marshal(gin.H{"results": results})
-		if err != nil {
-			zap.S().Errorw("response encode failed", "component", "search", "err", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
-			return
-		}
-		cache.Set(key, body, _searchCacheTTL)
-		c.Data(http.StatusOK, "application/json; charset=utf-8", body)
+		serveFreshSearch(c, query, key, responses, db)
 	}
+}
+
+func serveFreshSearch(c *gin.Context, query searchQuery, key string, responses *cache.TTLCache, db searchDB) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), _searchRequestTimeout)
+	defer cancel()
+	results, err := executeSearch(ctx, query, db)
+	if err != nil {
+		zap.S().Errorw("search failed", "component", "search", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
+		return
+	}
+	body, err := json.Marshal(gin.H{"results": results})
+	if err != nil {
+		zap.S().Errorw("response encode failed", "component", "search", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
+		return
+	}
+	responses.Set(key, body, _searchCacheTTL)
+	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
+}
+
+func executeSearch(ctx context.Context, query searchQuery, db searchDB) ([]searchResult, error) {
+	trainResults, err := searchTrainResults(ctx, query, db)
+	if err != nil {
+		return nil, err
+	}
+	textResults, err := textSearch(ctx, query.text, query.city, query.limit, db)
+	if err != nil {
+		return nil, err
+	}
+	results := mergeSearchResults(query.limit, trainResults, textResults)
+	results = searchVectorFallback(ctx, query, results, db)
+	return expandSearchResults(ctx, query, results, db)
+}
+
+func expandSearchResults(ctx context.Context, query searchQuery, results []searchResult, db searchDB) ([]searchResult, error) {
+	// A full page has no room for expanded routes, so avoid the second query.
+	if len(results) < query.limit {
+		expanded, err := expandStationRoutes(ctx, results, db)
+		if err != nil {
+			return nil, err
+		}
+		results = mergeSearchResults(query.limit, expanded)
+	}
+	return results, nil
+}
+
+func searchTrainResults(ctx context.Context, query searchQuery, db searchDB) ([]searchResult, error) {
+	// Train rows have no city, so city-scoped searches must exclude them.
+	if isNumericQuery(query.text) && query.city == "" {
+		return trainNumberSearch(ctx, query.text, db)
+	}
+	return nil, nil
+}
+
+func searchVectorFallback(ctx context.Context, query searchQuery, results []searchResult, db searchDB) []searchResult {
+	if !needsSearchVector(query, results) {
+		return results
+	}
+	// An optional embedding failure must preserve an empty successful search.
+	vectorResults, err := vectorSearch(ctx, query.text, query.limit, db)
+	if err != nil {
+		zap.S().Errorw("vector search failed", "component", "search", "err", err)
+		return results
+	}
+	return mergeSearchResults(query.limit, results, vectorResults)
+}
+
+func needsSearchVector(query searchQuery, results []searchResult) bool {
+	return len(results) == 0 && query.city == "" && shouldUseVector(query.text)
 }
 
 func toVecLiteral(v []float32) string {
@@ -223,6 +262,10 @@ func embedQuery(ctx context.Context, text string) ([]float32, error) {
 		}
 		return nil, err
 	}
+	return decodeEmbeddingResponse(resp)
+}
+
+func decodeEmbeddingResponse(resp *resty.Response) ([]float32, error) {
 	if resp.StatusCode() != 200 {
 		return nil, _oops.With("status_code", resp.StatusCode()).With("body", resp.Body()).Errorf("embed")
 	}
@@ -258,6 +301,10 @@ func vectorSearch(ctx context.Context, q string, limit int, db searchDB) ([]sear
 		return nil, err
 	}
 	defer rows.Close()
+	return collectSearchResults(rows)
+}
+
+func collectSearchResults(rows pgx.Rows) ([]searchResult, error) {
 	var results []searchResult
 	for rows.Next() {
 		var r searchResult
@@ -287,6 +334,14 @@ func textSearch(ctx context.Context, q, city string, limit int, db searchDB) ([]
 		return nil, err
 	}
 	defer rows.Close()
+	candidates, err := collectTextSearchCandidates(rows)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeTextSearchCandidates(candidates, limit), nil
+}
+
+func collectTextSearchCandidates(rows pgx.Rows) ([]textSearchCandidate, error) {
 	var candidates []textSearchCandidate
 	for rows.Next() {
 		var c textSearchCandidate
@@ -302,36 +357,60 @@ func textSearch(ctx context.Context, q, city string, limit int, db searchDB) ([]
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return dedupeTextSearchCandidates(candidates, limit), nil
+	return candidates, nil
 }
 
 func dedupeTextSearchCandidates(candidates []textSearchCandidate, limit int) []searchResult {
 	if limit <= 0 {
 		return nil
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].rank != candidates[j].rank {
-			return candidates[i].rank < candidates[j].rank
-		}
-		if candidates[i].sim != candidates[j].sim {
-			return candidates[i].sim > candidates[j].sim
-		}
-		return candidates[i].result.Name < candidates[j].result.Name
-	})
-	seen := make(map[string]bool, len(candidates))
-	results := make([]searchResult, 0, limit)
-	for _, c := range candidates {
-		key := searchResultKey(c.result)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		results = append(results, c.result)
-		if len(results) >= limit {
+	sort.SliceStable(candidates, func(i, j int) bool { return textSearchCandidateBefore(candidates[i], candidates[j]) })
+	accumulator := newSearchAccumulator(limit, len(candidates))
+	for _, candidate := range candidates {
+		if accumulator.append(candidate.result) {
 			break
 		}
 	}
-	return results
+	return accumulator.results
+}
+
+func textSearchCandidateBefore(a, b textSearchCandidate) bool {
+	if a.rank != b.rank {
+		return a.rank < b.rank
+	}
+	if a.sim != b.sim {
+		return a.sim > b.sim
+	}
+	return a.result.Name < b.result.Name
+}
+
+type searchAccumulator struct {
+	limit   int
+	seen    map[string]bool
+	results []searchResult
+}
+
+func newSearchAccumulator(limit, capacity int) *searchAccumulator {
+	return &searchAccumulator{limit: limit, seen: make(map[string]bool, capacity), results: make([]searchResult, 0, limit)}
+}
+
+func (a *searchAccumulator) append(result searchResult) bool {
+	key := searchResultKey(result)
+	if a.seen[key] {
+		return false
+	}
+	a.seen[key] = true
+	a.results = append(a.results, result)
+	return len(a.results) >= a.limit
+}
+
+func (a *searchAccumulator) appendGroup(group []searchResult) bool {
+	for _, result := range group {
+		if a.append(result) {
+			return true
+		}
+	}
+	return false
 }
 
 func searchResultKey(r searchResult) string {
@@ -342,33 +421,17 @@ func mergeSearchResults(limit int, groups ...[]searchResult) []searchResult {
 	if limit <= 0 {
 		return nil
 	}
-	seen := make(map[string]bool, limit)
-	merged := make([]searchResult, 0, limit)
+	accumulator := newSearchAccumulator(limit, limit)
 	for _, group := range groups {
-		for _, r := range group {
-			key := searchResultKey(r)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			merged = append(merged, r)
-			if len(merged) >= limit {
-				return merged
-			}
+		if accumulator.appendGroup(group) {
+			return accumulator.results
 		}
 	}
-	return merged
+	return accumulator.results
 }
 
 func expandStationRoutes(ctx context.Context, primary []searchResult, db searchDB) ([]searchResult, error) {
-	var groupUIDs []string
-	seen := make(map[string]bool, len(primary))
-	for _, r := range primary {
-		seen[searchResultKey(r)] = true
-		if r.Type == "bus_station" {
-			groupUIDs = append(groupUIDs, r.UID)
-		}
-	}
+	groupUIDs, seen := stationRouteIdentities(primary)
 	if len(groupUIDs) == 0 {
 		return primary, nil
 	}
@@ -387,35 +450,41 @@ func expandStationRoutes(ctx context.Context, primary []searchResult, db searchD
 		return nil, err
 	}
 	defer rows.Close()
-	var extra []searchResult
-	for rows.Next() {
-		var r searchResult
-		if err := rows.Scan(&r.Type, &r.UID, &r.Name, &r.City, &r.Depart, &r.Destin, &r.Lat, &r.Lon); err != nil {
-			return nil, err
-		}
-		key := searchResultKey(r)
+	results, err := collectSearchResults(rows)
+	if err != nil {
+		return nil, err
+	}
+	return appendStationRoutes(primary, results, seen), nil
+}
+
+func appendStationRoutes(primary, extra []searchResult, seen map[string]bool) []searchResult {
+	for _, result := range extra {
+		key := searchResultKey(result)
 		if !seen[key] {
-			extra = append(extra, r)
+			primary = append(primary, result)
 			seen[key] = true
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	return primary
+}
+
+func stationRouteIdentities(primary []searchResult) ([]string, map[string]bool) {
+	var groupUIDs []string
+	seen := make(map[string]bool, len(primary))
+	for _, r := range primary {
+		seen[searchResultKey(r)] = true
+		if r.Type == "bus_station" {
+			groupUIDs = append(groupUIDs, r.UID)
+		}
 	}
-	return append(primary, extra...), nil
+	return groupUIDs, seen
 }
 
 func isNumericQuery(q string) bool {
-	if len(q) == 0 {
-		return false
-	}
-	for _, c := range q {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
+	return q != "" && strings.IndexFunc(q, nonNumericQueryRune) == -1
 }
+
+func nonNumericQueryRune(r rune) bool { return r < '0' || r > '9' }
 
 func shouldUseVector(q string) bool {
 	return len([]rune(q)) >= 2 && !isNumericQuery(q)
@@ -433,18 +502,7 @@ func trainNumberSearch(ctx context.Context, q string, db searchDB) ([]searchResu
 		return nil, err
 	}
 	defer rows.Close()
-	var results []searchResult
-	for rows.Next() {
-		var r searchResult
-		if err := rows.Scan(&r.Type, &r.UID, &r.Name, &r.City, &r.Depart, &r.Destin, &r.Lat, &r.Lon); err != nil {
-			return nil, err
-		}
-		results = append(results, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return results, nil
+	return collectSearchResults(rows)
 }
 
 // searchCacheKey identifies a rendered response by everything that shapes

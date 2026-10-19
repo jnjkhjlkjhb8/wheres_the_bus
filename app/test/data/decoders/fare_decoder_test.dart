@@ -75,6 +75,31 @@ void main() {
     expect(decodeBufferSequences(fare), {5});
   });
 
+  test(
+    'invalid section and zone shapes cannot hide later numeric sequences',
+    () {
+      final fare = fareWith(
+        jsonEncode([
+          null,
+          7,
+          <Object?>[],
+          {'BufferZones': null},
+          {
+            'BufferZones': [
+              null,
+              <Object?>[],
+              4,
+              <String, Object?>{},
+              {'StopSequence': 5.9},
+              {'StopSequence': 5},
+            ],
+          },
+        ]),
+      );
+      expect(decodeBufferSequences(fare), {5});
+    },
+  );
+
   group('decodeFareTable', () {
     List<Object?> dump(List<FareGroup> groups) => [
       for (final g in groups)
@@ -130,6 +155,86 @@ void main() {
           [r'全票 NT$15', r'學生票 NT$15', r'學生票 · 電子票證 NT$12'],
         ],
       ]);
+    });
+
+    test(
+      'variant names override ticket labels and duplicate rows collapse',
+      () {
+        final fare = fareWith(
+          jsonEncode([
+            {
+              'Fares': [
+                null,
+                1,
+                <String, Object?>{},
+                {'FareClass': '1', 'Price': 20},
+                {'FareClass': 1, 'Price': '20'},
+                {'FareClass': 1, 'Price': 0},
+                {'FareClass': 1, 'Price': 20, 'FareName': '現金_全票'},
+                {
+                  'FareClass': 1,
+                  'Price': 20,
+                  'FareName': '現金_全票',
+                  'TicketType': 3,
+                },
+                {'FareClass': 1, 'Price': 15, 'FareName': '', 'TicketType': 3},
+                {'FareClass': 1, 'Price': 17, 'FareName': 5, 'TicketType': '3'},
+              ],
+            },
+            {'Fares': 'invalid'},
+          ]),
+        );
+        final rows = decodeFareTable(zhStrings, fare).single.rows;
+        expect(rows, [
+          (label: '現金 全票', price: r'NT$20', fareClass: 1),
+          (
+            label: '${zhStrings.fareClassFull}${zhStrings.fareSmartCard}',
+            price: r'NT$15',
+            fareClass: 1,
+          ),
+          (label: zhStrings.fareClassFull, price: r'NT$17', fareClass: 1),
+        ]);
+      },
+    );
+
+    test('segment names accept Chinese and reject malformed endpoints', () {
+      final endpoints = <Object?>[
+        null,
+        42,
+        {'StopName': ''},
+        {'StopName': 42},
+        {
+          'StopName': {'Zh_tw': ''},
+        },
+        {
+          'StopName': {'Zh_tw': 42},
+        },
+        {
+          'StopName': {'En': 'English only'},
+        },
+        {
+          'StopName': {'Zh_tw': '終點'},
+        },
+      ];
+      final fare = stageFare(
+        jsonEncode([
+          for (final endpoint in endpoints)
+            {
+              'OriginStage': {'StopName': '起點'},
+              'DestinationStage': endpoint,
+              'Fares': [
+                {'FareClass': 1, 'Price': 15},
+              ],
+            },
+        ]),
+      );
+      final groups = decodeFareTable(zhStrings, fare);
+      expect(groups, hasLength(endpoints.length));
+      expect(
+        groups.take(endpoints.length - 1).map((g) => g.segment),
+        everyElement(isNull),
+      );
+      expect(groups.last.segment, '起點 → 終點');
     });
 
     test('stage fares yield one origin→destination group each', () {
@@ -297,6 +402,47 @@ void main() {
     test('odFareRange is null when there are no priced rows', () {
       expect(odFareRange(const [], FareType.full), isNull);
     });
+
+    test(
+      'range ignores unpriced destinations and keeps extrema across origins',
+      () {
+        const origins = <OdOrigin>[
+          (
+            origin: 'A',
+            destinations: [
+              (destination: 'empty', rows: []),
+              (
+                destination: 'unknown',
+                rows: [(label: '全票', price: '待公布', fareClass: 1)],
+              ),
+              (
+                destination: 'far',
+                rows: [(label: '全票', price: r'NT$1,234', fareClass: 1)],
+              ),
+              (
+                destination: 'near',
+                rows: [(label: '全票', price: r'NT$5', fareClass: 1)],
+              ),
+            ],
+          ),
+          (
+            origin: 'B',
+            destinations: [
+              (
+                destination: 'middle',
+                rows: [(label: '全票', price: r'NT$80', fareClass: 1)],
+              ),
+              (
+                destination: 'same',
+                rows: [(label: '全票', price: r'NT$5', fareClass: 1)],
+              ),
+            ],
+          ),
+        ];
+        expect(odFareRange(origins, FareType.full), (min: 5, max: 1234));
+        expect(odFareRange([origins.last], FareType.full), (min: 5, max: 80));
+      },
+    );
   });
 
   group('pickFareRow', () {

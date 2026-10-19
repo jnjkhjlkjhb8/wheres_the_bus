@@ -41,49 +41,80 @@ func ThsrAvailableSeats(ctx context.Context, fetch pipeline.BoundFetch, sink pip
 		)
 		return nil
 	}
-	err = pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error {
-		row := make(map[string]*models.ThsrAvailableSeats)
-		if decErr := pipeline.DecodeLiveItems(dec, func(temp rawThsrAvailableSeatStatus) error {
-			for _, stop := range temp.Items {
-				if row[stop.TrainNo] == nil {
-					row[stop.TrainNo] = &models.ThsrAvailableSeats{}
-				}
-				row[stop.TrainNo].Segments = append(row[stop.TrainNo].Segments, &models.ThsrSeatSegment{
-					OriginStationId:      stop.OriginStationID,
-					DestinationStationId: stop.DestinationStationID,
-					StandardSeatStatus:   stop.StandardSeatStatus,
-					BusinessSeatStatus:   stop.BusinessSeatStatus,
-				})
-			}
-			return nil
-		}); decErr != nil {
-			return decErr
-		}
-		channel := shared.ThsrSeatsPattern(date)
-		pipe := sink.Pipe()
-		count := 0
-		for trainNo, seats := range row {
-			pb, err := proto.Marshal(seats)
-			if err != nil {
-				return err
-			}
-			pipe.Set(shared.ThsrSeatsKey(date, trainNo), pb, pipeline.ThsrSeatsLiveTTL)
-			pipe.Publish(channel, string(pb))
-			count++
-		}
-		if err := pipe.Exec(ctx); err != nil {
-			return err
-		}
-		zap.S().Infow("complete",
-			"component", "thsr_seats",
-			"action", "thsr_seats",
-			"event", "complete",
-			"train_count", count,
-		)
-		return nil
+	return commitThsrSeats(ctx, sink, result, date)
+}
+
+func commitThsrSeats(ctx context.Context, sink pipeline.LiveSink, result *shared.TDXFetch, date string) error {
+	err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error {
+		return publishThsrSeats(ctx, sink, dec, date)
 	})
 	if err != nil {
 		return _oops.With("date", date).Wrapf(err, "process THSR available seats")
 	}
+	return nil
+}
+
+func publishThsrSeats(ctx context.Context, sink pipeline.LiveSink, dec *json.Decoder, date string) error {
+	row, err := readThsrSeats(dec)
+	if err != nil {
+		return err
+	}
+	return publishThsrSeatRows(ctx, sink, row, date)
+}
+
+func readThsrSeats(dec *json.Decoder) (map[string]*models.ThsrAvailableSeats, error) {
+	row := make(map[string]*models.ThsrAvailableSeats)
+	err := pipeline.DecodeLiveItems(dec, func(temp rawThsrAvailableSeatStatus) error {
+		appendThsrSeats(row, temp)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+func appendThsrSeats(row map[string]*models.ThsrAvailableSeats, temp rawThsrAvailableSeatStatus) {
+	for _, stop := range temp.Items {
+		if row[stop.TrainNo] == nil {
+			row[stop.TrainNo] = &models.ThsrAvailableSeats{}
+		}
+		row[stop.TrainNo].Segments = append(row[stop.TrainNo].Segments, &models.ThsrSeatSegment{OriginStationId: stop.OriginStationID, DestinationStationId: stop.DestinationStationID, StandardSeatStatus: stop.StandardSeatStatus, BusinessSeatStatus: stop.BusinessSeatStatus})
+	}
+}
+
+func publishThsrSeatRows(ctx context.Context, sink pipeline.LiveSink, row map[string]*models.ThsrAvailableSeats, date string) error {
+	channel := shared.ThsrSeatsPattern(date)
+	pipe := sink.Pipe()
+	count := 0
+	for trainNo, seats := range row {
+		if err := queueThsrTrain(pipe, channel, date, trainNo, seats); err != nil {
+			return err
+		}
+		count++
+	}
+	return commitThsrSnapshot(ctx, pipe, count)
+}
+
+func queueThsrTrain(pipe pipeline.LivePipe, channel, date, trainNo string, seats *models.ThsrAvailableSeats) error {
+	pb, err := proto.Marshal(seats)
+	if err != nil {
+		return err
+	}
+	pipe.Set(shared.ThsrSeatsKey(date, trainNo), pb, pipeline.ThsrSeatsLiveTTL)
+	pipe.Publish(channel, string(pb))
+	return nil
+}
+
+func commitThsrSnapshot(ctx context.Context, pipe pipeline.LivePipe, count int) error {
+	if err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	zap.S().Infow("complete",
+		"component", "thsr_seats",
+		"action", "thsr_seats",
+		"event", "complete",
+		"train_count", count,
+	)
 	return nil
 }

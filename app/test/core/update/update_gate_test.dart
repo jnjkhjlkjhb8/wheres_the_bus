@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:wheres_the_bus/core/update/update_gate.dart';
@@ -29,6 +30,8 @@ void main() {
       required String Function() minVersionOf,
       String Function() latestVersionOf = _atCurrent,
       String? Function() dismissedVersionOf = _nothingDismissed,
+      ({bool enabled, String message}) Function()? maintenanceOf,
+      Uri? Function()? storeUrlOf,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -43,12 +46,44 @@ void main() {
             minVersionOf: minVersionOf,
             latestVersionOf: latestVersionOf,
             dismissedVersionOf: dismissedVersionOf,
+            maintenanceOf: maintenanceOf,
+            storeUrlOf: storeUrlOf ?? () => null,
             child: const Text('home'),
           ),
         ),
       );
       await tester.pumpAndSettle();
     }
+
+    testWidgets(
+      'maintenance displays operator copy, fallback and then restores the app',
+      (tester) async {
+        var message = '服務升級中';
+        var enabled = true;
+        final controller = StreamController<void>.broadcast();
+        addTearDown(controller.close);
+        await pumpGate(
+          tester,
+          revisions: controller.stream,
+          minVersionOf: () => '0.9.0',
+          latestVersionOf: () => '1.4.0',
+          maintenanceOf: () => (enabled: enabled, message: message),
+        );
+        expect(find.text(message), findsOneWidget);
+        expect(find.text('home'), findsNothing);
+        expect(availableUpdate.value, '1.4.0');
+        message = '';
+        controller.add(null);
+        await tester.pumpAndSettle();
+        final i18n = AppI18n.of(tester.element(find.byType(UpdateGate)));
+        expect(find.text(i18n.maintenanceBody), findsOneWidget);
+        enabled = false;
+        controller.add(null);
+        await tester.pumpAndSettle();
+        expect(find.text('home'), findsOneWidget);
+        expect(availableUpdate.value, '1.4.0');
+      },
+    );
 
     testWidgets('re-checks on each Remote Config revision', (tester) async {
       var minVersion = '0.9.0';
@@ -161,6 +196,102 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(availableUpdate.value, isNull);
+    });
+
+    testWidgets('stops listening for revisions once the gate is gone', (
+      tester,
+    ) async {
+      final controller = StreamController<void>.broadcast();
+      addTearDown(controller.close);
+      await pumpGate(
+        tester,
+        revisions: controller.stream,
+        minVersionOf: () => '0.9.0',
+      );
+      expect(controller.hasListener, isTrue);
+
+      await tester.pumpWidget(const SizedBox());
+
+      expect(controller.hasListener, isFalse);
+    });
+
+    testWidgets('a blocking screen sets its body copy at 1.5 line height', (
+      tester,
+    ) async {
+      final controller = StreamController<void>.broadcast();
+      addTearDown(controller.close);
+      await pumpGate(
+        tester,
+        revisions: controller.stream,
+        minVersionOf: () => '0.9.0',
+        maintenanceOf: () => (enabled: true, message: '維護中'),
+      );
+
+      expect(tester.widget<Text>(find.text('維護中')).style?.height, 1.5);
+    });
+
+    group('force update', () {
+      final store = Uri.parse('https://apps.apple.com/tw/app/id123');
+
+      Future<void> pumpBlocked(WidgetTester tester, {Uri? url}) async {
+        final controller = StreamController<void>.broadcast();
+        addTearDown(controller.close);
+        await pumpGate(
+          tester,
+          revisions: controller.stream,
+          minVersionOf: () => '5.0.0',
+          storeUrlOf: () => url,
+        );
+      }
+
+      testWidgets('offers a full-width 50 tall button to a store URL', (
+        tester,
+      ) async {
+        await pumpBlocked(tester, url: store);
+
+        final button = tester.widget<FilledButton>(find.byType(FilledButton));
+        expect(
+          button.style?.minimumSize?.resolve({}),
+          const Size(double.infinity, 50),
+        );
+      });
+
+      testWidgets('the button opens the store outside the app', (tester) async {
+        final launches = <Map<Object?, Object?>>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/url_launcher'),
+          (call) async {
+            if (call.method == 'launch') {
+              launches.add(call.arguments as Map<Object?, Object?>);
+            }
+            return true;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/url_launcher'),
+            null,
+          ),
+        );
+        await pumpBlocked(tester, url: store);
+
+        await tester.tap(find.byType(FilledButton));
+        await tester.pump();
+
+        expect(launches, hasLength(1));
+        expect(launches.single['url'], store.toString());
+        expect(launches.single['useSafariVC'], isFalse);
+      });
+
+      testWidgets('without a store URL there is no button, only a hint', (
+        tester,
+      ) async {
+        await pumpBlocked(tester);
+
+        expect(find.byType(FilledButton), findsNothing);
+        final i18n = AppI18n.of(tester.element(find.byType(UpdateGate)));
+        expect(find.text(i18n.updateStoreHintAndroid), findsOneWidget);
+      });
     });
   });
 }

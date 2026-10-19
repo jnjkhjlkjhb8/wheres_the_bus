@@ -12,20 +12,37 @@ import (
 )
 
 func rawSourcePool(ctx context.Context, db *pgxpool.Pool) (*pgxpool.Pool, func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx = rawPoolContext(ctx)
 	dsn := os.Getenv("RAW_DATABASE_URL")
 	if dsn == "" {
 		return db, func() {}, nil
 	}
+	cfg, err := rawSourcePoolConfig(dsn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return openRawSourcePool(ctx, cfg)
+}
+
+func rawPoolContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func rawSourcePoolConfig(dsn string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		return nil, nil, _oops.Wrapf(err, "parse configured RAW_DATABASE_URL")
+		return nil, _oops.Wrapf(err, "parse configured RAW_DATABASE_URL")
 	}
 	cfg.MaxConns = shared.EnvInt32("RAW_DB_MAX_CONNS", 4)
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 5 * time.Minute
+	return cfg, nil
+}
+
+func openRawSourcePool(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, func(), error) {
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, nil, _oops.Wrapf(err, "connect configured RAW_DATABASE_URL")

@@ -132,10 +132,14 @@ class FavoritesRepository {
 
     final settings = HiveStore.settings;
     if (settings.get('favorites_migrated', defaultValue: false) as bool) return;
+    await _migrateFavorites(_legacyFavorites(settings));
+    await settings.put('favorites_migrated', true);
+  }
 
+  Future<void> _migrateFavorites(Iterable<Favorite> favorites) async {
     var order = all().length;
-    Future<void> put(Favorite fav) async {
-      if (_box.containsKey(fav.id)) return;
+    for (final fav in favorites) {
+      if (_box.containsKey(fav.id)) continue;
       _cache = null;
       await _box.put(
         fav.id,
@@ -147,41 +151,43 @@ class FavoritesRepository {
             .toMap(),
       );
     }
+  }
 
+  Iterable<Favorite> _legacyFavorites(Box<dynamic> settings) sync* {
     final busStops = List<String>.from(
       settings.get('fav_bus_stops', defaultValue: <String>[]) as List,
     );
     for (final name in busStops) {
-      await put(Favorite(type: FavoriteType.busStop, refId: name, title: name));
+      yield Favorite(type: FavoriteType.busStop, refId: name, title: name);
     }
+    yield* HiveStore.favMetroStations.map(_legacyMetroFavorite);
+    yield* _legacyRouteFavorites();
+  }
 
-    for (final id in HiveStore.favMetroStations) {
-      final match = metroMapStations.where((s) => s.id == id);
-      await put(
-        Favorite(
-          type: FavoriteType.metroStation,
-          refId: id,
-          title: match.isEmpty ? id : match.first.name,
-          subtitle: '捷運',
-        ),
-      );
-    }
+  Favorite _legacyMetroFavorite(String id) {
+    final match = metroMapStations.where((s) => s.id == id);
+    return Favorite(
+      type: FavoriteType.metroStation,
+      refId: id,
+      title: match.isEmpty ? id : match.first.name,
+      subtitle: '捷運',
+    );
+  }
 
+  Iterable<Favorite> _legacyRouteFavorites() sync* {
     for (final key in HiveStore.favRoutes.keys) {
       final v = HiveStore.favRoutes.get(key);
       if (v is! Map) continue;
-      final routeType = (v['route_type'] as String?) ?? 'bus';
-      await put(
-        Favorite(
-          type: routeType == 'bus'
-              ? FavoriteType.busRoute
-              : FavoriteType.railTrain,
-          refId: (v['route_key'] as String?) ?? key.toString(),
-          title: (v['route_label'] as String?) ?? key.toString(),
-        ),
-      );
+      yield _legacyRouteFavorite(key, v);
     }
+  }
 
-    await settings.put('favorites_migrated', true);
+  Favorite _legacyRouteFavorite(dynamic key, Map<dynamic, dynamic> value) {
+    final routeType = (value['route_type'] as String?) ?? 'bus';
+    return Favorite(
+      type: routeType == 'bus' ? FavoriteType.busRoute : FavoriteType.railTrain,
+      refId: (value['route_key'] as String?) ?? key.toString(),
+      title: (value['route_label'] as String?) ?? key.toString(),
+    );
   }
 }

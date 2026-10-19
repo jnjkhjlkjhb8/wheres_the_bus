@@ -8,9 +8,7 @@ import (
 	"io"
 	"math"
 	"runtime/debug"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,14 +18,10 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/holiday"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/weather"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 )
 
 // etaKey identifies one TDX ETA entry by its canonical subroute, derived
@@ -155,12 +149,20 @@ var errBusFeedCacheMiss = errors.New("bus raw feed cache missing")
 
 func readBusFeedCache[T any](ctx context.Context, sink pipeline.LiveSink, key string) ([]T, error) {
 	raw, err := sink.GetString(ctx, key)
-	if errors.Is(err, redis.Nil) || (err == nil && raw == "") {
+	if busFeedCacheMissing(raw, err) {
 		return nil, _oops.With("key", key).Wrapf(errBusFeedCacheMiss, "bus feed cache lookup")
 	}
 	if err != nil {
 		return nil, _oops.With("key", key).Wrapf(err, "read")
 	}
+	return decodeBusFeedCache[T](raw, key)
+}
+
+func busFeedCacheMissing(raw string, err error) bool {
+	return errors.Is(err, redis.Nil) || err == nil && raw == ""
+}
+
+func decodeBusFeedCache[T any](raw, key string) ([]T, error) {
 	var values []T
 	if err := json.Unmarshal([]byte(raw), &values); err != nil {
 		return nil, _oops.With("key", key).Wrapf(err, "decode")
@@ -172,13 +174,13 @@ func readBusFeedCache[T any](ctx context.Context, sink pipeline.LiveSink, key st
 }
 
 func pickBusEstimate(prev, next busmodel.RawEstimated) busmodel.RawEstimated {
-	if prev.StopStatus == 0 && next.StopStatus == 0 {
-		if next.EstimatedTime < prev.EstimatedTime {
-			return next
-		}
+	if next.StopStatus != 0 {
 		return prev
 	}
-	if next.StopStatus == 0 {
+	if prev.StopStatus != 0 {
+		return next
+	}
+	if next.EstimatedTime < prev.EstimatedTime {
 		return next
 	}
 	return prev
@@ -186,12 +188,8 @@ func pickBusEstimate(prev, next busmodel.RawEstimated) busmodel.RawEstimated {
 
 func decodeBusEtaArray(dec *json.Decoder) (eat []busmodel.RawEstimated, err error) {
 	eat = make([]busmodel.RawEstimated, 0)
-	opening, err := dec.Token()
-	if err != nil {
-		return nil, fmt.Errorf("read opening array token: %w", err)
-	}
-	if opening != json.Delim('[') {
-		return nil, fmt.Errorf("body is not a JSON array: opens with %v", opening)
+	if err := readBusEtaOpening(dec); err != nil {
+		return nil, err
 	}
 	for dec.More() {
 		var e busmodel.RawEstimated
@@ -200,18 +198,37 @@ func decodeBusEtaArray(dec *json.Decoder) (eat []busmodel.RawEstimated, err erro
 		}
 		eat = append(eat, e)
 	}
+	return eat, readBusEtaEnding(dec, len(eat))
+}
+
+func readBusEtaOpening(dec *json.Decoder) error {
+	opening, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read opening array token: %w", err)
+	}
+	if opening != json.Delim('[') {
+		return fmt.Errorf("body is not a JSON array: opens with %v", opening)
+	}
+	return nil
+}
+
+func readBusEtaEnding(dec *json.Decoder, count int) error {
 	closing, err := dec.Token()
 	if err != nil {
-		return eat, fmt.Errorf("read closing array token after %d elements: %w", len(eat), err)
+		return fmt.Errorf("read closing array token after %d elements: %w", count, err)
 	}
 	if closing != json.Delim(']') {
-		return eat, fmt.Errorf("array does not close after %d elements: got %v", len(eat), closing)
+		return fmt.Errorf("array does not close after %d elements: got %v", count, closing)
 	}
+	return rejectBusEtaTrailingData(dec, count)
+}
+
+func rejectBusEtaTrailingData(dec *json.Decoder, count int) error {
 	var trailing any
 	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return eat, fmt.Errorf("trailing data after array of %d elements: %v (err %w)", len(eat), trailing, err)
+		return fmt.Errorf("trailing data after array of %d elements: %v (err %w)", count, trailing, err)
 	}
-	return eat, nil
+	return nil
 }
 
 var _busEtaFastCities = func() []string {
@@ -336,26 +353,7 @@ func runBusEtaCities(ctx context.Context, cityNames []string, job *busLiveJob, t
 	sem := make(chan struct{}, 4)
 	errCh := make(chan error, len(cityNames))
 	var wg sync.WaitGroup
-	for _, city := range cityNames {
-		if city == "ChanghuaCounty" || city == "NantouCounty" {
-			continue
-		}
-		wg.Add(1)
-		go func(city string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			if !job.shouldRunCity(ctx, city) {
-				if err := job.sink.RefreshTTL(ctx, busEtaTTLPatterns(city)); err != nil {
-					errCh <- _oops.With("city", city).Wrapf(err, "refresh unwatched bus ETA TTLs")
-				}
-				return
-			}
-			if err := job.runCityGuarded(ctx, city); err != nil {
-				errCh <- _oops.With("city", city).Wrapf(err, "bus ETA city run")
-			}
-		}(city)
-	}
+	launchBusCities(ctx, cityNames, job, sem, errCh, &wg)
 	wg.Wait()
 	close(errCh)
 	var jobErr error
@@ -368,474 +366,53 @@ func runBusEtaCities(ctx context.Context, cityNames []string, job *busLiveJob, t
 	return jobErr
 }
 
+func skippedBusCity(city string) bool { return city == "ChanghuaCounty" || city == "NantouCounty" }
+
+func launchBusCities(ctx context.Context, cityNames []string, job *busLiveJob, sem chan struct{}, errCh chan error, wg *sync.WaitGroup) {
+	for _, city := range cityNames {
+		if skippedBusCity(city) {
+			continue
+		}
+		wg.Add(1)
+		go func(city string) {
+			defer wg.Done()
+			runLimitedBusCity(ctx, city, job, sem, errCh)
+		}(city)
+	}
+
+}
+
+func runLimitedBusCity(ctx context.Context, city string, job *busLiveJob, sem chan struct{}, errCh chan error) {
+	sem <- struct{}{}
+	defer func() { <-sem }()
+	if err := job.runDemandCity(ctx, city); err != nil {
+		errCh <- err
+	}
+}
+
+func (j busLiveJob) runDemandCity(ctx context.Context, city string) error {
+	if !j.shouldRunCity(ctx, city) {
+		return j.refreshUnwatchedCity(ctx, city)
+	}
+
+	if err := j.runCityGuarded(ctx, city); err != nil {
+		return _oops.With("city", city).Wrapf(err, "bus ETA city run")
+	}
+	return nil
+}
+
+func (j busLiveJob) refreshUnwatchedCity(ctx context.Context, city string) error {
+	if err := j.sink.RefreshTTL(ctx, busEtaTTLPatterns(city)); err != nil {
+		return _oops.With("city", city).Wrapf(err, "refresh unwatched bus ETA TTLs")
+	}
+	return nil
+}
+
 func busEtaTTLPatterns(city string) []pipeline.TTLPattern {
 	return []pipeline.TTLPattern{
 		{Pattern: shared.BusStationEtaPattern(city), TTL: pipeline.BusLiveTTL},
 		{Pattern: shared.BusRouteEtaPattern(busmodel.CityPrefix[city]), TTL: pipeline.BusLiveTTL},
 	}
-}
-
-func (j busLiveJob) runCity(ctx context.Context, city string) (err error) {
-	published := false
-	defer func() {
-		if err == nil || published || ctx.Err() != nil {
-			return
-		}
-		if refreshErr := j.sink.RefreshTTL(ctx, busEtaTTLPatterns(city)); refreshErr != nil {
-			err = errors.Join(err, refreshErr)
-		}
-	}()
-	if _, skip := _busEtaSkip[city]; skip {
-		return nil
-	}
-	zap.S().Infow("city start", "component", "bus_eta", "action", "Bus_eta", "city", city, "event", "city_start")
-	prefix := busmodel.CityPrefix[city]
-	if prefix == "" {
-		zap.S().Warnw("skip empty",
-			"component", "bus_eta",
-			"action", "Bus_eta",
-			"city", city,
-			"event", "skip_empty",
-			"reason", "no_prefix",
-		)
-		return nil
-	}
-	generation, generationErr := j.sink.GetString(ctx, shared.BusStaticGenerationKey(city))
-	if generationErr != nil {
-		// Redis is the cross-process signal, but an outage must not stop realtime
-		// service. The local cache falls back to its bounded TTL in this case.
-		generation = ""
-	}
-	mp, cached := predict.CachedStaticMapFrom(predict.StaticMapCache(), prefix, generation, j.now())
-	if !cached {
-		var err error
-		mp, err = j.store.staticStops(ctx, prefix)
-		if err != nil {
-			return _oops.With("city", city).Wrapf(err, "load static stops")
-		}
-		if len(mp) == 0 {
-			// No static stops yet (a city the loader has not landed): nothing to
-			// resolve live ETA against, so skip the tick rather than fail it.
-			zap.S().Warnw("skip empty",
-				"component", "bus_eta",
-				"action", "Bus_eta",
-				"city", city,
-				"event", "skip_empty",
-				"reason", "no_stations",
-			)
-			return nil
-		}
-		predict.StoreStaticMapIn(predict.StaticMapCache(), prefix, mp, generation, j.now())
-	}
-	if len(mp) == 0 {
-		zap.S().Warnw("skip empty",
-			"component", "bus_eta",
-			"action", "Bus_eta",
-			"city", city,
-			"event", "skip_empty",
-			"reason", "no_stations",
-		)
-		return nil
-	}
-	var (
-		eat      []busmodel.RawEstimated
-		etaRaw   []byte
-		etaFetch *shared.TDXFetch
-	)
-	etaModified := true
-	if source, ok := j.eta[city]; ok {
-		eat, err = source.estimates(ctx)
-		if err != nil {
-			return _oops.With("city", city).Wrapf(err, "fetch bus ETA")
-		}
-		etaRaw, err = json.Marshal(eat)
-		if err != nil {
-			return err
-		}
-	} else {
-		etaURL := fmt.Sprintf("/v2/Bus/EstimatedTimeOfArrival/City/%s", city)
-		if city == "InterCity" {
-			etaURL = "/v2/Bus/EstimatedTimeOfArrival/InterCity"
-		}
-		etaFetch, err = j.fetch(ctx, etaURL, "bus_EstimatedTimeOfArrival"+city)
-		if err != nil {
-			return _oops.With("city", city).Wrapf(err, "fetch bus ETA")
-		}
-		etaModified = etaFetch.Modified
-		if etaFetch.Modified {
-			var decodeErr error
-			eat, decodeErr = decodeBusEtaArray(etaFetch.Decoder)
-			closeErr := etaFetch.Close()
-			if decodeErr != nil {
-				decodeErr = _oops.With("city", city).Wrapf(decodeErr, "decode bus ETA response")
-			}
-			if decodeErr != nil || closeErr != nil {
-				return errors.Join(decodeErr, closeErr)
-			}
-			etaRaw, err = json.Marshal(eat)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	posit := make([]busmodel.RawPosition, 0)
-	positionURL := fmt.Sprintf("/v2/Bus/RealTimeByFrequency/City/%s", city)
-	if city == "InterCity" {
-		positionURL = "/v2/Bus/RealTimeByFrequency/InterCity"
-	}
-	positionFetch, err := j.fetch(ctx, positionURL, "bus_RealTimeByFrequency"+city)
-	if err != nil {
-		return _oops.With("city", city).Wrapf(err, "fetch bus positions")
-	}
-	var positionRaw []byte
-	if positionFetch.Modified {
-		decodeErr := pipeline.DecodeLiveItems(positionFetch.Decoder, func(p busmodel.RawPosition) error {
-			posit = append(posit, p)
-			return nil
-		})
-		closeErr := positionFetch.Close()
-		if decodeErr != nil || closeErr != nil {
-			return errors.Join(decodeErr, closeErr)
-		}
-		positionRaw, err = json.Marshal(posit)
-		if err != nil {
-			return err
-		}
-	}
-
-	etaCacheKey := shared.BusETARawKey(city)
-	positionCacheKey := shared.BusPositionRawKey(city)
-	pipe := j.sink.Pipe()
-	var cacheErr error
-	if etaModified {
-		pipe.Set(etaCacheKey, etaRaw, _busFeedCacheTTL)
-	} else {
-		eat, err = readBusFeedCache[busmodel.RawEstimated](ctx, j.sink, etaCacheKey)
-		if err != nil {
-			cacheErr = errors.Join(cacheErr, err)
-		} else {
-			pipe.Expire(etaCacheKey, _busFeedCacheTTL)
-		}
-	}
-	if positionFetch.Modified {
-		pipe.Set(positionCacheKey, positionRaw, _busFeedCacheTTL)
-	} else {
-		posit, err = readBusFeedCache[busmodel.RawPosition](ctx, j.sink, positionCacheKey)
-		if err != nil {
-			cacheErr = errors.Join(cacheErr, err)
-		} else {
-			pipe.Expire(positionCacheKey, _busFeedCacheTTL)
-		}
-	}
-
-	if cacheErr != nil {
-		execErr := pipe.Exec(ctx)
-		var ackErr error
-		if execErr == nil {
-			// etaFetch is nil for a Data.taipei city (no TDX ETA fetch to
-			// acknowledge or invalidate); etaModified is always true for one,
-			// so neither branch below would otherwise skip it.
-			if etaModified && etaFetch != nil {
-				ackErr = errors.Join(ackErr, pipeline.AcknowledgeTDXFetch(etaFetch))
-			}
-			if positionFetch.Modified {
-				ackErr = errors.Join(ackErr, pipeline.AcknowledgeTDXFetch(positionFetch))
-			}
-		}
-		var invalidateErr error
-		if etaFetch != nil && !etaModified {
-			invalidateErr = errors.Join(invalidateErr, pipeline.InvalidateTDXFetch(etaFetch))
-		}
-		if !positionFetch.Modified {
-			invalidateErr = errors.Join(invalidateErr, pipeline.InvalidateTDXFetch(positionFetch))
-		}
-		return errors.Join(cacheErr, execErr, ackErr, invalidateErr)
-	}
-
-	observed := etaModified || positionFetch.Modified
-
-	stations := make(map[string]*models.Bus_StationArrival)
-	routes := make(map[string]*models.Bus_RouteArrival)
-	etamap := buildBusEtaMap(city, eat, mp)
-	posit = j.overlayVehicles(ctx, city, posit)
-	now := j.now().In(pipeline.Taipei)
-	busmap := buildDirectionAwareBusPositionMap(city, posit, now)
-	atStopMap := buildBusAtStopMap(city, posit)
-	for key, presence := range j.nearStops(ctx, city, now) {
-		atStopMap[key] = presence
-	}
-	totalStops := buildTotalStops(mp)
-	var wx *weather.Data
-	if wjson, wErr := j.sink.GetString(ctx, shared.WeatherKey(city)); wErr == nil {
-		var w weather.Data
-		if json.Unmarshal([]byte(wjson), &w) == nil {
-			wx = &w
-		}
-	}
-	isHoliday := holiday.IsHoliday(now)
-	fillKeys, fillUIDs := collectFillKeys(mp, etamap)
-	todTime := now.Format("15:04:05")
-	// Day-of-week mask only; holiday-aware schedules would need TDX SpecialDays
-	// landing, as schedule rows carry no holiday flag from TDX's Mon-Sun fields.
-	dayBit := 1 << ((int(now.Weekday()) + 6) % 7) // mask2 bit order: Monday=bit0..Sunday=bit6
-	depMap := j.store.nextDepartures(ctx, predict.DedupRouteDirPairs(fillKeys), todTime, dayBit)
-	uidList := make([]string, 0, len(fillUIDs))
-	for u := range fillUIDs {
-		uidList = append(uidList, u)
-	}
-	offsetMap := j.store.stopOffsets(ctx, uidList)
-	// baselineFor returns the schedule+running-time arrival for a stop, shared by
-	// the delay-propagation observation pass and the downstream fill.
-	baselineFor := func(b busmodel.StationMap, uid string, dir int32) time.Time {
-		offsetSec, hasOffset := offsetMap[predict.StopOffsetKey{SubRouteUID: uid, Direction: dir, StopUID: b.StopUID}]
-		return predict.BaselineArrival(predict.Inputs{
-			Now:       now,
-			NextDep:   depMap[predict.RouteDirKey{SubRouteUID: uid, Direction: dir}],
-			OffsetSec: offsetSec,
-			HasOffset: hasOffset,
-		})
-	}
-	// Delay-propagation observation stage: record each en-route vehicle's delay
-	// against the schedule+running-time baseline, keyed per route/direction, for
-	// the downstream fill to inherit.
-	upstreamByRoute := buildUpstreamObs(mp, etamap, now, baselineFor)
-	var (
-		predictionRows        []history.PredictionRecord
-		historyRows           [][]any
-		arrivalEvents         []riderevent.ArrivalEvent
-		fillsWithoutDeparture int
-	)
-	for _, b := range mp {
-		uid, dir := b.SubRouteUID, b.Direction
-		positionKey := busPositionIdentity(uid, dir)
-		eta, ok := etaForStop(etamap, b)
-		status := _busEtaNoReading
-		var est int32
-		var stime string
-		if ok {
-			est = adjustedEstimate(eta, now)
-			status = eta.StopStatus
-			stime = eta.SrcUpdateTime
-			if status == 0 && arrivingExpired(eta, now) {
-				status = _busEtaNoReading
-			}
-		}
-		// Resolved in the status==0 branch below (a live bus is only matched to the
-		// stop when one is en route).
-		var plateNumb *string
-		if status == 0 {
-			ts := totalStops[uid]
-			var busSpeed *int16
-			var busDist *int
-			plateNumb, busSpeed, busDist = nearestBus(b.Lat, b.Lon, busmap[positionKey])
-			if plate, speed, dist, ok := busAtStop(atStopMap, busAtStopKey{uid, dir, b.StopUID}); ok {
-				plateNumb, busDist = plate, dist
-				if speed != nil {
-					busSpeed = speed
-				}
-			}
-			if p := normalizeArrivalPlate(eta.PlateNumb); p != "" {
-				plateNumb = &p
-			}
-			if history.RecordsHistory(est, j.snapshot) {
-				var srcTime *time.Time
-				if t, ok := parseSrcUpdateTime(stime); ok {
-					srcTime = &t
-				}
-				var nextBusTimePtr *string
-				if eta.NextBusTime != "" {
-					nbtp := eta.NextBusTime
-					nextBusTimePtr = &nbtp
-				}
-				// nil stays nil when the city has no weather reading: the history
-				// columns are nullable and a zero would read as a real measurement.
-				var weatherTemp, weatherPrecip, weatherWind, weatherHumid any
-				if wx != nil {
-					weatherTemp = wx.Temperature
-					weatherPrecip = wx.Precipitation
-					weatherWind = wx.WindSpeed
-					weatherHumid = wx.Humidity
-				}
-				historyRows = append(historyRows, []any{
-					uid, b.StopUID, int16(dir),
-					int16(b.StopSequence), int16(ts), est, nextBusTimePtr, srcTime,
-					city, int16(now.Hour()), int16(now.Weekday()), isHoliday,
-					weatherTemp, weatherPrecip, weatherWind, weatherHumid,
-					plateNumb, busSpeed, busDist, now,
-				})
-			}
-		}
-		if status == 1 && eta.NextBusTime == "" {
-			rk := predict.RouteDirKey{SubRouteUID: uid, Direction: int32(dir)}
-			if depMap[rk].IsZero() {
-				fillsWithoutDeparture++
-			}
-			var predictedArrival time.Time
-			var predSource string
-			if propArrival, propOK := predict.PropagateDelay(
-				baselineFor(b, uid, int32(dir)), int(b.StopSequence), upstreamByRoute[rk], now,
-			); propOK {
-				predictedArrival = propArrival
-				predSource = history.SourcePropagation
-				eta.NextBusTime = propArrival.Format(time.RFC3339)
-			} else {
-				offsetSec, hasOffset := offsetMap[predict.StopOffsetKey{SubRouteUID: uid, Direction: int32(dir), StopUID: b.StopUID}]
-				eta.NextBusTime = predict.NextBusTime(wx,
-					predict.StopCtx{
-						SubRouteUID:  uid,
-						Direction:    int32(dir),
-						StopUID:      b.StopUID,
-						City:         city,
-						StopSequence: int(b.StopSequence),
-						TotalStops:   totalStops[uid],
-					},
-					predict.Inputs{
-						Now:       now,
-						NextDep:   depMap[rk],
-						OffsetSec: offsetSec,
-						HasOffset: hasOffset,
-					},
-				)
-				if eta.NextBusTime != "" {
-					if t, err := time.Parse(time.RFC3339, eta.NextBusTime); err == nil {
-						predictedArrival = t
-						// Without an offset the model tier returns the bare departure
-						// uncorrected, which is a schedule prediction rather than a
-						// model one; label it as such so the two are measured apart.
-						predSource = history.SourceSchedule
-						if hasOffset {
-							predSource = history.SourceModel
-						}
-					}
-				}
-			}
-			// Record the prediction (actual pending) for daily MAE measurement.
-			if predSource != "" && !predictedArrival.IsZero() {
-				predictionRows = append(predictionRows, history.PredictionRecord{SubRouteUID: uid,
-					Direction:     int16(dir),
-					StopUID:       b.StopUID,
-					Source:        predSource,
-					PredictedAt:   now,
-					PredictedSecs: int(predictedArrival.Sub(now).Round(time.Second).Seconds()),
-				})
-			}
-		}
-		groupUID := b.GroupUID
-		if groupUID == "" {
-			groupUID = b.StationUID
-		}
-		groupName := b.GroupName
-		if groupName == "" {
-			groupName = b.StationName
-		}
-		if _, exists := stations[groupUID]; !exists {
-			stations[groupUID] = &models.Bus_StationArrival{
-				StationName: groupName,
-			}
-		}
-		arrivalUnix := computeArrivalUnix(status, est, eta.NextBusTime, now)
-		station := stations[groupUID]
-		if !slices.Contains(station.StationUid, b.StationUID) {
-			station.StationUid = append(station.StationUid, b.StationUID)
-		}
-		station.Routes = append(station.Routes, &models.Bus_StopEstimate{
-			StopUid:       b.StationUID,
-			SubRouteUid:   uid,
-			RouteName:     b.SubRouteName,
-			Destination:   b.Destination,
-			Direction:     int32(dir),
-			Estimate:      est,
-			NextBusTime:   eta.NextBusTime,
-			StopStatus:    int32(status),
-			SrcUpdateTime: stime,
-			Buses:         busmap[positionKey],
-			ArrivalUnix:   arrivalUnix,
-			CrowdLevel:    crowdForPlate(busmap[positionKey], plateNumb),
-			IsLastBus:     eta.IsLastBus == 1,
-		})
-		if shouldDispatchBusArrival(ok, status, est) {
-			arrivalEvents = append(arrivalEvents, riderevent.ArrivalEvent{
-				RouteType: "bus", RouteKey: uid, StopKey: b.StopUID,
-				Direction: strconv.Itoa(int(dir)), ETASeconds: est,
-				ArrivingPlate: normalizeArrivalPlate(eta.PlateNumb),
-			})
-		}
-		if _, ok = routes[uid]; !ok {
-			routes[uid] = &models.Bus_RouteArrival{
-				SubRouteUid: uid,
-			}
-		}
-		routes[uid].Stops = append(routes[uid].Stops, &models.Bus_RouteEstimate{
-			StopUid:       b.StopUID,
-			Direction:     int32(dir),
-			Estimate:      est,
-			StopStatus:    int32(status),
-			NextBusTime:   eta.NextBusTime,
-			SrcUpdateTime: stime,
-			Buses:         busmap[positionKey],
-			StopSequence:  int32(b.StopSequence),
-			ArrivalUnix:   arrivalUnix,
-			PlateNumb:     normalizeArrivalPlate(eta.PlateNumb),
-			CrowdLevel:    crowdForPlate(busmap[positionKey], plateNumb),
-			IsLastBus:     eta.IsLastBus == 1,
-		})
-	}
-	for groupUID, pb := range stations {
-		data, err := proto.Marshal(pb)
-		if err != nil {
-			return err
-		}
-		key := shared.BusStationEtaKey(city, groupUID)
-		pipe.Set(key, data, pipeline.BusLiveTTL)
-		pipe.Publish(key, data)
-	}
-	for uid, pb := range routes {
-		data, err := proto.Marshal(pb)
-		if err != nil {
-			return err
-		}
-		key := shared.BusRouteEtaKey(uid)
-		pipe.Set(key, data, pipeline.BusLiveTTL)
-		pipe.Publish(key, data)
-	}
-	err = pipe.Exec(ctx)
-	if err != nil {
-		return _oops.With("city", city).With("stations", len(stations)).With("routes", len(routes)).With("eat", len(eat)).With("posit", len(posit)).Wrapf(err, "publish bus realtime snapshot for (stations= routes= eta= positions=)")
-	}
-	published = true
-	zap.S().Infow("redis success",
-		"component", "bus_eta",
-		"action", "Bus_eta",
-		"city", city,
-		"event", "redis_success",
-		"station_count", len(stations),
-		"route_count", len(routes),
-		"eat_count", len(eat),
-		"posit_count", len(posit),
-		"frozen_eta_count", countFrozenEstimates(eat),
-		"fill_without_departure_count", fillsWithoutDeparture,
-	)
-	var ackErr error
-	if etaModified && etaFetch != nil {
-		ackErr = errors.Join(ackErr, pipeline.AcknowledgeTDXFetch(etaFetch))
-	}
-	if positionFetch.Modified {
-		ackErr = errors.Join(ackErr, pipeline.AcknowledgeTDXFetch(positionFetch))
-	}
-	if ackErr != nil {
-		return ackErr
-	}
-	if j.notifier != nil {
-		if err := j.notifier.Arrivals(ctx, arrivalEvents); err != nil {
-			return _oops.With("city", city).Wrapf(err, "dispatch bus arrival reminders")
-		}
-	}
-	if observed {
-		j.store.saveHistory(ctx, historyRows)
-		j.store.recordPredictions(ctx, predictionRows)
-	}
-	return nil
 }
 
 func shouldDispatchBusArrival(found bool, status uint8, etaSeconds int32) bool {

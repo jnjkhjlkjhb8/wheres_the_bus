@@ -22,8 +22,7 @@ class _Fares extends StatelessWidget {
         // A genuine range (min != max) means the OD table really does carry
         // per-stop variation, which contradicts TDX's own 一段票 (flat-fare)
         // label for some routes — reconcile them instead of showing both.
-        final hasFareRange =
-            od.isNotEmpty && range != null && range.min != range.max;
+        final hasFareRange = _hasOdFareRange(od, range);
         // Every class the route prices, for the 全部票種 disclosure. A route
         // that only ever publishes 全票 gets no disclosure rather than one
         // that opens onto a single row the rider is already looking at.
@@ -67,9 +66,9 @@ class _Fares extends StatelessWidget {
                           ),
                       ],
                     ),
-                    if (od.isNotEmpty && range != null)
+                    if (_hasOdRange(od, range))
                       _FareRangeLine(
-                        range: range,
+                        range: range!,
                         fareType: fareType,
                         cs: cs,
                       )
@@ -87,7 +86,7 @@ class _Fares extends StatelessWidget {
               // The rider's own ticket type is the headline above; the rest of
               // the classes stay one tap away rather than stacking six rows
               // per segment on a screen read at a bus stop.
-              if (allClasses > 1 && flatGroups.isNotEmpty)
+              if (_hasClassDisclosure(allClasses, flatGroups))
                 AppAccordion(
                   title: AppI18n.of(
                     context,
@@ -116,21 +115,25 @@ class _Fares extends StatelessWidget {
 /// How many distinct fare classes the route prices anywhere, which decides
 /// whether a 全部票種 disclosure has anything to disclose.
 int _fareClassCount(List<FareGroup> groups, List<OdOrigin> origins) {
-  final classes = <int>{};
-  for (final group in groups) {
-    for (final row in group.rows) {
-      classes.add(row.fareClass);
-    }
-  }
-  for (final origin in origins) {
-    for (final dest in origin.destinations) {
-      for (final row in dest.rows) {
-        classes.add(row.fareClass);
-      }
-    }
-  }
+  final classes = <int>{}
+    ..addAll(groups.expand((group) => group.rows).map((row) => row.fareClass))
+    ..addAll(
+      origins
+          .expand((origin) => origin.destinations)
+          .expand((destination) => destination.rows)
+          .map((row) => row.fareClass),
+    );
   return classes.length;
 }
+
+bool _hasOdFareRange(List<OdOrigin> origins, ({int min, int max})? range) =>
+    origins.isNotEmpty && range != null && range.min != range.max;
+
+bool _hasOdRange(List<OdOrigin> origins, ({int min, int max})? range) =>
+    origins.isNotEmpty && range != null;
+
+bool _hasClassDisclosure(int classCount, List<FareGroup> groups) =>
+    classCount > 1 && groups.isNotEmpty;
 
 /// Every fare class the route prices, per segment. The rider's own type is
 /// already shown above, so this is reference material: a plain label/price
@@ -268,22 +271,7 @@ class _OdFareTableState extends State<_OdFareTable> {
   Widget build(BuildContext context) {
     final cs = widget.cs;
     final q = _query.trim();
-    // An origin match shows all its destinations; otherwise only the
-    // destinations whose name matches, dropping origins with no hit.
-    final matches = <OdOrigin>[];
-    for (final origin in widget.origins) {
-      if (q.isEmpty || origin.origin.contains(q)) {
-        matches.add(origin);
-        continue;
-      }
-      final dests = [
-        for (final d in origin.destinations)
-          if (d.destination.contains(q)) d,
-      ];
-      if (dests.isNotEmpty) {
-        matches.add((origin: origin.origin, destinations: dests));
-      }
-    }
+    final matches = _matchingOrigins(q);
 
     final blocks = <Widget>[];
     var shown = 0;
@@ -293,9 +281,7 @@ class _OdFareTableState extends State<_OdFareTable> {
         truncated = true;
         break;
       }
-      final dests = origin.destinations.length + shown > _maxRows
-          ? origin.destinations.sublist(0, _maxRows - shown)
-          : origin.destinations;
+      final dests = _limitedDestinations(origin, shown);
       if (dests.length < origin.destinations.length) truncated = true;
       blocks.add(_originBlock(origin.origin, dests, cs));
       shown += dests.length;
@@ -340,6 +326,33 @@ class _OdFareTableState extends State<_OdFareTable> {
         ],
       ],
     );
+  }
+
+  List<OdDestination> _limitedDestinations(OdOrigin origin, int shown) =>
+      origin.destinations.length + shown > _maxRows
+      ? origin.destinations.sublist(0, _maxRows - shown)
+      : origin.destinations;
+
+  List<OdOrigin> _matchingOrigins(String query) {
+    final matches = <OdOrigin>[];
+    for (final origin in widget.origins) {
+      final match = _matchingOrigin(origin, query);
+      if (match != null) matches.add(match);
+    }
+    return matches;
+  }
+
+  OdOrigin? _matchingOrigin(OdOrigin origin, String query) {
+    // An origin match retains all destinations; a destination match retains
+    // only the matching rows so unrelated fare pairs are not shown.
+    if (query.isEmpty || origin.origin.contains(query)) return origin;
+    final destinations = [
+      for (final destination in origin.destinations)
+        if (destination.destination.contains(query)) destination,
+    ];
+    return destinations.isEmpty
+        ? null
+        : (origin: origin.origin, destinations: destinations);
   }
 
   Widget _originBlock(

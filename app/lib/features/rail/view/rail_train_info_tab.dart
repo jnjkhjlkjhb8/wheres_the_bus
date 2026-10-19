@@ -1,7 +1,9 @@
 part of 'rail_train_screen.dart';
 
-class _InfoTab extends StatelessWidget {
-  const _InfoTab({
+// Public only so tests can mount the tab from stop fixtures instead of the
+// whole train screen.
+class RailTrainInfoTab extends StatelessWidget {
+  const RailTrainInfoTab({
     required this.type,
     required this.trainNo,
     required this.stops,
@@ -11,6 +13,7 @@ class _InfoTab extends StatelessWidget {
     this.userDest,
     this.marks = const [],
     this.remark = '',
+    super.key,
   });
 
   final String type;
@@ -48,13 +51,10 @@ class _InfoTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    final userOriginStop = userOrigin != null ? _findStop(userOrigin!) : null;
-    final userDestStop = userDest != null ? _findStop(userDest!) : null;
+    final userOriginStop = _userStop(userOrigin);
+    final userDestStop = _userStop(userDest);
     final showUserSegment = userOriginStop != null && userDestStop != null;
-    final isFullRun =
-        !showUserSegment ||
-        (userOriginStop.name == stops.first.name &&
-            userDestStop.name == stops.last.name);
+    final isFullRun = _isFullRun(userOriginStop, userDestStop);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(
@@ -73,7 +73,7 @@ class _InfoTab extends StatelessWidget {
             showUserSegment,
             isFullRun,
           ),
-          if (userFare != null || fullFare != null)
+          if (_fareAvailable())
             _buildFare(
               cs,
               userOriginStop,
@@ -116,6 +116,17 @@ class _InfoTab extends StatelessWidget {
     );
   }
 
+  RailTrainStop? _userStop(String? name) =>
+      name == null ? null : _findStop(name);
+
+  bool _fareAvailable() => userFare != null || fullFare != null;
+
+  bool _isFullRun(RailTrainStop? origin, RailTrainStop? destination) {
+    if (origin == null || destination == null) return true;
+    return origin.name == stops.first.name &&
+        destination.name == stops.last.name;
+  }
+
   Widget _buildTrainInfo(
     AppI18n i18n,
     ColorScheme cs,
@@ -130,19 +141,15 @@ class _InfoTab extends StatelessWidget {
     // Product decision: the user's own segment is the primary information,
     // the train's full run is secondary context — so it, not the run, is
     // the headline once we have it.
-    final headlineOrigin = showUserSegment ? userOriginStop! : runOrigin;
-    final headlineDest = showUserSegment ? userDestStop! : runDest;
+    final headlineOrigin = _headlineStop(
+      showUserSegment,
+      userOriginStop,
+      runOrigin,
+    );
+    final headlineDest = _headlineStop(showUserSegment, userDestStop, runDest);
 
-    final departTime = hhmm(
-      headlineOrigin.depart.isNotEmpty
-          ? headlineOrigin.depart
-          : headlineOrigin.arrive,
-    );
-    final arriveTime = hhmm(
-      headlineDest.arrive.isNotEmpty
-          ? headlineDest.arrive
-          : headlineDest.depart,
-    );
+    final departTime = _departureTime(headlineOrigin);
+    final arriveTime = _arrivalTime(headlineDest);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -216,6 +223,18 @@ class _InfoTab extends StatelessWidget {
     );
   }
 
+  RailTrainStop _headlineStop(
+    bool showUser,
+    RailTrainStop? user,
+    RailTrainStop run,
+  ) => showUser ? user! : run;
+
+  String _departureTime(RailTrainStop stop) =>
+      hhmm(stop.depart.isNotEmpty ? stop.depart : stop.arrive);
+
+  String _arrivalTime(RailTrainStop stop) =>
+      hhmm(stop.arrive.isNotEmpty ? stop.arrive : stop.depart);
+
   Widget _buildFare(
     ColorScheme cs,
     RailTrainStop? userOriginStop,
@@ -223,43 +242,32 @@ class _InfoTab extends StatelessWidget {
     bool showUserSegment,
     bool isFullRun,
   ) {
-    final runOrigin = stops.first;
-    final runDest = stops.last;
-
     return FarePreferenceBuilder(
       builder: (context, fareType) {
         final i18n = AppI18n.of(context);
         final userResolved = userFare?.resolve(fareType);
         final fullResolved = fullFare?.resolve(fareType);
-        final useUserFare = showUserSegment && userResolved != null;
+        final useUserFare = _useUserFare(showUserSegment, userResolved);
         final primary = useUserFare ? userResolved : fullResolved;
-        final primaryLabel = useUserFare
-            ? '${userOriginStop!.name} → ${userDestStop!.name}'
-            : i18n.railRunPair(runOrigin.name, runDest.name);
+        final primaryLabel = _primaryFareLabel(
+          i18n,
+          useUserFare,
+          userOriginStop,
+          userDestStop,
+        );
 
         // A second figure never appears without saying what it prices — that
         // ambiguity (an unlabelled full-run fare beside a list that already
         // quoted the segment fare) is the P0 bug this screen used to have.
-        Widget? secondary;
-        if (useUserFare && !isFullRun && fullResolved != null) {
-          secondary = Text(
-            '${i18n.railFullRunInline(runOrigin.name, runDest.name)}'
-            '\$${fullResolved.price}',
-            style: AppTextStyles.bodySmall.copyWith(
-              color: cs.onSurfaceVariant,
-            ),
-          );
-        } else if (!useUserFare && showUserSegment && !isFullRun) {
-          // Wanted the user's segment fare but it failed to resolve (the RPC
-          // is best-effort) — say so rather than silently substituting the
-          // full-run number unlabelled.
-          secondary = Text(
-            i18n.railNoFareForPair(userOriginStop!.name, userDestStop!.name),
-            style: AppTextStyles.bodySmall.copyWith(
-              color: cs.onSurfaceVariant,
-            ),
-          );
-        }
+        final secondary = _secondaryFare(
+          context,
+          useUserFare,
+          showUserSegment,
+          isFullRun,
+          userOriginStop,
+          userDestStop,
+          fullResolved,
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -305,6 +313,67 @@ class _InfoTab extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  bool _useUserFare(bool showUser, ResolvedFare? fare) =>
+      showUser && fare != null;
+
+  String _primaryFareLabel(
+    AppI18n i18n,
+    bool useUser,
+    RailTrainStop? origin,
+    RailTrainStop? destination,
+  ) => useUser
+      ? '${origin!.name} → ${destination!.name}'
+      : i18n.railRunPair(stops.first.name, stops.last.name);
+
+  Widget? _secondaryFare(
+    BuildContext context,
+    bool useUserFare,
+    bool showUserSegment,
+    bool isFullRun,
+    RailTrainStop? userOriginStop,
+    RailTrainStop? userDestStop,
+    ResolvedFare? fullResolved,
+  ) {
+    if (isFullRun) return null;
+    if (useUserFare) return _fullRunFare(context, fullResolved);
+    return _unpricedSegment(
+      context,
+      showUserSegment,
+      userOriginStop,
+      userDestStop,
+    );
+  }
+
+  Widget? _fullRunFare(BuildContext context, ResolvedFare? fare) {
+    if (fare == null) return null;
+    final label = AppI18n.of(context).railFullRunInline(
+      stops.first.name,
+      stops.last.name,
+    );
+    return Text(
+      '$label\$${fare.price}',
+      style: AppTextStyles.bodySmall.copyWith(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Widget? _unpricedSegment(
+    BuildContext context,
+    bool showUser,
+    RailTrainStop? origin,
+    RailTrainStop? destination,
+  ) {
+    if (!showUser) return null;
+    // Keep unresolved segment fares distinct from the full-run price.
+    return Text(
+      AppI18n.of(context).railNoFareForPair(origin!.name, destination!.name),
+      style: AppTextStyles.bodySmall.copyWith(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
     );
   }
 }

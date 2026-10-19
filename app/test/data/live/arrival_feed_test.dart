@@ -29,6 +29,52 @@ Future<void> _pump() => Future<void>.delayed(Duration.zero);
 
 void main() {
   group('replace policy', () {
+    testWidgets('decay waits for data and updates every item in a frame', (
+      tester,
+    ) async {
+      final source = StreamController<List<_Arrival>>();
+      final decayedKeys = <String>[];
+      final emitted = <ArrivalFeedEmission<_Arrival>>[];
+      final feed = ArrivalFeed<_Arrival>.replace(
+        decay: (arrival, _) {
+          decayedKeys.add(arrival.key);
+          return arrival.decayed(60);
+        },
+        decayInterval: const Duration(milliseconds: 20),
+      );
+      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(emitted, isEmpty);
+      expect(decayedKeys, isEmpty);
+
+      source.add([
+        const _Arrival('already-zero', 0),
+        const _Arrival('first-changing', 120),
+        const _Arrival('last-changing', 180),
+      ]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(decayedKeys, [
+        'already-zero',
+        'first-changing',
+        'last-changing',
+      ]);
+      expect(emitted.last.kind, ArrivalFeedEmissionKind.decay);
+      expect(emitted.last.arrivals, [
+        const _Arrival('already-zero', 0),
+        const _Arrival('first-changing', 60),
+        const _Arrival('last-changing', 120),
+      ]);
+
+      await tester.runAsync(() async {
+        await sub.cancel();
+        await source.close();
+      });
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(emitted, hasLength(2));
+    });
+
     test('each frame replaces the whole list', () async {
       final source = StreamController<List<_Arrival>>();
       final feed = ArrivalFeed<_Arrival>.replace();
@@ -326,6 +372,80 @@ void main() {
     }
 
     expect(failures.single, isA<AppError>());
+  });
+
+  group('default decay interval', () {
+    late Future<void> Function() cancel;
+
+    Future<List<ArrivalFeedEmission<_Arrival>>> mount(
+      WidgetTester tester,
+      ArrivalFeed<_Arrival> feed,
+      StreamController<List<_Arrival>> source,
+    ) async {
+      final emitted = <ArrivalFeedEmission<_Arrival>>[];
+      final sub = feed.watch(source: () => source.stream).listen(emitted.add);
+      cancel = () => tester.runAsync(() async {
+        await sub.cancel();
+        await source.close();
+      });
+      source.add([const _Arrival('a', 300)]);
+      await tester.pump();
+      return emitted;
+    }
+
+    testWidgets('replace decays every 15 seconds', (tester) async {
+      final emitted = await mount(
+        tester,
+        ArrivalFeed<_Arrival>.replace(decay: (a, _) => a.decayed(60)),
+        StreamController<List<_Arrival>>(),
+      );
+      expect(emitted, hasLength(1));
+      await tester.pump(const Duration(seconds: 14));
+      expect(emitted, hasLength(1));
+      await tester.pump(const Duration(seconds: 1));
+      expect(emitted, hasLength(2));
+      expect(emitted.last.isDecay, isTrue);
+      expect(emitted.last.isSource, isFalse);
+      expect(emitted.last.arrivals.single.estimate, 240);
+      await cancel();
+    });
+
+    testWidgets('upsertByKey decays every 15 seconds', (tester) async {
+      final emitted = await mount(
+        tester,
+        ArrivalFeed<_Arrival>.upsertByKey(
+          key: (a) => a.key,
+          compare: (a, b) => a.estimate.compareTo(b.estimate),
+          decay: (a, _) => a.decayed(60),
+        ),
+        StreamController<List<_Arrival>>(),
+      );
+      await tester.pump(const Duration(seconds: 14));
+      expect(emitted, hasLength(1));
+      await tester.pump(const Duration(seconds: 1));
+      expect(emitted, hasLength(2));
+      expect(emitted.last.isDecay, isTrue);
+      expect(emitted.last.arrivals.single.estimate, 240);
+      await cancel();
+    });
+
+    testWidgets('upsertByKey ignores an empty frame', (tester) async {
+      final source = StreamController<List<_Arrival>>();
+      final emitted = await mount(
+        tester,
+        ArrivalFeed<_Arrival>.upsertByKey(
+          key: (a) => a.key,
+          compare: (a, b) => a.estimate.compareTo(b.estimate),
+        ),
+        source,
+      );
+      source.add(const []);
+      await tester.pump();
+      expect(emitted, hasLength(1));
+      expect(emitted.single.isSource, isTrue);
+      expect(emitted.single.isDecay, isFalse);
+      await cancel();
+    });
   });
 
   test('cancel stops the source and the decay timer', () async {

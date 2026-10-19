@@ -12,6 +12,12 @@ import 'package:wheres_the_bus/shared/map/bus_heading.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 import 'package:wheres_the_bus/shared/map/wkt.dart';
 
+typedef _StopLayer = ({
+  Set<Marker> markers,
+  Set<Polyline> polylines,
+  List<LatLng> points,
+});
+
 class BusRouteOverlay {
   BusRouteOverlay({required this.onStopTap, required this.onVehicleTap});
 
@@ -73,12 +79,9 @@ class BusRouteOverlay {
     String? trackedPlate,
     bool pickingStop = false,
   }) async {
-    final route = state.route;
-    if (route == null) return null;
-    final stops = state.direction == 0 ? route.stopsGo : route.stopsReturn;
-    if (stops.isEmpty) return null;
+    final stops = _stopsFor(state);
+    if (stops == null) return null;
 
-    final generation = ++_generation;
     final vehicles = vehiclePositionsFor(state);
 
     // The one rule for who gets a bubble, shared with the signature below so
@@ -97,66 +100,16 @@ class BusRouteOverlay {
       glyphSalt: '$pinnedPlate|$trackedPlate|$pickingStop|$selectedStopUid',
     );
     if (sig == _frameSig) return null;
+    // A duplicate arriving during rasterisation must not cancel its own frame.
+    final generation = ++_generation;
     _frameSig = sig;
 
-    final stopPoints = [
-      for (final st in stops)
-        if (st.lat != 0 || st.lon != 0) LatLng(st.lat, st.lon),
-    ];
-
-    // Geometry only changes with the route or the direction, and parsing WKT is
-    // the one genuinely expensive non-bitmap step here, so it is cached apart
-    // from the frame signature that live ETAs churn every 30 s.
-    final geometrySig = '${route.subRouteUid}:${state.direction}';
-    if (geometrySig != _geometrySig) {
-      _geometrySig = geometrySig;
-      final geometry = state.direction == 0
-          ? route.geometryGo
-          : route.geometryReturn;
-      var lines = parseWktLines(geometry);
-      if (lines.isEmpty && stopPoints.length >= 2) lines = [stopPoints];
-      _geometryLines = lines;
-    }
-
-    final isDark = colors.brightness == Brightness.dark;
-    final isLight = !isDark;
-
-    final polylines = <Polyline>{
-      for (var i = 0; i < _geometryLines.length; i++)
-        Polyline(
-          polylineId: PolylineId('route_$i'),
-          points: _geometryLines[i],
-          color: colors.onSurface,
-          width: 4,
-          startCap: Cap.roundCap,
-          endCap: Cap.roundCap,
-          jointType: JointType.round,
-        ),
-    };
-
-    final bounds = stopPoints.isEmpty ? null : boundsOf(stopPoints);
-    // Same retirement the sheet's timeline applies: read literally the feed
-    // republishes 進站中 on every stop the bus has already driven past, and the
-    // map would paint a trail of green plates behind it.
-    final resolvedEtas = retireStaleArriving([
-      for (final st in stops) etaFor(state, st),
-    ]);
-    final etaByUid = {
-      for (final (i, st) in stops.indexed) st.stopUid: resolvedEtas[i],
-    };
-    final stopMarkers = await _buildStopMarkers(
+    final layer = await _resolveStopLayer(
+      state: state,
       stops: stops,
-      etaFor: (st) => etaByUid[st.stopUid],
-      cs: colors,
+      colors: colors,
       i18n: i18n,
-      selectedUid: selectedStopUid,
-      // A selected stop's name leans away from the route's mid-longitude, so it
-      // falls outside the line rather than over the next stop along.
-      midLon: bounds == null
-          ? 0
-          : (bounds.southwest.longitude + bounds.northeast.longitude) / 2,
-      cache: _markerCache,
-      onTap: onStopTap,
+      selectedStopUid: selectedStopUid,
     );
 
     // A newer frame may have started and finished while this one awaited the
@@ -168,7 +121,7 @@ class BusRouteOverlay {
       vehicles: vehicles,
       i18n: i18n,
       colors: colors,
-      isLight: isLight,
+      isLight: colors.brightness != Brightness.dark,
       glideProgress: glideProgress,
       now: now,
       pinnedPlate: pinnedPlate,
@@ -177,24 +130,113 @@ class BusRouteOverlay {
       showsBubble: showsBubble,
     );
 
-    // Same check, now guarding the commit itself: this is the write, so a stale
-    // call must not reach it even if everything above finished.
-    if (generation != _generation) return null;
+    return _commitFrame(generation, layer, nextGlides);
+  }
 
-    _stopMarkers = stopMarkers;
-    _polylines = polylines;
-    _stopPoints = stopPoints;
+  BusOverlayFrame? _commitFrame(
+    int generation,
+    _StopLayer layer,
+    Map<String, BusGlide> nextGlides,
+  ) {
+    // A frame overtaken during vehicle rasterisation must not replace the
+    // markers and glides committed by the newer frame.
+    if (generation != _generation) return null;
+    _stopMarkers = layer.markers;
+    _polylines = layer.polylines;
+    _stopPoints = layer.points;
     _glides
       ..clear()
       ..addAll(nextGlides);
-
     return BusOverlayFrame(
-      stopMarkers: stopMarkers,
-      polylines: polylines,
-      stopPoints: stopPoints,
+      stopMarkers: layer.markers,
+      polylines: layer.polylines,
+      stopPoints: layer.points,
       hasVehicles: nextGlides.isNotEmpty,
       showsAnyBubble: nextGlides.values.any((g) => g.rebuildBubble != null),
     );
+  }
+
+  List<BusStopModel>? _stopsFor(BusRouteState state) {
+    final route = state.route;
+    if (route == null) return null;
+    final stops = state.direction == 0 ? route.stopsGo : route.stopsReturn;
+    return stops.isEmpty ? null : stops;
+  }
+
+  Future<_StopLayer> _resolveStopLayer({
+    required BusRouteState state,
+    required List<BusStopModel> stops,
+    required ColorScheme colors,
+    required AppI18n i18n,
+    required String? selectedStopUid,
+  }) async {
+    final stopPoints = _stopCoordinates(stops);
+    _refreshGeometry(state, stopPoints);
+    final polylines = _routePolylines(colors);
+    // The timeline retires the feed's repeated arriving readings too, so the
+    // map must not leave green plates behind a bus that has passed them.
+    final resolvedEtas = retireStaleArriving([
+      for (final stop in stops) etaFor(state, stop),
+    ]);
+    final etaByUid = {
+      for (final (i, stop) in stops.indexed) stop.stopUid: resolvedEtas[i],
+    };
+    final markers = await _buildStopMarkers(
+      stops: stops,
+      etaFor: (stop) => etaByUid[stop.stopUid],
+      cs: colors,
+      i18n: i18n,
+      selectedUid: selectedStopUid,
+      midLon: _middleLongitude(stopPoints),
+      cache: _markerCache,
+      onTap: onStopTap,
+    );
+    return (markers: markers, polylines: polylines, points: stopPoints);
+  }
+
+  void _refreshGeometry(BusRouteState state, List<LatLng> stopPoints) {
+    final route = state.route!;
+    // WKT only changes with route/direction; live ETA frames can reuse it.
+    final signature = '${route.subRouteUid}:${state.direction}';
+    if (signature == _geometrySig) return;
+    _geometrySig = signature;
+    final geometry = state.direction == 0
+        ? route.geometryGo
+        : route.geometryReturn;
+    _geometryLines = _geometryWithFallback(geometry, stopPoints);
+  }
+
+  List<List<LatLng>> _geometryWithFallback(
+    String geometry,
+    List<LatLng> points,
+  ) {
+    final lines = parseWktLines(geometry);
+    return lines.isEmpty && points.length >= 2 ? [points] : lines;
+  }
+
+  Set<Polyline> _routePolylines(ColorScheme colors) => {
+    for (var i = 0; i < _geometryLines.length; i++)
+      Polyline(
+        polylineId: PolylineId('route_$i'),
+        points: _geometryLines[i],
+        color: colors.onSurface,
+        width: 4,
+        startCap: Cap.roundCap,
+        endCap: Cap.roundCap,
+        jointType: JointType.round,
+      ),
+  };
+
+  List<LatLng> _stopCoordinates(List<BusStopModel> stops) => [
+    for (final stop in stops)
+      if (stop.lat != 0 || stop.lon != 0) LatLng(stop.lat, stop.lon),
+  ];
+
+  double _middleLongitude(List<LatLng> points) {
+    if (points.isEmpty) return 0;
+    final bounds = boundsOf(points);
+    // Selected names lean away from the route's middle to avoid the next stop.
+    return (bounds.southwest.longitude + bounds.northeast.longitude) / 2;
   }
 
   BusMapLayer paint({required double glideProgress, String? pinnedPlate}) {
@@ -281,9 +323,7 @@ class BusRouteOverlay {
       final prev = _glides[v.plate];
       // A newly-seen bus starts at its target (no fly-in from nowhere);
       // otherwise it glides from wherever it sits right now.
-      final from = prev == null
-          ? target
-          : lerpLatLng(prev.from, prev.to, glideProgress);
+      final from = _glideStart(prev, target, glideProgress);
 
       final heading = headingFor(
         azimuth: v.azimuth,
@@ -305,7 +345,7 @@ class BusRouteOverlay {
       };
       final icon = await MapMarkers.busMark(
         body: markBody,
-        halo: isLight ? AppTheme.surfaceCardLight : AppTheme.surfaceDark,
+        halo: _markHalo(isLight),
         ring: markRing,
         showHeading: heading != null,
         // The dark basemap gives a drop shadow nothing to land on; there the
@@ -344,6 +384,14 @@ class BusRouteOverlay {
     }
     return next;
   }
+
+  LatLng _glideStart(BusGlide? previous, LatLng target, double progress) =>
+      previous == null
+      ? target
+      : lerpLatLng(previous.from, previous.to, progress);
+
+  Color _markHalo(bool isLight) =>
+      isLight ? AppTheme.surfaceCardLight : AppTheme.surfaceDark;
 }
 
 /// What one resolved frame committed. The markers and polylines are what the
@@ -445,16 +493,22 @@ LatLngBounds boundsOf(List<LatLng> pts) {
   var minLng = pts.first.longitude;
   var maxLng = pts.first.longitude;
   for (final p in pts) {
-    minLat = p.latitude < minLat ? p.latitude : minLat;
-    maxLat = p.latitude > maxLat ? p.latitude : maxLat;
-    minLng = p.longitude < minLng ? p.longitude : minLng;
-    maxLng = p.longitude > maxLng ? p.longitude : maxLng;
+    minLat = _minimum(minLat, p.latitude);
+    maxLat = _maximum(maxLat, p.latitude);
+    minLng = _minimum(minLng, p.longitude);
+    maxLng = _maximum(maxLng, p.longitude);
   }
   return LatLngBounds(
     southwest: LatLng(minLat, minLng),
     northeast: LatLng(maxLat, maxLng),
   );
 }
+
+double _minimum(double current, double candidate) =>
+    candidate < current ? candidate : current;
+
+double _maximum(double current, double candidate) =>
+    candidate > current ? candidate : current;
 
 @visibleForTesting
 String frameSignature({
@@ -534,72 +588,111 @@ MarkerStyle markerStyle(
   BusStopEtaViewModel? eta,
   ColorScheme cs,
 ) {
-  final isDark = cs.brightness == Brightness.dark;
-  // Dark mode's plate can't stay white against the dark basemap, so it borrows
-  // the elevated-surface pairing the app's other floating map chrome uses.
-  final plate = isDark ? cs.surfaceContainerHigh : AppTheme.surfaceCardLight;
-  MarkerStyle quiet({String? text, IconData? glyph}) => (
+  final plate = _markerPlate(cs);
+
+  if (_markerIsEnded(eta)) {
+    return _quietMarker(plate, cs, glyph: Icons.close_rounded);
+  }
+  if (_markerIsScheduled(eta)) {
+    return _quietMarker(plate, cs, glyph: Icons.schedule_rounded);
+  }
+  if (_markerIsUnknown(eta)) {
+    return _quietMarker(plate, cs, text: markerEta(i18n, eta));
+  }
+
+  return _liveMarkerStyle(i18n, eta, cs, plate);
+}
+
+Color _markerPlate(ColorScheme cs) => cs.brightness == Brightness.dark
+    ? cs.surfaceContainerHigh
+    : AppTheme.surfaceCardLight;
+
+MarkerStyle _quietMarker(
+  Color plate,
+  ColorScheme cs, {
+  String? text,
+  IconData? glyph,
+}) => (
+  fill: plate,
+  content: cs.onSurfaceVariant,
+  ring: cs.onSurfaceVariant,
+  ringWidth: 1.5,
+  height: 30,
+  text: text,
+  glyph: glyph,
+  pill: false,
+  zIndex: 0,
+);
+
+MarkerStyle _liveMarkerStyle(
+  AppI18n i18n,
+  BusStopEtaViewModel? eta,
+  ColorScheme cs,
+  Color plate,
+) => switch (timelineStopState(eta)) {
+  TimelineStopState.arriving => _arrivingMarker(i18n, eta, cs),
+  TimelineStopState.approaching => _approachingMarker(i18n, eta, cs, plate),
+  TimelineStopState.none => (
     fill: plate,
-    content: cs.onSurfaceVariant,
-    ring: cs.onSurfaceVariant,
-    ringWidth: 1.5,
-    height: 30,
-    text: text,
-    glyph: glyph,
+    content: cs.onSurface,
+    // Thinner than the 3.6 it replaces: the number is the content, the ring
+    // only has to lift it off the tiles.
+    ring: cs.onSurface,
+    ringWidth: 2,
+    height: 32,
+    text: markerEta(i18n, eta),
+    glyph: null,
     pill: false,
     zIndex: 0,
+  ),
+};
+
+MarkerStyle _arrivingMarker(
+  AppI18n i18n,
+  BusStopEtaViewModel? eta,
+  ColorScheme cs,
+) {
+  final isDark = cs.brightness == Brightness.dark;
+  return (
+    // Green, not red: an arriving bus is the moment to act, not an alarm
+    // (DESIGN.md). The light shade is the darker text-weight green,
+    // because white sits on this fill and the badge green fails there.
+    fill: isDark ? AppTheme.statusArriving : AppTheme.statusArrivingText,
+    content: isDark ? AppTheme.inkLight : AppTheme.surfaceCardLight,
+    ring: null,
+    ringWidth: 0,
+    height: 32,
+    text: markerEta(i18n, eta),
+    glyph: null,
+    pill: true,
+    zIndex: 2,
   );
+}
 
-  if (_markerIsEnded(eta)) return quiet(glyph: Icons.close_rounded);
-  if (_markerIsScheduled(eta)) return quiet(glyph: Icons.schedule_rounded);
-  if (_markerIsUnknown(eta)) return quiet(text: markerEta(i18n, eta));
-
+MarkerStyle _approachingMarker(
+  AppI18n i18n,
+  BusStopEtaViewModel? eta,
+  ColorScheme cs,
+  Color plate,
+) {
+  final isDark = cs.brightness == Brightness.dark;
   final approach = isDark ? AppTheme.statusApproach : AppTheme.etaApproaching;
-  return switch (timelineStopState(eta)) {
-    TimelineStopState.arriving => (
-      // Green, not red: an arriving bus is the moment to act, not an alarm
-      // (DESIGN.md). The light shade is the darker text-weight green,
-      // because white sits on this fill and the badge green fails there.
-      fill: isDark ? AppTheme.statusArriving : AppTheme.statusArrivingText,
-      content: isDark ? AppTheme.inkLight : AppTheme.surfaceCardLight,
-      ring: null,
-      ringWidth: 0,
-      height: 32,
-      text: markerEta(i18n, eta),
-      glyph: null,
-      pill: true,
-      zIndex: 2,
+  return (
+    // The wash is what makes this readable without reading: colour alone is a
+    // hue change, colour plus a lighter body is a change in weight.
+    fill: Color.alphaBlend(
+      approach.withValues(alpha: isDark ? 0.14 : 0.10),
+      plate,
     ),
-    TimelineStopState.approaching => (
-      // The wash is what makes this readable without reading: colour alone is a
-      // hue change, colour plus a lighter body is a change in weight.
-      fill: Color.alphaBlend(
-        approach.withValues(alpha: isDark ? 0.14 : 0.10),
-        plate,
-      ),
-      content: cs.onSurface,
-      ring: approach,
-      ringWidth: 3,
-      height: 34,
-      text: markerEta(i18n, eta),
-      glyph: null,
-      pill: false,
-      zIndex: 1,
-    ),
-    TimelineStopState.none => (
-      fill: plate,
-      content: cs.onSurface,
-      // Thinner than the 3.6 it replaces: the number is the content, the ring
-      // only has to lift it off the tiles.
-      ring: cs.onSurface,
-      ringWidth: 2,
-      height: 32,
-      text: markerEta(i18n, eta),
-      glyph: null,
-      pill: false,
-      zIndex: 0,
-    ),
-  };
+    content: cs.onSurface,
+    ring: approach,
+    ringWidth: 3,
+    height: 34,
+    text: markerEta(i18n, eta),
+    glyph: null,
+    pill: false,
+    zIndex: 1,
+  );
 }
 
 /// Builds the stop layer. Reuses any marker whose rendered inputs are unchanged
@@ -618,15 +711,15 @@ Future<Set<Marker>> _buildStopMarkers({
   final markers = <Marker>{};
   final misses = <Future<Marker> Function()>[];
   for (final st in stops) {
-    if (st.lat == 0 && st.lon == 0) continue;
+    if (!_hasCoordinates(st)) continue;
     final style = markerStyle(i18n, etaFor(st), cs);
     final selected = st.stopUid == selectedUid;
     final key =
         '${cs.brightness}:${style.text}:${style.glyph?.codePoint}:'
         '${style.height}:${style.pill}:$selected:${st.lat},${st.lon}';
-    final cached = cache[st.stopUid];
-    if (cached != null && cached.key == key) {
-      markers.add(cached.marker);
+    final cached = _cachedMarker(cache[st.stopUid], key);
+    if (cached != null) {
+      markers.add(cached);
       continue;
     }
     misses.add(
@@ -645,6 +738,11 @@ Future<Set<Marker>> _buildStopMarkers({
   markers.addAll(await Future.wait([for (final start in misses) start()]));
   return markers;
 }
+
+bool _hasCoordinates(BusStopModel stop) => stop.lat != 0 || stop.lon != 0;
+
+Marker? _cachedMarker(({String key, Marker marker})? cached, String key) =>
+    cached != null && cached.key == key ? cached.marker : null;
 
 Future<Marker> _rasteriseStopMarker({
   required BusStopModel stop,

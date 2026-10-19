@@ -525,6 +525,67 @@ void main() {
       expect(state.thsrItems, [secondItem]);
     },
   );
+  test(
+    'train stops from the initial state default to TRA and preserve order',
+    () async {
+      final repo = _StopTra();
+      final b = RailBloc(traRepository: repo);
+      addTearDown(b.close);
+      b.add(const RailTrainStopsRequested(trainNo: '123', date: '2030-01-02'));
+      final loaded =
+          await b.stream.firstWhere((s) => s is RailTrainStopsLoaded)
+              as RailTrainStopsLoaded;
+      expect(loaded.system, RailSystem.tra);
+      expect(loaded.trainType, '台鐵');
+      expect(loaded.traStops.single.stationName, '台北');
+      expect(repo.calls, [('2030-01-02', '123')]);
+    },
+  );
+
+  test(
+    'THSR selection dispatches the matching train-stop repository',
+    () async {
+      final repo = _StopThsr();
+      final b = RailBloc(thsrRepository: repo);
+      addTearDown(b.close);
+      b.add(
+        const RailTimetableRequested(
+          system: RailSystem.thsr,
+          origin: RailStationSelection(name: '南港'),
+          destination: RailStationSelection(name: '左營'),
+          date: '2030-01-02',
+        ),
+      );
+      await b.stream.firstWhere((s) => s is RailTimetableLoaded);
+      b.add(const RailTrainStopsRequested(trainNo: '101', date: '2030-01-02'));
+      final loaded =
+          await b.stream.firstWhere((s) => s is RailTrainStopsLoaded)
+              as RailTrainStopsLoaded;
+      expect(loaded.system, RailSystem.thsr);
+      expect(loaded.trainType, '高鐵');
+      expect(loaded.thsrStops.single.stationName, '南港');
+    },
+  );
+
+  test('stale stop errors do not replace newer successful stops', () async {
+    final repo = _StopTra(controlled: true);
+    final b = RailBloc(traRepository: repo);
+    addTearDown(b.close);
+    b.add(const RailTrainStopsRequested(trainNo: 'first', date: '2030-01-02'));
+    await pumpEventQueue();
+    b.add(const RailTrainStopsRequested(trainNo: 'second', date: '2030-01-02'));
+    await pumpEventQueue();
+    repo.pending[1].complete(_StopTra.result);
+    await pumpEventQueue();
+    repo.pending[0].completeError(StateError('stale error'));
+    await pumpEventQueue();
+    expect((b.state as RailTrainStopsLoaded).trainNo, 'second');
+    b.add(const RailTrainStopsRequested(trainNo: 'third', date: '2030-01-02'));
+    await pumpEventQueue();
+    repo.pending[2].completeError(StateError('current error'));
+    await pumpEventQueue();
+    expect(b.state, isA<RailError>());
+  });
 }
 
 class _ControlledThsrRepository extends ThsrRepository {
@@ -534,6 +595,14 @@ class _ControlledThsrRepository extends ThsrRepository {
   /// order, so overlapping requests in a test can resolve out of order.
   final List<Completer<List<ThsrTimetableItem>>> completers;
   var _calls = 0;
+
+  // Without this the un-overridden fares() reaches the network.
+  @override
+  Future<List<ThsrFare>> fares(
+    String date,
+    String originId,
+    String destId,
+  ) => Future.value(const <ThsrFare>[]);
 
   @override
   Future<List<ThsrTimetableItem>> timetable(
@@ -607,4 +676,39 @@ class _FakeTraRepository extends TraRepository {
     delayCalls.add((date, originId, destId));
     return _delayStream;
   }
+}
+
+class _StopTra extends _FakeTraRepository {
+  _StopTra({this.controlled = false});
+  final bool controlled;
+  final pending = <Completer<List<TraStopTime>>>[];
+  final calls = <(String, String)>[];
+  static const result = [
+    TraStopTime(
+      stationName: '台北',
+      arrivalTime: '',
+      departureTime: '08:00',
+      sequence: 1,
+    ),
+  ];
+  @override
+  Future<List<TraStopTime>> stops(String date, String trainNo) {
+    calls.add((date, trainNo));
+    if (!controlled) return Future.value(result);
+    final completer = Completer<List<TraStopTime>>();
+    pending.add(completer);
+    return completer.future;
+  }
+}
+
+class _StopThsr extends _FakeThsrRepository {
+  @override
+  Future<List<ThsrStopTime>> stops(String date, String trainNo) async => const [
+    ThsrStopTime(
+      stationName: '南港',
+      arrivalTime: '',
+      departureTime: '08:00',
+      sequence: 1,
+    ),
+  ];
 }

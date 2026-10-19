@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 )
 
 type convergenceViolation struct {
@@ -21,21 +22,27 @@ func findConvergenceViolations(subRoutemap map[string]*models.BusSubroute, nameO
 			out = append(out, convergenceViolation{uid, "too_many_directions", strconv.Itoa(n)})
 		}
 	}
+	out = append(out, findBusNameViolations(nameObs)...)
+	sortBusConvergenceViolations(out)
+	return out
+}
+
+func findBusNameViolations(nameObs map[string]map[string]struct{}) []convergenceViolation {
+	var out []convergenceViolation
 	for uid, names := range nameObs {
 		if len(names) > 1 {
-			distinct := make([]string, 0, len(names))
-			for name := range names {
-				distinct = append(distinct, name)
-			}
-			sort.Strings(distinct)
+			distinct := pipeline.SortedKeys(names)
 			out = append(out, convergenceViolation{uid, "name_mismatch", strings.Join(distinct, "|")})
 		}
 	}
+	return out
+}
+
+func sortBusConvergenceViolations(out []convergenceViolation) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].canonical != out[j].canonical {
 			return out[i].canonical < out[j].canonical
 		}
 		return out[i].issue < out[j].issue
 	})
-	return out
 }

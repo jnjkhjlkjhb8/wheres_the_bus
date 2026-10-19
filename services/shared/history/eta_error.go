@@ -61,21 +61,7 @@ func matchPredictionActual(preds []PredictionRecord, arrivals []arrivalEvent, ma
 
 	out := make([]matchedError, 0, len(preds))
 	for _, p := range preds {
-		var matched *arrivalEvent
-		for i := range sorted {
-			a := &sorted[i]
-			if a.SubRouteUID != p.SubRouteUID || a.Direction != p.Direction || a.StopUID != p.StopUID {
-				continue
-			}
-			if a.arrivedAt.Before(p.PredictedAt) {
-				continue
-			}
-			if a.arrivedAt.Sub(p.PredictedAt) > matchWindow {
-				break
-			}
-			matched = a
-			break
-		}
+		matched := matchingArrival(p, sorted, matchWindow)
 		if matched == nil {
 			continue
 		}
@@ -90,6 +76,28 @@ func matchPredictionActual(preds []PredictionRecord, arrivals []arrivalEvent, ma
 		})
 	}
 	return out
+}
+
+func matchingArrival(p PredictionRecord, sorted []arrivalEvent, matchWindow time.Duration) *arrivalEvent {
+	for i := range sorted {
+		a := &sorted[i]
+		if !candidateArrival(p, a) {
+			continue
+		}
+		if a.arrivedAt.Sub(p.PredictedAt) > matchWindow {
+			return nil
+		}
+		return a
+	}
+	return nil
+}
+
+func candidateArrival(p PredictionRecord, a *arrivalEvent) bool {
+	return samePredictionStop(p, a) && !a.arrivedAt.Before(p.PredictedAt)
+}
+
+func samePredictionStop(p PredictionRecord, a *arrivalEvent) bool {
+	return a.SubRouteUID == p.SubRouteUID && a.Direction == p.Direction && a.StopUID == p.StopUID
 }
 
 // maeKey groups matched errors for aggregation: per route and prediction source.
@@ -111,21 +119,32 @@ type maeStat struct {
 // route per source. Results are sorted by route then source for a stable,
 // scannable log. An empty input yields an empty slice.
 func aggregateMAE(errs []matchedError) []maeStat {
-	type acc struct {
-		sumAbs float64
-		n      int
-	}
-	buckets := make(map[maeKey]*acc)
+	out := maeBucketStats(accumulateMAE(errs))
+	sortMAEStats(out)
+	return out
+}
+
+type maeAccumulator struct {
+	sumAbs float64
+	n      int
+}
+
+func accumulateMAE(errs []matchedError) map[maeKey]*maeAccumulator {
+	buckets := make(map[maeKey]*maeAccumulator)
 	for _, e := range errs {
 		k := maeKey{SubRouteUID: e.SubRouteUID, Source: e.Source}
 		a := buckets[k]
 		if a == nil {
-			a = &acc{}
+			a = &maeAccumulator{}
 			buckets[k] = a
 		}
 		a.sumAbs += math.Abs(float64(e.PredictedSecs - e.actualSecs))
 		a.n++
 	}
+	return buckets
+}
+
+func maeBucketStats(buckets map[maeKey]*maeAccumulator) []maeStat {
 	out := make([]maeStat, 0, len(buckets))
 	for k, a := range buckets {
 		mae := 0.0
@@ -134,13 +153,16 @@ func aggregateMAE(errs []matchedError) []maeStat {
 		}
 		out = append(out, maeStat{SubRouteUID: k.SubRouteUID, Source: k.Source, maeSeconds: mae, samples: a.n})
 	}
+	return out
+}
+
+func sortMAEStats(out []maeStat) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].SubRouteUID != out[j].SubRouteUID {
 			return out[i].SubRouteUID < out[j].SubRouteUID
 		}
 		return out[i].Source < out[j].Source
 	})
-	return out
 }
 
 // _predictionMatchWindow bounds how long after a prediction an arrival may occur
@@ -162,6 +184,10 @@ func loadOpenPredictions(ctx context.Context, db *pgxpool.Pool) ([]PredictionRec
 		return nil, _oops.Wrapf(err, "query open predictions")
 	}
 	defer rows.Close()
+	return readOpenPredictions(rows)
+}
+
+func readOpenPredictions(rows pgx.Rows) ([]PredictionRecord, error) {
 	var out []PredictionRecord
 	for rows.Next() {
 		var p PredictionRecord
@@ -222,6 +248,10 @@ func fillPredictionActuals(ctx context.Context, db *pgxpool.Pool, hist Reader) (
 	if len(preds) == 0 {
 		return 0, nil
 	}
+	return fillObservedPredictions(ctx, db, hist, preds)
+}
+
+func fillObservedPredictions(ctx context.Context, db *pgxpool.Pool, hist Reader, preds []PredictionRecord) (int64, error) {
 	arrivals, err := hist.arrivals(ctx, time.Now().Add(-_predictionLookback))
 	if err != nil {
 		return 0, obs.Transient(_oops.Wrapf(err, "load history arrivals"))
@@ -242,8 +272,12 @@ func MeasurePredictionError(ctx context.Context, db *pgxpool.Pool, hist Reader) 
 	}
 	zap.S().Infow("filled actuals", "component", "eta_error", "actuals", filled)
 
+	return reportPredictionAccuracy(ctx, db)
+}
+
+func reportPredictionAccuracy(ctx context.Context, db *pgxpool.Pool) error {
 	rows, err := db.Query(ctx, `
-		SELECT sub_route_uid, source,
+  SELECT sub_route_uid, source,
 		       AVG(ABS(predicted_seconds - actual_seconds))::float AS mae,
 		       COUNT(*) AS samples
 		FROM bus_eta_prediction_error
@@ -255,29 +289,34 @@ func MeasurePredictionError(ctx context.Context, db *pgxpool.Pool, hist Reader) 
 		return obs.Transient(_oops.Wrapf(err, "aggregate prediction error"))
 	}
 	defer rows.Close()
-	count := 0
-	for rows.Next() {
-		var sub, source string
-		var mae float64
-		var samples int
-		if err := rows.Scan(&sub, &source, &mae, &samples); err != nil {
-			zap.S().Errorw("scan error", "component", "eta_error", "err", err)
-			continue
-		}
-		zap.S().Infow("log",
-			"component", "eta_error",
-			"sub_route", sub,
-			"source", source,
-			"mae_seconds", mae,
-			"samples", samples,
-		)
-		count++
-	}
+	count := logPredictionAccuracy(rows)
 	if err := rows.Err(); err != nil {
 		return obs.Transient(_oops.Wrapf(err, "aggregate prediction error rows"))
 	}
 	zap.S().Infow("complete", "component", "eta_error", "groups", count)
 	return nil
+}
+
+func logPredictionAccuracy(rows pgx.Rows) int {
+	count := 0
+	for rows.Next() {
+		if logPredictionAccuracyRow(rows) {
+			count++
+		}
+	}
+	return count
+}
+
+func logPredictionAccuracyRow(rows pgx.Rows) bool {
+	var sub, source string
+	var mae float64
+	var samples int
+	if err := rows.Scan(&sub, &source, &mae, &samples); err != nil {
+		zap.S().Errorw("scan error", "component", "eta_error", "err", err)
+		return false
+	}
+	zap.S().Infow("log", "component", "eta_error", "sub_route", sub, "source", source, "mae_seconds", mae, "samples", samples)
+	return true
 }
 
 func RecordPredictionErrors(ctx context.Context, db *pgxpool.Pool, preds []PredictionRecord) {

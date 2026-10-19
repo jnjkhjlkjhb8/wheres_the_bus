@@ -160,16 +160,20 @@ func mrtLegacyVectorCleanupWrites(uid, system string) []vectorWrite {
 		if label.code != system {
 			continue
 		}
-		writes := make([]vectorWrite, 0, len(label.legacy))
-		for _, legacy := range label.legacy {
-			writes = append(writes, vectorWrite{
-				sql:  _mrtLegacyVectorCleanupSQL,
-				args: []any{uid, legacy, system},
-			})
-		}
-		return writes
+		return mrtLegacyLabelWrites(uid, system, label.legacy)
 	}
 	return nil
+}
+
+func mrtLegacyLabelWrites(uid, system string, legacyLabels []string) []vectorWrite {
+	writes := make([]vectorWrite, 0, len(legacyLabels))
+	for _, legacy := range legacyLabels {
+		writes = append(writes, vectorWrite{
+			sql:  _mrtLegacyVectorCleanupSQL,
+			args: []any{uid, legacy, system},
+		})
+	}
+	return writes
 }
 
 const (
@@ -189,33 +193,13 @@ type Redis interface {
 }
 
 var (
-	_busSubroutesForVectorSQL = `
-	SELECT bs.sub_route_uid, bs.sub_route_name, bs.city, bs.depart, bs.destin
-	FROM bus_static bs
-	WHERE bs.updated_at >= $1 AND bs.updated_at < $2` + FreshVectorSkipSQL("bus_route", "bs.sub_route_uid",
-		"sv.name = bs.sub_route_name AND sv.depart = bs.depart AND sv.destin = bs.destin") + `;`
-	_busStationsForVectorSQL = `
-	SELECT bg.group_uid, bg.group_name, bg.city, ST_AsText(bg.position)
-	FROM bus_station_groups bg
-	WHERE bg.updated_at >= $1 AND bg.updated_at < $2` + FreshVectorSkipSQL("bus_station", "bg.group_uid",
-		"sv.name = bg.group_name AND ST_OrderingEquals(sv.geom, bg.position)") + `;`
-	_bikeStationsForVectorSQL = `
-	SELECT bs.station_uid, bs.name, bs.city, ST_AsText(bs.geom)
-	FROM bike_stations bs
-	WHERE bs.updated_at >= $1 AND bs.updated_at < $2` + FreshVectorSkipSQL("bike_station", "bs.station_uid",
-		"sv.name = bs.name AND ST_OrderingEquals(sv.geom, bs.geom)") + `;`
+	_busSubroutesForVectorSQL  = buildBusSubroutesForVectorSQL()
+	_busStationsForVectorSQL   = buildBusStationsForVectorSQL()
+	_bikeStationsForVectorSQL  = buildBikeStationsForVectorSQL()
 	_mrtStationsForVectorSQL   = buildMRTStationsForVectorSQL()
 	_mrtLegacyVectorCleanupSQL = buildMRTLegacyVectorCleanupSQL()
-	_traStationsForVectorSQL   = `
-	SELECT ts.station_id, ts.name, ts.city, ST_AsText(ts.geom)
-	FROM tra_stations ts
-	WHERE ts.updated_at >= $1 AND ts.updated_at < $2` + FreshVectorSkipSQL("tra_station", "ts.station_id",
-		"sv.name = ts.name AND ST_OrderingEquals(sv.geom, ts.geom)") + `;`
-	_thsrStationsForVectorSQL = `
-	SELECT ts.station_id, ts.name, ts.city, ST_AsText(ts.geom)
-	FROM thsr_stations ts
-	WHERE ts.updated_at >= $1 AND ts.updated_at < $2` + FreshVectorSkipSQL("thsr_station", "ts.station_id",
-		"sv.name = ts.name AND ST_OrderingEquals(sv.geom, ts.geom)") + `;`
+	_traStationsForVectorSQL   = buildTRAStationsForVectorSQL()
+	_thsrStationsForVectorSQL  = buildTHSRStationsForVectorSQL()
 )
 
 // vectorDataset keeps the query and its row processor together,
@@ -243,97 +227,42 @@ var _vectorDatasets = []vectorDataset{
 		vectorType: "bus_route",
 		query:      _busSubroutesForVectorSQL,
 		queryArgs:  watermarkWindowQueryArgs,
-		process: func(rows pgx.Rows) (string, resp, error) {
-			var uid, name, city, depart, destin string
-			if err := rows.Scan(&uid, &name, &city, &depart, &destin); err != nil {
-				return "", resp{}, err
-			}
-			cn := cityName(city)
-			text := fmt.Sprintf("類型：公車路線 子路線UID：%s 路線名：%s 縣市：%s 起點站：%s 終點站：%s", uid, name, cn, depart, destin)
-			return text, resp{UID: uid, Name: name, City: cn, DepartSystem: depart, Destin: destin}, nil
-		},
+		process:    processBusSubrouteVector,
 	},
 	{
 		key:        "bus_station_groups",
 		vectorType: "bus_station",
 		query:      _busStationsForVectorSQL,
 		queryArgs:  watermarkWindowQueryArgs,
-		process: func(rows pgx.Rows) (string, resp, error) {
-			var uid, name, city, geom string
-			if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
-				return "", resp{}, err
-			}
-			cn := cityName(city)
-			text := fmt.Sprintf("類型：公車組站位 組站位UID：%s 組站位名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
-			return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
-		},
+		process:    processBusStationVector,
 	},
 	{
 		key:        "bike_stations",
 		vectorType: "bike_station",
 		query:      _bikeStationsForVectorSQL,
 		queryArgs:  watermarkWindowQueryArgs,
-		process: func(rows pgx.Rows) (string, resp, error) {
-			var uid, name, city, geom string
-			if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
-				return "", resp{}, err
-			}
-			cn := cityName(city)
-			text := fmt.Sprintf("類型：公共自行車租借站 站點UID：%s 站點名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
-			return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
-		},
+		process:    processBikeStationVector,
 	},
 	{
 		key:        "mrt_station",
 		vectorType: "mrt_station",
 		query:      _mrtStationsForVectorSQL,
 		queryArgs:  upperCutoffQueryArgs,
-		process: func(rows pgx.Rows) (string, resp, error) {
-			var uid, name, system, geom string
-			if err := rows.Scan(&uid, &name, &system, &geom); err != nil {
-				return "", resp{}, err
-			}
-			cn := mrtSystemName(system)
-			text := fmt.Sprintf("類型：捷運站 車站UID：%s 車站名稱：%s 捷運系統：%s 位置：%s", uid, name, cn, geom)
-			return text, resp{
-				UID:          uid,
-				Name:         name,
-				City:         cn,
-				DepartSystem: system,
-				Geom:         geom,
-				postUpsert:   mrtLegacyVectorCleanupWrites(uid, system),
-			}, nil
-		},
+		process:    processMRTStationVector,
 	},
 	{
 		key:        "tra_stations",
 		vectorType: "tra_station",
 		query:      _traStationsForVectorSQL,
 		queryArgs:  watermarkWindowQueryArgs,
-		process: func(rows pgx.Rows) (string, resp, error) {
-			var uid, name, city, geom string
-			if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
-				return "", resp{}, err
-			}
-			cn := cityName(city)
-			text := fmt.Sprintf("類型：台鐵車站 車站UID：%s 車站名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
-			return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
-		},
+		process:    processTRAStationVector,
 	},
 	{
 		key:        "thsr_stations",
 		vectorType: "thsr_station",
 		query:      _thsrStationsForVectorSQL,
 		queryArgs:  watermarkWindowQueryArgs,
-		process: func(rows pgx.Rows) (string, resp, error) {
-			var uid, name, city, geom string
-			if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
-				return "", resp{}, err
-			}
-			cn := cityName(city)
-			text := fmt.Sprintf("類型：高鐵車站 車站UID：%s 車站名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
-			return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
-		},
+		process:    processTHSRStationVector,
 	},
 }
 
@@ -366,18 +295,22 @@ const _searchVectorUpsertSQL = `INSERT INTO search_vector(
 			geom = EXCLUDED.geom,
 			updated_at = NOW();`
 
+func queueVectorRow(batch *pgx.Batch, row resp) {
+	batch.Queue(_searchVectorUpsertSQL,
+		row.Type, row.UID, row.Name, searchalias.SearchAlias(row.Name), row.City,
+		row.DepartSystem, row.Destin, row.Geom)
+	for _, write := range row.postUpsert {
+		batch.Queue(write.sql, write.args...)
+	}
+}
+
 func processVectorBatch(ctx context.Context, db DB, rows []resp) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	batch := &pgx.Batch{}
 	for _, row := range rows {
-		batch.Queue(_searchVectorUpsertSQL,
-			row.Type, row.UID, row.Name, searchalias.SearchAlias(row.Name), row.City,
-			row.DepartSystem, row.Destin, row.Geom)
-		for _, write := range row.postUpsert {
-			batch.Queue(write.sql, write.args...)
-		}
+		queueVectorRow(batch, row)
 	}
 	// With no transaction-control statements, pgx executes the batch in an
 	// implicit transaction. A cleanup failure therefore rolls back its preceding
@@ -401,27 +334,54 @@ func processVectorDataset(
 	}
 	defer rows.Close()
 
-	metadata := make([]resp, 0, _size)
+	builder := vectorBatchBuilder{ctx: ctx, db: db, dataset: dataset, metadata: make([]resp, 0, _size)}
+	return builder.consume(rows)
+}
+
+type vectorBatchBuilder struct {
+	ctx      context.Context
+	db       DB
+	dataset  vectorDataset
+	metadata []resp
+}
+
+func (b *vectorBatchBuilder) consume(rows pgx.Rows) error {
 	for rows.Next() {
-		_, row, err := dataset.process(rows)
-		if err != nil {
-			return _oops.With("dataset_key", dataset.key).Wrapf(err, "scan vector dataset")
-		}
-		row.Type = dataset.vectorType
-		metadata = append(metadata, row)
-		if len(metadata) == _size {
-			if err := processVectorBatch(ctx, db, metadata); err != nil {
-				return _oops.With("dataset_key", dataset.key).Wrapf(err, "process vector dataset")
-			}
-			metadata = metadata[:0]
+		if err := b.readRow(rows); err != nil {
+			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return _oops.With("dataset_key", dataset.key).Wrapf(err, "read vector dataset rows")
+		return _oops.With("dataset_key", b.dataset.key).Wrapf(err, "read vector dataset rows")
 	}
-	if err := processVectorBatch(ctx, db, metadata); err != nil {
-		return _oops.With("dataset_key", dataset.key).Wrapf(err, "process vector dataset")
+	return b.writeRemaining()
+}
+
+func (b *vectorBatchBuilder) readRow(rows pgx.Rows) error {
+	_, row, err := b.dataset.process(rows)
+	if err != nil {
+		return _oops.With("dataset_key", b.dataset.key).Wrapf(err, "scan vector dataset")
 	}
+	row.Type = b.dataset.vectorType
+	b.metadata = append(b.metadata, row)
+	return b.flushFull()
+}
+
+func (b *vectorBatchBuilder) writeRemaining() error {
+	if err := processVectorBatch(b.ctx, b.db, b.metadata); err != nil {
+		return _oops.With("dataset_key", b.dataset.key).Wrapf(err, "process vector dataset")
+	}
+	return nil
+}
+
+func (b *vectorBatchBuilder) flushFull() error {
+	if len(b.metadata) != _size {
+		return nil
+	}
+	if err := b.writeRemaining(); err != nil {
+		return err
+	}
+	b.metadata = b.metadata[:0]
 	return nil
 }
 
@@ -430,23 +390,149 @@ func processVectorDataset(
 // cutoff only after all queries, scans, and batch writes succeed.
 func ChangeToVector(ctx context.Context, rc Redis, db DB) error {
 	cutoff := time.Now().UTC()
+	lower, err := readVectorWatermark(ctx, rc)
+	if err != nil {
+		return err
+	}
+	if err := updateVectorDatasets(ctx, db, lower, cutoff); err != nil {
+		return err
+	}
+	return writeVectorWatermark(ctx, rc, cutoff)
+}
+
+func readVectorWatermark(ctx context.Context, rc Redis) (string, error) {
 	lower, err := rc.Get(ctx, "LastTimeUpdate").Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return _oops.Wrapf(err, "get vector watermark")
+		return "", _oops.Wrapf(err, "get vector watermark")
 	}
 	if lower == "" {
 		lower = time.Time{}.Format(time.RFC3339)
 	}
 
+	return lower, nil
+}
+
+func updateVectorDatasets(ctx context.Context, db DB, lower string, cutoff time.Time) error {
 	for _, dataset := range _vectorDatasets {
 		if err := processVectorDataset(ctx, db, dataset, lower, cutoff); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func writeVectorWatermark(ctx context.Context, rc Redis, cutoff time.Time) error {
 	watermark := cutoff.Format(time.RFC3339Nano)
 	if err := rc.Set(ctx, "LastTimeUpdate", watermark, 0).Err(); err != nil {
 		return _oops.Wrapf(err, "set vector watermark")
 	}
 	zap.S().Infow("complete", "component", "vector", "action", "vector", "event", "complete", "cutoff", watermark)
 	return nil
+}
+
+func processBusSubrouteVector(rows pgx.Rows) (string, resp, error) {
+	var uid, name, city, depart, destin string
+	if err := rows.Scan(&uid, &name, &city, &depart, &destin); err != nil {
+		return "", resp{}, err
+	}
+	cn := cityName(city)
+	text := fmt.Sprintf("類型：公車路線 子路線UID：%s 路線名：%s 縣市：%s 起點站：%s 終點站：%s", uid, name, cn, depart, destin)
+	return text, resp{UID: uid, Name: name, City: cn, DepartSystem: depart, Destin: destin}, nil
+}
+
+func processBusStationVector(rows pgx.Rows) (string, resp, error) {
+	var uid, name, city, geom string
+	if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
+		return "", resp{}, err
+	}
+	cn := cityName(city)
+	text := fmt.Sprintf("類型：公車組站位 組站位UID：%s 組站位名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
+	return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
+}
+
+func processBikeStationVector(rows pgx.Rows) (string, resp, error) {
+	var uid, name, city, geom string
+	if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
+		return "", resp{}, err
+	}
+	cn := cityName(city)
+	text := fmt.Sprintf("類型：公共自行車租借站 站點UID：%s 站點名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
+	return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
+}
+
+func processMRTStationVector(rows pgx.Rows) (string, resp, error) {
+	var uid, name, system, geom string
+	if err := rows.Scan(&uid, &name, &system, &geom); err != nil {
+		return "", resp{}, err
+	}
+	cn := mrtSystemName(system)
+	text := fmt.Sprintf("類型：捷運站 車站UID：%s 車站名稱：%s 捷運系統：%s 位置：%s", uid, name, cn, geom)
+	return text, resp{
+		UID:          uid,
+		Name:         name,
+		City:         cn,
+		DepartSystem: system,
+		Geom:         geom,
+		postUpsert:   mrtLegacyVectorCleanupWrites(uid, system),
+	}, nil
+}
+
+func processTRAStationVector(rows pgx.Rows) (string, resp, error) {
+	var uid, name, city, geom string
+	if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
+		return "", resp{}, err
+	}
+	cn := cityName(city)
+	text := fmt.Sprintf("類型：台鐵車站 車站UID：%s 車站名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
+	return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
+}
+
+func processTHSRStationVector(rows pgx.Rows) (string, resp, error) {
+	var uid, name, city, geom string
+	if err := rows.Scan(&uid, &name, &city, &geom); err != nil {
+		return "", resp{}, err
+	}
+	cn := cityName(city)
+	text := fmt.Sprintf("類型：高鐵車站 車站UID：%s 車站名稱：%s 縣市：%s 位置：%s", uid, name, cn, geom)
+	return text, resp{UID: uid, Name: name, City: cn, Geom: geom}, nil
+}
+
+func buildBusSubroutesForVectorSQL() string {
+	return `
+	SELECT bs.sub_route_uid, bs.sub_route_name, bs.city, bs.depart, bs.destin
+	FROM bus_static bs
+	WHERE bs.updated_at >= $1 AND bs.updated_at < $2` + FreshVectorSkipSQL("bus_route", "bs.sub_route_uid",
+		"sv.name = bs.sub_route_name AND sv.depart = bs.depart AND sv.destin = bs.destin") + `;`
+}
+
+func buildBusStationsForVectorSQL() string {
+	return `
+	SELECT bg.group_uid, bg.group_name, bg.city, ST_AsText(bg.position)
+	FROM bus_station_groups bg
+	WHERE bg.updated_at >= $1 AND bg.updated_at < $2` + FreshVectorSkipSQL("bus_station", "bg.group_uid",
+		"sv.name = bg.group_name AND ST_OrderingEquals(sv.geom, bg.position)") + `;`
+}
+
+func buildBikeStationsForVectorSQL() string {
+	return `
+	SELECT bs.station_uid, bs.name, bs.city, ST_AsText(bs.geom)
+	FROM bike_stations bs
+	WHERE bs.updated_at >= $1 AND bs.updated_at < $2` + FreshVectorSkipSQL("bike_station", "bs.station_uid",
+		"sv.name = bs.name AND ST_OrderingEquals(sv.geom, bs.geom)") + `;`
+}
+
+func buildTRAStationsForVectorSQL() string {
+	return `
+	SELECT ts.station_id, ts.name, ts.city, ST_AsText(ts.geom)
+	FROM tra_stations ts
+	WHERE ts.updated_at >= $1 AND ts.updated_at < $2` + FreshVectorSkipSQL("tra_station", "ts.station_id",
+		"sv.name = ts.name AND ST_OrderingEquals(sv.geom, ts.geom)") + `;`
+}
+
+func buildTHSRStationsForVectorSQL() string {
+	return `
+	SELECT ts.station_id, ts.name, ts.city, ST_AsText(ts.geom)
+	FROM thsr_stations ts
+	WHERE ts.updated_at >= $1 AND ts.updated_at < $2` + FreshVectorSkipSQL("thsr_station", "ts.station_id",
+		"sv.name = ts.name AND ST_OrderingEquals(sv.geom, ts.geom)") + `;`
 }

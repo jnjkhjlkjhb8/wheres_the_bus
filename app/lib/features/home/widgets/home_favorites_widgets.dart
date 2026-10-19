@@ -125,10 +125,12 @@ class _FavoritesEmpty extends StatelessWidget {
       icon: Icons.push_pin_outlined,
       heading: AppI18n.of(context).homeNoPinned,
       body: AppI18n.of(context).homeNoPinnedBody,
-      actionLabel: AppI18n.of(context).homeGoToFavorites,
-      onAction: () {
-        unawaited(context.push(AppRoutes.favorites));
-      },
+      action: (
+        label: AppI18n.of(context).homeGoToFavorites,
+        onTap: () {
+          unawaited(context.push(AppRoutes.favorites));
+        },
+      ),
     );
   }
 }
@@ -138,15 +140,13 @@ class _EmptyState extends StatelessWidget {
     required this.icon,
     required this.heading,
     required this.body,
-    this.actionLabel,
-    this.onAction,
+    this.action,
   });
 
   final IconData icon;
   final String heading;
   final String body;
-  final String? actionLabel;
-  final VoidCallback? onAction;
+  final ({String label, VoidCallback onTap})? action;
 
   @override
   Widget build(BuildContext context) {
@@ -176,11 +176,11 @@ class _EmptyState extends StatelessWidget {
                 height: 1.5,
               ),
             ),
-            if (actionLabel != null && onAction != null) ...[
+            if (action case final cta?) ...[
               const SizedBox(height: AppTheme.space16),
               Pressable(
-                onTap: onAction,
-                semanticLabel: actionLabel,
+                onTap: cta.onTap,
+                semanticLabel: cta.label,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppTheme.space20,
@@ -193,7 +193,7 @@ class _EmptyState extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    actionLabel!,
+                    cta.label,
                     style: AppTextStyles.bodyRegular.copyWith(
                       fontWeight: FontWeight.w600,
                       color: cs.onSurface,

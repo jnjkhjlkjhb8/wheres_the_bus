@@ -78,13 +78,7 @@ func (s *MrtServer) MrtEta(in *pb.AskMrt, stream pb.Mrt_Service_EtaServer) error
 	// serialize their sends through one mutex.
 	var mu sync.Mutex
 	send := func(data []byte) error {
-		live, err := livestream.DecodePayload(data, &pb.MrtLive{})
-		if err != nil {
-			return err
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		return stream.Send(&pb.Resp_MrtEta{Data: live})
+		return sendMrtEta(stream, &mu, data)
 	}
 
 	g, ctx := errgroup.WithContext(stream.Context())
@@ -100,4 +94,14 @@ func (s *MrtServer) MrtEta(in *pb.AskMrt, stream pb.Mrt_Service_EtaServer) error
 		})
 	}
 	return g.Wait()
+}
+
+func sendMrtEta(stream pb.Mrt_Service_EtaServer, mu *sync.Mutex, data []byte) error {
+	live, err := livestream.DecodePayload(data, &pb.MrtLive{})
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return stream.Send(&pb.Resp_MrtEta{Data: live})
 }

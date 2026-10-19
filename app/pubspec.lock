@@ -170,7 +170,7 @@ packages:
     source: hosted
     version: "7.3.1"
   connectivity_plus_platform_interface:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: connectivity_plus_platform_interface
       sha256: "3c09627c536d22fd24691a905cdd8b14520de69da52c7a97499c8be5284a32ed"
@@ -290,7 +290,7 @@ packages:
     source: hosted
     version: "12.4.6"
   firebase_analytics_platform_interface:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: firebase_analytics_platform_interface
       sha256: "448c319ea895da002e43892c7d3f15dccbc3c4c3b81d3e307e37da885ea52bdf"
@@ -362,7 +362,7 @@ packages:
     source: hosted
     version: "4.13.0"
   firebase_core_platform_interface:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: firebase_core_platform_interface
       sha256: e28f9afdcb5b0f0a8ea74ea3b322f5a7592c81cb45dd9d189913bdae08a2089a
@@ -402,7 +402,7 @@ packages:
     source: hosted
     version: "16.5.0"
   firebase_messaging_platform_interface:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: firebase_messaging_platform_interface
       sha256: e5fbb62bd23a27c983825277877ac91fdfdb6bfb31c6e5399700963ae586e339
@@ -450,7 +450,7 @@ packages:
     source: hosted
     version: "6.5.6"
   firebase_remote_config_platform_interface:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: firebase_remote_config_platform_interface
       sha256: c05980baf7e116689d6f320db5b7e3b2ff19b30eb577f78150fae019057d591e
@@ -896,7 +896,7 @@ packages:
     source: hosted
     version: "0.15.6"
   http:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: http
       sha256: "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412"

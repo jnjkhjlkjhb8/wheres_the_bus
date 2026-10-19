@@ -34,9 +34,9 @@ class GrpcClient {
     required String host,
     required bool tls,
   }) {
-    final isLocalEnv = appEnv == 'dev' || appEnv == 'test';
+    final isLocalEnv = const {'dev', 'test'}.contains(appEnv);
     if (isLocalEnv) return;
-    if (host.isEmpty || host == 'localhost' || host == '127.0.0.1') {
+    if (_loopbackHost(host)) {
       throw StateError(
         'GRPC_HOST must be a non-loopback host in the "$appEnv" environment',
       );
@@ -45,6 +45,9 @@ class GrpcClient {
       throw StateError('GRPC_TLS must be true in the "$appEnv" environment');
     }
   }
+
+  static bool _loopbackHost(String host) =>
+      const {'', 'localhost', '127.0.0.1'}.contains(host);
 
   static Future<void> init() async {
     validateConfig(appEnv: _appEnv, host: _host, tls: _tls);
@@ -74,6 +77,9 @@ class GrpcClient {
 
   ClientChannel? _channelInstance;
 
+  @visibleForTesting
+  ChannelOptions? get channelOptions => _channelInstance?.options;
+
   ClientChannel get _channel => _channelInstance ??= _buildChannel();
 
   /// Drops the current channel so the next RPC builds a fresh one. In-flight
@@ -102,9 +108,7 @@ class GrpcClient {
       _host,
       port: _port,
       options: ChannelOptions(
-        credentials: _tls
-            ? const ChannelCredentials.secure()
-            : const ChannelCredentials.insecure(),
+        credentials: _credentials,
         keepAlive: const ClientKeepAliveOptions(
           pingInterval: Duration(seconds: 60),
           timeout: Duration(seconds: 10),
@@ -118,6 +122,10 @@ class GrpcClient {
       ),
     );
   }
+
+  ChannelCredentials get _credentials => _tls
+      ? const ChannelCredentials.secure()
+      : const ChannelCredentials.insecure();
 
   static final List<ClientInterceptor> _interceptors = [
     GrpcCompressionInterceptor(),

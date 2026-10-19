@@ -86,6 +86,31 @@ void main() {
   });
 
   group('AlightConfirmBar', () {
+    testWidgets(
+      'a pending start keeps one spinner and blocks duplicate starts',
+      (
+        tester,
+      ) async {
+        var starts = 0;
+        await tester.pumpWidget(
+          _host(
+            AlightConfirmBar(
+              targetName: '市政府',
+              lead: 2,
+              busy: true,
+              onLeadChanged: (_) {},
+              onStart: () => starts++,
+              onCancel: () {},
+            ),
+          ),
+        );
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        await tester.tap(find.byType(CircularProgressIndicator));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(starts, 0);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
     testWidgets('hands back the lead the rider actually set', (tester) async {
       var lead = 2;
       final started = <int>[];

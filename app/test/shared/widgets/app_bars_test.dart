@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce_flutter/adapters.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
@@ -63,6 +64,15 @@ void main() {
     );
 
     expect(find.byType(AppBarCircleButton), findsOneWidget);
+    for (final (i, circled) in [(0, false), (1, true)]) {
+      expect(
+        find.descendant(
+          of: find.byType(AppBarBackButton).at(i),
+          matching: find.byType(AppBarCircleButton),
+        ),
+        circled ? findsOneWidget : findsNothing,
+      );
+    }
     for (var i = 0; i < 2; i++) {
       expect(
         tester.getSize(find.byType(AppBarBackButton).at(i)),
@@ -171,6 +181,138 @@ void main() {
     for (final text in tester.widgetList<Text>(find.text('07/29 (三)'))) {
       expect(text.style!.fontFeatures, isNotEmpty);
     }
+  });
+
+  testWidgets('a subtitle tightens the title and follows the alignment', (
+    tester,
+  ) async {
+    Future<void> mount({required bool centered, String? subtitle}) =>
+        tester.pumpWidget(
+          i18nApp(
+            Scaffold(
+              appBar: DetailAppBar(
+                title: '票價',
+                subtitle: subtitle,
+                centerTitle: centered,
+              ),
+            ),
+          ),
+        );
+    double? heightOf(String text) =>
+        tester.widget<Text>(find.text(text)).style!.height;
+
+    await mount(centered: false);
+    expect(heightOf('票價'), AppTextStyles.bodyLarge.height);
+
+    await mount(centered: false, subtitle: '07/29 (三)');
+    expect(heightOf('票價'), 1.2);
+    expect(heightOf('07/29 (三)'), 1.2);
+    Column titleColumn() => tester.widget<Column>(
+      find
+          .ancestor(of: find.text('07/29 (三)'), matching: find.byType(Column))
+          .first,
+    );
+    expect(titleColumn().crossAxisAlignment, CrossAxisAlignment.start);
+
+    await mount(centered: true, subtitle: '07/29 (三)');
+    expect(titleColumn().crossAxisAlignment, CrossAxisAlignment.center);
+  });
+
+  testWidgets('a removed bar stops listening to scrolls', (tester) async {
+    final shown = ValueNotifier(true);
+    addTearDown(shown.dispose);
+    await tester.pumpWidget(
+      i18nApp(
+        Material(
+          child: ScrollNotificationObserver(
+            child: ValueListenableBuilder<bool>(
+              valueListenable: shown,
+              builder: (_, on, _) => Column(
+                children: [
+                  if (on) const DetailAppBar(title: '票價'),
+                  Expanded(
+                    child: ListView(children: const [SizedBox(height: 2000)]),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    shown.value = false;
+    await tester.pump();
+    await tester.drag(find.byType(ListView), const Offset(0, -200));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a bar moved to another observer follows only that one', (
+    tester,
+  ) async {
+    final barKey = GlobalKey();
+    final inFirst = ValueNotifier(true);
+    addTearDown(inFirst.dispose);
+    Widget list(String name) => Expanded(
+      child: ListView(
+        key: ValueKey(name),
+        children: const [SizedBox(height: 2000)],
+      ),
+    );
+    await tester.pumpWidget(
+      i18nApp(
+        Material(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: inFirst,
+            builder: (_, first, _) => Column(
+              children: [
+                Expanded(
+                  child: ScrollNotificationObserver(
+                    child: Column(
+                      children: [
+                        if (first)
+                          KeyedSubtree(
+                            key: barKey,
+                            child: const DetailAppBar(title: '票價'),
+                          ),
+                        list('first'),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: ScrollNotificationObserver(
+                    child: Column(
+                      children: [
+                        if (!first)
+                          KeyedSubtree(
+                            key: barKey,
+                            child: const DetailAppBar(title: '票價'),
+                          ),
+                        list('second'),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    inFirst.value = false;
+    await tester.pump();
+
+    await tester.drag(find.byKey(const ValueKey('first')), const Offset(0, -200));
+    await tester.pumpAndSettle();
+    expect(barDecoration(tester).boxShadow, isEmpty);
+
+    await tester.drag(
+      find.byKey(const ValueKey('second')),
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+    expect(barDecoration(tester).boxShadow, hasLength(1));
   });
 }
 

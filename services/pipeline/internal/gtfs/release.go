@@ -53,22 +53,34 @@ func RunDir(root, runID string) string {
 func ExportRun(ctx context.Context, db *pgxpool.Pool, root, runID string, runDate time.Time) (Manifest, error) {
 	ctx, cancel := context.WithTimeout(ctx, _gtfsExportTimeout)
 	defer cancel()
-	var buildSeq int64
-	if err := db.QueryRow(ctx, "SELECT nextval('static_build_seq')").Scan(&buildSeq); err != nil {
-		return Manifest{}, _oops.Wrapf(err, "gtfs export: next build seq")
-	}
-	dir := RunDir(root, runID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return Manifest{}, _oops.With("dir", dir).Wrapf(err, "gtfs export: create run dir")
+	dir, buildSeq, err := prepareGTFSRun(ctx, db, root, runID)
+	if err != nil {
+		return Manifest{}, err
 	}
 	sum, err := writeRunFeed(ctx, db, dir, runDate.Format("20060102-1504"))
 	if err != nil {
 		return Manifest{}, err
 	}
-	if err := writeRTSnapshot(ctx, db, runID); err != nil {
+	m := Manifest{RunID: runID, BuildSeq: buildSeq, GTFSSHA256: sum}
+	return finishGTFSRun(ctx, db, dir, m)
+}
+
+func prepareGTFSRun(ctx context.Context, db *pgxpool.Pool, root, runID string) (string, int64, error) {
+	var buildSeq int64
+	if err := db.QueryRow(ctx, "SELECT nextval('static_build_seq')").Scan(&buildSeq); err != nil {
+		return "", 0, _oops.Wrapf(err, "gtfs export: next build seq")
+	}
+	dir := RunDir(root, runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", 0, _oops.With("dir", dir).Wrapf(err, "gtfs export: create run dir")
+	}
+	return dir, buildSeq, nil
+}
+
+func finishGTFSRun(ctx context.Context, db *pgxpool.Pool, dir string, m Manifest) (Manifest, error) {
+	if err := writeRTSnapshot(ctx, db, m.RunID); err != nil {
 		return Manifest{}, err
 	}
-	m := Manifest{RunID: runID, BuildSeq: buildSeq, GTFSSHA256: sum}
 	if err := writeManifest(dir, m); err != nil {
 		return Manifest{}, err
 	}
@@ -85,24 +97,35 @@ func writeRunFeed(ctx context.Context, db *pgxpool.Pool, dir, version string) (s
 		_ = temp.Close()
 		_ = os.Remove(tempName)
 	}()
+	return writeRunArchive(ctx, db, temp, dir, version)
+}
+
+func writeRunArchive(ctx context.Context, db *pgxpool.Pool, temp *os.File, dir, version string) (string, error) {
 	hash := sha256.New()
 	if _, err := writeGTFSArchive(ctx, db, io.MultiWriter(temp, hash), version); err != nil {
 		return "", err
 	}
-	// fsync before the rename, as in buildGTFSFeed.
-	if err := temp.Sync(); err != nil {
-		return "", _oops.Wrapf(err, "gtfs export: sync")
-	}
-	if err := temp.Close(); err != nil {
-		return "", _oops.Wrapf(err, "gtfs export: close")
-	}
-	if err := os.Chmod(tempName, 0o644); err != nil {
-		return "", _oops.Wrapf(err, "gtfs export: chmod")
-	}
-	if err := os.Rename(tempName, filepath.Join(dir, _runFeed)); err != nil {
-		return "", _oops.Wrapf(err, "gtfs export: publish run feed")
+	if err := publishRunFeed(temp, dir); err != nil {
+		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func publishRunFeed(temp *os.File, dir string) error {
+	if err := closeDurableGTFSFile(temp); err != nil {
+		return err
+	}
+	return renameRunFeed(temp.Name(), dir)
+}
+
+func renameRunFeed(tempName, dir string) error {
+	if err := os.Chmod(tempName, 0o644); err != nil {
+		return _oops.Wrapf(err, "gtfs export: chmod")
+	}
+	if err := os.Rename(tempName, filepath.Join(dir, _runFeed)); err != nil {
+		return _oops.Wrapf(err, "gtfs export: publish run feed")
+	}
+	return nil
 }
 
 func writeManifest(dir string, m Manifest) error {
@@ -137,70 +160,71 @@ func ReadManifest(root, runID string) (Manifest, error) {
 // The snapshot rows are exactly what the GTFS-RT index used to read from
 // raw_tdx and the catalog at load time, frozen per run.
 var (
-	_snapshotBusTripSQL = `
-INSERT INTO gtfs_rt_bus_trip (run_id, trip_id, direction_id, service_id)
-SELECT DISTINCT $1::text, trip_id, direction_id, service_id
-FROM (
-  SELECT trip_id, direction_id, service_id FROM (` + _busScheduleSource + `) s
-  UNION ALL
-  SELECT trip_id, direction_id, service_id FROM (` + _busPatternTripsSQL + `) o
-) t
-WHERE trip_id <> '' AND service_id LIKE 'W:%'`
+	_snapshotBusTripSQL = buildSnapshotBusTripSQL()
 
 	// One row per TRA train per service date in the calendar window, so the
 	// index can switch to the next day's trip_ids even when no later run lands.
-	_snapshotRailTripSQL = `
-INSERT INTO gtfs_rt_rail_trip (run_id, service_date, train_no, trip_id, stations)
-SELECT $1::text, t.service_date, t.train_no,
-       t.operator || ':' || t.train_no || ':' || to_char(t.service_date, 'YYYYMMDD'),
-       array_agg(DISTINCT c->>'StationID')
-FROM (` + _railTripSource + `) t
-CROSS JOIN LATERAL jsonb_array_elements(t.stoptimes) c
-WHERE t.operator = 'TRA'
-  AND jsonb_typeof(t.stoptimes) = 'array'
-  AND COALESCE(c->>'StationID', '') <> ''
-GROUP BY t.service_date, t.train_no, t.operator
-HAVING count(*) > 1`
+	_snapshotRailTripSQL = buildSnapshotRailTripSQL()
 
-	_snapshotBusOffsetSQL = `
-INSERT INTO gtfs_rt_bus_offset (run_id, sub_route_uid, direction, stop_uid, offset_secs)
-SELECT $1::text, p.sub_route_uid, p.direction, p.stop_uid, p.offset_secs
-FROM (` + busmodel.PatternSQL + `) p
-WHERE p.complete`
+	_snapshotBusOffsetSQL = buildSnapshotBusOffsetSQL()
 )
 
 func writeRTSnapshot(ctx context.Context, db *pgxpool.Pool, runID string) error {
 	return pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
-		for _, table := range []string{"gtfs_rt_bus_trip", "gtfs_rt_rail_trip", "gtfs_rt_bus_offset"} {
-			// A retried run reuses its run_id; start its snapshot over.
-			if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE run_id = $1", runID); err != nil {
-				return _oops.With("table", table).Wrapf(err, "gtfs-rt snapshot: clear")
-			}
+		if err := clearRTSnapshot(ctx, tx, runID); err != nil {
+			return err
 		}
-		for _, stmt := range []string{_snapshotBusTripSQL, _snapshotRailTripSQL, _snapshotBusOffsetSQL} {
-			if _, err := tx.Exec(ctx, stmt, runID); err != nil {
-				return _oops.Wrapf(err, "gtfs-rt snapshot: write")
-			}
-		}
-		return nil
+		return insertRTSnapshot(ctx, tx, runID)
 	})
+}
+
+func clearRTSnapshot(ctx context.Context, tx pgx.Tx, runID string) error {
+	for _, table := range []string{"gtfs_rt_bus_trip", "gtfs_rt_rail_trip", "gtfs_rt_bus_offset"} {
+		// A retried run reuses its run_id; start its snapshot over.
+		if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE run_id = $1", runID); err != nil {
+			return _oops.With("table", table).Wrapf(err, "gtfs-rt snapshot: clear")
+		}
+	}
+	return nil
+}
+
+func insertRTSnapshot(ctx context.Context, tx pgx.Tx, runID string) error {
+	for _, stmt := range []string{_snapshotBusTripSQL, _snapshotRailTripSQL, _snapshotBusOffsetSQL} {
+		if _, err := tx.Exec(ctx, stmt, runID); err != nil {
+			return _oops.Wrapf(err, "gtfs-rt snapshot: write")
+		}
+	}
+	return nil
 }
 
 // Publish makes run m the published static data: active points at it, the
 // previous active becomes previous, and static_release records it. A run older
 // than the published one is refused with ErrStaleRun.
 func Publish(ctx context.Context, db *pgxpool.Pool, root string, m Manifest) error {
-	conn, err := db.Acquire(ctx)
+	conn, err := lockGTFSPublish(ctx, db)
 	if err != nil {
-		return _oops.Wrapf(err, "gtfs publish: acquire connection")
+		return err
 	}
 	defer conn.Release()
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", _publishLockKey); err != nil {
-		return _oops.Wrapf(err, "gtfs publish: lock")
-	}
 	defer func() {
 		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", _publishLockKey)
 	}()
+	return publishGTFSRelease(ctx, conn, root, m)
+}
+
+func lockGTFSPublish(ctx context.Context, db *pgxpool.Pool) (*pgxpool.Conn, error) {
+	conn, err := db.Acquire(ctx)
+	if err != nil {
+		return nil, _oops.Wrapf(err, "gtfs publish: acquire connection")
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", _publishLockKey); err != nil {
+		conn.Release()
+		return nil, _oops.Wrapf(err, "gtfs publish: lock")
+	}
+	return conn, nil
+}
+
+func checkGTFSReleaseVersion(ctx context.Context, conn *pgxpool.Conn, m Manifest) error {
 	var latest int64
 	if err := conn.QueryRow(ctx, "SELECT COALESCE(max(build_seq), 0) FROM static_release").Scan(&latest); err != nil {
 		return _oops.Wrapf(err, "gtfs publish: read published build seq")
@@ -208,9 +232,20 @@ func Publish(ctx context.Context, db *pgxpool.Pool, root string, m Manifest) err
 	if m.BuildSeq <= latest {
 		return ErrStaleRun
 	}
+	return nil
+}
+
+func publishGTFSRelease(ctx context.Context, conn *pgxpool.Conn, root string, m Manifest) error {
+	if err := checkGTFSReleaseVersion(ctx, conn, m); err != nil {
+		return err
+	}
 	if err := switchActive(root, m.RunID); err != nil {
 		return err
 	}
+	return recordGTFSRelease(ctx, conn, m)
+}
+
+func recordGTFSRelease(ctx context.Context, conn *pgxpool.Conn, m Manifest) error {
 	if _, err := conn.Exec(ctx,
 		"INSERT INTO static_release (run_id, build_seq, gtfs_sha256) VALUES ($1, $2, $3)",
 		m.RunID, m.BuildSeq, m.GTFSSHA256); err != nil {
@@ -224,12 +259,17 @@ func Publish(ctx context.Context, db *pgxpool.Pool, root string, m Manifest) err
 // whole run.
 func switchActive(root, runID string) error {
 	target := filepath.Join(_runsDir, runID)
-	if old, err := os.Readlink(filepath.Join(root, _activeLink)); err == nil && old != target {
-		if err := replaceLink(root, _previousLink, old); err != nil {
-			return err
-		}
+	if err := preservePreviousGTFSRun(root, target); err != nil {
+		return err
 	}
 	return replaceLink(root, _activeLink, target)
+}
+
+func preservePreviousGTFSRun(root, target string) error {
+	if old, err := os.Readlink(filepath.Join(root, _activeLink)); err == nil && old != target {
+		return replaceLink(root, _previousLink, old)
+	}
+	return nil
 }
 
 func replaceLink(root, name, target string) error {
@@ -254,29 +294,22 @@ func Prune(ctx context.Context, db *pgxpool.Pool, root string, minAge time.Durat
 	if err != nil {
 		return _oops.Wrapf(err, "gtfs prune: read previous build seq")
 	}
+	return prunePreviousGTFSRuns(ctx, db, root, previousSeq, minAge)
+}
+
+func prunePreviousGTFSRuns(ctx context.Context, db *pgxpool.Pool, root string, previousSeq int64, minAge time.Duration) error {
 	if previousSeq == 0 {
 		return nil
 	}
-	entries, err := os.ReadDir(filepath.Join(root, _runsDir))
+	errs, err := pruneGTFSRunFiles(root, previousSeq, minAge)
 	if err != nil {
-		return _oops.Wrapf(err, "gtfs prune: list runs")
+		return err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return errors.Join(append(errs, pruneRTSnapshots(ctx, db, previousSeq)...)...)
+}
+
+func pruneRTSnapshots(ctx context.Context, db *pgxpool.Pool, previousSeq int64) []error {
 	var errs []error
-	for _, e := range entries {
-		m, err := ReadManifest(root, e.Name())
-		if err != nil || m.BuildSeq >= previousSeq {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil || time.Since(info.ModTime()) < minAge {
-			continue
-		}
-		if err := os.RemoveAll(RunDir(root, e.Name())); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-	}
 	for _, table := range []string{"gtfs_rt_bus_trip", "gtfs_rt_rail_trip", "gtfs_rt_bus_offset"} {
 		if _, err := db.Exec(ctx, "DELETE FROM "+table+` WHERE run_id NOT IN (
 			SELECT run_id FROM static_release WHERE build_seq >= $1)
@@ -284,5 +317,80 @@ func Prune(ctx context.Context, db *pgxpool.Pool, root string, minAge time.Durat
 			errs = append(errs, err)
 		}
 	}
-	return errors.Join(errs...)
+	return errs
+}
+
+func pruneGTFSRunFiles(root string, previousSeq int64, minAge time.Duration) ([]error, error) {
+	entries, err := os.ReadDir(filepath.Join(root, _runsDir))
+	if err != nil {
+		return nil, _oops.Wrapf(err, "gtfs prune: list runs")
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return removeExpiredGTFSRuns(root, entries, previousSeq, minAge), nil
+}
+
+func removeExpiredGTFSRuns(root string, entries []os.DirEntry, previousSeq int64, minAge time.Duration) []error {
+	var errs []error
+	for _, e := range entries {
+		if err := removeExpiredGTFSRun(root, e, previousSeq, minAge); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+	}
+	return errs
+}
+
+func removeExpiredGTFSRun(root string, e os.DirEntry, previousSeq int64, minAge time.Duration) error {
+	if !expiredGTFSRun(root, e, previousSeq, minAge) {
+		return nil
+	}
+	return os.RemoveAll(RunDir(root, e.Name()))
+}
+
+func expiredGTFSRun(root string, e os.DirEntry, previousSeq int64, minAge time.Duration) bool {
+	m, err := ReadManifest(root, e.Name())
+	if err != nil || m.BuildSeq >= previousSeq {
+		return false
+	}
+	return gtfsRunAgeExpired(e, minAge)
+}
+
+func gtfsRunAgeExpired(e os.DirEntry, minAge time.Duration) bool {
+	info, err := e.Info()
+	return err == nil && time.Since(info.ModTime()) >= minAge
+}
+
+func buildSnapshotBusTripSQL() string {
+	return `
+INSERT INTO gtfs_rt_bus_trip (run_id, trip_id, direction_id, service_id)
+SELECT DISTINCT $1::text, trip_id, direction_id, service_id
+FROM (
+  SELECT trip_id, direction_id, service_id FROM (` + _busScheduleSource + `) s
+  UNION ALL
+  SELECT trip_id, direction_id, service_id FROM (` + _busPatternTripsSQL + `) o
+) t
+WHERE trip_id <> '' AND service_id LIKE 'W:%'`
+}
+
+func buildSnapshotRailTripSQL() string {
+	return `
+INSERT INTO gtfs_rt_rail_trip (run_id, service_date, train_no, trip_id, stations)
+SELECT $1::text, t.service_date, t.train_no,
+       t.operator || ':' || t.train_no || ':' || to_char(t.service_date, 'YYYYMMDD'),
+       array_agg(DISTINCT c->>'StationID')
+FROM (` + _railTripSource + `) t
+CROSS JOIN LATERAL jsonb_array_elements(t.stoptimes) c
+WHERE t.operator = 'TRA'
+  AND jsonb_typeof(t.stoptimes) = 'array'
+  AND COALESCE(c->>'StationID', '') <> ''
+GROUP BY t.service_date, t.train_no, t.operator
+HAVING count(*) > 1`
+}
+
+func buildSnapshotBusOffsetSQL() string {
+	return `
+INSERT INTO gtfs_rt_bus_offset (run_id, sub_route_uid, direction, stop_uid, offset_secs)
+SELECT $1::text, p.sub_route_uid, p.direction, p.stop_uid, p.offset_secs
+FROM (` + busmodel.PatternSQL + `) p
+WHERE p.complete`
 }

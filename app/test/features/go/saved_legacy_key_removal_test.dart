@@ -45,12 +45,17 @@ void main() {
 
     final bloc = PlanBloc();
     addTearDown(bloc.close);
-    await bloc.stream.firstWhere((s) => s.savedRoutes.isNotEmpty);
+    await bloc.stream
+        .firstWhere((s) => s.savedRoutesReady && s.savedRoutes.isNotEmpty)
+        .timeout(const Duration(seconds: 5));
     expect(bloc.state.savedRoutes, hasLength(1));
 
     // Tap un-save on the card the list actually shows (derived key "r…").
+    final removed = bloc.stream
+        .firstWhere((s) => s.savedRoutesReady && s.savedRoutes.isEmpty)
+        .timeout(const Duration(seconds: 5));
     bloc.add(RouteSaveToggled(bloc.state.savedRoutes.first));
-    await Future<void>.delayed(const Duration(milliseconds: 300));
+    await removed;
 
     expect(bloc.state.savedRoutes, isEmpty);
     expect(HiveStore.savedPlanEntries, isEmpty);

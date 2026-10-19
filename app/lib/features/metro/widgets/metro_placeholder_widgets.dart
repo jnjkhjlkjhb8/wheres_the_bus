@@ -66,13 +66,7 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
         .map((f) => f.refId)
         .toSet();
 
-    final searchResults = _query.isEmpty
-        ? const <MetroMapStation>[]
-        : metroMapStations.where((s) {
-            final q = _query.toLowerCase();
-            return s.name.toLowerCase().contains(q) ||
-                s.id.toLowerCase().contains(q);
-          }).toList();
+    final searchResults = _searchResults;
 
     final favStations = metroMapStations
         .where((s) => favIds.contains(s.id))
@@ -124,6 +118,18 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
       ],
     );
   }
+
+  List<MetroMapStation> get _searchResults {
+    if (_query.isEmpty) return const [];
+    final query = _query.toLowerCase();
+    return metroMapStations
+        .where((station) => _matchesQuery(station, query))
+        .toList();
+  }
+
+  bool _matchesQuery(MetroMapStation station, String query) =>
+      station.name.toLowerCase().contains(query) ||
+      station.id.toLowerCase().contains(query);
 
   Widget _stationRow(
     ColorScheme cs,

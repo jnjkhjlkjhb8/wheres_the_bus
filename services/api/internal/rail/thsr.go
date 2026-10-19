@@ -4,10 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 )
 
 type thsrTimetableRow struct {
@@ -46,60 +44,26 @@ type thsrFareRow struct {
 }
 
 func QueryTHSRFares(ctx context.Context, db railDB, start, end string) ([]*models.ThsaFare, error) {
-	start, err := resolveRailStationID(ctx, db, "thsr_stations", start)
+	start, end, err := resolveRailJourney(ctx, db, "thsr_stations", start, end)
 	if err != nil {
 		return nil, err
 	}
-	end, err = resolveRailStationID(ctx, db, "thsr_stations", end)
+	row, err := queryRailRows[thsrFareRow](ctx, db, `SELECT ticket_type, fare_class, cabin_class, price FROM thsr_fares WHERE origin_station_id = $1 AND destination_station_id = $2 AND ticket_type = 1 AND price > 0 ORDER BY cabin_class, fare_class, price;`, start, end)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT ticket_type, fare_class, cabin_class, price FROM thsr_fares WHERE origin_station_id = $1 AND destination_station_id = $2 AND ticket_type = 1 AND price > 0 ORDER BY cabin_class, fare_class, price;`, start, end)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[thsrFareRow])
-	if err != nil {
-		return nil, err
-	}
-	arr := make([]*models.ThsaFare, 0, len(row))
-	for _, temp := range row {
-		arr = append(arr, &models.ThsaFare{
-			CabinClas:  int32(temp.CabinClass),
-			TicketType: int32(temp.TicketType),
-			FareClass:  int32(temp.FareClass),
-			Price:      temp.Price,
-		})
-	}
-	return arr, rows.Err()
+	arr := thsrFareItems(row)
+	return arr, nil
 }
 
 func THSRStoptimesPayload(ctx context.Context, db railDB, trainno, dateStr string) ([]byte, int, error) {
 	const q = `SELECT stopsequence, stationid,stationname,arrivaltime,departuretime FROM thsr_timetable WHERE trainno = $1 AND train_date = $2 ORDER BY stopsequence;`
-	rows, err := db.Query(ctx, q, trainno, dateStr)
+	row, err := queryRailRows[thsrStopsRow](ctx, db, q, trainno, dateStr)
 	if err != nil {
 		return nil, 0, err
 	}
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[thsrStopsRow])
-	if err != nil {
-		return nil, 0, err
-	}
-	arr := make([]*models.ThsaStoptime, 0, len(row))
-	for _, temp := range row {
-		arr = append(arr, &models.ThsaStoptime{
-			StopSequence:  int32(temp.Stopsequence),
-			StationId:     temp.Stationid,
-			StationName:   temp.Stationname,
-			ArrivalTime:   temp.Arrivaltime,
-			DepartureTime: temp.Departuretime,
-		})
-	}
-	b, err := proto.Marshal(&models.ThsrStoptimes{Items: arr})
-	if err != nil {
-		return nil, 0, err
-	}
-	return b, len(row), nil
+	arr := thsrStops(row)
+	return marshalRailPayload(&models.ThsrStoptimes{Items: arr}, len(row))
 }
 
 func THSRStationBoardPayload(ctx context.Context, db railDB, station string, date time.Time, direction int32) ([]*models.ThsrStationDeparture, error) {
@@ -108,50 +72,33 @@ func THSRStationBoardPayload(ctx context.Context, db railDB, station string, dat
 		return nil, err
 	}
 	const q = `SELECT train_date,trainno,ending_station_name,departuretime,direction,note FROM thsr_timetable WHERE stationid = $1 AND train_date = $2 AND direction = $3 AND stationid <> ending_station_id ORDER BY departuretime;`
-	rows, err := db.Query(ctx, q, station, date.Format(time.DateOnly), direction)
+	row, err := queryRailRows[thsrStationBoardRow](ctx, db, q, station, date.Format(time.DateOnly), direction)
 	if err != nil {
 		return nil, err
 	}
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[thsrStationBoardRow])
-	if err != nil {
-		return nil, err
-	}
-	arr := make([]*models.ThsrStationDeparture, 0, len(row))
-	for _, temp := range row {
-		arr = append(arr, &models.ThsrStationDeparture{
-			TrainDate:                temp.TrainDate.Format(time.DateOnly),
-			TrainNo:                  temp.Trainno,
-			Destination_Station_Name: temp.EndingStationName,
-			DepartureTime:            temp.Departuretime,
-			Direction:                temp.Direction,
-			Note:                     temp.Note,
-		})
-	}
+	arr := thsrStationDepartures(row)
 	return arr, nil
 }
 
 func THSRTimetablePayload(ctx context.Context, db railDB, start, end string, date time.Time) ([]byte, int, error) {
-	start, err := resolveRailStationID(ctx, db, "thsr_stations", start)
-	if err != nil {
-		return nil, 0, err
-	}
-	end, err = resolveRailStationID(ctx, db, "thsr_stations", end)
+	start, end, err := resolveRailJourney(ctx, db, "thsr_stations", start, end)
 	if err != nil {
 		return nil, 0, err
 	}
 	const combined = `SELECT trainno, starting_station_id,starting_station_name,ending_station_id,ending_station_name,arrivaltime,departuretime,note,overnight,stationid,stopsequence FROM thsr_timetable WHERE stationid = ANY($1) AND train_date = $2 ORDER BY trainno, stopsequence, stationid;`
 	stations := []string{start, end}
-	rows, err := db.Query(ctx, combined, stations, date.Format(time.DateOnly))
+	row, err := queryRailRows[thsrTimetableRow](ctx, db, combined, stations, date.Format(time.DateOnly))
 	if err != nil {
 		return nil, 0, err
 	}
-	row, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[thsrTimetableRow])
-	if err != nil {
-		return nil, 0, err
-	}
+	mp, startSeq := thsrTimetableSeeds(row, start, date)
+	arr := matchingTHSRTimetables(row, mp, startSeq, end)
+	return marshalRailPayload(&models.ThsrTimetables{Items: arr}, len(arr))
+}
+
+func thsrTimetableSeeds(row []*thsrTimetableRow, start string, date time.Time) (map[string]*models.ThsaTimetable, map[string]int) {
 	mp := make(map[string]*models.ThsaTimetable)
 	startSeq := make(map[string]int)
-	arr := make([]*models.ThsaTimetable, 0, len(row))
 	for _, temp := range row {
 		if temp.Stationid != start {
 			continue
@@ -170,38 +117,90 @@ func THSRTimetablePayload(ctx context.Context, db railDB, start, end string, dat
 			Starting_Time:         temp.Departuretime,
 		}
 	}
+	return mp, startSeq
+}
+
+func thsrTravelDuration(departure, arrival string) (time.Duration, bool) {
+	w, err := time.Parse(time.TimeOnly, departure)
+	if err != nil {
+		zap.S().Errorw("parse time error", "err", err)
+		return 0, false
+	}
+	t, err := time.Parse(time.TimeOnly, arrival)
+	if err != nil {
+		zap.S().Errorw("parse time error", "err", err)
+		return 0, false
+	}
+	duration := t.Sub(w)
+	if duration < 0 {
+		duration += 24 * time.Hour
+	}
+	return duration, true
+}
+
+func matchingTHSRTimetables(row []*thsrTimetableRow, mp map[string]*models.ThsaTimetable, startSeq map[string]int, end string) []*models.ThsaTimetable {
+	arr := make([]*models.ThsaTimetable, 0, len(row))
 	for _, temp := range row {
-		if temp.Stationid != end {
-			continue
-		}
 		seed, ok := mp[temp.Trainno]
-		if !ok {
+		if !forwardRailTrip(temp.Stationid, end, temp.Stopsequence, startSeq[temp.Trainno], ok) {
 			continue
 		}
-		if temp.Stopsequence <= startSeq[temp.Trainno] {
+		if !completeTHSRTimetable(seed, temp) {
 			continue
 		}
-		w, err := time.Parse(time.TimeOnly, seed.Starting_Time)
-		if err != nil {
-			zap.S().Errorw("parse time error", "err", err)
-			continue
-		}
-		t, err := time.Parse(time.TimeOnly, temp.Arrivaltime)
-		if err != nil {
-			zap.S().Errorw("parse time error", "err", err)
-			continue
-		}
-		duration := t.Sub(w)
-		if duration < 0 {
-			duration += 24 * time.Hour
-		}
-		seed.Ending_Time = temp.Arrivaltime
-		seed.Travel_Time = duration.String()
 		arr = append(arr, seed)
 	}
-	b, err := proto.Marshal(&models.ThsrTimetables{Items: arr})
-	if err != nil {
-		return nil, 0, err
+	return arr
+}
+
+func thsrFareItems(row []*thsrFareRow) []*models.ThsaFare {
+	arr := make([]*models.ThsaFare, 0, len(row))
+	for _, temp := range row {
+		arr = append(arr, &models.ThsaFare{
+			CabinClas:  int32(temp.CabinClass),
+			TicketType: int32(temp.TicketType),
+			FareClass:  int32(temp.FareClass),
+			Price:      temp.Price,
+		})
 	}
-	return b, len(arr), nil
+	return arr
+}
+
+func thsrStops(row []*thsrStopsRow) []*models.ThsaStoptime {
+	arr := make([]*models.ThsaStoptime, 0, len(row))
+	for _, temp := range row {
+		arr = append(arr, &models.ThsaStoptime{
+			StopSequence:  int32(temp.Stopsequence),
+			StationId:     temp.Stationid,
+			StationName:   temp.Stationname,
+			ArrivalTime:   temp.Arrivaltime,
+			DepartureTime: temp.Departuretime,
+		})
+	}
+	return arr
+}
+
+func thsrStationDepartures(row []*thsrStationBoardRow) []*models.ThsrStationDeparture {
+	arr := make([]*models.ThsrStationDeparture, 0, len(row))
+	for _, temp := range row {
+		arr = append(arr, &models.ThsrStationDeparture{
+			TrainDate:                temp.TrainDate.Format(time.DateOnly),
+			TrainNo:                  temp.Trainno,
+			Destination_Station_Name: temp.EndingStationName,
+			DepartureTime:            temp.Departuretime,
+			Direction:                temp.Direction,
+			Note:                     temp.Note,
+		})
+	}
+	return arr
+}
+
+func completeTHSRTimetable(seed *models.ThsaTimetable, temp *thsrTimetableRow) bool {
+	duration, ok := thsrTravelDuration(seed.Starting_Time, temp.Arrivaltime)
+	if !ok {
+		return false
+	}
+	seed.Ending_Time = temp.Arrivaltime
+	seed.Travel_Time = duration.String()
+	return true
 }

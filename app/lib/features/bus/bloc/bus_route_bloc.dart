@@ -22,9 +22,14 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
     BusRepository? busRepository,
     FirebaseRepository? firebaseRepository,
     RemindersRepository? remindersRepository,
+    FirebaseTelemetry? telemetry,
+    void Function(Object error, StackTrace stack) reportError =
+        CrashReporter.record,
   }) : _bus = busRepository ?? BusRepository.instance,
        _firebase = firebaseRepository ?? FirebaseRepository.instance,
        _reminders = remindersRepository ?? RemindersRepository.instance,
+       _telemetry = telemetry ?? FirebaseTelemetry.instance,
+       _reportError = reportError,
        super(const BusRouteState()) {
     on<BusRouteStarted>(_onStarted);
     on<BusRouteDirectionToggled>(_onDirectionToggled);
@@ -40,6 +45,8 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
   final BusRepository _bus;
   final FirebaseRepository _firebase;
   final RemindersRepository _reminders;
+  final FirebaseTelemetry _telemetry;
+  final void Function(Object error, StackTrace stack) _reportError;
   // Replace policy + 15s decay live inside the feed; the bloc keys the emitted
   // list into etaMap on arrival (etaKey), preserving the map-shaped state.
   final _feed = ArrivalFeed<BusStopEtaViewModel>.replace(
@@ -115,7 +122,7 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
     try {
       daily = await _bus.routeDaily(subRouteUid);
     } on Object catch (e, s) {
-      CrashReporter.record(e, s);
+      _reportError(e, s);
       daily = null;
     }
     final fare = state.fare;
@@ -180,35 +187,48 @@ class BusRouteBloc extends Bloc<BusRouteEvent, BusRouteState> {
         plate: event.plate,
         alightEvent: event.event.name,
       );
-      if (emit.isDone) return;
-      emit(
-        state.copyWith(
-          reminders: {...state.reminders, event.stopUid: receipt.reminderId},
-        ),
-      );
-      await _reminders.put(
-        subRouteUid,
-        event.stopUid,
-        receipt.reminderId,
-        expiresAt,
-      );
-      unawaited(
-        FirebaseTelemetry.instance.arrivalReminderChanged(
-          routeType: 'bus',
-          routeKey: subRouteUid,
-          enabled: true,
-          leadMinutes: _pinnedLeadMinutes,
-        ),
-      );
+      await _completePinnedReminder(event, receipt.reminderId, expiresAt, emit);
     } on Object catch (e, s) {
-      CrashReporter.record(e, s);
-      if (emit.isDone) return;
-      emit(
-        state.copyWith(
-          reminders: Map.of(state.reminders)..remove(event.stopUid),
-        ),
-      );
+      _reportError(e, s);
+      _clearPendingReminder(event.stopUid, emit);
     }
+  }
+
+  Future<void> _completePinnedReminder(
+    BusRoutePinnedReminderArmed event,
+    String reminderId,
+    DateTime expiresAt,
+    Emitter<BusRouteState> emit,
+  ) async {
+    if (emit.isDone) return;
+    emit(
+      state.copyWith(
+        reminders: {...state.reminders, event.stopUid: reminderId},
+      ),
+    );
+    await _reminders.put(
+      subRouteUid,
+      event.stopUid,
+      reminderId,
+      expiresAt,
+    );
+    unawaited(
+      _telemetry.arrivalReminderChanged(
+        routeType: 'bus',
+        routeKey: subRouteUid,
+        enabled: true,
+        leadMinutes: _pinnedLeadMinutes,
+      ),
+    );
+  }
+
+  void _clearPendingReminder(String stopUid, Emitter<BusRouteState> emit) {
+    if (emit.isDone) return;
+    emit(
+      state.copyWith(
+        reminders: Map.of(state.reminders)..remove(stopUid),
+      ),
+    );
   }
 
   void _onStreamFailed(

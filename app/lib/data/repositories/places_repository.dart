@@ -24,8 +24,28 @@ class PlaceSuggestion {
 }
 
 class PlacesRepository {
-  PlacesRepository._();
-  static final PlacesRepository instance = PlacesRepository._();
+  PlacesRepository({
+    Dio? geocoder,
+    Dio? restClient,
+    String? apiKey,
+    bool? useRest,
+    places.FlutterGooglePlacesSdk? client,
+    Future<String>? bundleId,
+  }) : _geocoder = geocoder,
+       _restClient = restClient,
+       _configuredApiKey = apiKey,
+       _configuredUseRest = useRest,
+       _providedClient = client,
+       _providedBundleId = bundleId;
+
+  static final PlacesRepository instance = PlacesRepository();
+
+  final Dio? _geocoder;
+  final Dio? _restClient;
+  final String? _configuredApiKey;
+  final bool? _configuredUseRest;
+  final places.FlutterGooglePlacesSdk? _providedClient;
+  final Future<String>? _providedBundleId;
 
   /// A Places key carries a platform restriction (Android package +
   /// signing SHA-1, or iOS bundle id), so each platform needs its own key.
@@ -36,7 +56,9 @@ class PlacesRepository {
   );
   static const _apiKeyShared = String.fromEnvironment('GOOGLE_PLACES_API_KEY');
 
-  static String get _apiKey {
+  String get _apiKey => _configuredApiKey ?? _platformApiKey;
+
+  static String get _platformApiKey {
     final platformKey = switch (defaultTargetPlatform) {
       TargetPlatform.iOS => _apiKeyIos,
       TargetPlatform.android => _apiKeyAndroid,
@@ -45,7 +67,9 @@ class PlacesRepository {
     return platformKey.isEmpty ? _apiKeyShared : platformKey;
   }
 
-  static bool get _useRest => defaultTargetPlatform == TargetPlatform.iOS;
+  bool get _useRest => _configuredUseRest ?? _platformUsesRest;
+  static bool get _platformUsesRest =>
+      defaultTargetPlatform == TargetPlatform.iOS;
 
   /// Null client when REST is in use or no key is configured (e.g. test env)
   /// so the UI degrades to just the current-location option instead of
@@ -53,25 +77,30 @@ class PlacesRepository {
   late final places.FlutterGooglePlacesSdk? _client =
       _useRest || _apiKey.isEmpty
       ? null
-      : places.FlutterGooglePlacesSdk(
-          _apiKey,
-          locale: const Locale('zh', 'TW'),
-          useNewApi: true,
-        );
+      : _providedClient ??
+            places.FlutterGooglePlacesSdk(
+              _apiKey,
+              locale: const Locale('zh', 'TW'),
+              useNewApi: true,
+            );
 
-  late final Dio _dio = Dio(
-    BaseOptions(
-      baseUrl: 'https://places.googleapis.com/v1/',
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-    ),
-  );
+  late final Dio _dio =
+      _restClient ??
+      Dio(
+        BaseOptions(
+          baseUrl: 'https://places.googleapis.com/v1/',
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
 
   /// The key restriction is checked against this, so it has to be the real
   /// bundle id rather than a constant that can drift from the Xcode project.
-  late final Future<String> _bundleId = PackageInfo.fromPlatform().then(
-    (info) => info.packageName,
-  );
+  late final Future<String> _bundleId =
+      _providedBundleId ??
+      PackageInfo.fromPlatform().then(
+        (info) => info.packageName,
+      );
 
   /// Shared by the keystrokes of one search and the details lookup that ends
   /// it, so Google bills them as a single session. Cleared in [details].
@@ -86,8 +115,16 @@ class PlacesRepository {
     if (query.isEmpty) return const [];
     final fromMotis = await _motisAutocomplete(query, bias);
     if (fromMotis.isNotEmpty) return fromMotis;
+    return _googleAutocomplete(query);
+  }
+
+  Future<List<PlaceSuggestion>> _googleAutocomplete(String query) async {
     if (_apiKey.isEmpty) return const [];
     if (_useRest) return _restAutocomplete(query);
+    return _sdkAutocomplete(query);
+  }
+
+  Future<List<PlaceSuggestion>> _sdkAutocomplete(String query) async {
     final client = _client;
     if (client == null) return const [];
     final res = await client.findAutocompletePredictions(
@@ -107,10 +144,18 @@ class PlacesRepository {
   Future<PlannedPlace> details(String placeId) async {
     final resolved = _motisPlaces[placeId];
     if (resolved != null) return resolved;
+    return _googleDetails(placeId);
+  }
+
+  Future<PlannedPlace> _googleDetails(String placeId) async {
     if (_apiKey.isEmpty) {
       throw StateError('Places API key not configured');
     }
     if (_useRest) return _restDetails(placeId);
+    return _sdkDetails(placeId);
+  }
+
+  Future<PlannedPlace> _sdkDetails(String placeId) async {
     final client = _client;
     if (client == null) {
       throw StateError('Places API key not configured');
@@ -134,14 +179,15 @@ class PlacesRepository {
     LatLng? bias,
   ) async {
     try {
-      final response = await HttpClient.instance.dio.get<Map<String, dynamic>>(
-        '/api/geocode',
-        queryParameters: {
-          'text': query,
-          if (bias != null) 'lat': bias.latitude,
-          if (bias != null) 'lon': bias.longitude,
-        },
-      );
+      final response = await (_geocoder ?? HttpClient.instance.dio)
+          .get<Map<String, dynamic>>(
+            '/api/geocode',
+            queryParameters: {
+              'text': query,
+              if (bias != null) 'lat': bias.latitude,
+              if (bias != null) 'lon': bias.longitude,
+            },
+          );
       final parsed = motisSuggestionsFromJson(response.data ?? const {});
       _motisPlaces = parsed.places;
       return parsed.suggestions;
@@ -245,28 +291,51 @@ class PlacesRepository {
     final places = <String, PlannedPlace>{};
     final rows = json['suggestions'] as List? ?? const [];
     for (var i = 0; i < rows.length; i++) {
-      final row = rows[i] as Map?;
-      if (row == null) continue;
-      final name = row['name'] as String?;
-      final lat = row['lat'] as num?;
-      final lng = row['lon'] as num?;
-      // A row the rider can tap and get nothing from is worse than no row.
-      if (name == null || name.isEmpty || lat == null || lng == null) continue;
-      final id = 'motis:$i';
-      suggestions.add(
-        PlaceSuggestion(
-          placeId: id,
-          primaryText: name,
-          secondaryText: row['address'] as String? ?? '',
-        ),
-      );
-      places[id] = PlannedPlace(
-        name: name,
-        latLng: LatLng(lat.toDouble(), lng.toDouble()),
-      );
+      final entry = _motisEntry(rows[i], i);
+      if (entry == null) continue;
+      suggestions.add(entry.suggestion);
+      places[entry.suggestion.placeId] = entry.place;
     }
     return MotisPlaceResults(suggestions: suggestions, places: places);
   }
+
+  static ({PlaceSuggestion suggestion, PlannedPlace place})? _motisEntry(
+    Object? raw,
+    int index,
+  ) {
+    final row = raw as Map?;
+    if (row == null) return null;
+    return _namedMotisEntry(row, index);
+  }
+
+  static ({PlaceSuggestion suggestion, PlannedPlace place})? _namedMotisEntry(
+    Map<Object?, Object?> row,
+    int index,
+  ) {
+    final name = row['name'] as String?;
+    final lat = row['lat'] as num?;
+    final lng = row['lon'] as num?;
+    // A row the rider can tap and get nothing from is worse than no row.
+    if (!_motisNameValid(name) || !_motisCoordinatesValid(lat, lng)) {
+      return null;
+    }
+    final id = 'motis:$index';
+    return (
+      suggestion: PlaceSuggestion(
+        placeId: id,
+        primaryText: name!,
+        secondaryText: row['address'] as String? ?? '',
+      ),
+      place: PlannedPlace(
+        name: name,
+        latLng: LatLng(lat!.toDouble(), lng!.toDouble()),
+      ),
+    );
+  }
+
+  static bool _motisNameValid(String? name) => name != null && name.isNotEmpty;
+  static bool _motisCoordinatesValid(num? lat, num? lng) =>
+      lat != null && lng != null;
 }
 
 /// One `/api/geocode` response: the rows to show, and the coordinates they

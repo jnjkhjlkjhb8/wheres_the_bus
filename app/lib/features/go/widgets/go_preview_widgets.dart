@@ -382,6 +382,9 @@ class _PreviewItinerary extends StatelessWidget {
   final PlanRoute route;
   final String destName;
 
+  Color _connectorColor(PlanSection section, ColorScheme cs) =>
+      isWalk(section) ? cs.outlineVariant : transitColor(section.transport, cs);
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -393,9 +396,7 @@ class _PreviewItinerary extends StatelessWidget {
         _PreviewRow(
           nodeRing: _nodeRing(i, sections, cs),
           nodeFilled: false,
-          connectorColor: walk
-              ? cs.outlineVariant
-              : transitColor(s.transport, cs),
+          connectorColor: _connectorColor(s, cs),
           dashed: walk,
           showConnector: true,
           minutes: sectionMinutes(s),
@@ -457,9 +458,11 @@ class _PreviewItinerary extends StatelessWidget {
     final s = sections[i];
     if (!isWalk(s)) return transitColor(s.transport, cs);
     final prev = sections[i - 1];
-    if (!isWalk(prev)) return transitColor(prev.transport, cs);
-    return cs.onSurface;
+    return _previousNodeColor(prev, cs);
   }
+
+  Color _previousNodeColor(PlanSection previous, ColorScheme cs) =>
+      isWalk(previous) ? cs.onSurface : transitColor(previous.transport, cs);
 
   Widget _walkContent(BuildContext context, int i, PlanSection s) {
     final cs = Theme.of(context).colorScheme;

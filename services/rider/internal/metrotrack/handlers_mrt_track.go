@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/firebase"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
@@ -42,24 +44,87 @@ const _mrtTrackSessionTTL = 3 * time.Hour
 const _mrtTrackEndedStateTTL = 60 * time.Second
 
 func (s *MrtServer) CreateTrack(ctx context.Context, request *pb.CreateMrtTrackRequest) (*pb.MrtTrackState, error) {
-	if !installid.ValidText(request.GetInstallId(), 128) || !installid.ValidText(request.GetCarId(), 32) ||
-		!installid.ValidText(request.GetBoardStationId(), 32) || !installid.ValidText(request.GetDestStationId(), 32) ||
-		!installid.ValidText(request.GetTargetStationId(), 32) {
-		return nil, status.Error(codes.InvalidArgument, "install_id, car_id, and station IDs are required")
-	}
-	if request.System != "TRTC" {
-		return nil, status.Error(codes.FailedPrecondition, "metro alight reminders are supported for TRTC only")
-	}
-	if request.LeadStops < 0 || request.LeadStops > 120 {
-		return nil, status.Error(codes.InvalidArgument, "lead_stops must be between 0 and 120")
-	}
-	if len(request.VehicleLabel) > 64 || len(request.LineCode) > 8 || !validHexColor(request.LineColorHex) {
-		return nil, status.Error(codes.InvalidArgument, "invalid card display fields")
+	if err := validateTrackRequest(request); err != nil {
+		return nil, err
 	}
 	if err := s.authorizeInstall(ctx, request.InstallId); err != nil {
 		return nil, err
 	}
+	return s.createAuthorizedTrack(ctx, request)
+}
 
+func (s *MrtServer) createAuthorizedTrack(ctx context.Context, request *pb.CreateMrtTrackRequest) (*pb.MrtTrackState, error) {
+	state, stored, err := s.prepareTrack(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.saveTrackReminders(ctx, request, stored); err != nil {
+		return nil, err
+	}
+	return s.seedTrackState(ctx, request, state)
+}
+
+func (s *MrtServer) seedTrackState(ctx context.Context, request *pb.CreateMrtTrackRequest, state *pb.MrtTrackState) (*pb.MrtTrackState, error) {
+	if err := s.writeTrackState(ctx, state, _mrtTrackSessionTTL); err != nil {
+		zap.S().Errorw("store failed",
+			"component", "mrt_track",
+			"action", "create",
+			"event", "seed_state_failed",
+			"track", state.TrackId,
+			"err", err,
+		)
+		return nil, status.Error(codes.Internal, "failed to seed metro session state")
+	}
+	zap.S().Infow("log",
+		"component", "mrt_track",
+		"action", "create",
+		"track", state.TrackId,
+		"trip", state.TripId,
+		"car", request.CarId,
+		"target_index", state.TargetIndex,
+	)
+	return state, nil
+}
+
+func validateTrackRequest(request *pb.CreateMrtTrackRequest) error {
+	if !validTrackIdentity(request) {
+		return status.Error(codes.InvalidArgument, "install_id, car_id, and station IDs are required")
+	}
+	if request.System != "TRTC" {
+		return status.Error(codes.FailedPrecondition, "metro alight reminders are supported for TRTC only")
+	}
+	return validateTrackSettings(request)
+}
+
+func validateTrackSettings(request *pb.CreateMrtTrackRequest) error {
+	if !validTrackLeadStops(request.LeadStops) {
+		return status.Error(codes.InvalidArgument, "lead_stops must be between 0 and 120")
+	}
+	if !validTrackDisplay(request) {
+		return status.Error(codes.InvalidArgument, "invalid card display fields")
+	}
+	return nil
+}
+
+func validTrackLeadStops(value int32) bool { return value >= 0 && value <= 120 }
+
+func validTrackIdentity(request *pb.CreateMrtTrackRequest) bool {
+	if !installid.ValidText(request.GetInstallId(), 128) {
+		return false
+	}
+	for _, value := range []string{request.GetCarId(), request.GetBoardStationId(), request.GetDestStationId(), request.GetTargetStationId()} {
+		if !installid.ValidText(value, 32) {
+			return false
+		}
+	}
+	return true
+}
+
+func validTrackDisplay(request *pb.CreateMrtTrackRequest) bool {
+	return len(request.VehicleLabel) <= 64 && len(request.LineCode) <= 8 && validHexColor(request.LineColorHex)
+}
+
+func (s *MrtServer) trackPath(ctx context.Context, request *pb.CreateMrtTrackRequest) ([]string, int32, error) {
 	adjacency, err := s.loadMrtAdjacency(ctx, "TRTC")
 	if err != nil {
 		zap.S().Errorw("query failed",
@@ -68,17 +133,25 @@ func (s *MrtServer) CreateTrack(ctx context.Context, request *pb.CreateMrtTrackR
 			"event", "load_adjacency_failed",
 			"err", err,
 		)
-		return nil, status.Error(codes.Internal, "failed to load metro adjacency")
+		return nil, 0, status.Error(codes.Internal, "failed to load metro adjacency")
 	}
+	return validatedTrackPath(adjacency, request)
+}
+
+func validatedTrackPath(adjacency map[string][]string, request *pb.CreateMrtTrackRequest) ([]string, int32, error) {
 	path, ok := mrtBFSPath(adjacency, request.BoardStationId, request.DestStationId)
 	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "這班車不到該站")
+		return nil, 0, status.Error(codes.InvalidArgument, "這班車不到該站")
 	}
 	targetIndex, ok := mrtTargetIndex(path, request.TargetStationId)
 	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "這班車不到該站")
+		return nil, 0, status.Error(codes.InvalidArgument, "這班車不到該站")
 	}
 
+	return path, targetIndex, nil
+}
+
+func (s *MrtServer) trackTrainInfo(ctx context.Context, request *pb.CreateMrtTrackRequest) (*shared.TRTCTrainInfo, error) {
 	info, found, err := s.trtc.GetTrainInfo(ctx, request.CarId)
 	if err != nil {
 		zap.S().Errorw("query failed",
@@ -94,6 +167,22 @@ func (s *MrtServer) CreateTrack(ctx context.Context, request *pb.CreateMrtTrackR
 		return nil, status.Error(codes.NotFound, "查無此車")
 	}
 
+	return info, nil
+}
+
+func (s *MrtServer) prepareTrack(ctx context.Context, request *pb.CreateMrtTrackRequest) (*pb.MrtTrackState, firebase.FirebaseArrivalReminder, error) {
+	path, targetIndex, err := s.trackPath(ctx, request)
+	if err != nil {
+		return nil, firebase.FirebaseArrivalReminder{}, err
+	}
+	info, err := s.trackTrainInfo(ctx, request)
+	if err != nil {
+		return nil, firebase.FirebaseArrivalReminder{}, err
+	}
+	return s.prepareBoundTrack(ctx, request, path, targetIndex, info)
+}
+
+func (s *MrtServer) prepareBoundTrack(ctx context.Context, request *pb.CreateMrtTrackRequest, path []string, targetIndex int32, info *shared.TRTCTrainInfo) (*pb.MrtTrackState, firebase.FirebaseArrivalReminder, error) {
 	names, err := s.mrtStationNames(ctx, path)
 	if err != nil {
 		zap.S().Errorw("query failed",
@@ -102,7 +191,7 @@ func (s *MrtServer) CreateTrack(ctx context.Context, request *pb.CreateMrtTrackR
 			"event", "load_station_names_failed",
 			"err", err,
 		)
-		return nil, status.Error(codes.Internal, "failed to load station names")
+		return nil, firebase.FirebaseArrivalReminder{}, status.Error(codes.Internal, "failed to load station names")
 	}
 
 	trackID, err := installid.NewUUIDv4()
@@ -113,7 +202,7 @@ func (s *MrtServer) CreateTrack(ctx context.Context, request *pb.CreateMrtTrackR
 			"event", "uuid_failed",
 			"err", err,
 		)
-		return nil, status.Error(codes.Internal, "failed to create session ID")
+		return nil, firebase.FirebaseArrivalReminder{}, status.Error(codes.Internal, "failed to create session ID")
 	}
 	now := s.clock()
 	expiresAt := now.Add(_mrtTrackSessionTTL)
@@ -124,52 +213,7 @@ func (s *MrtServer) CreateTrack(ctx context.Context, request *pb.CreateMrtTrackR
 		ExpiresAt: expiresAt, Status: firebase.ReminderPending, Plate: request.CarId,
 		AlightEvent: "alight",
 	}
-	if err := s.store.CreateArrivalReminder(ctx, stored); err != nil {
-		zap.S().Errorw("store failed",
-			"component", "mrt_track",
-			"action", "create",
-			"event", "save_session_failed",
-			"track", trackID,
-			"err", err,
-		)
-		if errors.Is(err, firebase.ErrReminderLimitReached) {
-			return nil, status.Error(codes.ResourceExhausted, "too many active arrival reminders")
-		}
-		if errors.Is(err, firebase.ErrReminderDuplicate) {
-			return nil, status.Error(codes.AlreadyExists, "arrival reminder already exists")
-		}
-		return nil, status.Error(codes.Internal, "failed to save metro session")
-	}
-	if request.LeadStops > 0 {
-		lead := stored
-		lead.ReminderID = mrtLeadReminderID(trackID)
-		lead.AlightEvent = "lead"
-		if err := s.store.CreateArrivalReminder(ctx, lead); err != nil {
-			_, _ = s.store.CancelArrivalReminder(ctx, stored.ReminderID, request.InstallId)
-			zap.S().Errorw("store failed",
-				"component", "mrt_track",
-				"action", "create",
-				"event", "save_lead_session_failed",
-				"track", trackID,
-				"err", err,
-			)
-			if errors.Is(err, firebase.ErrReminderLimitReached) {
-				return nil, status.Error(codes.ResourceExhausted, "too many active arrival reminders")
-			}
-			if errors.Is(err, firebase.ErrReminderDuplicate) {
-				return nil, status.Error(codes.AlreadyExists, "arrival reminder already exists")
-			}
-			return nil, status.Error(codes.Internal, "failed to save metro session")
-		}
-	}
-
-	nextStationID, nextStationName := "", ""
-	if len(path) > 1 {
-		nextStationID = path[1]
-		if len(names) > 1 {
-			nextStationName = names[1]
-		}
-	}
+	nextStationID, nextStationName := nextTrackStation(path, names)
 	state := &pb.MrtTrackState{
 		TrackId: trackID, TripId: info.TripID, CarId: request.CarId,
 		PathStationIds: path, PathStationNames: names,
@@ -184,38 +228,79 @@ func (s *MrtServer) CreateTrack(ctx context.Context, request *pb.CreateMrtTrackR
 		LineCode:           request.LineCode,
 		LineColorHex:       request.LineColorHex,
 	}
-	if err := s.writeTrackState(ctx, state, _mrtTrackSessionTTL); err != nil {
+	return state, stored, nil
+}
+
+func (s *MrtServer) saveTrackReminders(ctx context.Context, request *pb.CreateMrtTrackRequest, stored firebase.FirebaseArrivalReminder) error {
+	if err := s.store.CreateArrivalReminder(ctx, stored); err != nil {
 		zap.S().Errorw("store failed",
 			"component", "mrt_track",
 			"action", "create",
-			"event", "seed_state_failed",
-			"track", trackID,
+			"event", "save_session_failed",
+			"track", stored.ReminderID,
 			"err", err,
 		)
-		return nil, status.Error(codes.Internal, "failed to seed metro session state")
+		return trackStoreError(err)
 	}
-	zap.S().Infow("log",
-		"component", "mrt_track",
-		"action", "create",
-		"track", trackID,
-		"trip", info.TripID,
-		"car", request.CarId,
-		"target_index", targetIndex,
-	)
-	return state, nil
+	if request.LeadStops > 0 {
+		lead := stored
+		lead.ReminderID = mrtLeadReminderID(stored.ReminderID)
+		lead.AlightEvent = "lead"
+		if err := s.store.CreateArrivalReminder(ctx, lead); err != nil {
+			_, _ = s.store.CancelArrivalReminder(ctx, stored.ReminderID, request.InstallId)
+			zap.S().Errorw("store failed",
+				"component", "mrt_track",
+				"action", "create",
+				"event", "save_lead_session_failed",
+				"track", stored.ReminderID,
+				"err", err,
+			)
+			return trackStoreError(err)
+		}
+	}
+
+	return nil
+}
+
+func trackStoreError(err error) error {
+	if errors.Is(err, firebase.ErrReminderLimitReached) {
+		return status.Error(codes.ResourceExhausted, "too many active arrival reminders")
+	}
+	if errors.Is(err, firebase.ErrReminderDuplicate) {
+		return status.Error(codes.AlreadyExists, "arrival reminder already exists")
+	}
+	return status.Error(codes.Internal, "failed to save metro session")
+}
+
+func nextTrackStation(path, names []string) (string, string) {
+	if len(path) <= 1 {
+		return "", ""
+	}
+	if len(names) <= 1 {
+		return path[1], ""
+	}
+	return path[1], names[1]
 }
 
 // WatchTrack streams a session's state: it seeds from the current Redis state key
 // then forwards each published update until the client disconnects — the same
 // seed-then-subscribe pattern as the metro arrival stream.
 
+func validTrackOwner(installID, trackID string) bool {
+	return installid.ValidText(installID, 128) && installid.ValidText(trackID, 64)
+}
+
 func (s *MrtServer) CancelTrack(ctx context.Context, request *pb.CancelMrtTrackRequest) (*pb.MrtTrackAck, error) {
-	if !installid.ValidText(request.GetInstallId(), 128) || !installid.ValidText(request.GetTrackId(), 64) {
+	if !validTrackOwner(request.GetInstallId(), request.GetTrackId()) {
 		return nil, status.Error(codes.InvalidArgument, "install_id and track_id are required")
 	}
 	if err := s.authorizeInstall(ctx, request.InstallId); err != nil {
 		return nil, err
 	}
+	return s.cancelAuthorizedTrack(ctx, request)
+}
+
+func (s *MrtServer) cancelAuthorizedTrack(ctx context.Context, request *pb.CancelMrtTrackRequest) (*pb.MrtTrackAck, error) {
 	cancelled, err := s.store.CancelArrivalReminder(ctx, request.TrackId, request.InstallId)
 	if err != nil {
 		zap.S().Errorw("store failed",
@@ -230,6 +315,12 @@ func (s *MrtServer) CancelTrack(ctx context.Context, request *pb.CancelMrtTrackR
 	if !cancelled {
 		return nil, status.Error(codes.NotFound, "metro session not found")
 	}
+	s.cancelLeadTrack(ctx, request)
+	s.publishCancelledState(ctx, request.TrackId)
+	return &pb.MrtTrackAck{Ok: true}, nil
+}
+
+func (s *MrtServer) cancelLeadTrack(ctx context.Context, request *pb.CancelMrtTrackRequest) {
 	if _, leadErr := s.store.CancelArrivalReminder(ctx, mrtLeadReminderID(request.TrackId), request.InstallId); leadErr != nil {
 		zap.S().Warnw("lead row error",
 			"component", "mrt_track",
@@ -239,35 +330,37 @@ func (s *MrtServer) CancelTrack(ctx context.Context, request *pb.CancelMrtTrackR
 			"err", leadErr,
 		)
 	}
-	s.publishCancelledState(ctx, request.TrackId)
-	return &pb.MrtTrackAck{Ok: true}, nil
 }
 
 func (s *MrtServer) SetTrackPushToken(ctx context.Context, request *pb.SetMrtTrackPushTokenRequest) (*pb.MrtTrackAck, error) {
-	if !installid.ValidText(request.GetInstallId(), 128) || !installid.ValidText(request.GetTrackId(), 64) {
-		return nil, status.Error(codes.InvalidArgument, "install_id and track_id are required")
-	}
-	// APNs tokens are lowercase hex; anything else never reaches Apple, so it is
-	// rejected at the door rather than stored and retried every station hop.
-	if !validPushToken(request.GetPushToken()) {
-		return nil, status.Error(codes.InvalidArgument, "push_token must be hex")
+	if err := validateTrackPushToken(request); err != nil {
+		return nil, err
 	}
 	if err := s.authorizeInstall(ctx, request.InstallId); err != nil {
 		return nil, err
 	}
+	if err := s.storeTrackPushToken(ctx, request); err != nil {
+		return nil, err
+	}
+	return &pb.MrtTrackAck{Ok: true}, nil
+}
+
+func validateTrackPushToken(request *pb.SetMrtTrackPushTokenRequest) error {
+	if !validTrackOwner(request.GetInstallId(), request.GetTrackId()) {
+		return status.Error(codes.InvalidArgument, "install_id and track_id are required")
+	}
+	// APNs tokens are lowercase hex; anything else never reaches Apple, so it is
+	// rejected at the door rather than stored and retried every station hop.
+	if !validPushToken(request.GetPushToken()) {
+		return status.Error(codes.InvalidArgument, "push_token must be hex")
+	}
+	return nil
+}
+
+func (s *MrtServer) storeTrackPushToken(ctx context.Context, request *pb.SetMrtTrackPushTokenRequest) error {
 	key := shared.MrtTrackPushTokenKey(request.TrackId)
 	if request.PushToken == "" {
-		if err := s.rc.Del(ctx, key).Err(); err != nil {
-			zap.S().Errorw("store failed",
-				"component", "mrt_track",
-				"action", "set_push_token",
-				"event", "del_failed",
-				"track", request.TrackId,
-				"err", err,
-			)
-			return nil, status.Error(codes.Internal, "failed to store push token")
-		}
-		return &pb.MrtTrackAck{Ok: true}, nil
+		return s.deleteTrackPushToken(ctx, request.TrackId, key)
 	}
 	if err := s.rc.Set(ctx, key, request.PushToken, _mrtTrackSessionTTL).Err(); err != nil {
 		zap.S().Errorw("store failed",
@@ -277,9 +370,23 @@ func (s *MrtServer) SetTrackPushToken(ctx context.Context, request *pb.SetMrtTra
 			"track", request.TrackId,
 			"err", err,
 		)
-		return nil, status.Error(codes.Internal, "failed to store push token")
+		return status.Error(codes.Internal, "failed to store push token")
 	}
-	return &pb.MrtTrackAck{Ok: true}, nil
+	return nil
+}
+
+func (s *MrtServer) deleteTrackPushToken(ctx context.Context, trackID, key string) error {
+	if err := s.rc.Del(ctx, key).Err(); err != nil {
+		zap.S().Errorw("store failed",
+			"component", "mrt_track",
+			"action", "set_push_token",
+			"event", "del_failed",
+			"track", trackID,
+			"err", err,
+		)
+		return status.Error(codes.Internal, "failed to store push token")
+	}
+	return nil
 }
 
 // validHexColor accepts an empty value or `#RRGGBB`, the form the app's line
@@ -288,10 +395,16 @@ func validHexColor(value string) bool {
 	if value == "" {
 		return true
 	}
-	if len(value) != 7 || value[0] != '#' {
+	if !validHexColorShape(value) {
 		return false
 	}
-	for _, r := range value[1:] {
+	return validHexDigits(value[1:])
+}
+
+func validHexColorShape(value string) bool { return len(value) == 7 && value[0] == '#' }
+
+func validHexDigits(value string) bool {
+	for _, r := range value {
 		if !isHexDigit(r) {
 			return false
 		}
@@ -313,20 +426,22 @@ func validPushToken(value string) bool {
 }
 
 func isHexDigit(r rune) bool {
-	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+	for _, bounds := range [][2]rune{{'0', '9'}, {'a', 'f'}, {'A', 'F'}} {
+		if runeInRange(r, bounds) {
+			return true
+		}
+	}
+	return false
 }
+
+func runeInRange(value rune, bounds [2]rune) bool { return value >= bounds[0] && value <= bounds[1] }
 
 func (s *MrtServer) publishCancelledState(ctx context.Context, trackID string) {
 	publishCancelledTrackState(ctx, s.rc, trackID)
 }
 
 func publishCancelledTrackState(ctx context.Context, rc *redis.Client, trackID string) {
-	state := &pb.MrtTrackState{TrackId: trackID, System: "TRTC"}
-	if raw, err := rc.Get(ctx, shared.MrtTrackKey(trackID)).Bytes(); err == nil {
-		if decoded, decodeErr := decodeTrackState(raw); decodeErr == nil {
-			state = decoded
-		}
-	}
+	state := cancelledTrackBase(ctx, rc, trackID)
 	state.Status = "cancelled"
 	state.NextPollAtUnix = 0
 	if err := writeTrackState(ctx, rc, state, _mrtTrackEndedStateTTL); err != nil {
@@ -338,6 +453,16 @@ func publishCancelledTrackState(ctx context.Context, rc *redis.Client, trackID s
 			"err", err,
 		)
 	}
+}
+
+func cancelledTrackBase(ctx context.Context, rc *redis.Client, trackID string) *pb.MrtTrackState {
+	state := &pb.MrtTrackState{TrackId: trackID, System: "TRTC"}
+	if raw, err := rc.Get(ctx, shared.MrtTrackKey(trackID)).Bytes(); err == nil {
+		if decoded, decodeErr := decodeTrackState(raw); decodeErr == nil {
+			state = decoded
+		}
+	}
+	return state
 }
 
 func (s *MrtServer) writeTrackState(ctx context.Context, state *pb.MrtTrackState, ttl time.Duration) error {
@@ -373,6 +498,10 @@ func (s *MrtServer) authorizeInstall(ctx context.Context, installID string) erro
 	if err != nil {
 		return err
 	}
+	return s.authorizeHashedInstall(ctx, installID, secretHash)
+}
+
+func (s *MrtServer) authorizeHashedInstall(ctx context.Context, installID string, secretHash []byte) error {
 	authorized, err := s.store.AuthorizeInstall(ctx, installID, secretHash)
 	if err != nil {
 		zap.S().Errorw("query failed",
@@ -404,6 +533,10 @@ func (s *MrtServer) loadMrtAdjacency(ctx context.Context, system string) (map[st
 		return nil, err
 	}
 	defer rows.Close()
+	return readMrtAdjacency(rows)
+}
+
+func readMrtAdjacency(rows pgx.Rows) (map[string][]string, error) {
 	adjacency := make(map[string][]string)
 	for rows.Next() {
 		var from, to string
@@ -423,6 +556,22 @@ func (s *MrtServer) mrtStationNames(ctx context.Context, path []string) ([]strin
 		return nil, err
 	}
 	defer rows.Close()
+	byID, err := readMrtStationNames(rows)
+	if err != nil {
+		return nil, err
+	}
+	return orderedMrtStationNames(path, byID), nil
+}
+
+func orderedMrtStationNames(path []string, byID map[string]string) []string {
+	names := make([]string, len(path))
+	for i, id := range path {
+		names[i] = byID[id]
+	}
+	return names
+}
+
+func readMrtStationNames(rows pgx.Rows) (map[string]string, error) {
 	byID := make(map[string]string)
 	for rows.Next() {
 		var id, name string
@@ -431,20 +580,24 @@ func (s *MrtServer) mrtStationNames(ctx context.Context, path []string) ([]strin
 		}
 		byID[id] = name
 	}
+	return completedMrtStationNames(rows, byID)
+}
+
+func completedMrtStationNames(rows pgx.Rows, byID map[string]string) (map[string]string, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	names := make([]string, len(path))
-	for i, id := range path {
-		names[i] = byID[id]
-	}
-	return names, nil
+	return byID, nil
 }
 
 func mrtBFSPath(adjacency map[string][]string, board, terminal string) ([]string, bool) {
 	if board == terminal {
 		return nil, false
 	}
+	return searchMrtPath(adjacency, board, terminal)
+}
+
+func searchMrtPath(adjacency map[string][]string, board, terminal string) ([]string, bool) {
 	prev := map[string]string{board: ""}
 	queue := []string{board}
 	for len(queue) > 0 {
@@ -453,15 +606,20 @@ func mrtBFSPath(adjacency map[string][]string, board, terminal string) ([]string
 		if node == terminal {
 			return mrtReconstruct(prev, terminal), true
 		}
-		for _, next := range adjacency[node] {
-			if _, seen := prev[next]; seen {
-				continue
-			}
-			prev[next] = node
-			queue = append(queue, next)
-		}
+		queue = appendUnseenMrtNeighbors(queue, prev, adjacency[node], node)
 	}
 	return nil, false
+}
+
+func appendUnseenMrtNeighbors(queue []string, prev map[string]string, neighbors []string, node string) []string {
+	for _, next := range neighbors {
+		if _, seen := prev[next]; seen {
+			continue
+		}
+		prev[next] = node
+		queue = append(queue, next)
+	}
+	return queue
 }
 
 // mrtReconstruct walks the BFS predecessor map from terminal back to the root and

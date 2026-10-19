@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
@@ -16,9 +17,11 @@ import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/models/journey_info.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/data/models/metro_topology.dart';
+import 'package:wheres_the_bus/data/repositories/mrt_repository.dart';
 import 'package:wheres_the_bus/data/repositories/near_repository.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_bloc.dart';
+import 'package:wheres_the_bus/features/metro/bloc/metro_eta_state.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_event.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_state.dart';
 import 'package:wheres_the_bus/features/metro/bloc/mrt_track_bloc.dart';
@@ -45,29 +48,31 @@ part '../widgets/metro_system_widgets.dart';
 
 final RegExp _digits = RegExp(r'\d+');
 
+// The SVG merges interchange codes; reminder requests keep each line separate.
+String? _mapStationId(String? code) =>
+    metroMapStations
+        .where((station) => station.id.split('_').contains(code))
+        .firstOrNull
+        ?.id ??
+    code;
+
 String _lineCode(String id) => id.split('_').first.replaceAll(_digits, '');
 
 String _lineName(AppI18n i18n, String id) =>
     metroLineNames(i18n)[_lineCode(id)] ?? _lineCode(id);
 
 TransportType _getTransportType(String line) {
-  switch (line) {
-    case 'BL':
-      return TransportType.mrtBL;
-    case 'R':
-      return TransportType.mrtR;
-    case 'G':
-      return TransportType.mrtG;
-    case 'BR':
-      return TransportType.mrtBR;
-    case 'O':
-      return TransportType.mrtO;
-    default:
-      return TransportType.mrtBL;
-  }
+  return switch (line) {
+    'BL' => TransportType.mrtBL,
+    'R' => TransportType.mrtR,
+    'G' => TransportType.mrtG,
+    'BR' => TransportType.mrtBR,
+    'O' => TransportType.mrtO,
+    _ => TransportType.mrtBL,
+  };
 }
 
-@Preview(name: 'MetroScreen — full', group: 'Metro', size: Size(390, 844))
+@Preview(name: 'MetroScreen — full', group: 'Metro')
 Widget metroScreenPreview() => MaterialApp(
   debugShowCheckedModeBanner: false,
   theme: AppTheme.light,
@@ -78,7 +83,6 @@ Widget metroScreenPreview() => MaterialApp(
   name: 'MetroScreen — full (dark)',
   group: 'Metro',
   brightness: Brightness.dark,
-  size: Size(390, 844),
 )
 Widget metroScreenDarkPreview() => MaterialApp(
   debugShowCheckedModeBanner: false,
@@ -89,7 +93,6 @@ Widget metroScreenDarkPreview() => MaterialApp(
 @Preview(
   name: 'MetroScreen — station detail',
   group: 'Metro',
-  size: Size(390, 720),
 )
 Widget metroDetailPreview() {
   final station = metroMapStations.firstWhere(
@@ -114,12 +117,20 @@ Widget metroDetailPreview() {
 }
 
 class MetroScreen extends StatefulWidget {
-  const MetroScreen({super.key, this.stationId, this.mode = MetroMapMode.time});
+  const MetroScreen({
+    super.key,
+    this.stationId,
+    this.mode = MetroMapMode.time,
+    this.repository,
+    this.nearRepository,
+  });
 
   final String? stationId;
 
   /// What the map labels stations with, from `?mode=`.
   final MetroMapMode mode;
+  final MrtRepository? repository;
+  final NearRepository? nearRepository;
 
   @override
   State<MetroScreen> createState() => _MetroScreenState();
@@ -138,7 +149,7 @@ class _MetroScreenState extends State<MetroScreen> {
   /// without the tap haptic — the rider did not tap anything.
   bool _autoSelecting = false;
   late MetroMapMode _mode = widget.mode;
-  final _metroBloc = MetroBloc();
+  late final _metroBloc = MetroBloc(repository: widget.repository);
   final _sheetController = SheetController();
 
   @override
@@ -156,38 +167,49 @@ class _MetroScreenState extends State<MetroScreen> {
 
   Future<void> _autoFocusNearest() async {
     try {
-      final fix = await LocationService.instance.lastKnownPosition();
-      if (!mounted ||
-          fix == null ||
-          !usableAutoFocusFix(
-            fix,
-            maxAccuracyMeters: _kAutoFocusRadiusMeters.toDouble(),
-            now: DateTime.now().toUtc(),
-          )) {
-        return;
-      }
-      final stations = await NearRepository.instance
+      final fix = await _usableNearbyFix();
+      if (fix == null) return;
+      final stations = await (widget.nearRepository ?? NearRepository.instance)
           .nearOnce(fix.latitude, fix.longitude, _kAutoFocusRadiusMeters)
           .first;
-      // The rider may have picked a station themselves while the query was in
-      // flight; auto-focus is a head start, never a correction.
-      if (!mounted || _selected != null || widget.stationId != null) return;
-      final near = nearestWithin(
-        stations.where((s) => s.type == NearStationType.mrt),
-        lat: fix.latitude,
-        lon: fix.longitude,
-        radiusMeters: _kAutoFocusRadiusMeters.toDouble(),
-        latOf: (s) => s.lat,
-        lonOf: (s) => s.lon,
-      );
-      if (near == null) return;
-      final id = metroStationIdForName(near.stationName);
-      if (id == null || _stationFor(id) == null) return;
-      _autoSelecting = true;
-      _goToStation(_stationFor(id)!);
+      _focusNearbyStation(stations, fix);
     } on Object {
       // Manual station selection remains available if location lookup fails.
     }
+  }
+
+  Future<Position?> _usableNearbyFix() async {
+    final fix = await LocationService.instance.lastKnownPosition();
+    if (!mounted || fix == null) return null;
+    return usableAutoFocusFix(
+          fix,
+          maxAccuracyMeters: _kAutoFocusRadiusMeters.toDouble(),
+          now: DateTime.now().toUtc(),
+        )
+        ? fix
+        : null;
+  }
+
+  bool get _canAutoFocus =>
+      mounted && _selected == null && widget.stationId == null;
+
+  void _focusNearbyStation(List<NearStationViewModel> stations, Position fix) {
+    // The rider may have picked a station themselves while the query was in
+    // flight; auto-focus is a head start, never a correction.
+    if (!_canAutoFocus) return;
+    final near = nearestWithin(
+      stations.where((s) => s.type == NearStationType.mrt),
+      lat: fix.latitude,
+      lon: fix.longitude,
+      radiusMeters: _kAutoFocusRadiusMeters.toDouble(),
+      latOf: (s) => s.lat,
+      lonOf: (s) => s.lon,
+    );
+    if (near == null) return;
+    final station = _stationFor(metroStationIdForName(near.stationName));
+    if (station == null) return;
+    _autoSelecting = true;
+    _goToStation(station);
   }
 
   @override
@@ -205,10 +227,7 @@ class _MetroScreenState extends State<MetroScreen> {
 
   static MetroMapStation? _stationFor(String? id) {
     if (id == null || id.isEmpty) return null;
-    for (final station in metroMapStations) {
-      if (station.id == id) return station;
-    }
-    return null;
+    return metroMapStations.where((station) => station.id == id).firstOrNull;
   }
 
   /// Writes a selection to the location; the sheet and the labels follow in
@@ -239,7 +258,7 @@ class _MetroScreenState extends State<MetroScreen> {
       line: arrival.line,
       boardCode: arrival.stationId,
       terminalCode: arrival.destinationStationId,
-    ).map((stop) => stop.id).toSet();
+    ).map((stop) => _mapStationId(stop.id)).whereType<String>().toSet();
   }
 
   /// A tap on the map means "select this station" normally, and "this is where
@@ -247,7 +266,11 @@ class _MetroScreenState extends State<MetroScreen> {
   void _onMapStationTap(MetroMapStation station) {
     final track = context.read<MrtTrackBloc>();
     if (track.state.picking) {
-      track.add(MrtAlightTargetPicked(station.id));
+      final code = station.id
+          .split('_')
+          .where((code) => code.startsWith(track.state.pickArrival!.line))
+          .firstOrNull;
+      if (code != null) track.add(MrtAlightTargetPicked(code));
       return;
     }
     _goToStation(station);
@@ -296,11 +319,13 @@ class _MetroScreenState extends State<MetroScreen> {
       for (final s in all)
         if (s.id != _selected!.id)
           if (_journeyFor(matrix, s.id) case final info?)
-            s.id: _mode == MetroMapMode.time
-                ? (info.travelTimeMin > 0 ? '${info.travelTimeMin}' : '—')
-                : '${info.fareNt}',
+            s.id: _journeyLabel(info),
     };
   }
+
+  String _journeyLabel(JourneyInfo info) => _mode == MetroMapMode.time
+      ? (info.travelTimeMin > 0 ? '${info.travelTimeMin}' : '—')
+      : '${info.fareNt}';
 
   /// Interchange ids combine both line codes (e.g. `'BL15_BR10'`); the matrix
   /// is keyed by single TDX codes, so match on whichever component is present.
@@ -359,6 +384,7 @@ class _MetroScreenState extends State<MetroScreen> {
                         system: 'TRTC',
                         stationId: _selected!.id,
                         name: _selected!.name,
+                        repository: widget.repository,
                         onClose: _dismiss,
                       )
                     : _MetroPlaceholderSheet(
@@ -373,6 +399,8 @@ class _MetroScreenState extends State<MetroScreen> {
       ),
     );
   }
+
+  bool get _animateSelection => _prevSelected == null && _selected != null;
 
   @override
   Widget build(BuildContext context) {
@@ -403,20 +431,17 @@ class _MetroScreenState extends State<MetroScreen> {
                   selectedStationId: _selected?.id,
                   onStationTap: _onMapStationTap,
                   pickAheadIds: _pickAheadIds(context),
-                  pickBoardId: context
-                      .watch<MrtTrackBloc>()
-                      .state
-                      .pickArrival
-                      ?.stationId,
-                  pickedStationId: context
-                      .watch<MrtTrackBloc>()
-                      .state
-                      .pickTargetStationId,
+                  pickBoardId: _mapStationId(
+                    context.watch<MrtTrackBloc>().state.pickArrival?.stationId,
+                  ),
+                  pickedStationId: _mapStationId(
+                    context.watch<MrtTrackBloc>().state.pickTargetStationId,
+                  ),
                   stationLabels: _buildLabels(
                     metroMapStations,
                     state.journeyMatrix,
                   ),
-                  animate: _prevSelected == null && _selected != null,
+                  animate: _animateSelection,
                 ),
               ),
               Align(
@@ -517,9 +542,7 @@ class _MetroAlightDockState extends State<_MetroAlightDock> {
         if (target == null) return const SizedBox.shrink();
 
         final autoCarId = deriveCarIdFromCn1(arrival.cn1);
-        final carId = arrival.cn1.isNotEmpty
-            ? autoCarId
-            : _carController.text.trim();
+        final carId = _boundCarId(arrival, autoCarId);
 
         return AlightConfirmBar(
           targetName: target.name,
@@ -534,19 +557,8 @@ class _MetroAlightDockState extends State<_MetroAlightDock> {
           ),
           canStart: carId.isNotEmpty,
           busy: state.creating,
-          errorText: state.createError == MrtTrackCreateError.none
-              ? null
-              : _errorText(AppI18n.of(context), state.createError),
-          binding: arrival.cn1.isNotEmpty
-              ? AlightBindingChip(
-                  label: AppI18n.of(context).metroCarChip(autoCarId),
-                )
-              : _CarNumberField(
-                  controller: _carController,
-                  // The CTA is gated on a car number being present, so the
-                  // field has to force a rebuild as it is typed.
-                  onChanged: (_) => setState(() {}),
-                ),
+          errorText: _creationError(context, state.createError),
+          binding: _carBinding(context, arrival, autoCarId),
           onStart: () => context.read<MrtTrackBloc>().add(
             MrtTrackRequested(
               carId: carId,
@@ -565,6 +577,31 @@ class _MetroAlightDockState extends State<_MetroAlightDock> {
         );
       },
     );
+  }
+
+  String _boundCarId(MetroArrival arrival, String automatic) =>
+      arrival.cn1.isNotEmpty ? automatic : _carController.text.trim();
+
+  String? _creationError(BuildContext context, MrtTrackCreateError error) =>
+      error == MrtTrackCreateError.none
+      ? null
+      : _errorText(AppI18n.of(context), error);
+
+  Widget _carBinding(
+    BuildContext context,
+    MetroArrival arrival,
+    String autoCarId,
+  ) {
+    return arrival.cn1.isNotEmpty
+        ? AlightBindingChip(
+            label: AppI18n.of(context).metroCarChip(autoCarId),
+          )
+        : _CarNumberField(
+            controller: _carController,
+            // The CTA is gated on a car number being present, so the
+            // field has to force a rebuild as it is typed.
+            onChanged: (_) => setState(() {}),
+          );
   }
 
   static String _errorText(AppI18n i18n, MrtTrackCreateError error) =>

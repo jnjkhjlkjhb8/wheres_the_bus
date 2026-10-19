@@ -41,21 +41,7 @@ class BikeStationBloc extends Bloc<BikeStationEvent, BikeStationState> {
     BikeStationStarted _,
     Emitter<BikeStationState> emit,
   ) async {
-    try {
-      final info = await _repository.stationStatic(stationUid);
-      emit(
-        state.copyWith(
-          name: info.name,
-          capacity: info.capacity,
-          lat: info.lat != 0 ? info.lat : null,
-          lon: info.lon != 0 ? info.lon : null,
-          loading: false,
-          clearError: true,
-        ),
-      );
-    } on Object catch (e) {
-      emit(state.copyWith(loading: false, error: e.toString()));
-    }
+    await _loadStationInfo(emit);
     if (_sub != null) await _sub!.cancel();
     _sub =
         ArrivalFeed.passthrough(
@@ -72,6 +58,24 @@ class BikeStationBloc extends Bloc<BikeStationEvent, BikeStationState> {
             ),
           ),
         );
+  }
+
+  Future<void> _loadStationInfo(Emitter<BikeStationState> emit) async {
+    try {
+      final info = await _repository.stationStatic(stationUid);
+      emit(
+        state.copyWith(
+          name: info.name,
+          capacity: info.capacity,
+          lat: info.lat != 0 ? info.lat : null,
+          lon: info.lon != 0 ? info.lon : null,
+          loading: false,
+          clearError: true,
+        ),
+      );
+    } on Object catch (e) {
+      emit(state.copyWith(loading: false, error: e.toString()));
+    }
   }
 
   void _onEta(BikeStationEtaUpdated e, Emitter<BikeStationState> emit) {

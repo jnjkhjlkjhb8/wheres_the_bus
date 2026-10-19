@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/alert_models.dart';
 import 'package:wheres_the_bus/features/alerts/view/alert_source_chip.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -57,8 +58,10 @@ void main() {
       WidgetTester tester,
       AlertSource? source, {
       String? department,
+      ThemeData? theme,
     }) => tester.pumpWidget(
       MaterialApp(
+        theme: theme,
         locale: const Locale('zh'),
         localizationsDelegates: AppI18n.localizationsDelegates,
         supportedLocales: AppI18n.supportedLocales,
@@ -110,11 +113,97 @@ void main() {
       },
     );
 
-    testWidgets('no department falls back to the hardcoded city map', (
-      tester,
-    ) async {
-      await pump(tester, const AlertSource(AlertSourceKind.busAlert, 'Taipei'));
-      expect(find.text('北市公車'), findsOneWidget);
+    testWidgets(
+      'bus labels cover all cities, unknown feeds and empty department',
+      (
+        tester,
+      ) async {
+        final labels = {
+          'NewTaipei': zhStrings.operatorBusNewTaipei,
+          'Taoyuan': zhStrings.operatorBusTaoyuan,
+          'Taichung': zhStrings.operatorBusTaichung,
+          'Tainan': zhStrings.operatorBusTainan,
+          'Kaohsiung': zhStrings.operatorBusKaohsiung,
+          'unknown': zhStrings.modeBus,
+        };
+        for (final entry in labels.entries) {
+          await pump(
+            tester,
+            AlertSource(AlertSourceKind.busAlert, entry.key),
+            department: '',
+          );
+          expect(find.text(entry.value), findsOneWidget);
+        }
+      },
+    );
+
+    group('colors', () {
+      final light = ThemeData(colorScheme: const ColorScheme.light());
+      final dark = ThemeData(colorScheme: const ColorScheme.dark());
+
+      Future<(Color?, Color?)> chipColors(
+        WidgetTester tester,
+        AlertSource source,
+        ThemeData theme,
+      ) async {
+        await pump(tester, source, theme: theme);
+        final box = tester.widget<Container>(
+          find.descendant(
+            of: find.byType(AlertSourceChip),
+            matching: find.byType(Container),
+          ),
+        );
+        final label = tester.widget<Text>(
+          find.descendant(
+            of: find.byType(AlertSourceChip),
+            matching: find.byType(Text),
+          ),
+        );
+        return ((box.decoration! as BoxDecoration).color, label.style?.color);
+      }
+
+      const bus = AlertSource(AlertSourceKind.busAlert, 'Taipei');
+      const metro = AlertSource(AlertSourceKind.metro, 'TRTC');
+
+      testWidgets('the Ink bus chip is dark with a white label in light', (
+        tester,
+      ) async {
+        expect(
+          await chipColors(tester, bus, light),
+          (AppTheme.inkLight, Colors.white),
+        );
+      });
+
+      testWidgets('the Ink bus chip swaps to the inverse surface in dark', (
+        tester,
+      ) async {
+        expect(
+          await chipColors(tester, bus, dark),
+          (dark.colorScheme.inverseSurface, dark.colorScheme.onInverseSurface),
+        );
+      });
+
+      testWidgets('an operator color stands on its own in both themes', (
+        tester,
+      ) async {
+        for (final theme in [light, dark]) {
+          expect(
+            await chipColors(tester, metro, theme),
+            (AppTheme.mrtBL, Colors.white),
+          );
+        }
+      });
+
+      testWidgets('an app notice is the Ink chip too', (tester) async {
+        expect(
+          await chipColors(
+            tester,
+            const AlertSource(AlertSourceKind.appNotice),
+            dark,
+          ),
+          (dark.colorScheme.inverseSurface, dark.colorScheme.onInverseSurface),
+        );
+      });
     });
   });
 }

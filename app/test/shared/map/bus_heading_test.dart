@@ -52,6 +52,59 @@ void main() {
     });
   });
 
+  group('bearingIfMoved precision', () {
+    const origin = LatLng(0, 0);
+
+    test('reads the intercardinal directions exactly', () {
+      expect(bearingIfMoved(origin, const LatLng(0.001, 0.001)), closeTo(45, 1e-9));
+      expect(bearingIfMoved(origin, const LatLng(-0.001, 0.001)), closeTo(135, 1e-9));
+      expect(bearingIfMoved(origin, const LatLng(-0.001, -0.001)), closeTo(225, 1e-9));
+      expect(bearingIfMoved(origin, const LatLng(0.001, -0.001)), closeTo(315, 1e-9));
+      expect(bearingIfMoved(origin, const LatLng(0.001, 0)), closeTo(0, 1e-9));
+      expect(bearingIfMoved(origin, const LatLng(0, 0.001)), closeTo(90, 1e-9));
+      expect(bearingIfMoved(origin, const LatLng(-0.001, 0)), closeTo(180, 1e-9));
+      expect(bearingIfMoved(origin, const LatLng(0, -0.001)), closeTo(270, 1e-9));
+    });
+
+    test('a degree of latitude is 111320 metres', () {
+      const oneDegreeNorth = LatLng(1, 0);
+      expect(bearingIfMoved(origin, oneDegreeNorth, minMeters: 111319.5), 0);
+      expect(bearingIfMoved(origin, oneDegreeNorth, minMeters: 111320.5), isNull);
+    });
+
+    test('a move of exactly the floor still counts', () {
+      expect(bearingIfMoved(origin, const LatLng(1, 0), minMeters: 111320), 0);
+    });
+
+    test('the default floor is five metres', () {
+      // 0.000045 degrees of latitude is 5.0094 m; 0.000044 is 4.898 m.
+      expect(bearingIfMoved(origin, const LatLng(0.000045, 0)), 0);
+      expect(bearingIfMoved(origin, const LatLng(0.000044, 0)), isNull);
+    });
+
+    test('east-west distance shrinks with the cosine of the latitude', () {
+      const sixty = LatLng(60, 0);
+      const east = LatLng(60, 1);
+      expect(bearingIfMoved(sixty, east, minMeters: 55659), closeTo(90, 1e-9));
+      expect(bearingIfMoved(sixty, east, minMeters: 55661), isNull);
+    });
+
+    test('north and east both count towards the floor', () {
+      // 3 and 4 hundredths of a metre-scale hypotenuse: 3-4-5.
+      const a = LatLng(0, 0);
+      final b = LatLng(3 / 111320, 4 / 111320);
+      expect(bearingIfMoved(a, b, minMeters: 4.99), isNotNull);
+      expect(bearingIfMoved(a, b, minMeters: 5.01), isNull);
+    });
+
+    test('the bearing is measured from a, not b', () {
+      final forward = bearingIfMoved(origin, const LatLng(0.001, 0.002))!;
+      final back = bearingIfMoved(const LatLng(0.001, 0.002), origin)!;
+      expect(forward, closeTo(63.4349488229, 1e-6));
+      expect((forward + 180) % 360, closeTo(back, 1e-6));
+    });
+  });
+
   group('lerpHeading', () {
     test('holds still when there is nothing to turn', () {
       expect(lerpHeading(90, 90, 0.5), 90);
@@ -72,6 +125,30 @@ void main() {
     test('lands exactly on the endpoints', () {
       expect(lerpHeading(350, 10, 0), 350);
       expect(lerpHeading(350, 10, 1), 370);
+    });
+  });
+  group('lerpHeading precision', () {
+    test('a full step lands on the target by the short way', () {
+      expect(lerpHeading(0, 90, 1), 90);
+      expect(lerpHeading(0, 45, 1), 45);
+      expect(lerpHeading(90, 0, 1), 0);
+      expect(lerpHeading(100, 280, 1), -80);
+      expect(lerpHeading(0, 180, 1), -180);
+      expect(lerpHeading(0, 181, 1), -179);
+      expect(lerpHeading(0, 179, 1), 179);
+      expect(lerpHeading(30, 200, 1), 200);
+      expect(lerpHeading(200, 30, 1), 30);
+      expect(lerpHeading(270, 10, 1), 370);
+      expect(lerpHeading(180, 0, 1), 0);
+      expect(lerpHeading(181, 0, 1), 360);
+      expect(lerpHeading(359, 0, 1), 360);
+    });
+
+    test('a fractional step moves that share of the shortest turn', () {
+      expect(lerpHeading(0, 100, 0.25), 25);
+      expect(lerpHeading(0, 260, 0.5), -50);
+      expect(lerpHeading(10, 350, 0.5), 0);
+      expect(lerpHeading(20, 40, 0), 20);
     });
   });
 }

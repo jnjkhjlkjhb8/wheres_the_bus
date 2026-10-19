@@ -32,6 +32,7 @@ JourneyLeg _leg(String label) => JourneyLeg(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late StreamController<Duration?> etaCtrl;
   // channel and positions default to null: platform channel and location
   // tracking are skipped in tests.
@@ -195,6 +196,27 @@ void main() {
     },
   );
 
+  test(
+    'cancelling while native start is pending releases the late lease',
+    () async {
+      final channel = _DelayedChannel();
+      final b = JourneySessionBloc(
+        etaStream: (_) => etaCtrl.stream,
+        channel: channel,
+        liveActivityEnabled: () => true,
+      )..add(JourneyStarted(legs: [_leg('307')]));
+      addTearDown(b.close);
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+      b.add(const JourneyCancelled());
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.done);
+      expect(channel.stopped, isEmpty);
+      channel.pending.complete(42);
+      await Future<void>.delayed(Duration.zero);
+      expect(channel.stopped, [42]);
+      expect(channel.updated, isEmpty);
+    },
+  );
+
   test('every card names its session, and a new ride mints a new id', () async {
     final channel = _FakeChannel();
     JourneySessionBloc start() => JourneySessionBloc(
@@ -238,6 +260,46 @@ void main() {
     expect(b.state.phase, JourneyPhase.riding);
     await b.close();
   });
+
+  test(
+    'riding fixes advance to the nearest upcoming stop without rewinding',
+    () async {
+      final positions = StreamController<Position>();
+      addTearDown(positions.close);
+      final b = JourneySessionBloc(
+        etaStream: (_) => etaCtrl.stream,
+        positions: () => positions.stream,
+        liveActivityEnabled: () => true,
+      )..add(JourneyStarted(legs: [_leg('307')]));
+      addTearDown(b.close);
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+      b.add(const BoardConfirmed());
+      await b.stream.firstWhere((s) => s.phase == JourneyPhase.riding);
+      Position fix(double latitude, double longitude) => Position(
+        latitude: latitude,
+        longitude: longitude,
+        timestamp: DateTime(2026),
+        accuracy: 1,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
+      positions.add(fix(25.02, 121.52));
+      await b.stream.firstWhere((s) => s.nextStopIndex == 1);
+      positions.add(fix(25.01, 121.51));
+      await Future<void>.delayed(Duration.zero);
+      expect(b.state.nextStopIndex, 1);
+      b.add(const ProgressTicked(0, generation: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(b.state.nextStopIndex, 1);
+      b.add(const ProgressTicked(2, generation: -1));
+      await Future<void>.delayed(Duration.zero);
+      expect(b.state.nextStopIndex, 1);
+    },
+  );
 }
 
 class _FakeChannel extends AlightTrackChannel {
@@ -255,4 +317,23 @@ class _FakeChannel extends AlightTrackChannel {
 
   @override
   Future<void> stop(int lease) async {}
+}
+
+class _DelayedChannel extends AlightTrackChannel {
+  final pending = Completer<int>();
+  final stopped = <int>[];
+  final updated = <int>[];
+
+  @override
+  Future<int> start(AlightTrackContent content) => pending.future;
+
+  @override
+  Future<void> update(int lease, AlightTrackContent content) async {
+    updated.add(lease);
+  }
+
+  @override
+  Future<void> stop(int lease) async {
+    stopped.add(lease);
+  }
 }

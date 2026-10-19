@@ -10,6 +10,7 @@ import 'package:wheres_the_bus/features/bus/bloc/bus_stop_bloc.dart';
 import 'package:wheres_the_bus/features/bus/view/bus_stop_detail_view.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';
 
 import '../../support/helpers/i18n.dart';
 
@@ -43,24 +44,45 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('a bloc built by the view is closed with it', (tester) async {
+    final favorites = FavoritesBloc(
+      _FakeFavoritesRepository(),
+      ValueNotifier(true),
+    );
+    addTearDown(favorites.close);
+
+    await tester.pumpWidget(_host(null, favorites, stopId: ''));
+    await tester.pump();
+    final owned = BlocProvider.of<BusStopBloc>(
+      tester.element(find.byType(SheetDetailHeader)),
+    );
+    expect(owned.isClosed, isFalse);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+
+    expect(owned.isClosed, isTrue);
+  });
 }
 
-Widget _host(BusStopBloc? bloc, FavoritesBloc favorites) => MaterialApp(
-  locale: const Locale('zh'),
-  localizationsDelegates: AppI18n.localizationsDelegates,
-  supportedLocales: AppI18n.supportedLocales,
+Widget _host(BusStopBloc? bloc, FavoritesBloc favorites, {String? stopId}) =>
+    MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppI18n.localizationsDelegates,
+      supportedLocales: AppI18n.supportedLocales,
 
-  home: Scaffold(
-    body: BlocProvider<FavoritesBloc>.value(
-      value: favorites,
-      child: BusStopDetailView(
-        stopName: '台北車站',
-        stopId: 'group-1',
-        bloc: bloc,
+      home: Scaffold(
+        body: BlocProvider<FavoritesBloc>.value(
+          value: favorites,
+          child: BusStopDetailView(
+            stopName: '台北車站',
+            stopId: stopId ?? 'group-1',
+            bloc: bloc,
+          ),
+        ),
       ),
-    ),
-  ),
-);
+    );
 
 class _FakeFavoritesRepository implements FavoritesRepository {
   @override

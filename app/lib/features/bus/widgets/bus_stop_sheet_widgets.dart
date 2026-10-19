@@ -27,47 +27,53 @@ class _StopBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return BlocBuilder<BusStopBloc, BusStopState>(
-      buildWhen: (p, n) =>
-          p.status != n.status ||
-          p.selectedStationUid != n.selectedStationUid ||
-          p.error != n.error ||
-          !identical(p.members, n.members) ||
-          !identical(p.displays, n.displays),
-      builder: (context, state) {
-        // Non-loaded states are a single box; loaded rows go through a lazy
-        // sliver so only visible tiles are built.
-        switch (state.status) {
-          case BusStopStatus.loading:
-            return const SliverToBoxAdapter(child: _StopSkeletonList());
-          case BusStopStatus.empty:
-            return SliverToBoxAdapter(
-              child: _StopMessage(
-                icon: Icons.directions_bus_outlined,
-                title: AppI18n.of(context).busStopNoRoutes,
-                hint: AppI18n.of(context).busStopNoRoutesHint,
-              ),
-            );
-          case BusStopStatus.error:
-            return SliverToBoxAdapter(
-              child: ErrorStateView(
-                error: state.error ?? const OfflineError(),
-                onRetry: () {
-                  context.read<BusStopBloc>().add(
-                    const BusStopRetryRequested(),
-                  );
-                },
-              ),
-            );
-          case BusStopStatus.loaded:
-            final rows = _rowBuilders(context, state, cs);
-            return SliverList.builder(
-              itemCount: rows.length,
-              itemBuilder: (context, i) => rows[i](),
-            );
-        }
+      buildWhen: _shouldBuild,
+      builder: (context, state) => switch (state.status) {
+        // Non-loaded states are a single box; loaded rows use a lazy sliver.
+        BusStopStatus.loading => const SliverToBoxAdapter(
+          child: _StopSkeletonList(),
+        ),
+        BusStopStatus.empty => SliverToBoxAdapter(
+          child: _StopMessage(
+            icon: Icons.directions_bus_outlined,
+            title: AppI18n.of(context).busStopNoRoutes,
+            hint: AppI18n.of(context).busStopNoRoutesHint,
+          ),
+        ),
+        BusStopStatus.error => SliverToBoxAdapter(
+          child: ErrorStateView(
+            error: state.error ?? const OfflineError(),
+            onRetry: () =>
+                context.read<BusStopBloc>().add(const BusStopRetryRequested()),
+          ),
+        ),
+        BusStopStatus.loaded => _loadedRows(context, state, cs),
       },
     );
   }
+
+  Widget _loadedRows(BuildContext context, BusStopState state, ColorScheme cs) {
+    final rows = _rowBuilders(context, state, cs);
+    return SliverList.builder(
+      itemCount: rows.length,
+      itemBuilder: (context, i) => rows[i](),
+    );
+  }
+
+  bool _shouldBuild(BusStopState previous, BusStopState next) =>
+      _selectionChanged(previous, next) || _rowsChanged(previous, next);
+
+  bool _selectionChanged(BusStopState previous, BusStopState next) =>
+      previous.status != next.status ||
+      previous.selectedStationUid != next.selectedStationUid ||
+      previous.error != next.error;
+
+  bool _rowsChanged(BusStopState previous, BusStopState next) =>
+      !identical(previous.members, next.members) ||
+      !identical(previous.displays, next.displays);
+
+  bool _showHeaders(bool hasFilter, String? selected) =>
+      hasFilter && selected == null;
 
   /// Flattens the loaded state into per-row thunks. Deferring widget
   /// construction to the sliver's itemBuilder is the point: off-screen rows
@@ -90,7 +96,7 @@ class _StopBody extends StatelessWidget {
     final visibleMembers = selected == null
         ? members
         : members.where((m) => m.stationUid == selected).toList();
-    final showHeaders = hasFilter && selected == null;
+    final showHeaders = _showHeaders(hasFilter, selected);
     final labels = memberStopLabels(chipMembers, byStation);
     // Member stops with no routes render nothing in the 全部 view — an empty
     // group is noise, and a stack of them reads as a broken screen.

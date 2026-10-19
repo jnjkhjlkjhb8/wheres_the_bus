@@ -116,11 +116,14 @@ class BusStopEtaViewModel extends Equatable {
     if (stopStatus == 0 && estimateSeconds == 0) {
       return BusArrivalStatus.arriving;
     }
-    if (estimateSeconds > 0 && estimateSeconds < 60) {
-      return BusArrivalStatus.approaching;
-    }
-    if (estimateSeconds > 0) return BusArrivalStatus.minutes;
-    return BusArrivalStatus.unknown;
+    return _estimateStatus;
+  }
+
+  BusArrivalStatus get _estimateStatus {
+    if (estimateSeconds <= 0) return BusArrivalStatus.unknown;
+    return estimateSeconds < 60
+        ? BusArrivalStatus.approaching
+        : BusArrivalStatus.minutes;
   }
 
   @override
@@ -314,9 +317,8 @@ class BusRouteViewModel extends Equatable {
   final BusFareInfo? fare;
 
   int? get soleDirection {
-    if (stopsGo.isEmpty && stopsReturn.isNotEmpty) return 1;
-    if (stopsReturn.isEmpty && stopsGo.isNotEmpty) return 0;
-    return null;
+    if (stopsGo.isEmpty == stopsReturn.isEmpty) return null;
+    return stopsGo.isEmpty ? 1 : 0;
   }
 
   @override

@@ -70,25 +70,43 @@ func (m mysqlArchiveAdmin) partitions(ctx context.Context, table string) ([]arch
 		return nil, _oops.With("table", table).Wrapf(err, "read partitions")
 	}
 	defer func() { _ = rows.Close() }()
+	return readArchivePartitions(rows, table)
+}
+
+func readArchivePartitions(rows *sql.Rows, table string) ([]archivePartition, error) {
 	var out []archivePartition
 	for rows.Next() {
-		var name, desc string
-		if err := rows.Scan(&name, &desc); err != nil {
-			return nil, _oops.With("table", table).Wrapf(err, "scan partition")
-		}
-		if strings.EqualFold(strings.TrimSpace(desc), "MAXVALUE") {
-			continue
-		}
-		days, err := strconv.Atoi(strings.TrimSpace(desc))
+		partition, err := readArchivePartition(rows, table)
 		if err != nil {
-			return nil, _oops.With("table", table).With("partition", name).Wrapf(err, "parse partition bound")
+			return nil, err
 		}
-		out = append(out, archivePartition{name: name, upper: fromMySQLDays(days)})
+		if partition != nil {
+			out = append(out, *partition)
+		}
 	}
+	return completedArchivePartitions(rows, table, out)
+}
+
+func completedArchivePartitions(rows *sql.Rows, table string, out []archivePartition) ([]archivePartition, error) {
 	if err := rows.Err(); err != nil {
 		return nil, _oops.With("table", table).Wrapf(err, "iterate partitions")
 	}
 	return out, nil
+}
+
+func readArchivePartition(rows *sql.Rows, table string) (*archivePartition, error) {
+	var name, desc string
+	if err := rows.Scan(&name, &desc); err != nil {
+		return nil, _oops.With("table", table).Wrapf(err, "scan partition")
+	}
+	if strings.EqualFold(strings.TrimSpace(desc), "MAXVALUE") {
+		return nil, nil
+	}
+	days, err := strconv.Atoi(strings.TrimSpace(desc))
+	if err != nil {
+		return nil, _oops.With("table", table).With("partition", name).Wrapf(err, "parse partition bound")
+	}
+	return &archivePartition{name: name, upper: fromMySQLDays(days)}, nil
 }
 
 const (
@@ -110,40 +128,31 @@ func MaintainPartitions(ctx context.Context, db archiveAdmin, now time.Time) err
 	}
 	var errs []error
 	for _, spec := range _archivePartitionTables {
-		existing, err := db.partitions(ctx, spec.table)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		if err := addArchivePartitions(ctx, db, spec.table, existing, now); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		if spec.retention == 0 {
-			continue
-		}
-		if err := dropArchivePartitions(ctx, db, spec.table, existing, now.Add(-spec.retention)); err != nil {
-			errs = append(errs, err)
-		}
+		errs = append(errs, maintainArchiveTable(ctx, db, spec.table, spec.retention, now))
 	}
 	return errors.Join(errs...)
 }
 
+func maintainArchiveTable(ctx context.Context, db archiveAdmin, table string, retention time.Duration, now time.Time) error {
+	existing, err := db.partitions(ctx, table)
+	if err != nil {
+		return err
+	}
+	if err := addArchivePartitions(ctx, db, table, existing, now); err != nil {
+		return err
+	}
+	return expireArchiveTable(ctx, db, table, retention, existing, now)
+}
+
+func expireArchiveTable(ctx context.Context, db Execer, table string, retention time.Duration, existing []archivePartition, now time.Time) error {
+	if retention == 0 {
+		return nil
+	}
+	return dropArchivePartitions(ctx, db, table, existing, now.Add(-retention))
+}
+
 func addArchivePartitions(ctx context.Context, db Execer, table string, existing []archivePartition, now time.Time) error {
-	// Bounds, not months: a partition bounded by the first of month N holds
-	// month N-1. Holding the next _archiveMonthsAhead months therefore means
-	// declaring bounds up to _archiveMonthsAhead+1 months out.
-	limit := monthStart(now).AddDate(0, _archiveMonthsAhead+1, 0)
-	next := monthStart(now).AddDate(0, 1, 0)
-	if last, ok := lastBound(existing); ok && !last.Before(next) {
-		// REORGANIZE requires the new bounds to rise past every declared one, so
-		// continue from the month after the last, never from it.
-		next = last.AddDate(0, 1, 0)
-	}
-	var defs []string
-	for b := next; !b.After(limit); b = b.AddDate(0, 1, 0) {
-		defs = append(defs, fmt.Sprintf("PARTITION %s VALUES LESS THAN (%d)", partitionName(b), toMySQLDays(b)))
-	}
+	defs := archivePartitionDefinitions(existing, now)
 	if len(defs) == 0 {
 		return nil
 	}
@@ -157,13 +166,28 @@ func addArchivePartitions(ctx context.Context, db Execer, table string, existing
 	return nil
 }
 
-func dropArchivePartitions(ctx context.Context, db Execer, table string, existing []archivePartition, cutoff time.Time) error {
-	var names []string
-	for _, p := range existing {
-		if !p.upper.After(cutoff) {
-			names = append(names, p.name)
-		}
+func archivePartitionDefinitions(existing []archivePartition, now time.Time) []string {
+	// A bound at month N holds N-1, so keeping upcoming months requires one extra bound.
+	limit := monthStart(now).AddDate(0, _archiveMonthsAhead+1, 0)
+	next := nextArchiveBound(existing, now)
+	var defs []string
+	for b := next; !b.After(limit); b = b.AddDate(0, 1, 0) {
+		defs = append(defs, fmt.Sprintf("PARTITION %s VALUES LESS THAN (%d)", partitionName(b), toMySQLDays(b)))
 	}
+	return defs
+}
+
+func nextArchiveBound(existing []archivePartition, now time.Time) time.Time {
+	next := monthStart(now).AddDate(0, 1, 0)
+	if last, ok := lastBound(existing); ok && !last.Before(next) {
+		// REORGANIZE requires new bounds to rise beyond every declared bound.
+		return last.AddDate(0, 1, 0)
+	}
+	return next
+}
+
+func dropArchivePartitions(ctx context.Context, db Execer, table string, existing []archivePartition, cutoff time.Time) error {
+	names := expiredArchivePartitions(existing, cutoff)
 	if len(names) == 0 {
 		return nil
 	}
@@ -176,6 +200,16 @@ func dropArchivePartitions(ctx context.Context, db Execer, table string, existin
 		"component", "archive_partitions", "action", "drop",
 		"table", table, "partitions", strings.Join(names, ","), "cutoff", cutoff.UTC().Format(time.DateOnly))
 	return nil
+}
+
+func expiredArchivePartitions(existing []archivePartition, cutoff time.Time) []string {
+	var names []string
+	for _, p := range existing {
+		if !p.upper.After(cutoff) {
+			names = append(names, p.name)
+		}
+	}
+	return names
 }
 
 // lastBound returns the newest declared upper bound, which is where new months

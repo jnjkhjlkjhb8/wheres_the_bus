@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,5 +111,16 @@ func TestRunRejectsUnknownUsage(t *testing.T) {
 		if err := run(args); err == nil {
 			t.Errorf("run(%q) = nil, want usage error", args)
 		}
+	}
+}
+
+func TestPipelineStepUnknownNameNeverRunsWork(t *testing.T) {
+	if err := runPipelineStep(context.Background(), deps{}, "typo"); err == nil || !strings.Contains(err.Error(), "unknown pipeline step") {
+		t.Fatalf("unknown step = %v", err)
+	}
+	t.Setenv("TDX_CLIENT_ID", "")
+	t.Setenv("TDX_CLIENT_SECRET", "")
+	if err := runPipelineStep(context.Background(), deps{}, "ingest"); err == nil || !strings.Contains(err.Error(), "raw lock pool is nil") {
+		t.Fatalf("ingest without lock pool = %v", err)
 	}
 }

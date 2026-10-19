@@ -38,6 +38,10 @@ func saveBikeAvailabilityHistory(ctx context.Context, db history.Execer, rows []
 	if db == nil || len(rows) == 0 {
 		return
 	}
+	writeBikeHistory(ctx, db, rows)
+}
+
+func writeBikeHistory(ctx context.Context, db history.Execer, rows [][]any) {
 	if err := history.Insert(ctx, db, "bike_availability_history", _bikeHistoryCols, rows); err != nil {
 		zap.S().Errorw("insert error", "component", "bike_history", "rows", len(rows), "err", err)
 		return

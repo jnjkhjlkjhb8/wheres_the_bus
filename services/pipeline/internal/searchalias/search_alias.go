@@ -13,40 +13,47 @@ func SearchAlias(name string) string {
 		return strings.Join(nameShorthands(name), " ")
 	}
 
-	var full, initials, zhuyin strings.Builder
-	for _, s := range syllables {
-		full.WriteString(s)
-		initials.WriteString(syllableInitial(s))
-		zhuyin.WriteString(syllableZhuyin(s))
-	}
-
-	forms := []string{full.String()}
+	forms := []string{joinSyllables(syllables, func(s string) string { return s })}
 	// Initials are only a useful handle when there is more than one syllable;
 	// for a one-syllable name they are a single letter that matches half the
 	// corpus.
 	if len(syllables) > 1 {
-		forms = append(forms, initials.String())
+		forms = append(forms, joinSyllables(syllables, syllableInitial))
 	}
-	if z := zhuyin.String(); z != "" {
+	if z := joinSyllables(syllables, syllableZhuyin); z != "" {
 		forms = append(forms, z)
 	}
 	forms = append(forms, nameShorthands(name)...)
 	return strings.Join(forms, " ")
 }
 
+func joinSyllables(syllables []string, convert func(string) string) string {
+	var result strings.Builder
+	for _, syllable := range syllables {
+		result.WriteString(convert(syllable))
+	}
+	return result.String()
+}
+
 func pinyinSyllables(name string) []string {
 	args := pinyin.NewArgs()
 	var out []string
 	for _, r := range name {
-		if readings := pinyin.SinglePinyin(r, args); len(readings) > 0 {
-			out = append(out, readings[0])
-			continue
-		}
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			out = append(out, strings.ToLower(string(r)))
+		if syllable := runePinyin(r, args); syllable != "" {
+			out = append(out, syllable)
 		}
 	}
 	return out
+}
+
+func runePinyin(r rune, args pinyin.Args) string {
+	if readings := pinyin.SinglePinyin(r, args); len(readings) > 0 {
+		return readings[0]
+	}
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return strings.ToLower(string(r))
+	}
+	return ""
 }
 
 // syllableInitial is the first letter of a romanised syllable — the handle a

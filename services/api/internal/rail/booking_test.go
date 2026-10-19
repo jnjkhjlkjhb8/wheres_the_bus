@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -37,6 +38,42 @@ func getBooking(r *gin.Engine, query string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestTicketCounts(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  map[string]int
+	}{
+		{"omitted", "", map[string]int{}},
+		{"blank", "adult_ticket=%20", map[string]int{}},
+		{"single passenger", "adult_ticket=1", map[string]int{"adult": 1}},
+		{"maximum category", "student_ticket=10", map[string]int{"student": 10}},
+		{"mixed categories", "adult_ticket=2&child_ticket=1&senior_ticket=0&disabled_ticket=1", map[string]int{"adult": 2, "child": 1, "senior": 0, "disabled": 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/?"+tt.query, nil)
+			got, err := parseTicketCounts(c)
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("counts = %v, err %v, want %v", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestTicketCountsRejectInvalidOrders(t *testing.T) {
+	for _, query := range []string{"adult_ticket=0", "adult_ticket=0&child_ticket=0", "adult_ticket=-1", "adult_ticket=11", "adult_ticket=1.5", "child_ticket=invalid"} {
+		t.Run(query, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/?"+query, nil)
+			if _, err := parseTicketCounts(c); err == nil {
+				t.Fatal("invalid passenger order accepted")
+			}
+		})
+	}
 }
 
 func TestBookingRoute(t *testing.T) {

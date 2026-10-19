@@ -51,7 +51,7 @@ COMPOSE_PROD := ENV_FILE=env/prod.env \
 # Empty (the default) follows every service in the environment.
 SERVICE ?=
 
-.PHONY: up-test up-staging up-prod logs-test logs-staging logs-prod down-test down-staging down-prod migrations-check run-test run-staging build-prod test test-go test-flutter quality lint lint-fix lint-tool proto-go proto-dart l10n-push l10n-pull l10n-pull-sources verify render-env-test render-env-staging render-env-prod refresh-motis-prod
+.PHONY: up-test up-staging up-prod logs-test logs-staging logs-prod down-test down-staging down-prod migrations-check run-test run-staging build-prod test test-go test-flutter quality quality-all lint lint-fix lint-tool proto-go proto-dart l10n-push l10n-pull l10n-pull-sources verify render-env-test render-env-staging render-env-prod refresh-motis-prod
 
 test: test-go test-flutter
 
@@ -62,11 +62,22 @@ test-go: proto-go
 test-flutter: proto-dart
 	cd app && flutter analyze --no-fatal-infos && flutter test
 
-# CRAP <= 8 and mutation score >= 90% on code changed since QUALITY_BASE
+# CRAP <= 4 and mutation score >= 90% on code changed since QUALITY_BASE
 # (default HEAD: the uncommitted work). Slow, so not part of `make test`.
 quality: proto-go proto-dart
 	go test -coverprofile=coverage.out ./...
 	cd app && flutter test --coverage
+	./scripts/check-quality.sh go flutter
+
+quality-all: export QUALITY_SCOPE = all
+quality-all: proto-go proto-dart
+	@if [ "$$QUALITY_SCOPE" != all ] || [ "$${QUALITY_PHASE:-all}" != all ] || \
+	    [ "$${QUALITY_DART_SHARD_COUNT:-1}" != 1 ] || [ "$${QUALITY_DART_SHARD_INDEX:-0}" != 0 ]; then \
+	  echo "quality-all requires the complete all phase and an unsharded Dart run; use check-quality.sh for diagnostics or workers" >&2; exit 2; \
+	fi
+	python3 scripts/quality-report.py go-preflight
+	go test -p=1 -coverpkg=./... -coverprofile=coverage.out ./...
+	./scripts/collect-quality-flutter.sh
 	./scripts/check-quality.sh go flutter
 
 # lint reads .golangci.yml. lint-fix additionally applies the fixes the enabled

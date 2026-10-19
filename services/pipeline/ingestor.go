@@ -54,15 +54,8 @@ func ingestRaw(ctx context.Context, tdx rawFetcher, tables ...string) error {
 		return nil
 	}
 
-	scope := "all"
-	only := map[string]bool{}
-	if len(tables) > 0 {
-		scope = strings.Join(tables, ",")
-		for _, t := range tables {
-			only[t] = true
-		}
-	}
-	fullReland := len(only) == 0 && time.Now().In(pipeline.Taipei).Weekday() == _fullRelandWeekday
+	scope, only := rawIngestSelection(tables)
+	fullReland := fullRawReland(only, time.Now().In(pipeline.Taipei))
 	zap.S().Infow("start",
 		"component", "ingest",
 		"action", "raw",
@@ -75,27 +68,68 @@ func ingestRaw(ctx context.Context, tdx rawFetcher, tables ...string) error {
 		return _oops.Wrapf(err, "start raw landing cycle")
 	}
 
-	type job struct{ url, name string }
-	var jobs []job
+	jobs := rawIngestJobs(only)
+	joined := runRawIngestJobs(ctx, tdx, jobs, landingCycle, fullReland)
+
+	// Only a full run touches every partition, so only a full run can tell a
+	// partition nobody fetches from one this subset simply did not cover.
+	reportFullRawIngest(ctx, only)
+	zap.S().Infow("end", "component", "ingest", "action", "raw", "event", "end", "scope", scope)
+	return errors.Join(joined...)
+}
+
+func rawIngestSelection(tables []string) (string, map[string]bool) {
+	only := make(map[string]bool, len(tables))
+	for _, table := range tables {
+		only[table] = true
+	}
+	if len(tables) == 0 {
+		return "all", only
+	}
+	return strings.Join(tables, ","), only
+}
+
+func fullRawReland(only map[string]bool, now time.Time) bool {
+	return len(only) == 0 && now.Weekday() == _fullRelandWeekday
+}
+
+func reportFullRawIngest(ctx context.Context, only map[string]bool) {
+	// Subset runs cannot establish freshness for partitions they did not fetch.
+	if len(only) == 0 && raw.DB != nil {
+		raw.ReportStalePartitions(ctx, raw.DB)
+	}
+}
+
+type rawIngestJob struct{ url, name string }
+
+func rawIngestJobs(only map[string]bool) []rawIngestJob {
+	var jobs []rawIngestJob
 	for _, d := range dataset.Registry() {
-		if !d.Fetched() {
-			continue
-		}
-		if len(only) > 0 && !only[d.RawTable] {
+		if !selectedRawDataset(d, only) {
 			continue
 		}
 		for _, part := range d.Partitions() {
-			jobs = append(jobs, job{d.URL(part), d.Name(part)})
+			jobs = append(jobs, rawIngestJob{d.URL(part), d.Name(part)})
 		}
 	}
 
+	return jobs
+}
+func selectedRawDataset(d dataset.Spec, only map[string]bool) bool {
+	if !d.Fetched() {
+		return false
+	}
+	return len(only) == 0 || only[d.RawTable]
+}
+
+func runRawIngestJobs(ctx context.Context, tdx rawFetcher, jobs []rawIngestJob, landingCycle string, fullReland bool) []error {
 	sem := make(chan struct{}, 3)
 	var wg sync.WaitGroup
 	failures := make(chan error, len(jobs))
 	for _, j := range jobs {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(j job) {
+		go func(j rawIngestJob) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			if err := fetchRaw(ctx, tdx, j.url, j.name, landingCycle, fullReland); err != nil {
@@ -109,13 +143,7 @@ func ingestRaw(ctx context.Context, tdx rawFetcher, tables ...string) error {
 	for err := range failures {
 		joined = append(joined, err)
 	}
-	// Only a full run touches every partition, so only a full run can tell a
-	// partition nobody fetches from one this subset simply did not cover.
-	if len(only) == 0 && raw.DB != nil {
-		raw.ReportStalePartitions(ctx, raw.DB)
-	}
-	zap.S().Infow("end", "component", "ingest", "action", "raw", "event", "end", "scope", scope)
-	return errors.Join(joined...)
+	return joined
 }
 
 func fetchRaw(ctx context.Context, tdx rawFetcher, url, name, landingCycle string, forceReland bool) error {
@@ -134,58 +162,95 @@ func fetchRawWithVerifier(
 	if landingCycle == "" {
 		return errors.New("fetch raw: empty landing cycle")
 	}
-	target, mapped := raw.DumpTarget(url)
-	for attempt := range 2 {
-		result, err := tdx.GetInto(ctx, url, name, func(commit shared.TDXIntoCommit) error {
-			if !mapped {
-				return nil
-			}
-			return raw.DumpReader(ctx, target, commit.Marker, landingCycle, commit.Body)
-		})
-		if err != nil {
-			return _oops.With("url", url).Wrapf(err, "fetch raw")
-		}
-		if result.Modified {
-			return nil
-		}
-		if !mapped {
-			zap.S().Warnw("skip", "component", "ingest", "url", url, "event", "skip", "reason", "not_modified")
-			return nil
-		}
-		if forceReland && attempt == 0 {
-			if result.Invalidate == nil {
-				return _oops.With("url", url).Errorf("force reland: nil marker invalidator")
-			}
-			if err := result.Invalidate(); err != nil {
-				return _oops.With("url", url).Wrapf(err, "force reland")
-			}
-			zap.S().Infow("refetch", "component", "ingest", "url", url, "event", "refetch", "reason", "full_reland")
-			continue
-		}
+	return fetchRawAttempts(ctx, tdx, url, name, landingCycle, forceReland, verify)
+}
 
-		err = verify(ctx, target, result.Marker, landingCycle)
-		if err == nil {
-			zap.S().Warnw("skip", "component", "ingest", "url", url, "event", "skip", "reason", "not_modified")
+func fetchRawAttempts(ctx context.Context, tdx rawFetcher, url, name, landingCycle string, forceReland bool, verify rawLandingVerifier) error {
+	retry, err := fetchRawAttempt(ctx, tdx, url, name, landingCycle, forceReland, verify, 0)
+	if err != nil || !retry {
+		return err
+	}
+	_, err = fetchRawAttempt(ctx, tdx, url, name, landingCycle, forceReland, verify, 1)
+	return err
+}
+
+func fetchRawAttempt(ctx context.Context, tdx rawFetcher, url, name, landingCycle string, forceReland bool, verify rawLandingVerifier, attempt int) (bool, error) {
+	target, mapped := raw.DumpTarget(url)
+	result, err := tdx.GetInto(ctx, url, name, rawLandingCommitter(ctx, mapped, target, landingCycle))
+	if err != nil {
+		return false, _oops.With("url", url).Wrapf(err, "fetch raw")
+	}
+	return processRawFetchResult(ctx, target, mapped, result, url, landingCycle, forceReland, verify, attempt)
+}
+
+func processRawFetchResult(ctx context.Context, target raw.Target, mapped bool, result shared.TDXIntoResult, url, landingCycle string, forceReland bool, verify rawLandingVerifier, attempt int) (bool, error) {
+	if result.Modified {
+		return false, nil
+	}
+	if !mapped {
+		zap.S().Warnw("skip", "component", "ingest", "url", url, "event", "skip", "reason", "not_modified")
+		return false, nil
+	}
+	return processNotModifiedRaw(ctx, verify, target, result, url, landingCycle, forceReland, attempt)
+}
+
+func processNotModifiedRaw(ctx context.Context, verify rawLandingVerifier, target raw.Target, result shared.TDXIntoResult, url, landingCycle string, forceReland bool, attempt int) (bool, error) {
+	if shouldForceRawReland(forceReland, attempt) {
+		return true, forceRawReland(result, url)
+	}
+
+	err := verify(ctx, target, result.Marker, landingCycle)
+	if err == nil {
+		zap.S().Warnw("skip", "component", "ingest", "url", url, "event", "skip", "reason", "not_modified")
+		return false, nil
+	}
+	return handleRawVerificationFailure(result, url, err, attempt)
+}
+
+func shouldForceRawReland(forceReland bool, attempt int) bool {
+	return forceReland && attempt == 0
+}
+
+func handleRawVerificationFailure(result shared.TDXIntoResult, url string, err error, attempt int) (bool, error) {
+	if !errors.Is(err, raw.ErrLandingStateMismatch) {
+		return false, _oops.With("url", url).Wrapf(err, "verify raw")
+	}
+	if attempt == 1 {
+		return false, _oops.With("url", url).Wrapf(err, "verify raw after forced refetch")
+	}
+	return true, invalidateMismatchedRaw(result, url, err)
+}
+func forceRawReland(result shared.TDXIntoResult, url string) error {
+	if result.Invalidate == nil {
+		return _oops.With("url", url).Errorf("force reland: nil marker invalidator")
+	}
+	if err := result.Invalidate(); err != nil {
+		return _oops.With("url", url).Wrapf(err, "force reland")
+	}
+	zap.S().Infow("refetch", "component", "ingest", "url", url, "event", "refetch", "reason", "full_reland")
+	return nil
+}
+func invalidateMismatchedRaw(result shared.TDXIntoResult, url string, err error) error {
+	if result.Invalidate == nil {
+		return _oops.With("url", url).Wrapf(err, "verify raw: nil marker invalidator")
+	}
+	if invalidateErr := result.Invalidate(); invalidateErr != nil {
+		return _oops.With("url", url).Wrapf(errors.Join(err, invalidateErr), "verify raw")
+	}
+	zap.S().Infow("refetch",
+		"component", "ingest",
+		"url", url,
+		"event", "refetch",
+		"reason", "landing_state_mismatch",
+	)
+	return nil
+}
+
+func rawLandingCommitter(ctx context.Context, mapped bool, target raw.Target, landingCycle string) func(shared.TDXIntoCommit) error {
+	return func(commit shared.TDXIntoCommit) error {
+		if !mapped {
 			return nil
 		}
-		if !errors.Is(err, raw.ErrLandingStateMismatch) {
-			return _oops.With("url", url).Wrapf(err, "verify raw")
-		}
-		if attempt == 1 {
-			return _oops.With("url", url).Wrapf(err, "verify raw after forced refetch")
-		}
-		if result.Invalidate == nil {
-			return _oops.With("url", url).Wrapf(err, "verify raw: nil marker invalidator")
-		}
-		if invalidateErr := result.Invalidate(); invalidateErr != nil {
-			return _oops.With("url", url).Wrapf(errors.Join(err, invalidateErr), "verify raw")
-		}
-		zap.S().Infow("refetch",
-			"component", "ingest",
-			"url", url,
-			"event", "refetch",
-			"reason", "landing_state_mismatch",
-		)
+		return raw.DumpReader(ctx, target, commit.Marker, landingCycle, commit.Body)
 	}
-	return nil
 }

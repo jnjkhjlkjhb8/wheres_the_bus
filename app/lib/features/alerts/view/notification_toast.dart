@@ -239,6 +239,9 @@ class _ToastLayerState extends State<_ToastLayer> {
     }
   }
 
+  double _toastOpacity(double value, bool reduced, double eased) =>
+      reduced ? (value > 0 ? 1 : 0) : eased;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -255,7 +258,7 @@ class _ToastLayerState extends State<_ToastLayer> {
         builder: (context, child) {
           final t = AppMotion.easeOut.transform(controller.value);
           return Opacity(
-            opacity: reduce ? (controller.value > 0 ? 1 : 0) : t,
+            opacity: _toastOpacity(controller.value, reduce, t),
             child: Transform.translate(
               offset: reduce ? Offset.zero : Offset(0, (1 - t) * -16),
               child: Transform.scale(

@@ -70,6 +70,10 @@ func drainRouteAlertOutbox(ctx context.Context, db outboxDB, alerter routeAlerte
 	if err != nil {
 		return 0, _oops.Wrapf(err, "scan claimed route alerts")
 	}
+	return dispatchClaimedAlerts(ctx, db, alerter, claimed)
+}
+
+func dispatchClaimedAlerts(ctx context.Context, db outboxDB, alerter routeAlerter, claimed []outboxRow) (int, error) {
 	// UPDATE ... RETURNING has no defined order; alerts go out in arrival order.
 	slices.SortFunc(claimed, func(a, b outboxRow) int { return cmp.Compare(a.id, b.id) })
 	for _, o := range claimed {

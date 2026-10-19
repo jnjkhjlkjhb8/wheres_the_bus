@@ -103,18 +103,20 @@ func (m *PlannerHealthMonitor) Start(ctx context.Context) {
 		return
 	}
 	m.check(ctx)
-	go func() {
-		ticker := time.NewTicker(m.interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				m.check(ctx)
-			}
+	go m.poll(ctx)
+}
+
+func (m *PlannerHealthMonitor) poll(ctx context.Context) {
+	ticker := time.NewTicker(m.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.check(ctx)
 		}
-	}()
+	}
 }
 
 // motisHealthResponse is what /api/v1/health returns. Both fields are present
@@ -130,30 +132,31 @@ type motisHealthResponse struct {
 func (m *PlannerHealthMonitor) check(ctx context.Context) {
 	var body motisHealthResponse
 	resp, err := m.client.R().SetContext(ctx).SetResult(&body).SetError(&body).Get(_motisHealthPath)
-	switch {
-	case err != nil:
+	if err != nil {
 		m.observe(false, body, "MOTIS is unreachable: "+err.Error())
-	case resp.StatusCode() == http.StatusBadRequest:
-		m.observe(false, body,
-			"MOTIS has not completed an update cycle over every feed"+describeFeeds(body))
-	case !resp.IsSuccess():
-		m.observe(false, body, "MOTIS health returned "+resp.Status())
-	default:
-		m.observe(true, body, "MOTIS has consumed every configured feed")
+		return
 	}
+	m.observeResponse(resp, body)
+}
+
+func (m *PlannerHealthMonitor) observeResponse(resp *resty.Response, body motisHealthResponse) {
+	if resp.StatusCode() == http.StatusBadRequest {
+		m.observe(false, body, "MOTIS has not completed an update cycle over every feed"+describeFeeds(body))
+		return
+	}
+	if !resp.IsSuccess() {
+		m.observe(false, body, "MOTIS health returned "+resp.Status())
+		return
+	}
+	m.observe(true, body, "MOTIS has consumed every configured feed")
 }
 
 func describeFeeds(body motisHealthResponse) string {
-	switch {
-	case !body.RT && !body.GBFS:
-		return " (realtime and bikeshare both stale)"
-	case !body.RT:
-		return " (realtime stale)"
-	case !body.GBFS:
-		return " (bikeshare stale)"
-	default:
-		return ""
-	}
+	return map[motisHealthResponse]string{
+		{RT: false, GBFS: false}: " (realtime and bikeshare both stale)",
+		{RT: false, GBFS: true}:  " (realtime stale)",
+		{RT: true, GBFS: false}:  " (bikeshare stale)",
+	}[body]
 }
 
 // observe folds one check into the state, flipping the live backend only once
@@ -216,6 +219,10 @@ func (m *PlannerHealthMonitor) Status() PlannerStatus {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.statusLocked()
+}
+
+func (m *PlannerHealthMonitor) statusLocked() PlannerStatus {
 	status := PlannerStatus{
 		Backend:   _plannerTDX,
 		Healthy:   m.healthy,
@@ -226,11 +233,14 @@ func (m *PlannerHealthMonitor) Status() PlannerStatus {
 	if m.healthy {
 		status.Backend = _plannerMotis
 	}
-	if !m.checkedAt.IsZero() {
-		status.CheckedAt = m.checkedAt.Format(time.RFC3339)
-	}
-	if !m.changedAt.IsZero() {
-		status.ChangedAt = m.changedAt.Format(time.RFC3339)
-	}
+	status.CheckedAt = observedTime(m.checkedAt)
+	status.ChangedAt = observedTime(m.changedAt)
 	return status
+}
+
+func observedTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339)
 }

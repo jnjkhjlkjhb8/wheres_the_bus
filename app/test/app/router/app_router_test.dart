@@ -39,6 +39,7 @@ void main() {
     // real on-disk box the same way other Hive-touching tests do.
     Hive.init('./.dart_tool/hive_test_app_router');
     await Hive.openBox<dynamic>('settings');
+    await Hive.openBox<dynamic>('saved_plans');
   });
 
   Future<GoRouter> pumpAt(WidgetTester tester, String location) async {
@@ -129,6 +130,25 @@ void main() {
     ) async {
       await pumpAt(tester, AppRoutes.settingsAppearance);
       expect(find.byType(SettingsOptionScreen), findsOneWidget);
+      expect(find.byType(RouteErrorScreen), findsNothing);
+    });
+
+    testWidgets('canonical walk pace link renders its picker', (tester) async {
+      await pumpAt(tester, AppRoutes.settingsWalkPace);
+      expect(find.byType(SettingsOptionScreen), findsOneWidget);
+      expect(find.byType(RouteErrorScreen), findsNothing);
+    });
+
+    testWidgets('canonical fare type link keeps all labeled ticket choices', (
+      tester,
+    ) async {
+      await pumpAt(tester, AppRoutes.settingsFareType);
+      final picker = tester.widget<SettingsOptionScreen>(
+        find.byType(SettingsOptionScreen),
+      );
+      expect(picker.title, '我的票種');
+      expect(picker.options, ['全票', '學生票', '孩童票', '敬老及愛心票']);
+      expect(find.text('全票'), findsOneWidget);
       expect(find.byType(RouteErrorScreen), findsNothing);
     });
 

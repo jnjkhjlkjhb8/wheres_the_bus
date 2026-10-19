@@ -141,5 +141,78 @@ void main() {
       );
       expect(JourneyLeg.legsFromRoute(route), isEmpty);
     });
+
+    test('without a routed identity the transport mode picks the kind', () {
+      const expected = {
+        'bus': JourneyLegKind.bus,
+        'subway': JourneyLegKind.metro,
+        'metro': JourneyLegKind.metro,
+        'train': JourneyLegKind.tra,
+        'rail': JourneyLegKind.tra,
+        'highSpeedTrain': JourneyLegKind.thsr,
+        'ferry': JourneyLegKind.other,
+      };
+      for (final MapEntry(key: mode, value: kind) in expected.entries) {
+        final route = PlanRoute(
+          travelTime: 600,
+          startTime: '',
+          endTime: '',
+          transfers: 0,
+          sections: [_section(type: 'transit', mode: mode)],
+        );
+        expect(
+          JourneyLeg.legsFromRoute(route).single.kind,
+          kind,
+          reason: mode,
+        );
+      }
+    });
+
+    test('consecutive walks add up before the next transit leg', () {
+      final route = PlanRoute(
+        travelTime: 600,
+        startTime: '',
+        endTime: '',
+        transfers: 0,
+        sections: [
+          _section(type: 'pedestrian', walkSeconds: 90),
+          _section(type: 'pedestrian', walkSeconds: 30),
+          _section(type: 'transit', mode: 'bus'),
+        ],
+      );
+      expect(JourneyLeg.legsFromRoute(route).single.leadingWalkMinutes, 2);
+    });
+  });
+
+  test('a rail stop is identified by its name and scheduled arrival', () {
+    final base = RailStopSchedule(
+      name: '台北',
+      scheduledArrival: DateTime(2026, 7, 20, 8),
+    );
+    expect(
+      base,
+      RailStopSchedule(
+        name: '台北',
+        scheduledArrival: DateTime(2026, 7, 20, 8),
+      ),
+    );
+    expect(
+      base,
+      isNot(
+        RailStopSchedule(
+          name: '台中',
+          scheduledArrival: DateTime(2026, 7, 20, 8),
+        ),
+      ),
+    );
+    expect(
+      base,
+      isNot(
+        RailStopSchedule(
+          name: '台北',
+          scheduledArrival: DateTime(2026, 7, 20, 9),
+        ),
+      ),
+    );
   });
 }

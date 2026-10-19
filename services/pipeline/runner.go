@@ -51,12 +51,7 @@ func (c pgStaticPipelineConnector) Connect(ctx context.Context) (staticPipelineT
 	if c.pool == nil {
 		return nil, nil, errors.New("static pipeline raw lock pool is nil")
 	}
-	connect := c.connect
-	if connect == nil {
-		connect = func(ctx context.Context, cfg *pgx.ConnConfig) (staticPipelineDedicatedConn, error) {
-			return pgx.ConnectConfig(ctx, cfg)
-		}
-	}
+	connect := resolveStaticPipelineConnect(c.connect)
 	conn, err := connect(ctx, c.pool.Config().ConnConfig.Copy())
 	if err != nil {
 		return nil, nil, _oops.Wrapf(err, "connect static pipeline advisory database")
@@ -64,9 +59,22 @@ func (c pgStaticPipelineConnector) Connect(ctx context.Context) (staticPipelineT
 	if conn == nil {
 		return nil, nil, errors.New("connect static pipeline advisory database returned nil connection")
 	}
+	return conn, closeStaticPipelineConnection(conn), nil
+}
+
+func resolveStaticPipelineConnect(connect func(context.Context, *pgx.ConnConfig) (staticPipelineDedicatedConn, error)) func(context.Context, *pgx.ConnConfig) (staticPipelineDedicatedConn, error) {
+	if connect != nil {
+		return connect
+	}
+	return func(ctx context.Context, cfg *pgx.ConnConfig) (staticPipelineDedicatedConn, error) {
+		return pgx.ConnectConfig(ctx, cfg)
+	}
+}
+
+func closeStaticPipelineConnection(conn staticPipelineDedicatedConn) func() error {
 	var once sync.Once
 	var closeErr error
-	closeConnection := func() error {
+	return func() error {
 		once.Do(func() {
 			releaseCtx, cancel := context.WithTimeout(context.Background(), _staticPipelineReleaseTimeout)
 			defer cancel()
@@ -76,48 +84,55 @@ func (c pgStaticPipelineConnector) Connect(ctx context.Context) (staticPipelineT
 		})
 		return closeErr
 	}
-	return conn, closeConnection, nil
 }
 
 type pgStaticPipelineLocker struct{ connector staticPipelineConnector }
 
 func (l pgStaticPipelineLocker) Acquire(ctx context.Context) (func() error, error) {
-	if l.connector == nil {
-		return nil, errors.New("static pipeline raw lock connector is nil")
-	}
-	conn, closeConnection, err := l.connector.Connect(ctx)
+	tx, closeConnection, err := openStaticPipelineTransaction(ctx, l.connector)
 	if err != nil {
 		return nil, err
 	}
-	if conn == nil || closeConnection == nil {
-		if closeConnection != nil {
-			_ = closeConnection()
-		}
-		return nil, errors.New("static pipeline connector returned incomplete connection")
+	if err := lockStaticPipelineTransaction(ctx, tx, closeConnection); err != nil {
+		return nil, err
+	}
+	return releaseStaticPipelineTransaction(tx, closeConnection), nil
+}
+
+func openStaticPipelineTransaction(ctx context.Context, connector staticPipelineConnector) (pgx.Tx, func() error, error) {
+	conn, closeConnection, err := connectStaticPipeline(ctx, connector)
+	if err != nil {
+		return nil, nil, err
+	}
+	return beginStaticPipelineTransaction(ctx, conn, closeConnection)
+}
+
+func connectStaticPipeline(ctx context.Context, connector staticPipelineConnector) (staticPipelineTxBeginner, func() error, error) {
+	if connector == nil {
+		return nil, nil, errors.New("static pipeline raw lock connector is nil")
+	}
+	return connector.Connect(ctx)
+}
+
+func beginStaticPipelineTransaction(ctx context.Context, conn staticPipelineTxBeginner, closeConnection func() error) (pgx.Tx, func() error, error) {
+	if err := validateStaticPipelineConnection(conn, closeConnection); err != nil {
+		return nil, nil, err
 	}
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return nil, errors.Join(
-			_oops.Wrapf(err, "begin static pipeline advisory transaction"),
-			closeConnection(),
-		)
+		return nil, nil, errors.Join(_oops.Wrapf(err, "begin static pipeline advisory transaction"), closeConnection())
 	}
-	rollback := func() error {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), _staticPipelineReleaseTimeout)
-		defer cancel()
-		err := tx.Rollback(releaseCtx)
-		if errors.Is(err, pgx.ErrTxClosed) {
-			return nil
-		}
-		return err
-	}
+	return tx, closeConnection, nil
+}
+
+func lockStaticPipelineTransaction(ctx context.Context, tx pgx.Tx, closeConnection func() error) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", _staticPipelineAdvisoryKey); err != nil {
-		return nil, errors.Join(
-			_oops.Wrapf(err, "acquire static pipeline advisory lock"),
-			rollback(),
-			closeConnection(),
-		)
+		return errors.Join(_oops.Wrapf(err, "acquire static pipeline advisory lock"), rollbackStaticPipelineTx(tx), closeConnection())
 	}
+	return nil
+}
+
+func releaseStaticPipelineTransaction(tx pgx.Tx, closeConnection func() error) func() error {
 	var once sync.Once
 	var releaseErr error
 	return func() error {
@@ -125,15 +140,12 @@ func (l pgStaticPipelineLocker) Acquire(ctx context.Context) (func() error, erro
 			releaseCtx, cancel := context.WithTimeout(context.Background(), _staticPipelineReleaseTimeout)
 			defer cancel()
 			if err := tx.Commit(releaseCtx); err != nil {
-				releaseErr = errors.Join(
-					_oops.Wrapf(err, "release static pipeline advisory lock"),
-					rollback(),
-				)
+				releaseErr = errors.Join(_oops.Wrapf(err, "release static pipeline advisory lock"), rollbackStaticPipelineTx(tx))
 			}
 			releaseErr = errors.Join(releaseErr, closeConnection())
 		})
 		return releaseErr
-	}, nil
+	}
 }
 
 // One process-wide gate serializes boot, cron, and manual static work. Separate
@@ -157,39 +169,20 @@ func newStaticPipelineRunner(rawLockPool *pgxpool.Pool, timeout time.Duration) s
 }
 
 func (r staticPipelineRunner) Run(parent context.Context, job func(context.Context) error) (err error) {
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, r.timeout)
+	ctx, cancel := staticPipelineContext(parent, r.timeout)
 	defer cancel()
-	if r.gate == nil {
-		return errors.New("static pipeline process gate is nil")
-	}
-	select {
-	case r.gate <- struct{}{}:
-		defer func() { <-r.gate }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	if r.locker == nil {
-		return errors.New("static pipeline advisory locker is nil")
-	}
-	release, err := r.locker.Acquire(ctx)
+	leaveGate, err := enterStaticPipelineGate(ctx, r.gate)
 	if err != nil {
 		return err
 	}
-	if release == nil {
-		return errors.New("static pipeline advisory locker returned nil release")
+	defer leaveGate()
+	release, err := acquireStaticPipelineRelease(ctx, r.locker)
+	if err != nil {
+		return err
 	}
 	defer func() {
 		releaseErr := release()
-		if recovered := recover(); recovered != nil {
-			if releaseErr != nil {
-				panic(errors.Join(_oops.With("recovered", recovered).Errorf("static pipeline job panic"), releaseErr))
-			}
-			panic(recovered)
-		}
-		err = errors.Join(err, releaseErr)
+		err = finishStaticPipelineJob(err, releaseErr, recover())
 	}()
 	jobErr := job(ctx)
 	// A job may fail to cooperate with cancellation and return nil after the
@@ -198,8 +191,79 @@ func (r staticPipelineRunner) Run(parent context.Context, job func(context.Conte
 	return errors.Join(jobErr, ctx.Err())
 }
 
+func staticPipelineContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
+func enterStaticPipelineGate(ctx context.Context, gate chan struct{}) (func(), error) {
+	if gate == nil {
+		return nil, errors.New("static pipeline process gate is nil")
+	}
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func acquireStaticPipelineRelease(ctx context.Context, locker staticPipelineLocker) (func() error, error) {
+	if locker == nil {
+		return nil, errors.New("static pipeline advisory locker is nil")
+	}
+	release, err := locker.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return validateStaticPipelineRelease(release)
+}
+
+func validateStaticPipelineRelease(release func() error) (func() error, error) {
+	if release == nil {
+		return nil, errors.New("static pipeline advisory locker returned nil release")
+	}
+	return release, nil
+}
+
 func vectorRefreshJob(rc vector.Redis, db vector.DB) func(context.Context) error {
 	return func(ctx context.Context) error {
 		return vector.ChangeToVector(ctx, rc, db)
+	}
+}
+
+func rollbackStaticPipelineTx(tx pgx.Tx) error {
+	releaseCtx, cancel := context.WithTimeout(context.Background(), _staticPipelineReleaseTimeout)
+	defer cancel()
+	err := tx.Rollback(releaseCtx)
+	if errors.Is(err, pgx.ErrTxClosed) {
+		return nil
+	}
+	return err
+}
+
+func finishStaticPipelineJob(err, releaseErr error, recovered any) error {
+	if recovered != nil {
+		if releaseErr != nil {
+			panic(errors.Join(_oops.With("recovered", recovered).Errorf("static pipeline job panic"), releaseErr))
+		}
+		panic(recovered)
+	}
+	return errors.Join(err, releaseErr)
+}
+
+func validateStaticPipelineConnection(conn staticPipelineTxBeginner, closeConnection func() error) error {
+	if conn == nil || closeConnection == nil {
+		closeIncompleteStaticPipelineConnection(closeConnection)
+		return errors.New("static pipeline connector returned incomplete connection")
+	}
+	return nil
+}
+
+func closeIncompleteStaticPipelineConnection(closeConnection func() error) {
+	if closeConnection != nil {
+		_ = closeConnection()
 	}
 }

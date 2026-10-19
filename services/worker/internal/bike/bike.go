@@ -67,86 +67,93 @@ func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink,
 		if _, skip := _bikeAvailabilitySkip[city]; skip {
 			continue
 		}
-		if !pipeline.LiveDemandGate(ctx, sink, "bike", city) {
-			ownedKey := shared.LiveOwnedKeysKey("bike", city)
-			if err := sink.RefreshOwnedTTL(ctx, ownedKey, pipeline.BikeLiveTTL); err != nil {
-				pipe := sink.Pipe()
-				pipe.Expire(shared.LiveColdKey("bike", city), 0)
-				if execErr := pipe.Exec(ctx); execErr != nil {
-					err = errors.Join(err, _oops.Wrapf(execErr, "drop bike cadence claim"))
-				}
-				jobErr = errors.Join(jobErr,
-					_oops.With("city", city).Wrapf(err, "refresh unwatched bike TTLs"))
-			}
-			continue
-		}
-		zap.S().Infow("city start",
-			"component", "bike_eta",
-			"action", "bike_eta",
-			"city", city,
-			"event", "city_start",
-		)
-		result, err := fetch(ctx, fmt.Sprintf("/v2/Bike/Availability/City/%s", city), "bike_availability"+city)
-		if err != nil {
-			jobErr = errors.Join(jobErr, _oops.With("city", city).Wrapf(err, "bike fetch"))
-			continue
-		}
-		if !result.Modified {
-			// A 304 is the expected answer most ticks: the cadence is well under
-			// how often the operators republish. Logged at info because a warning
-			// here is 840 lines an hour that never once means anything is wrong.
-			zap.S().Warnw("skip",
-				"component", "bike_eta",
-				"action", "bike_eta",
-				"city", city,
-				"event", "skip",
-				"reason", "not_modified",
-			)
-			continue
-		}
-		if err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error {
-			pipe := sink.Pipe()
-			ownedKeys := make([]string, 0)
-			if err := pipeline.DecodeLiveItems(dec, func(temp bikeAvailability) error {
-				availableRent := int(temp.AvailableRentBikesDetail.GeneralBikes) + int(temp.AvailableRentBikesDetail.ElectricBikes)
-				raw := &models.BikeEta{
-					StationUID:           temp.StationUID,
-					ServiceStatus:        int32(temp.ServiceStatus),
-					ServiceType:          int32(temp.ServiceType),
-					AvailableReturnBikes: temp.AvailableReturnBikes,
-					GeneralBikes:         temp.AvailableRentBikesDetail.GeneralBikes,
-					ElectricBikes:        temp.AvailableRentBikesDetail.ElectricBikes,
-				}
-				pb, err := proto.Marshal(raw)
-				if err != nil {
-					return err
-				}
-				key := shared.BikeAvailabilityKey(temp.StationUID)
-				pipe.Set(key, pb, pipeline.BikeLiveTTL)
-				observedAtKey := shared.BikeAvailabilityObservedAtKey(temp.StationUID)
-				pipe.Set(observedAtKey, now.Unix(), pipeline.BikeLiveTTL)
-				ownedKeys = append(ownedKeys, key)
-				// Sample into history at most once per 5 minutes per station.
-				if db != nil && _bikeHistorySampleGate.shouldSample(temp.StationUID, now) {
-					historyRows = append(historyRows, []any{
-						temp.StationUID, availableRent, int(temp.AvailableReturnBikes), now,
-					})
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-			pipe.ReplaceOwnedKeys(shared.LiveOwnedKeysKey("bike", city), ownedKeys, pipeline.OwnedKeysTTL)
-			if err := pipe.Exec(ctx); err != nil {
-				return _oops.With("city", city).Wrapf(err, "publish bike availability")
-			}
-			zap.S().Infow("complete", "component", "bike_eta", "action", "bike_eta", "city", city, "event", "complete")
-			return nil
-		}); err != nil {
-			jobErr = errors.Join(jobErr, _oops.With("city", city).Wrapf(err, "bike process"))
-		}
+		jobErr = errors.Join(jobErr, runBikeCity(ctx, fetch, sink, db, city, now, &historyRows))
 	}
 	saveBikeAvailabilityHistory(ctx, history.Target(), historyRows)
 	zap.S().Infow("complete", "component", "bike_eta", "action", "bike_eta", "event", "complete")
 	return jobErr
+}
+
+func runBikeCity(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, city string, now time.Time, historyRows *[][]any) error {
+	if !pipeline.LiveDemandGate(ctx, sink, "bike", city) {
+		return refreshUnwatchedBike(ctx, sink, city)
+	}
+	zap.S().Infow("city start", "component", "bike_eta", "action", "bike_eta", "city", city, "event", "city_start")
+	result, err := fetch(ctx, fmt.Sprintf("/v2/Bike/Availability/City/%s", city), "bike_availability"+city)
+	if err != nil {
+		return _oops.With("city", city).Wrapf(err, "bike fetch")
+	}
+	return commitBikeFetch(ctx, sink, db, result, city, now, historyRows)
+}
+
+func commitBikeFetch(ctx context.Context, sink pipeline.LiveSink, db *pgxpool.Pool, result *shared.TDXFetch, city string, now time.Time, historyRows *[][]any) error {
+	if !result.Modified {
+		zap.S().Warnw("skip", "component", "bike_eta", "action", "bike_eta", "city", city, "event", "skip", "reason", "not_modified")
+		return nil
+	}
+	err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error { return publishBikeCity(ctx, sink, db, dec, city, now, historyRows) })
+	if err != nil {
+		return _oops.With("city", city).Wrapf(err, "bike process")
+	}
+	return nil
+}
+
+func refreshUnwatchedBike(ctx context.Context, sink pipeline.LiveSink, city string) error {
+	ownedKey := shared.LiveOwnedKeysKey("bike", city)
+	if err := sink.RefreshOwnedTTL(ctx, ownedKey, pipeline.BikeLiveTTL); err != nil {
+		pipe := sink.Pipe()
+		pipe.Expire(shared.LiveColdKey("bike", city), 0)
+		if execErr := pipe.Exec(ctx); execErr != nil {
+			err = errors.Join(err, _oops.Wrapf(execErr, "drop bike cadence claim"))
+		}
+		return _oops.With("city", city).Wrapf(err, "refresh unwatched bike TTLs")
+	}
+	return nil
+}
+
+func publishBikeCity(ctx context.Context, sink pipeline.LiveSink, db *pgxpool.Pool, dec *json.Decoder, city string, now time.Time, historyRows *[][]any) error {
+	pipe := sink.Pipe()
+	ownedKeys := make([]string, 0)
+	err := pipeline.DecodeLiveItems(dec, func(temp bikeAvailability) error {
+		return queueBikeStation(pipe, db, temp, now, &ownedKeys, historyRows)
+	})
+	if err != nil {
+		return err
+	}
+	pipe.ReplaceOwnedKeys(shared.LiveOwnedKeysKey("bike", city), ownedKeys, pipeline.OwnedKeysTTL)
+	if err := pipe.Exec(ctx); err != nil {
+		return _oops.With("city", city).Wrapf(err, "publish bike availability")
+	}
+	zap.S().Infow("complete", "component", "bike_eta", "action", "bike_eta", "city", city, "event", "complete")
+	return nil
+}
+
+func queueBikeAvailability(pipe pipeline.LivePipe, temp bikeAvailability, now time.Time) (string, error) {
+	raw := &models.BikeEta{StationUID: temp.StationUID, ServiceStatus: int32(temp.ServiceStatus), ServiceType: int32(temp.ServiceType), AvailableReturnBikes: temp.AvailableReturnBikes, GeneralBikes: temp.AvailableRentBikesDetail.GeneralBikes, ElectricBikes: temp.AvailableRentBikesDetail.ElectricBikes}
+	pb, err := proto.Marshal(raw)
+	if err != nil {
+		return "", err
+	}
+	key := shared.BikeAvailabilityKey(temp.StationUID)
+	pipe.Set(key, pb, pipeline.BikeLiveTTL)
+	pipe.Set(shared.BikeAvailabilityObservedAtKey(temp.StationUID), now.Unix(), pipeline.BikeLiveTTL)
+	return key, nil
+}
+
+func sampleBikeHistory(db *pgxpool.Pool, temp bikeAvailability, now time.Time, historyRows *[][]any) {
+	// The process-wide gate preserves station sampling cadence across live rounds.
+	if db != nil && _bikeHistorySampleGate.shouldSample(temp.StationUID, now) {
+		availableRent := int(temp.AvailableRentBikesDetail.GeneralBikes) + int(temp.AvailableRentBikesDetail.ElectricBikes)
+		*historyRows = append(*historyRows, []any{temp.StationUID, availableRent, int(temp.AvailableReturnBikes), now})
+	}
+}
+
+func queueBikeStation(pipe pipeline.LivePipe, db *pgxpool.Pool, temp bikeAvailability, now time.Time, ownedKeys *[]string, historyRows *[][]any) error {
+	key, err := queueBikeAvailability(pipe, temp, now)
+	if err != nil {
+		return err
+	}
+	*ownedKeys = append(*ownedKeys, key)
+	sampleBikeHistory(db, temp, now, historyRows)
+	return nil
 }

@@ -52,22 +52,17 @@ type mrtFirstlast struct {
 	} `json:"ServiceDay"`
 }
 
-func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
-	if strings.TrimSpace(system) == "" {
-		return errors.New("mrt stations: system is required")
+func validateMRTStation(_ int, station mrtStation) error {
+	if strings.TrimSpace(station.StationID) == "" {
+		return errors.New("StationID is required")
 	}
-	stations, err := pipeline.DecodeLoadArray[mrtStation](dec, "mrt stations "+system, func(_ int, station mrtStation) error {
-		if strings.TrimSpace(station.StationID) == "" {
-			return errors.New("StationID is required")
-		}
-		if !pipeline.ValidPosition(station.StationPosition.PositionLon, station.StationPosition.PositionLat) {
-			return _oops.With("position_lon", station.StationPosition.PositionLon).With("position_lat", station.StationPosition.PositionLat).Errorf("position is invalid: lon= lat=")
-		}
-		return nil
-	})
-	if err != nil {
-		return err
+	if !pipeline.ValidPosition(station.StationPosition.PositionLon, station.StationPosition.PositionLat) {
+		return _oops.With("position_lon", station.StationPosition.PositionLon).With("position_lat", station.StationPosition.PositionLat).Errorf("position is invalid: lon= lat=")
 	}
+	return nil
+}
+
+func mrtStationRows(stations []mrtStation, system string) ([][]any, error) {
 	row := [][]any{}
 	seen := make(map[string][]any, len(stations))
 	for _, temp := range stations {
@@ -81,9 +76,28 @@ func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpse
 			temp.BikeAllowOnHoliday,
 		}
 		if err := pipeline.AppendUniqueLoadRow(&row, seen, system+"\x00"+temp.StationID, "station", candidate); err != nil {
-			return _oops.With("system", system).Wrapf(err, "mrt stations")
+			return nil, _oops.With("system", system).Wrapf(err, "mrt stations")
 		}
 	}
+	return row, nil
+}
+
+func LoadStations(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
+	if strings.TrimSpace(system) == "" {
+		return errors.New("mrt stations: system is required")
+	}
+	stations, err := pipeline.DecodeLoadArray[mrtStation](dec, "mrt stations "+system, validateMRTStation)
+	if err != nil {
+		return err
+	}
+	row, err := mrtStationRows(stations, system)
+	if err != nil {
+		return err
+	}
+	return writeMRTStations(ctx, sink, row)
+}
+
+func writeMRTStations(ctx context.Context, sink pipeline.CopyUpsertSink, row [][]any) error {
 	if len(row) == 0 {
 		return nil
 	}
@@ -117,33 +131,7 @@ func LoadFirstlast(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUps
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt first-last: system is required")
 	}
-	timetables, err := pipeline.DecodeLoadArray[mrtFirstlast](dec, "mrt first-last "+system, func(_ int, timetable mrtFirstlast) error {
-		if strings.TrimSpace(timetable.StationID) == "" {
-			return errors.New("StationID is required")
-		}
-		if strings.TrimSpace(timetable.LineID) == "" {
-			return errors.New("LineID is required")
-		}
-		if strings.TrimSpace(timetable.DestinationStaionID) == "" {
-			return errors.New("DestinationStaionID is required")
-		}
-		if v := strings.TrimSpace(timetable.FirstTrainTime); v != "" {
-			if _, ok := parseHHMM(v); !ok {
-				return _oops.With("first_train_time", timetable.FirstTrainTime).Errorf("FirstTrainTime is invalid")
-			}
-		}
-		if v := strings.TrimSpace(timetable.LastTrainTime); v != "" {
-			if _, ok := parseHHMM(v); !ok {
-				return _oops.With("last_train_time", timetable.LastTrainTime).Errorf("LastTrainTime is invalid")
-			}
-		}
-		if pipeline.Mask(timetable.ServiceDay.Monday, timetable.ServiceDay.Tuesday, timetable.ServiceDay.Wednesday,
-			timetable.ServiceDay.Thursday, timetable.ServiceDay.Friday, timetable.ServiceDay.Saturday,
-			timetable.ServiceDay.Sunday, timetable.ServiceDay.NationalHolidays) == 0 {
-			return errors.New("ServiceDay must enable at least one day")
-		}
-		return nil
-	})
+	timetables, err := pipeline.DecodeLoadArray[mrtFirstlast](dec, "mrt first-last "+system, validateMRTFirstlast)
 	if err != nil {
 		return err
 	}
@@ -210,21 +198,21 @@ func LoadFirstlast(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUps
 // parseHHMM parses "HH:MM" into minutes since midnight; ok is false for any
 // other shape (mrt_schedule stores times as text straight from TDX).
 func parseHHMM(s string) (int, bool) {
-	if len(s) != 5 || s[2] != ':' {
+	if !validMRTClockText(s) {
 		return 0, false
 	}
-	allDigits := isASCIIDigit(s[0]) && isASCIIDigit(s[1]) && isASCIIDigit(s[3]) && isASCIIDigit(s[4])
-	if !allDigits {
-		return 0, false
-	}
-	// 24..29 are kept: TDX publishes past-midnight departures as hour 24+.
+	// TDX publishes past-midnight departures as hour 24+.
 	h := int(s[0]-'0')*10 + int(s[1]-'0')
 	m := int(s[3]-'0')*10 + int(s[4]-'0')
-	if h > 29 || m > 59 {
+	if !boundedMRTClock(h, m) {
 		return 0, false
 	}
 	return h*60 + m, true
 }
+
+func mrtClockShape(s string) bool           { return len(s) == 5 && s[2] == ':' }
+func validMRTClockText(s string) bool       { return mrtClockShape(s) && mrtClockDigits(s) }
+func boundedMRTClock(hour, minute int) bool { return hour <= 29 && minute <= 59 }
 
 func isASCIIDigit(b byte) bool {
 	return b >= '0' && b <= '9'
@@ -262,18 +250,13 @@ const (
 // feed omits stays 0, which the upsert preserves rather than overwriting a known
 // price with a zero.
 func (f mrtODFare) fares() (full, half int) {
-	for _, t := range f.Fares {
-		if t.TicketType != _mrtTicketTypeSingle {
-			continue
-		}
-		switch t.FareClass {
-		case _mrtFareClassFull:
-			full = t.Price
-		case _mrtFareClassHalf:
-			half = t.Price
+	prices := map[int]int{}
+	for _, fare := range f.Fares {
+		if fare.TicketType == _mrtTicketTypeSingle {
+			prices[fare.FareClass] = fare.Price
 		}
 	}
-	return full, half
+	return prices[_mrtFareClassFull], prices[_mrtFareClassHalf]
 }
 
 // travelTimeMin parses an mrtODFare's optional whole-minute TravelTime. Missing
@@ -286,67 +269,43 @@ func (f mrtODFare) travelTimeMin() (int, error) {
 	return int(value), nil
 }
 
-func LoadJourneyMatrix(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
-	if strings.TrimSpace(system) == "" {
-		return errors.New("mrt journey matrix: system is required")
-	}
-	fares, err := pipeline.DecodeLoadArray[mrtODFare](dec, "mrt journey matrix "+system, func(_ int, fare mrtODFare) error {
-		if strings.TrimSpace(fare.OriginStationID) == "" {
-			return errors.New("OriginStationID is required")
-		}
-		if strings.TrimSpace(fare.DestinationStationID) == "" {
-			return errors.New("DestinationStationID is required")
-		}
-		if _, err := fare.travelTimeMin(); err != nil {
-			return err
-		}
-		singleSeen := false
-		classPrices := map[int]int{}
-		for i, item := range fare.Fares {
-			if item.TicketType <= 0 {
-				return _oops.With("index", i).With("ticket_type", item.TicketType).Errorf("fares element TicketType must be positive")
-			}
-			if item.FareClass < 0 {
-				return _oops.With("index", i).With("fare_class", item.FareClass).Errorf("fares element FareClass must be non-negative")
-			}
-			if item.Price < 0 {
-				return _oops.With("index", i).With("price", item.Price).Errorf("fares element Price must be non-negative")
-			}
-			if item.TicketType == _mrtTicketTypeSingle {
-				if item.FareClass == _mrtFareClassFull || item.FareClass == _mrtFareClassHalf {
-					if prior, seen := classPrices[item.FareClass]; seen && prior != item.Price {
-						return _oops.With("index", i).With("fare_class", item.FareClass).Errorf("fares element divergent duplicate TicketType 1 FareClass")
-					}
-					classPrices[item.FareClass] = item.Price
-				}
-				singleSeen = true
-			}
-		}
-		if !singleSeen {
-			return errors.New("fares must include TicketType 1")
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if len(fares) == 0 {
-		return nil
-	}
+func mrtJourneyRows(fares []mrtODFare, system string) ([][]any, error) {
 	rows := make([][]any, 0, len(fares))
 	seen := make(map[string][]any, len(fares))
 	for _, f := range fares {
 		full, half := f.fares()
 		travelTime, err := f.travelTimeMin()
 		if err != nil {
-			return _oops.With("system", system).Wrapf(err, "mrt journey matrix row build")
+			return nil, _oops.With("system", system).Wrapf(err, "mrt journey matrix row build")
 		}
 		id := fmt.Sprintf("%s-%s-%s", system, f.OriginStationID, f.DestinationStationID)
 		candidate := []any{id, f.OriginStationID, f.DestinationStationID, system, travelTime, full, half}
 		key := system + "\x00" + f.OriginStationID + "\x00" + f.DestinationStationID
 		if err := pipeline.AppendUniqueLoadRow(&rows, seen, key, "OD", candidate); err != nil {
-			return _oops.With("system", system).Wrapf(err, "mrt journey matrix")
+			return nil, _oops.With("system", system).Wrapf(err, "mrt journey matrix")
 		}
+	}
+	return rows, nil
+}
+
+func LoadJourneyMatrix(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
+	if strings.TrimSpace(system) == "" {
+		return errors.New("mrt journey matrix: system is required")
+	}
+	fares, err := pipeline.DecodeLoadArray[mrtODFare](dec, "mrt journey matrix "+system, validateMRTJourneyFare)
+	if err != nil {
+		return err
+	}
+	rows, err := mrtJourneyRows(fares, system)
+	if err != nil {
+		return err
+	}
+	return writeMRTJourneyRows(ctx, sink, rows)
+}
+
+func writeMRTJourneyRows(ctx context.Context, sink pipeline.CopyUpsertSink, rows [][]any) error {
+	if len(rows) == 0 {
+		return nil
 	}
 	return sink.CopyUpsert(ctx, pipeline.CopyUpsertSpec{
 		Key: "mrt_journey_matrix",
@@ -376,18 +335,34 @@ const _maxPostgresInteger int64 = 1<<31 - 1
 
 func nonNegativeJSONInteger(number json.Number, field string, optional bool, maximum int64) (int64, error) {
 	if number == "" {
-		if optional {
-			return 0, nil
-		}
-		return 0, _oops.With("field", field).Errorf("is required")
+		return missingMRTNumber(field, optional)
 	}
+	value, err := parseExactMRTNumber(number, field)
+	if err != nil {
+		return 0, err
+	}
+	return boundedMRTInteger(value, number, field, maximum)
+}
+
+func missingMRTNumber(field string, optional bool) (int64, error) {
+	if optional {
+		return 0, nil
+	}
+	return 0, _oops.With("field", field).Errorf("is required")
+}
+
+func parseExactMRTNumber(number json.Number, field string) (*big.Rat, error) {
 	value, ok := new(big.Rat).SetString(number.String())
 	if !ok || value.Sign() < 0 {
-		return 0, _oops.With("field", field).With("number", number).Errorf("must be an exact non-negative number")
+		return nil, _oops.With("field", field).With("number", number).Errorf("must be an exact non-negative number")
 	}
 	if !value.IsInt() {
-		return 0, _oops.With("field", field).With("number", number).Errorf("must use whole units")
+		return nil, _oops.With("field", field).With("number", number).Errorf("must use whole units")
 	}
+	return value, nil
+}
+
+func boundedMRTInteger(value *big.Rat, number json.Number, field string, maximum int64) (int64, error) {
 	integer := value.Num()
 	if !integer.IsInt64() || integer.Int64() > maximum {
 		return 0, _oops.With("field", field).With("maximum", maximum).With("number", number).Errorf("must be between 0")
@@ -395,13 +370,15 @@ func nonNegativeJSONInteger(number json.Number, field string, optional bool, max
 	return integer.Int64(), nil
 }
 
+type mrtTravelSegment struct {
+	FromStationID string      `json:"FromStationID"`
+	ToStationID   string      `json:"ToStationID"`
+	RunTime       json.Number `json:"RunTime"`
+	StopTime      json.Number `json:"StopTime"`
+}
+
 type mrtS2SRow struct {
-	TravelTimes []struct {
-		FromStationID string      `json:"FromStationID"`
-		ToStationID   string      `json:"ToStationID"`
-		RunTime       json.Number `json:"RunTime"`
-		StopTime      json.Number `json:"StopTime"`
-	} `json:"TravelTimes"`
+	TravelTimes []mrtTravelSegment `json:"TravelTimes"`
 }
 
 // mrtLineTransfer decodes one TDX Rail/Metro/LineTransfer element: an interchange
@@ -426,63 +403,19 @@ func LoadTrtcTravelTime(ctx context.Context, src pipeline.LoadSource, sink pipel
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt travel time: system is required")
 	}
-	s2sBody, _, err := src.DatasetJSON(ctx, "metro_s2straveltime", "system", system)
-	if err != nil {
-		return _oops.With("system", system).Wrapf(err, "mrt s2s read")
-	}
-	lines, err := pipeline.DecodeLoadArray[mrtS2SRow](json.NewDecoder(bytes.NewReader(s2sBody)), "mrt s2s "+system, func(_ int, line mrtS2SRow) error {
-		for i, segment := range line.TravelTimes {
-			if strings.TrimSpace(segment.FromStationID) == "" {
-				return _oops.With("index", i).Errorf("TravelTimes element FromStationID is required")
-			}
-			if strings.TrimSpace(segment.ToStationID) == "" {
-				return _oops.With("index", i).Errorf("TravelTimes element ToStationID is required")
-			}
-			runTime, err := nonNegativeJSONInteger(segment.RunTime, "RunTime", false /* optional */, _maxPostgresInteger)
-			if err != nil {
-				return _oops.With("index", i).Wrapf(err, "TravelTimes element")
-			}
-			if runTime == 0 {
-				return _oops.With("index", i).Errorf("TravelTimes element: RunTime must be positive")
-			}
-			if _, err := nonNegativeJSONInteger(segment.StopTime, "StopTime", false /* optional */, _maxPostgresInteger); err != nil {
-				return _oops.With("index", i).Wrapf(err, "TravelTimes element")
-			}
-		}
-		return nil
-	})
+	lines, transfers, err := readMRTTravelData(ctx, src, system)
 	if err != nil {
 		return err
 	}
-	trBody, _, err := src.DatasetJSON(ctx, "metro_linetransfer", "system", system)
-	if err != nil {
-		return _oops.With("system", system).Wrapf(err, "mrt linetransfer read")
-	}
-	transfers, err := pipeline.DecodeLoadArray[mrtLineTransfer](json.NewDecoder(bytes.NewReader(trBody)), "mrt line transfer "+system, func(_ int, transfer mrtLineTransfer) error {
-		if strings.TrimSpace(transfer.FromStationID) == "" {
-			return errors.New("FromStationID is required")
-		}
-		if strings.TrimSpace(transfer.ToStationID) == "" {
-			return errors.New("ToStationID is required")
-		}
-		transferTime, err := nonNegativeJSONInteger(transfer.TransferTime, "TransferTime", false /* optional */, _maxPostgresInteger)
-		if err != nil {
-			return err
-		}
-		if transferTime == 0 {
-			return errors.New("TransferTime must be positive")
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
+	return writeMRTTravelGraph(ctx, sink, lines, transfers, system)
+}
 
+func writeMRTTravelGraph(ctx context.Context, sink pipeline.CopyUpsertSink, lines []mrtS2SRow, transfers []mrtLineTransfer, system string) error {
 	stations, dist, segCount, transferCount, err := mrtTravelGraph(lines, transfers)
 	if err != nil {
 		return _oops.With("system", system).Wrapf(err, "mrt travel graph")
 	}
-	if len(stations) == 0 || segCount == 0 {
+	if !hasMRTTravelSegments(stations, segCount) {
 		zap.S().Infow("no graph",
 			"component", "mrt",
 			"action", "trtc_traveltime",
@@ -493,25 +426,13 @@ func LoadTrtcTravelTime(ctx context.Context, src pipeline.LoadSource, sink pipel
 		)
 		return nil
 	}
+	return writeMRTTravelTimes(ctx, sink, system, stations, dist)
+}
 
-	// UPDATE only rows that already exist (created by mrt_odfare); a pair absent
-	// from the matrix no-ops. Idx order is deterministic via the stations slice.
-	rows := make([][]any, 0, len(stations)*len(stations))
-	for i, from := range stations {
-		for j, to := range stations {
-			if i == j {
-				continue
-			}
-			d := dist[i][j]
-			if d <= 0 || d >= _mrtGraphInf {
-				continue
-			}
-			mins := max((d+30)/60, 1) // round to nearest minute, floor 1
-			if mins > _maxPostgresInteger {
-				return _oops.With("system", system).With("from", from).With("to", to).Errorf("mrt travel time to exceeds PostgreSQL integer maximum")
-			}
-			rows = append(rows, []any{mins, from, to, system})
-		}
+func writeMRTTravelTimes(ctx context.Context, sink pipeline.CopyUpsertSink, system string, stations []string, dist [][]int64) error {
+	rows, err := mrtTravelTimeRows(system, stations, dist)
+	if err != nil {
+		return err
 	}
 	if len(rows) == 0 {
 		return nil
@@ -540,24 +461,27 @@ type AdjacencyRow struct {
 	} `json:"TravelTimes"`
 }
 
+func validateMRTAdjacency(_ int, line AdjacencyRow) error {
+	if strings.TrimSpace(line.LineID) == "" {
+		return errors.New("LineID is required")
+	}
+	return validateMRTAdjacencySegments(line)
+}
+
+func validateMRTAdjacencySegments(line AdjacencyRow) error {
+	for index, segment := range line.TravelTimes {
+		if err := validateMRTSegmentIdentity(index, segment.FromStationID, segment.ToStationID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func LoadAdjacency(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, system string) error {
 	if strings.TrimSpace(system) == "" {
 		return errors.New("mrt adjacency: system is required")
 	}
-	lines, err := pipeline.DecodeLoadArray[AdjacencyRow](dec, "mrt adjacency "+system, func(_ int, line AdjacencyRow) error {
-		if strings.TrimSpace(line.LineID) == "" {
-			return errors.New("LineID is required")
-		}
-		for i, seg := range line.TravelTimes {
-			if strings.TrimSpace(seg.FromStationID) == "" {
-				return _oops.With("index", i).Errorf("TravelTimes element FromStationID is required")
-			}
-			if strings.TrimSpace(seg.ToStationID) == "" {
-				return _oops.With("index", i).Errorf("TravelTimes element ToStationID is required")
-			}
-		}
-		return nil
-	})
+	lines, err := pipeline.DecodeLoadArray[AdjacencyRow](dec, "mrt adjacency "+system, validateMRTAdjacency)
 	if err != nil {
 		return err
 	}
@@ -585,107 +509,461 @@ func LoadAdjacency(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUps
 	}, rows)
 }
 
+type mrtAdjacencyBuilder struct {
+	system string
+	seen   map[string]bool
+	rows   [][]any
+}
+
 func AdjacencyRows(lines []AdjacencyRow, system string) [][]any {
-	seen := map[string]bool{}
-	var rows [][]any
-	add := func(lineID, from, to string) {
-		key := from + "\x00" + to
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		rows = append(rows, []any{system, lineID, from, to})
-	}
+	b := mrtAdjacencyBuilder{system: system, seen: map[string]bool{}}
 	for _, line := range lines {
-		for _, seg := range line.TravelTimes {
-			if seg.FromStationID == "" || seg.ToStationID == "" {
-				continue
-			}
-			add(line.LineID, seg.FromStationID, seg.ToStationID)
-			add(line.LineID, seg.ToStationID, seg.FromStationID)
-		}
+		b.addLine(line)
 	}
-	return rows
+	return b.rows
+}
+
+func (b *mrtAdjacencyBuilder) addLine(line AdjacencyRow) {
+	for _, segment := range line.TravelTimes {
+		b.addPair(line.LineID, segment.FromStationID, segment.ToStationID)
+	}
+}
+
+func (b *mrtAdjacencyBuilder) addPair(lineID, from, to string) {
+	if from == "" || to == "" {
+		return
+	}
+	b.add(lineID, from, to)
+	b.add(lineID, to, from)
+}
+
+func (b *mrtAdjacencyBuilder) add(lineID, from, to string) {
+	key := from + "\x00" + to
+	if b.seen[key] {
+		return
+	}
+	b.seen[key] = true
+	b.rows = append(b.rows, []any{b.system, lineID, from, to})
 }
 
 const _mrtGraphInf int64 = 1 << 62
 
+type mrtTravelEdge struct {
+	a, b int
+	w    int64
+}
+type mrtTravelGraphBuilder struct {
+	stations            []string
+	index               map[string]int
+	edges               []mrtTravelEdge
+	segments, transfers int
+}
+
 func mrtTravelGraph(lines []mrtS2SRow, transfers []mrtLineTransfer) ([]string, [][]int64, int, int, error) {
-	stations := []string{}
-	idx := map[string]int{}
-	id := func(s string) int {
-		if i, ok := idx[s]; ok {
-			return i
+	b := mrtTravelGraphBuilder{stations: []string{}, index: make(map[string]int)}
+	if err := b.addLines(lines); err != nil {
+		return nil, nil, 0, 0, err
+	}
+	if err := b.addTransfers(transfers); err != nil {
+		return nil, nil, 0, 0, err
+	}
+	dist := initialMRTDistances(len(b.stations), b.edges)
+	relaxMRTDistances(dist)
+	return b.stations, dist, b.segments, b.transfers, nil
+}
+
+func (b *mrtTravelGraphBuilder) addLines(lines []mrtS2SRow) error {
+	for _, line := range lines {
+		if err := b.addLine(line); err != nil {
+			return err
 		}
-		i := len(stations)
-		idx[s] = i
-		stations = append(stations, s)
+	}
+	return nil
+}
+
+func (b *mrtTravelGraphBuilder) addTransfers(transfers []mrtLineTransfer) error {
+	for _, transfer := range transfers {
+		if err := b.addTransfer(transfer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *mrtTravelGraphBuilder) stationID(station string) int {
+	if i, ok := b.index[station]; ok {
 		return i
 	}
-	type edge struct {
-		a, b int
-		w    int64
-	}
-	var edges []edge
-	segCount, transferCount := 0, 0
-	for _, ln := range lines {
-		for _, s := range ln.TravelTimes {
-			if s.FromStationID == "" || s.ToStationID == "" {
-				continue
-			}
-			runTime, err := jsonNumInt(s.RunTime, "RunTime")
-			if err != nil {
-				return nil, nil, 0, 0, err
-			}
-			stopTime, err := jsonNumInt(s.StopTime, "StopTime")
-			if err != nil {
-				return nil, nil, 0, 0, err
-			}
-			edges = append(edges, edge{id(s.FromStationID), id(s.ToStationID), runTime + stopTime})
-			segCount++
+	i := len(b.stations)
+	b.index[station] = i
+	b.stations = append(b.stations, station)
+	return i
+}
+func (b *mrtTravelGraphBuilder) addLine(line mrtS2SRow) error {
+	for _, segment := range line.TravelTimes {
+		if err := b.addSegment(segment); err != nil {
+			return err
 		}
 	}
-	for _, t := range transfers {
-		if t.FromStationID == "" || t.ToStationID == "" {
-			continue
-		}
-		transferTime, err := jsonNumInt(t.TransferTime, "TransferTime")
-		if err != nil {
-			return nil, nil, 0, 0, err
-		}
-		edges = append(edges, edge{id(t.FromStationID), id(t.ToStationID), transferTime * 60})
-		transferCount++
+	return nil
+}
+
+func hasMRTStationPair(from, to string) bool { return from != "" && to != "" }
+
+func mrtSegmentDuration(segment mrtTravelSegment) (int64, error) {
+	runTime, err := jsonNumInt(segment.RunTime, "RunTime")
+	if err != nil {
+		return 0, err
 	}
-	n := len(stations)
+	stopTime, err := jsonNumInt(segment.StopTime, "StopTime")
+	if err != nil {
+		return 0, err
+	}
+	return runTime + stopTime, nil
+}
+
+func (b *mrtTravelGraphBuilder) addSegment(segment mrtTravelSegment) error {
+	if !hasMRTStationPair(segment.FromStationID, segment.ToStationID) {
+		return nil
+	}
+	duration, err := mrtSegmentDuration(segment)
+	if err != nil {
+		return err
+	}
+	b.edges = append(b.edges, mrtTravelEdge{b.stationID(segment.FromStationID), b.stationID(segment.ToStationID), duration})
+	b.segments++
+	return nil
+}
+func (b *mrtTravelGraphBuilder) addTransfer(transfer mrtLineTransfer) error {
+	if !hasMRTStationPair(transfer.FromStationID, transfer.ToStationID) {
+		return nil
+	}
+	duration, err := jsonNumInt(transfer.TransferTime, "TransferTime")
+	if err != nil {
+		return err
+	}
+	b.edges = append(b.edges, mrtTravelEdge{b.stationID(transfer.FromStationID), b.stationID(transfer.ToStationID), duration * 60})
+	b.transfers++
+	return nil
+}
+func initialMRTDistances(n int, edges []mrtTravelEdge) [][]int64 {
 	dist := make([][]int64, n)
 	for i := range dist {
-		dist[i] = make([]int64, n)
-		for j := range dist[i] {
-			if i != j {
-				dist[i][j] = _mrtGraphInf
-			}
+		dist[i] = initialMRTDistanceRow(n, i)
+	}
+	applyMRTTravelEdges(dist, edges)
+	return dist
+}
+
+func initialMRTDistanceRow(n, origin int) []int64 {
+	row := make([]int64, n)
+	for destination := range row {
+		if origin != destination {
+			row[destination] = _mrtGraphInf
 		}
 	}
-	for _, e := range edges {
-		if e.w < dist[e.a][e.b] {
-			dist[e.a][e.b] = e.w
-			dist[e.b][e.a] = e.w
+	return row
+}
+
+func applyMRTTravelEdges(dist [][]int64, edges []mrtTravelEdge) {
+	for _, edge := range edges {
+		if edge.w < dist[edge.a][edge.b] {
+			dist[edge.a][edge.b] = edge.w
+			dist[edge.b][edge.a] = edge.w
 		}
 	}
+}
+func relaxMRTDistances(dist [][]int64) {
+	n := len(dist)
 	for k := range n {
 		for i := range n {
 			if dist[i][k] >= _mrtGraphInf {
 				continue
 			}
-			for j := range n {
-				if dist[k][j] >= _mrtGraphInf || dist[i][k] > _mrtGraphInf-dist[k][j] {
-					continue
-				}
-				if d := dist[i][k] + dist[k][j]; d < dist[i][j] {
-					dist[i][j] = d
-				}
-			}
+			relaxMRTDistanceRow(dist, i, k)
 		}
 	}
-	return stations, dist, segCount, transferCount, nil
 }
+func relaxMRTDistanceRow(dist [][]int64, i, k int) {
+	for j := range dist {
+		relaxMRTPath(dist, i, j, k)
+	}
+}
+
+func boundedMRTPath(a, b int64) bool { return b < _mrtGraphInf && a <= _mrtGraphInf-b }
+
+func relaxMRTPath(dist [][]int64, i, j, k int) {
+	if !boundedMRTPath(dist[i][k], dist[k][j]) {
+		return
+	}
+	if distance := dist[i][k] + dist[k][j]; distance < dist[i][j] {
+		dist[i][j] = distance
+	}
+}
+
+func validateMRTTimetableIdentity(timetable mrtFirstlast) error {
+	if strings.TrimSpace(timetable.StationID) == "" {
+		return errors.New("StationID is required")
+	}
+	if strings.TrimSpace(timetable.LineID) == "" {
+		return errors.New("LineID is required")
+	}
+	if strings.TrimSpace(timetable.DestinationStaionID) == "" {
+		return errors.New("DestinationStaionID is required")
+	}
+	return nil
+}
+
+func validateMRTFirstlast(_ int, timetable mrtFirstlast) error {
+	if err := validateMRTTimetableIdentity(timetable); err != nil {
+		return err
+	}
+	if err := validateMRTTimetableClocks(timetable); err != nil {
+		return err
+	}
+	return validateMRTServiceDays(timetable)
+}
+
+func validateMRTTimetableClocks(timetable mrtFirstlast) error {
+	if !validOptionalMRTClock(timetable.FirstTrainTime) {
+		return _oops.With("first_train_time", timetable.FirstTrainTime).Errorf("FirstTrainTime is invalid")
+	}
+	if !validOptionalMRTClock(timetable.LastTrainTime) {
+		return _oops.With("last_train_time", timetable.LastTrainTime).Errorf("LastTrainTime is invalid")
+	}
+	return nil
+}
+
+func validateMRTServiceDays(timetable mrtFirstlast) error {
+	if pipeline.Mask(timetable.ServiceDay.Monday, timetable.ServiceDay.Tuesday, timetable.ServiceDay.Wednesday,
+		timetable.ServiceDay.Thursday, timetable.ServiceDay.Friday, timetable.ServiceDay.Saturday,
+		timetable.ServiceDay.Sunday, timetable.ServiceDay.NationalHolidays) == 0 {
+		return errors.New("ServiceDay must enable at least one day")
+	}
+	return nil
+}
+
+func validateMRTJourneyFare(_ int, fare mrtODFare) error {
+	if strings.TrimSpace(fare.OriginStationID) == "" {
+		return errors.New("OriginStationID is required")
+	}
+	if strings.TrimSpace(fare.DestinationStationID) == "" {
+		return errors.New("DestinationStationID is required")
+	}
+	if _, err := fare.travelTimeMin(); err != nil {
+		return err
+	}
+	return validateMRTFarePrices(fare)
+
+}
+
+func validOptionalMRTClock(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	_, ok := parseHHMM(value)
+	return ok
+}
+func mrtClockDigits(s string) bool {
+	return isASCIIDigit(s[0]) && isASCIIDigit(s[1]) && isASCIIDigit(s[3]) && isASCIIDigit(s[4])
+}
+
+func validateMRTFarePrices(fare mrtODFare) error {
+	singleSeen, err := collectMRTFarePrices(fare)
+	if err != nil {
+		return err
+	}
+	if !singleSeen {
+		return errors.New("fares must include TicketType 1")
+	}
+	return nil
+}
+
+func collectMRTFarePrices(fare mrtODFare) (bool, error) {
+	singleSeen := false
+	classPrices := map[int]int{}
+	for i := range fare.Fares {
+		single, err := validateMRTFarePrice(fare, i, classPrices)
+		if err != nil {
+			return false, err
+		}
+		singleSeen = singleSeen || single
+	}
+	return singleSeen, nil
+}
+
+func validateMRTFarePrice(fare mrtODFare, index int, prices map[int]int) (bool, error) {
+	if err := validateMRTFareItem(fare, index); err != nil {
+		return false, err
+	}
+	if fare.Fares[index].TicketType != _mrtTicketTypeSingle {
+		return false, nil
+	}
+	err := recordMRTSingleFarePrice(fare, index, prices)
+	return true, err
+}
+
+func validateMRTFareItem(fare mrtODFare, i int) error {
+	item := fare.Fares[i]
+	if item.TicketType <= 0 {
+		return _oops.With("index", i).With("ticket_type", item.TicketType).Errorf("fares element TicketType must be positive")
+	}
+	if item.FareClass < 0 {
+		return _oops.With("index", i).With("fare_class", item.FareClass).Errorf("fares element FareClass must be non-negative")
+	}
+	if item.Price < 0 {
+		return _oops.With("index", i).With("price", item.Price).Errorf("fares element Price must be non-negative")
+	}
+	return nil
+}
+func knownMRTFareClass(class int) bool {
+	return class == _mrtFareClassFull || class == _mrtFareClassHalf
+}
+
+func recordMRTSingleFarePrice(fare mrtODFare, i int, classPrices map[int]int) error {
+	item := fare.Fares[i]
+	if knownMRTFareClass(item.FareClass) {
+		if prior, seen := classPrices[item.FareClass]; seen && prior != item.Price {
+			return _oops.With("index", i).With("fare_class", item.FareClass).Errorf("fares element divergent duplicate TicketType 1 FareClass")
+		}
+		classPrices[item.FareClass] = item.Price
+	}
+	return nil
+}
+
+func validateMRTTravelLine(_ int, line mrtS2SRow) error {
+	for i, segment := range line.TravelTimes {
+		if err := validateMRTTravelSegment(i, segment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMRTSegmentIdentity(index int, from, to string) error {
+	if strings.TrimSpace(from) == "" {
+		return _oops.With("index", index).Errorf("TravelTimes element FromStationID is required")
+	}
+	if strings.TrimSpace(to) == "" {
+		return _oops.With("index", index).Errorf("TravelTimes element ToStationID is required")
+	}
+	return nil
+}
+
+func positiveMRTDuration(number json.Number, field string) error {
+	value, err := nonNegativeJSONInteger(number, field, false, _maxPostgresInteger)
+	if err != nil {
+		return err
+	}
+	if value == 0 {
+		return errors.New(field + " must be positive")
+	}
+	return nil
+}
+
+func validateMRTTravelSegment(index int, segment mrtTravelSegment) error {
+	if err := validateMRTSegmentIdentity(index, segment.FromStationID, segment.ToStationID); err != nil {
+		return err
+	}
+	return validateMRTSegmentTimes(index, segment)
+}
+
+func validateMRTSegmentTimes(index int, segment mrtTravelSegment) error {
+	if err := positiveMRTDuration(segment.RunTime, "RunTime"); err != nil {
+		return _oops.With("index", index).Wrapf(err, "TravelTimes element")
+	}
+	if _, err := nonNegativeJSONInteger(segment.StopTime, "StopTime", false, _maxPostgresInteger); err != nil {
+		return _oops.With("index", index).Wrapf(err, "TravelTimes element")
+	}
+	return nil
+}
+
+func validateMRTTransferIdentity(transfer mrtLineTransfer) error {
+	if strings.TrimSpace(transfer.FromStationID) == "" {
+		return errors.New("FromStationID is required")
+	}
+	if strings.TrimSpace(transfer.ToStationID) == "" {
+		return errors.New("ToStationID is required")
+	}
+	return nil
+}
+
+func validateMRTTransfer(_ int, transfer mrtLineTransfer) error {
+	if err := validateMRTTransferIdentity(transfer); err != nil {
+		return err
+	}
+	return positiveMRTDuration(transfer.TransferTime, "TransferTime")
+}
+
+func readMRTTravelLines(ctx context.Context, src pipeline.LoadSource, system string) ([]mrtS2SRow, error) {
+	body, _, err := src.DatasetJSON(ctx, "metro_s2straveltime", "system", system)
+	if err != nil {
+		return nil, _oops.With("system", system).Wrapf(err, "mrt s2s read")
+	}
+	return pipeline.DecodeLoadArray[mrtS2SRow](json.NewDecoder(bytes.NewReader(body)), "mrt s2s "+system, validateMRTTravelLine)
+}
+
+func readMRTTransfers(ctx context.Context, src pipeline.LoadSource, system string) ([]mrtLineTransfer, error) {
+	body, _, err := src.DatasetJSON(ctx, "metro_linetransfer", "system", system)
+	if err != nil {
+		return nil, _oops.With("system", system).Wrapf(err, "mrt linetransfer read")
+	}
+	return pipeline.DecodeLoadArray[mrtLineTransfer](json.NewDecoder(bytes.NewReader(body)), "mrt line transfer "+system, validateMRTTransfer)
+}
+
+func readMRTTravelData(ctx context.Context, src pipeline.LoadSource, system string) ([]mrtS2SRow, []mrtLineTransfer, error) {
+	lines, err := readMRTTravelLines(ctx, src, system)
+	if err != nil {
+		return nil, nil, err
+	}
+	transfers, err := readMRTTransfers(ctx, src, system)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lines, transfers, nil
+}
+
+func mrtTravelTimeRows(system string, stations []string, dist [][]int64) ([][]any, error) {
+	// Only existing OD rows are updated; station ordering keeps COPY deterministic.
+	rows := make([][]any, 0, len(stations)*len(stations))
+	for i, from := range stations {
+		part, err := mrtOriginTravelRows(system, from, stations, dist[i], i)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, part...)
+	}
+	return rows, nil
+}
+
+func mrtOriginTravelRows(system, from string, stations []string, distances []int64, origin int) ([][]any, error) {
+	rows := [][]any{}
+	for j, to := range stations {
+		row, err := mrtPairTravelRow(system, from, to, distances[j], origin == j)
+		if err != nil {
+			return nil, err
+		}
+		if row != nil {
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
+func usableMRTDistance(distance int64, self bool) bool {
+	return !self && distance > 0 && distance < _mrtGraphInf
+}
+
+func mrtPairTravelRow(system, from, to string, distance int64, self bool) ([]any, error) {
+	if !usableMRTDistance(distance, self) {
+		return nil, nil
+	}
+	mins := max((distance+30)/60, 1)
+	if mins > _maxPostgresInteger {
+		return nil, _oops.With("system", system).With("from", from).With("to", to).Errorf("mrt travel time to exceeds PostgreSQL integer maximum")
+	}
+	return []any{mins, from, to, system}, nil
+}
+
+func hasMRTTravelSegments(stations []string, count int) bool { return len(stations) != 0 && count != 0 }

@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/feedback"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/firebase"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/metrotrack"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -30,16 +32,38 @@ const (
 // runAPI serves the rider RPCs api forwards, over mutual TLS when
 // RIDER_TLS_DIR is set. App Check and rate limits are enforced at api, the
 // public boundary; this server still checks every install credential itself.
-func runAPI() error {
+func runAPI() error { return runRiderAPI(waitForShutdown, _riderGRPCAddr, _riderHTTPAddr) }
+
+func runRiderAPI(waitShutdown func(), grpcAddr, httpAddr string) error {
 	rc := shared.ConnectRedis()
 	defer func() { _ = rc.Close() }()
 	db := shared.ConnectDB("RIDER_DB_MAX_CONNS", 5)
 	defer db.Close()
 	tlsDir := os.Getenv("RIDER_TLS_DIR")
-
-	creds, err := shared.GRPCServerCreds(tlsDir)
+	grpcServer, err := newRiderGRPCServer(db, rc, tlsDir)
 	if err != nil {
 		return err
+	}
+	return startRiderHTTPAndGRPC(db, rc, tlsDir, grpcServer, grpcAddr, httpAddr, waitShutdown)
+}
+
+func startRiderHTTPAndGRPC(db *pgxpool.Pool, rc *redis.Client, tlsDir string, grpcServer *grpc.Server, grpcAddr, httpAddr string, waitShutdown func()) error {
+	httpServer, err := newRiderHTTPServer(db, rc, tlsDir)
+	if err != nil {
+		return err
+	}
+	httpServer.Addr = httpAddr
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		return _oops.Wrapf(err, "listen for rider gRPC")
+	}
+	return serveRiderServers(grpcServer, httpServer, lis, tlsDir, waitShutdown)
+}
+
+func newRiderGRPCServer(db *pgxpool.Pool, rc *redis.Client, tlsDir string) (*grpc.Server, error) {
+	creds, err := shared.GRPCServerCreds(tlsDir)
+	if err != nil {
+		return nil, err
 	}
 	opts := []grpc.ServerOption{
 		grpc.WaitForHandlers(true),
@@ -59,6 +83,10 @@ func runAPI() error {
 		time.Now,
 	))
 
+	return grpcServer, nil
+}
+
+func newRiderHTTPServer(db *pgxpool.Pool, rc *redis.Client, tlsDir string) (*http.Server, error) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -67,34 +95,26 @@ func runAPI() error {
 	if tlsDir != "" {
 		cfg, err := shared.MTLSConfig(tlsDir, true, "")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		httpServer.TLSConfig = cfg
 	}
 
-	lis, err := net.Listen("tcp", _riderGRPCAddr)
-	if err != nil {
-		return _oops.Wrapf(err, "listen for rider gRPC")
-	}
+	return httpServer, nil
+}
+
+func serveRiderServers(grpcServer *grpc.Server, httpServer *http.Server, lis net.Listener, tlsDir string, waitShutdown func()) error {
 	errs := make(chan error, 2)
 	go func() { errs <- grpcServer.Serve(lis) }()
 	go func() {
-		var err error
-		if httpServer.TLSConfig != nil {
-			err = httpServer.ListenAndServeTLS("", "")
-		} else {
-			err = httpServer.ListenAndServe()
-		}
-		if errors.Is(err, http.ErrServerClosed) {
-			err = nil
-		}
+		err := listenRiderHTTP(httpServer)
 		errs <- err
 	}()
 	zap.S().Infow("serving", "component", "rider_api", "grpc", _riderGRPCAddr, "http", _riderHTTPAddr, "mtls", tlsDir != "")
 
 	shutdown := make(chan struct{})
 	go func() {
-		waitForShutdown()
+		waitShutdown()
 		close(shutdown)
 	}()
 	select {
@@ -104,6 +124,23 @@ func runAPI() error {
 		return err
 	case <-shutdown:
 	}
+	return stopRiderServers(grpcServer, httpServer)
+}
+
+func listenRiderHTTP(httpServer *http.Server) error {
+	var err error
+	if httpServer.TLSConfig != nil {
+		err = httpServer.ListenAndServeTLS("", "")
+	} else {
+		err = httpServer.ListenAndServe()
+	}
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
+	return err
+}
+
+func stopRiderServers(grpcServer *grpc.Server, httpServer *http.Server) error {
 	stopped := make(chan struct{})
 	go func() {
 		grpcServer.GracefulStop()

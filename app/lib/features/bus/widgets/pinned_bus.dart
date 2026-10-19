@@ -14,11 +14,10 @@ int? pinnedBusNextStopIndex({
   // the raw position feed.
   final wanted = plate.trim().toUpperCase();
   for (final eta in etas) {
-    if (eta.direction != direction) continue;
-    if (eta.plate.isEmpty || eta.plate != wanted) continue;
+    if (!_matchesPinnedBus(eta, direction, wanted)) continue;
     final i = stopUidsInOrder.indexOf(eta.stopUid);
     if (i < 0) continue;
-    if (best == null || i < best) best = i;
+    best = _earlierStop(best, i);
   }
   return best;
 }
@@ -36,3 +35,9 @@ bool isAlightTarget(int index, int? nextStopIndex) =>
 
 /// Clamps a 提前站數 lead to at least one stop, matching the stepper's floor.
 int clampLeadStops(int leadStops) => leadStops < 0 ? 0 : leadStops;
+
+bool _matchesPinnedBus(BusStopEtaViewModel eta, int direction, String plate) =>
+    eta.direction == direction && eta.plate.isNotEmpty && eta.plate == plate;
+
+int _earlierStop(int? current, int next) =>
+    current == null || next < current ? next : current;

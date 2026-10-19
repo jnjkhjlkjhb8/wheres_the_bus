@@ -2,7 +2,7 @@ part of '../view/bus_route_screen.dart';
 
 const List<FontFeature> _tnum = AppTextStyles.tabularFigures;
 
-typedef _DepartureInfo = ({String time, bool isNext});
+typedef BusDepartureInfo = ({String time, bool isNext});
 
 // Memoize the timeline-stop derivation per state instance so both eta-scoped
 // selectors (timeline + stop list) share one computation instead of rebuilding
@@ -29,22 +29,10 @@ List<TimelineStop> _stopsFor(AppI18n i18n, BusRouteState s) {
 
 const int _dtDepartureWindow = 12;
 
-List<_DepartureInfo> _departuresFor(BusRouteState state) {
+List<BusDepartureInfo> busRouteDepartures(BusRouteState state, TimeOfDay now) {
   final trips =
       state.daily?.tripsForDirection(state.direction) ?? const <BusDailyTrip>[];
-  final now = TimeOfDay.now();
-  final rows = <String>[];
-  for (final trip in trips) {
-    if (trip.stopTimes.isEmpty) continue;
-    final first = trip.stopTimes.reduce(
-      (a, b) => a.stopSequence <= b.stopSequence ? a : b,
-    );
-    final time = first.departureTime.isNotEmpty
-        ? first.departureTime
-        : first.arrivalTime;
-    if (time.isNotEmpty) rows.add(busClockLabel(time));
-  }
-  rows.sort();
+  final rows = _departureTimes(trips);
   final nextIndex = rows.indexWhere((t) => busTimeIsUpcoming(t, now));
   if (nextIndex < 0) {
     // Service is over for the day: nothing to highlight (see _isUpcoming), so
@@ -62,8 +50,18 @@ List<_DepartureInfo> _departuresFor(BusRouteState state) {
   ];
 }
 
+List<String> _departureTimes(List<BusDailyTrip> trips) {
+  final rows = <String>[];
+  for (final trip in trips) {
+    final time = busTripOriginDeparture(trip);
+    if (time != null) rows.add(time);
+  }
+  rows.sort();
+  return rows;
+}
+
 /// Headsign for the current direction, shown once above the timetable board.
-String _headsignFor(BusRouteState state) => state.currentHeadsign.isNotEmpty
+String busRouteHeadsign(BusRouteState state) => state.currentHeadsign.isNotEmpty
     ? state.currentHeadsign
     : (state.currentStops.isEmpty ? '-' : state.currentStops.last.stopName);
 
@@ -72,16 +70,18 @@ List<BusServiceEntry> _schedulesFor(BusRouteState state) => state.direction == 0
     ? (state.route?.schedulesGo ?? const [])
     : (state.route?.schedulesReturn ?? const []);
 
-BusDayTimetable _timetableFor(BusRouteState state, int weekday) =>
-    busTimetableForDay(
-      weekday: weekday,
-      schedules: _schedulesFor(state),
-      todayTrips:
-          state.daily?.tripsForDirection(state.direction) ??
-          const <BusDailyTrip>[],
-      isToday: weekday == busWeekdayIndex(DateTime.now()),
-      now: TimeOfDay.now(),
-    );
+BusDayTimetable _timetableFor(
+  BusRouteState state,
+  int weekday,
+  DateTime now,
+) => busTimetableForDay(
+  weekday: weekday,
+  schedules: _schedulesFor(state),
+  todayTrips:
+      state.daily?.tripsForDirection(state.direction) ?? const <BusDailyTrip>[],
+  isToday: weekday == busWeekdayIndex(now),
+  now: TimeOfDay.fromDateTime(now),
+);
 
 // Built per call rather than held in a const map: the names follow the
 // rider's language.

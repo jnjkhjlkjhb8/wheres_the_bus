@@ -34,18 +34,29 @@ func busDailyLandingMarkers(ctx context.Context, q rawMarkerQuerier) (map[string
 		return nil, _oops.Wrapf(err, "read bus_dailytimetable landing markers")
 	}
 	defer rows.Close()
+	return decodeBusDailyLandingMarkers(rows)
+}
+
+func decodeBusDailyLandingMarkers(rows pgx.Rows) (map[string]string, error) {
 	markers := make(map[string]string, 32)
 	for rows.Next() {
-		var city, marker string
-		if err := rows.Scan(&city, &marker); err != nil {
-			return nil, _oops.Wrapf(err, "read bus_dailytimetable landing markers: scan")
+		if err := appendBusDailyLandingMarker(markers, rows); err != nil {
+			return nil, err
 		}
-		markers[city] = marker
 	}
 	if err := rows.Err(); err != nil {
 		return nil, _oops.Wrapf(err, "read bus_dailytimetable landing markers: rows")
 	}
 	return markers, nil
+}
+
+func appendBusDailyLandingMarker(markers map[string]string, rows pgx.Rows) error {
+	var city, marker string
+	if err := rows.Scan(&city, &marker); err != nil {
+		return _oops.Wrapf(err, "read bus_dailytimetable landing markers: scan")
+	}
+	markers[city] = marker
+	return nil
 }
 
 func busDailyPendingCities(markers, loaded map[string]string) []string {
@@ -76,6 +87,10 @@ func loadChangedBusDailyTimetables(
 	if err != nil {
 		return err
 	}
+	return loadBusDailyPendingCities(ctx, src, db, rc, base, markers, loaded)
+}
+
+func loadBusDailyPendingCities(ctx context.Context, src pipeline.LoadSource, db *pgxpool.Pool, rc *redis.Client, base loadSpec, markers, loaded map[string]string) error {
 	pending := busDailyPendingCities(markers, loaded)
 	var failures []error
 	for _, city := range pending {

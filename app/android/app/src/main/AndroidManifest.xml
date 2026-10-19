@@ -98,7 +98,7 @@
             android:name=".TrackCancelReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.wheres.bus.action.CANCEL_TRACK" />
+                <action android:name="me.rabbitsayhello.wheresthebus.action.CANCEL_TRACK" />
             </intent-filter>
         </receiver>
         <!-- Don't delete the meta-data below.

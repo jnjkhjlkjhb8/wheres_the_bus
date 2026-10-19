@@ -26,12 +26,16 @@ type mqttTopicCfg struct {
 	ttl     time.Duration
 }
 
-var _mqttTopics = []mqttTopicCfg{
-	{"v2/Bus/Alert/City/+", 5 * time.Minute},
-	{"v2/Bus/Alert/InterCity", 5 * time.Minute},
-	{"v2/Rail/Metro/Alert/#", 5 * time.Minute},
-	{"v3/Rail/TRA/Alert", 5 * time.Minute},
-	{"v2/Rail/THSR/AlertInfo", 5 * time.Minute},
+var _mqttTopics = mqttTopicConfigs()
+
+func mqttTopicConfigs() []mqttTopicCfg {
+	return []mqttTopicCfg{
+		{"v2/Bus/Alert/City/+", 5 * time.Minute},
+		{"v2/Bus/Alert/InterCity", 5 * time.Minute},
+		{"v2/Rail/Metro/Alert/#", 5 * time.Minute},
+		{"v3/Rail/TRA/Alert", 5 * time.Minute},
+		{"v2/Rail/THSR/AlertInfo", 5 * time.Minute},
+	}
 }
 
 type MQTTArchiver func(topic string, payload []byte)
@@ -42,36 +46,20 @@ type OutboxDB interface {
 }
 
 func StartMQTT(rc *redis.Client, outbox OutboxDB, archive MQTTArchiver) mqtt.Client {
+	return startMQTTWithClient(rc, outbox, archive, mqtt.NewClient)
+}
+
+func startMQTTWithClient(rc *redis.Client, outbox OutboxDB, archive MQTTArchiver, createClient func(*mqtt.ClientOptions) mqtt.Client) mqtt.Client {
 	clientID := os.Getenv("MQTT_CLIENT_ID")
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
-	if clientID == "" || username == "" || password == "" {
+	if !mqttCredentialsPresent(clientID, username, password) {
 		zap.S().Warnw("credentials not set \u2014 skipping MQTT subscriber", "component", "mqtt")
 		return nil
 	}
-	opts := mqtt.NewClientOptions().
-		AddBroker("mqtts://mqtt.transportdata.tw:8883").
-		SetClientID(clientID).
-		SetUsername(username).
-		SetPassword(password).
-		SetCleanSession(true).
-		SetAutoReconnect(true).
-		SetConnectRetry(true).
-		SetConnectRetryInterval(10 * time.Second).
-		SetTLSConfig(&tls.Config{}).
-		SetOnConnectHandler(func(c mqtt.Client) {
-			zap.S().Infow("connected", "component", "mqtt")
-			mqttsubscribeall(c, rc, outbox, archive)
-		}).
-		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
-			zap.S().Warnw("connection lost", "component", "mqtt", "err", err)
-		})
-	c := mqtt.NewClient(opts)
-	tok := c.Connect()
-	tok.Wait()
-	if err := tok.Error(); err != nil {
-		zap.S().Errorw("initial connect failed; will auto-retry", "component", "mqtt", "err", err)
-	}
+	opts := mqttClientOptions(clientID, username, password, rc, outbox, archive)
+	c := createClient(opts)
+	connectMQTT(c)
 	return c
 }
 
@@ -97,7 +85,6 @@ func mqttsubscribeall(c mqtt.Client, rc *redis.Client, outbox OutboxDB, archive 
 }
 
 func mqtthandle(rc *redis.Client, msg mqtt.Message, ttl time.Duration, outbox OutboxDB) {
-	key := shared.MQTTChannel(msg.Topic())
 	items, ok := normalizeAlerts(msg.Topic(), msg.Payload())
 	if !ok {
 		zap.S().Errorw("unparseable",
@@ -108,17 +95,25 @@ func mqtthandle(rc *redis.Client, msg mqtt.Message, ttl time.Duration, outbox Ou
 		)
 		return
 	}
+	publishNormalizedMQTTAlerts(rc, msg.Topic(), items, ttl, outbox)
+}
+
+func publishNormalizedMQTTAlerts(rc *redis.Client, topic string, items []*pb.Alert_Item, ttl time.Duration, outbox OutboxDB) {
 	payload, err := protojson.Marshal(&pb.Alert_Msg{Items: items})
 	if err != nil {
 		zap.S().Errorw("marshal failed",
 			"component", "mqtt",
 			"action", "normalize",
 			"event", "marshal_failed",
-			"topic", msg.Topic(),
+			"topic", topic,
 			"err", err,
 		)
 		return
 	}
+	publishMQTTAlerts(rc, topic, shared.MQTTChannel(topic), payload, ttl, outbox, items)
+}
+
+func publishMQTTAlerts(rc *redis.Client, topic, key string, payload []byte, ttl time.Duration, outbox OutboxDB, items []*pb.Alert_Item) {
 	// A broker push is a top-level entry point: paho calls this on its own
 	// goroutine with no parent context to inherit, so the handler owns one.
 	ctx := context.Background()
@@ -129,8 +124,12 @@ func mqtthandle(rc *redis.Client, msg mqtt.Message, ttl time.Duration, outbox Ou
 	if err := rc.Publish(ctx, key, payload).Err(); err != nil {
 		zap.S().Errorw("redis publish failed", "component", "mqtt", "key", key, "err", err)
 	}
+	logRouteAlertEnqueue(ctx, outbox, items, topic)
+}
+
+func logRouteAlertEnqueue(ctx context.Context, outbox OutboxDB, items []*pb.Alert_Item, topic string) {
 	if err := enqueueRouteAlerts(ctx, outbox, items); err != nil {
-		zap.S().Errorw("outbox insert failed", "component", "mqtt", "topic", msg.Topic(), "err", err)
+		zap.S().Errorw("outbox insert failed", "component", "mqtt", "topic", topic, "err", err)
 	}
 }
 
@@ -166,7 +165,11 @@ func enqueueRouteAlerts(ctx context.Context, outbox OutboxDB, items []*pb.Alert_
 	if outbox == nil {
 		return nil
 	}
-	for _, row := range routeAlertRows(items) {
+	return insertRouteAlertRows(ctx, outbox, routeAlertRows(items))
+}
+
+func insertRouteAlertRows(ctx context.Context, outbox OutboxDB, rows []routeAlertRow) error {
+	for _, row := range rows {
 		if _, err := outbox.Exec(ctx, `
 			INSERT INTO route_alert_outbox (dedupe_key, route_type, route_key, body)
 			VALUES ($1, $2, $3, $4)
@@ -187,43 +190,39 @@ func normalizeAlerts(topic string, payload []byte) ([]*pb.Alert_Item, bool) {
 	if json.Unmarshal(payload, &raw) != nil {
 		return nil, false
 	}
-	interCity := strings.Contains(topic, "/InterCity")
-	entries := alertItems(raw)
+	return normalizedAlertItems(routeType, strings.Contains(topic, "/InterCity"), alertItems(raw)), true
+}
+
+func normalizedAlertItems(routeType string, interCity bool, entries []map[string]any) []*pb.Alert_Item {
 	out := make([]*pb.Alert_Item, 0, len(entries))
 	at := map[string]int{}
 	for _, m := range entries {
-		title := firstString(m, "NewsTitle", "Title")
-		body := firstString(m, "Description", "NewsContent", "AlertDescription", "Message")
-		if body == "" {
-			body = title
-		}
-		if body == "" {
-			continue
-		}
-		keys := alertRouteKeys(routeType, m)
-		if interCity {
-			for i, key := range keys {
-				keys[i], _ = shared.CanonicalSubroute("InterCity", key, 0)
-			}
-			keys = dedupeStrings(keys)
-		}
-		if index, ok := at[body]; ok {
-			out[index].RouteKeys = dedupeStrings(append(out[index].RouteKeys, keys...))
-			continue
-		}
-		at[body] = len(out)
-		out = append(out, &pb.Alert_Item{
-			Id:         alertID(body),
-			RouteType:  routeType,
-			RouteKeys:  keys,
-			Title:      title,
-			Body:       body,
-			Level:      alertLevel(m),
-			TimeUnix:   alertTime(m),
-			Department: firstString(m, "Department"),
-		})
+		out = appendNormalizedAlert(out, at, routeType, interCity, m)
 	}
-	return out, true
+	return out
+}
+
+func appendNormalizedAlert(out []*pb.Alert_Item, at map[string]int, routeType string, interCity bool, m map[string]any) []*pb.Alert_Item {
+	title := firstString(m, "NewsTitle", "Title")
+	body := alertBody(m, title)
+	if body == "" {
+		return out
+	}
+	keys := canonicalAlertKeys(alertRouteKeys(routeType, m), interCity)
+	if index, ok := at[body]; ok {
+		out[index].RouteKeys = dedupeStrings(append(out[index].RouteKeys, keys...))
+		return out
+	}
+	at[body] = len(out)
+	return append(out, &pb.Alert_Item{Id: alertID(body), RouteType: routeType, RouteKeys: keys, Title: title, Body: body, Level: alertLevel(m), TimeUnix: alertTime(m), Department: firstString(m, "Department")})
+}
+
+func alertBody(m map[string]any, title string) string {
+	body := firstString(m, "Description", "NewsContent", "AlertDescription", "Message")
+	if body == "" {
+		return title
+	}
+	return body
 }
 
 func alertID(body string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(body))) }
@@ -232,17 +231,23 @@ func alertID(body string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte
 // and a number on others, so the value is compared as text either way.
 // Everything that is not an outright suspension is advisory.
 func alertLevel(m map[string]any) string {
-	raw := ""
-	for _, key := range []string{"Status", "status"} {
-		if value, ok := m[key]; ok && value != nil {
-			raw = strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
-			break
-		}
-	}
-	if raw == "red" || raw == "3" || strings.Contains(raw, "中斷") {
+	if suspendedAlertStatus(alertStatus(m)) {
 		return "red"
 	}
 	return "yellow"
+}
+
+func alertStatus(m map[string]any) string {
+	for _, key := range []string{"Status", "status"} {
+		if value, ok := m[key]; ok && value != nil {
+			return strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+		}
+	}
+	return ""
+}
+
+func suspendedAlertStatus(raw string) bool {
+	return raw == "red" || raw == "3" || strings.Contains(raw, "中斷")
 }
 
 // alertTime reads when the alert was published, as a Unix timestamp. TDX omits
@@ -268,21 +273,24 @@ var _alertLocation = func() *time.Location {
 	if loc, err := time.LoadLocation("Asia/Taipei"); err == nil {
 		return loc
 	}
-	return time.FixedZone("CST", 8*60*60)
+	return alertFallbackLocation()
 }()
+
+func alertFallbackLocation() *time.Location {
+	return time.FixedZone("CST", 8*60*60)
+}
 
 // alertRouteType maps an MQTT topic to the transit type its payload describes,
 // or "" for a topic that carries no disruption info.
+var _alertTopicTypes = []struct{ pattern, routeType string }{
+	{"/Bus/", "bus"}, {"/Metro/", "mrt"}, {"/TRA/", "tra"}, {"/THSR/", "thsr"},
+}
+
 func alertRouteType(topic string) string {
-	switch {
-	case strings.Contains(topic, "/Bus/"):
-		return "bus"
-	case strings.Contains(topic, "/Metro/"):
-		return "mrt"
-	case strings.Contains(topic, "/TRA/"):
-		return "tra"
-	case strings.Contains(topic, "/THSR/"):
-		return "thsr"
+	for _, mapping := range _alertTopicTypes {
+		if strings.Contains(topic, mapping.pattern) {
+			return mapping.routeType
+		}
 	}
 	return ""
 }
@@ -301,6 +309,17 @@ func alertRouteKeys(routeType string, m map[string]any) []string {
 }
 
 func alertItems(raw any) []map[string]any {
+	items := rawAlertItems(raw)
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func rawAlertItems(raw any) []any {
 	var items []any
 	switch v := raw.(type) {
 	case []any:
@@ -311,13 +330,7 @@ func alertItems(raw any) []map[string]any {
 			items = nested
 		}
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		if m, ok := item.(map[string]any); ok {
-			out = append(out, m)
-		}
-	}
-	return out
+	return items
 }
 
 func busRouteKeys(m map[string]any) []string {
@@ -368,4 +381,47 @@ func firstString(m map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func canonicalAlertKeys(keys []string, interCity bool) []string {
+	if interCity {
+		for i, key := range keys {
+			keys[i], _ = shared.CanonicalSubroute("InterCity", key, 0)
+		}
+		keys = dedupeStrings(keys)
+	}
+	return keys
+}
+
+func mqttCredentialsPresent(clientID, username, password string) bool {
+	return clientID != "" && username != "" && password != ""
+}
+
+func mqttClientOptions(clientID, username, password string, rc *redis.Client, outbox OutboxDB, archive MQTTArchiver) *mqtt.ClientOptions {
+	opts := mqtt.NewClientOptions().
+		AddBroker("mqtts://mqtt.transportdata.tw:8883").
+		SetClientID(clientID).
+		SetUsername(username).
+		SetPassword(password).
+		SetCleanSession(true).
+		SetAutoReconnect(true).
+		SetConnectRetry(true).
+		SetConnectRetryInterval(10 * time.Second).
+		SetTLSConfig(&tls.Config{}).
+		SetOnConnectHandler(func(c mqtt.Client) {
+			zap.S().Infow("connected", "component", "mqtt")
+			mqttsubscribeall(c, rc, outbox, archive)
+		}).
+		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+			zap.S().Warnw("connection lost", "component", "mqtt", "err", err)
+		})
+	return opts
+}
+
+func connectMQTT(c mqtt.Client) {
+	tok := c.Connect()
+	tok.Wait()
+	if err := tok.Error(); err != nil {
+		zap.S().Errorw("initial connect failed; will auto-retry", "component", "mqtt", "err", err)
+	}
 }

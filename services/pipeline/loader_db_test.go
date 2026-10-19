@@ -53,12 +53,32 @@ func loaderTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+func closeLoaderTestPool(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		borrowed := pool.Stat().AcquiredConns()
+		if borrowed == 0 {
+			pool.Close()
+			return
+		}
+		if !time.Now().Before(deadline) {
+			// A lost transaction lease makes pool Close wait forever,
+			// hiding the read assertion that already failed.
+			t.Errorf("loader fixture leaked %d database connections before pool cleanup", borrowed)
+			return
+		}
+		// Internal health checks can briefly borrow idle connections.
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestRawTDXSourceStripsBookkeeping lands a partitioned row and asserts the
 // reconstructed element carries the TDX fields but neither the partition column
 // (city) nor fetched_at, and that landing_state freshness comes back fresh.
 func TestRawTDXSourceStripsBookkeeping(t *testing.T) {
 	pool := loaderTestPool(t)
-	defer pool.Close()
+	defer closeLoaderTestPool(t, pool)
 	ctx := context.Background()
 
 	const city = "ZZ_LOAD_CITY"

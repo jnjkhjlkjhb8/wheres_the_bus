@@ -17,8 +17,11 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     required this.stopId,
     this.city,
     BusRepository? repository,
+    void Function(Object error, StackTrace stack) reportError =
+        CrashReporter.record,
   }) : _i18n = i18n,
        _repository = repository ?? BusRepository.instance,
+       _reportError = reportError,
        super(const BusStopState()) {
     on<BusStopStarted>(_onStarted);
     on<BusStopRetryRequested>(_onStarted);
@@ -33,6 +36,7 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
 
   final AppI18n _i18n;
   final BusRepository _repository;
+  final void Function(Object error, StackTrace stack) _reportError;
   // Replace policy + 15s decay live inside the feed; the empty-frame guard the
   // bloc used to run in _onUpdated is the feed's replace policy now.
   final _feed = ArrivalFeed<BusStopArrival>.replace(
@@ -48,19 +52,7 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     }
     emit(state.copyWith(status: BusStopStatus.loading, clearError: true));
     await _sub?.cancel();
-    try {
-      final members = await _repository.stationGroup(id);
-      if (isClosed) return;
-      if (members.isNotEmpty) {
-        emit(state.copyWith(status: BusStopStatus.loaded, members: members));
-      }
-    } on Object catch (e, s) {
-      CrashReporter.record(e, s);
-      if (isClosed) return;
-      emit(
-        state.copyWith(status: BusStopStatus.error, error: AppError.from(e)),
-      );
-    }
+    await _loadStationMembers(id, emit);
     if (isClosed) return;
     _sub = _feed
         .watch(
@@ -72,6 +64,30 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
             BusStopArrivalsUpdated(emission.arrivals, kind: emission.kind),
           ),
         );
+  }
+
+  Future<void> _loadStationMembers(
+    String id,
+    Emitter<BusStopState> emit,
+  ) async {
+    try {
+      final members = await _repository.stationGroup(id);
+      _emitMembers(members, emit);
+    } on Object catch (e, s) {
+      _reportError(e, s);
+      if (isClosed) return;
+      emit(
+        state.copyWith(status: BusStopStatus.error, error: AppError.from(e)),
+      );
+    }
+  }
+
+  void _emitMembers(
+    List<BusStationMember> members,
+    Emitter<BusStopState> emit,
+  ) {
+    if (isClosed || members.isEmpty) return;
+    emit(state.copyWith(status: BusStopStatus.loaded, members: members));
   }
 
   void _onStationSelected(
@@ -86,53 +102,60 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
   }
 
   void _onUpdated(BusStopArrivalsUpdated event, Emitter<BusStopState> emit) {
-    final arrivalsChanged = !listEquals(event.arrivals, state.arrivals);
-    final isSource = event.kind == ArrivalFeedEmissionKind.source;
-
-    if (!isSource) {
-      if (!arrivalsChanged) return;
-      final displays = [
-        for (final a in event.arrivals) BusStopArrivalItem(_i18n, a),
-      ]..sort((a, b) => a.rank.compareTo(b.rank));
-      final byStation = <String, List<BusStopArrivalItem>>{};
-      for (final item in displays) {
-        byStation.putIfAbsent(item.stationId, () => []).add(item);
-      }
-      emit(
-        state.copyWith(
-          arrivals: event.arrivals,
-          displays: displays,
-          arrivalsByStation: byStation,
-        ),
-      );
-      return;
+    final changed = !listEquals(event.arrivals, state.arrivals);
+    if (event.kind == ArrivalFeedEmissionKind.source) {
+      _updateSource(event.arrivals, changed, emit);
+    } else {
+      _updateDecay(event.arrivals, changed, emit);
     }
+  }
 
-    // The feed applies the empty-frame guard and decay upstream; the bloc keeps
-    // the status decision (empty only when no arrivals and no member stops).
-    final status = event.arrivals.isEmpty && state.members.isEmpty
-        ? BusStopStatus.empty
-        : BusStopStatus.loaded;
-    // An unchanged re-push (same values, new list instance) must leave the
-    // derived view-model and freshness time untouched so the state stays equal
-    // and the sheet does not rebuild. copyWith keeps the old values.
-    if (!arrivalsChanged) {
-      emit(state.copyWith(status: status, clearError: true));
-      return;
-    }
-    // Arrivals moved: derive the sorted/grouped tile view-models here, off the
-    // widget build path. The sheet build becomes pure layout over this.
+  (List<BusStopArrivalItem>, Map<String, List<BusStopArrivalItem>>)
+  _arrivalViews(List<BusStopArrival> arrivals) {
     final displays = [
-      for (final a in event.arrivals) BusStopArrivalItem(_i18n, a),
+      for (final arrival in arrivals) BusStopArrivalItem(_i18n, arrival),
     ]..sort((a, b) => a.rank.compareTo(b.rank));
     final byStation = <String, List<BusStopArrivalItem>>{};
     for (final item in displays) {
       byStation.putIfAbsent(item.stationId, () => []).add(item);
     }
+    return (displays, byStation);
+  }
+
+  void _updateDecay(
+    List<BusStopArrival> arrivals,
+    bool changed,
+    Emitter<BusStopState> emit,
+  ) {
+    if (!changed) return;
+    final (displays, byStation) = _arrivalViews(arrivals);
+    emit(
+      state.copyWith(
+        arrivals: arrivals,
+        displays: displays,
+        arrivalsByStation: byStation,
+      ),
+    );
+  }
+
+  void _updateSource(
+    List<BusStopArrival> arrivals,
+    bool changed,
+    Emitter<BusStopState> emit,
+  ) {
+    final status = arrivals.isEmpty && state.members.isEmpty
+        ? BusStopStatus.empty
+        : BusStopStatus.loaded;
+    // Repeated source values keep derived objects and freshness unchanged.
+    if (!changed) {
+      emit(state.copyWith(status: status, clearError: true));
+      return;
+    }
+    final (displays, byStation) = _arrivalViews(arrivals);
     emit(
       state.copyWith(
         status: status,
-        arrivals: event.arrivals,
+        arrivals: arrivals,
         displays: displays,
         arrivalsByStation: byStation,
         updatedAt: DateTime.now(),

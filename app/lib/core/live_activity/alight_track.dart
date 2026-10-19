@@ -125,7 +125,7 @@ class AlightTrackContent {
 }
 
 class AlightTrackChannel {
-  static const _channel = MethodChannel('com.wheres.bus/live_activity');
+  static const _channel = MethodChannel('me.rabbitsayhello.wheresthebus/live_activity');
 
   static const _opTimeout = Duration(seconds: 3);
 

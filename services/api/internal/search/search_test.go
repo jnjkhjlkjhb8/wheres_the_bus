@@ -232,12 +232,19 @@ func TestEmbedQueryHonorsContextCancellation(t *testing.T) {
 	t.Setenv("EMBED_URL", upstream.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := embedQuery(ctx, "台北車站")
 		errCh <- err
 	}()
-	<-started
+	select {
+	case <-started:
+	case err := <-errCh:
+		t.Fatalf("embed request returned before reaching upstream: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("embed request did not reach upstream")
+	}
 	cancel()
 
 	select {

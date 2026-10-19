@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
@@ -42,23 +43,41 @@ func loadRailDelayIndex(ctx context.Context, db *pgxpool.Pool, runID, today stri
 		return nil, _oops.Wrapf(err, "gtfs-rt: load rail delay index")
 	}
 	defer rows.Close()
+	return readRailDelayIndex(rows)
+}
+
+func readRailDelayIndex(rows pgx.Rows) (map[string]railDelayTrip, error) {
 	index := make(map[string]railDelayTrip, 2048)
-	for rows.Next() {
-		var trainNo, tripID string
-		var stations []string
-		if err := rows.Scan(&trainNo, &tripID, &stations); err != nil {
-			return nil, _oops.Wrapf(err, "gtfs-rt: load rail delay index: scan")
-		}
-		set := make(map[string]bool, len(stations))
-		for _, station := range stations {
-			set[station] = true
-		}
-		index[trainNo] = railDelayTrip{tripID: tripID, stations: set}
+	if err := indexRailDelayRows(rows, index); err != nil {
+		return nil, err
 	}
 	if err := rows.Err(); err != nil {
 		return nil, _oops.Wrapf(err, "gtfs-rt: load rail delay index: rows")
 	}
 	return index, nil
+}
+
+func indexRailDelayRows(rows pgx.Rows, index map[string]railDelayTrip) error {
+	for rows.Next() {
+		if err := indexRailDelayRow(rows, index); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func indexRailDelayRow(rows pgx.Rows, index map[string]railDelayTrip) error {
+	var trainNo, tripID string
+	var stations []string
+	if err := rows.Scan(&trainNo, &tripID, &stations); err != nil {
+		return _oops.Wrapf(err, "gtfs-rt: load rail delay index: scan")
+	}
+	set := make(map[string]bool, len(stations))
+	for _, station := range stations {
+		set[station] = true
+	}
+	index[trainNo] = railDelayTrip{tripID: tripID, stations: set}
+	return nil
 }
 
 // readRailDelays reads the two hashes rail.TraEta writes: the delay in minutes and
@@ -85,46 +104,55 @@ func buildGTFSRTRailDelays(
 	date := now.Format("20060102")
 	entities := make([]*gtfs.FeedEntity, 0, len(minutes))
 	for trainNo, raw := range minutes {
-		late, err := strconv.Atoi(raw)
-		if err != nil {
-			continue
+		if entity := railDelayEntity(trainNo, raw, stations[trainNo], date, index, &stats); entity != nil {
+			entities = append(entities, entity)
 		}
-		if late <= 0 {
-			stats.delaysOnTime++
-			continue
-		}
-		trip, running := index[trainNo]
-		if !running {
-			stats.trainNotToday++
-			continue
-		}
-		station := stations[trainNo]
-		if station == "" || !trip.stations[station] {
-			stats.stationUnknown++
-			continue
-		}
-		stats.updates++
-		entities = append(entities, &gtfs.FeedEntity{
-			Id: proto.String(trip.tripID),
-			TripUpdate: &gtfs.TripUpdate{
-				Trip: &gtfs.TripDescriptor{
-					TripId:               proto.String(trip.tripID),
-					StartDate:            proto.String(date),
-					ScheduleRelationship: gtfs.TripDescriptor_SCHEDULED.Enum(),
-				},
-				StopTimeUpdate: []*gtfs.TripUpdate_StopTimeUpdate{{
-					StopId: proto.String(railDelayStopID(station)),
-					// Arrival only: GTFS-RT reads a missing departure as carrying
-					// the same delay, and a train held at a platform is the one
-					// case where stating both would be inventing the difference.
-					Arrival: &gtfs.TripUpdate_StopTimeEvent{
-						Delay: proto.Int32(int32(late) * 60),
-					},
-				}},
-			},
-		})
 	}
 	return entities, stats
+}
+
+func railDelayEntity(trainNo, raw, station, date string, index map[string]railDelayTrip, stats *gtfsRTRailDelayStats) *gtfs.FeedEntity {
+	late, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil
+	}
+	if late <= 0 {
+		stats.delaysOnTime++
+		return nil
+	}
+	return runningRailDelayEntity(trainNo, late, station, date, index, stats)
+}
+
+func runningRailDelayEntity(trainNo string, late int, station, date string, index map[string]railDelayTrip, stats *gtfsRTRailDelayStats) *gtfs.FeedEntity {
+	trip, running := index[trainNo]
+	if !running {
+		stats.trainNotToday++
+		return nil
+	}
+	if station == "" || !trip.stations[station] {
+		stats.stationUnknown++
+		return nil
+	}
+	stats.updates++
+	return &gtfs.FeedEntity{
+		Id: proto.String(trip.tripID),
+		TripUpdate: &gtfs.TripUpdate{
+			Trip: &gtfs.TripDescriptor{
+				TripId:               proto.String(trip.tripID),
+				StartDate:            proto.String(date),
+				ScheduleRelationship: gtfs.TripDescriptor_SCHEDULED.Enum(),
+			},
+			StopTimeUpdate: []*gtfs.TripUpdate_StopTimeUpdate{{
+				StopId: proto.String(railDelayStopID(station)),
+				// Arrival only: GTFS-RT reads a missing departure as carrying
+				// the same delay, and a train held at a platform is the one
+				// case where stating both would be inventing the difference.
+				Arrival: &gtfs.TripUpdate_StopTimeEvent{
+					Delay: proto.Int32(int32(late) * 60),
+				},
+			}},
+		},
+	}
 }
 
 // railDelayStopID is the platform stop_times references, which is what a

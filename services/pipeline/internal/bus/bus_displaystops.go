@@ -27,23 +27,42 @@ type rawBusDisplayStopOfRoute struct {
 }
 
 func LoadDisplayStops(ctx context.Context, dec *json.Decoder, sink pipeline.CopyUpsertSink, city string) error {
-	if strings.TrimSpace(city) == "" {
-		return errors.New("bus display stops: city is required")
-	}
-	prefix := busmodel.CityPrefix[city]
-	if prefix == "" {
-		return _oops.With("city", city).Errorf("bus display stops: city has no UID prefix")
-	}
-	routes, err := pipeline.DecodeLoadArray[rawBusDisplayStopOfRoute](dec, "bus display stops "+city,
-		func(_ int, route rawBusDisplayStopOfRoute) error {
-			if !uidBelongsToPrefix(route.RouteUID, prefix) {
-				return _oops.With("route_uid", route.RouteUID).With("city", city).Errorf("RouteUID does not belong")
-			}
-			return nil
-		})
+	prefix, err := busDisplayCityPrefix(city)
 	if err != nil {
 		return err
 	}
+	routes, err := pipeline.DecodeLoadArray[rawBusDisplayStopOfRoute](dec, "bus display stops "+city, busDisplayRouteValidator(city, prefix))
+	if err != nil {
+		return err
+	}
+	return writeBusDisplayStops(ctx, sink, city, prefix, routes)
+}
+
+func busDisplayCityPrefix(city string) (string, error) {
+	if strings.TrimSpace(city) == "" {
+		return "", errors.New("bus display stops: city is required")
+	}
+	prefix := busmodel.CityPrefix[city]
+	if prefix == "" {
+		return "", _oops.With("city", city).Errorf("bus display stops: city has no UID prefix")
+	}
+	return prefix, nil
+}
+
+func busDisplayRouteValidator(city, prefix string) func(int, rawBusDisplayStopOfRoute) error {
+	return func(_ int, route rawBusDisplayStopOfRoute) error {
+		return validateBusDisplayRouteUID(city, prefix, route.RouteUID)
+	}
+}
+
+func validateBusDisplayRouteUID(city, prefix, uid string) error {
+	if !uidBelongsToPrefix(uid, prefix) {
+		return _oops.With("route_uid", uid).With("city", city).Errorf("RouteUID does not belong")
+	}
+	return nil
+}
+
+func writeBusDisplayStops(ctx context.Context, sink pipeline.CopyUpsertSink, city, prefix string, routes []rawBusDisplayStopOfRoute) error {
 	rows := busDisplayStopRows(routes)
 	if len(rows) == 0 {
 		zap.S().Infow("no display stops",
@@ -86,15 +105,25 @@ func LoadDisplayStops(ctx context.Context, dec *json.Decoder, sink pipeline.Copy
 func busDisplayStopRows(routes []rawBusDisplayStopOfRoute) [][]any {
 	var rows [][]any
 	for _, route := range routes {
-		for _, stop := range route.Stops {
-			if stop.StopUID == "" || stop.StationID == "" || stop.StopName.Zhtw == "" || stop.StopSequence == 0 {
-				continue
-			}
-			rows = append(rows, []any{
-				route.RouteUID, int16(route.Direction), stop.StopUID,
-				int16(stop.StopSequence), stop.StationID, stop.StopName.Zhtw,
-			})
-		}
+		rows = append(rows, busDisplayRouteRows(route)...)
 	}
 	return rows
+}
+
+func busDisplayRouteRows(route rawBusDisplayStopOfRoute) [][]any {
+	var rows [][]any
+	for _, stop := range route.Stops {
+		if !validBusDisplayStop(stop.StopUID, stop.StationID, stop.StopName.Zhtw, stop.StopSequence) {
+			continue
+		}
+		rows = append(rows, []any{
+			route.RouteUID, int16(route.Direction), stop.StopUID,
+			int16(stop.StopSequence), stop.StationID, stop.StopName.Zhtw,
+		})
+	}
+	return rows
+}
+
+func validBusDisplayStop(uid, stationID, name string, sequence uint8) bool {
+	return uid != "" && stationID != "" && name != "" && sequence != 0
 }

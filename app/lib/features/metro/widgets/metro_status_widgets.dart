@@ -38,52 +38,69 @@ MetroServiceStatus metroServiceStatus(
   List<MetroSchedule> schedule,
   DateTime now,
 ) {
-  int adjust(int minutes) => minutes < 180 ? minutes + 1440 : minutes;
-
-  int? earliestFirst;
-  String? firstHm;
-  String? firstDest;
-  int? latestLast;
-  String? lastHm;
-
-  for (final s in schedule) {
-    final f = _parseHm(s.firstTime);
-    if (f != null && (earliestFirst == null || f < earliestFirst)) {
-      earliestFirst = f;
-      firstHm = s.firstTime;
-      firstDest = s.destination;
-    }
-    final l = _parseHm(s.lastTime);
-    if (l != null) {
-      final la = adjust(l);
-      if (latestLast == null || la > latestLast) {
-        latestLast = la;
-        lastHm = s.lastTime;
-      }
-    }
-  }
-
-  if (earliestFirst == null || latestLast == null) {
+  final first = _firstMetroDeparture(schedule);
+  final last = _lastMetroDeparture(schedule);
+  if (first == null || last == null) {
     return const MetroServiceStatus(state: MetroServiceState.running);
   }
 
-  final nowAdj = adjust(now.hour * 60 + now.minute);
-  final MetroServiceState state;
-  if (nowAdj > latestLast) {
-    state = MetroServiceState.ended;
-  } else if (nowAdj < earliestFirst) {
-    state = MetroServiceState.beforeFirst;
-  } else {
-    state = MetroServiceState.running;
-  }
+  final nowAdj = _serviceMinutes(now.hour * 60 + now.minute);
+  final state = _metroServiceState(nowAdj, first.minutes, last.minutes);
 
   return MetroServiceStatus(
     state: state,
-    lastTrain: lastHm,
-    firstTrain: firstHm,
-    firstDestination: firstDest,
+    lastTrain: last.time,
+    firstTrain: first.time,
+    firstDestination: first.destination,
   );
 }
+
+MetroServiceState _metroServiceState(int now, int first, int last) {
+  if (now > last) return MetroServiceState.ended;
+  if (now < first) return MetroServiceState.beforeFirst;
+  return MetroServiceState.running;
+}
+
+int _serviceMinutes(int minutes) => minutes < 180 ? minutes + 1440 : minutes;
+
+({int minutes, String time, String destination})? _firstMetroDeparture(
+  List<MetroSchedule> schedule,
+) {
+  ({int minutes, String time, String destination})? first;
+  for (final entry in schedule) {
+    final minutes = _parseHm(entry.firstTime);
+    if (minutes == null) continue;
+    if (_earlierDeparture(minutes, first?.minutes)) {
+      first = (
+        minutes: minutes,
+        time: entry.firstTime,
+        destination: entry.destination,
+      );
+    }
+  }
+  return first;
+}
+
+({int minutes, String time})? _lastMetroDeparture(
+  List<MetroSchedule> schedule,
+) {
+  ({int minutes, String time})? last;
+  for (final entry in schedule) {
+    final clock = _parseHm(entry.lastTime);
+    if (clock == null) continue;
+    final minutes = _serviceMinutes(clock);
+    if (_laterDeparture(minutes, last?.minutes)) {
+      last = (minutes: minutes, time: entry.lastTime);
+    }
+  }
+  return last;
+}
+
+bool _earlierDeparture(int minutes, int? previous) =>
+    previous == null || minutes < previous;
+
+bool _laterDeparture(int minutes, int? previous) =>
+    previous == null || minutes > previous;
 
 /// Empty-arrivals content: a filled card that names why there are no trains
 /// (service ended / not yet started) and the next first train, or a quiet line
@@ -152,20 +169,18 @@ class MetroArrivalsEmpty extends StatelessWidget {
       );
     }
 
+    return _closedServiceCard(context, status);
+  }
+
+  Widget _closedServiceCard(BuildContext context, MetroServiceStatus status) {
+    final cs = Theme.of(context).colorScheme;
     final i18n = AppI18n.of(context);
     final ended = status.state == MetroServiceState.ended;
     final title = ended
         ? AppI18n.of(context).metroServiceEnded
         : AppI18n.of(context).metroServiceNotStarted;
-    final subtitle = ended && status.lastTrain != null
-        ? i18n.metroLastTrainDeparted(status.lastTrain!)
-        : null;
-    final nextPrefix = ended
-        ? i18n.metroFirstTrainTomorrow
-        : i18n.metroFirstTrainToday;
-    final nextLabel = status.firstDestination != null
-        ? i18n.metroFirstTrainTowards(nextPrefix, status.firstDestination!)
-        : nextPrefix;
+    final subtitle = _lastTrainSubtitle(i18n, status);
+    final nextLabel = _firstTrainLabel(i18n, status);
 
     return Container(
       padding: const EdgeInsets.all(AppTheme.space14),
@@ -218,6 +233,20 @@ class MetroArrivalsEmpty extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String? _lastTrainSubtitle(AppI18n i18n, MetroServiceStatus status) =>
+      status.state == MetroServiceState.ended && status.lastTrain != null
+      ? i18n.metroLastTrainDeparted(status.lastTrain!)
+      : null;
+
+  String _firstTrainLabel(AppI18n i18n, MetroServiceStatus status) {
+    final prefix = status.state == MetroServiceState.ended
+        ? i18n.metroFirstTrainTomorrow
+        : i18n.metroFirstTrainToday;
+    return status.firstDestination != null
+        ? i18n.metroFirstTrainTowards(prefix, status.firstDestination!)
+        : prefix;
   }
 }
 

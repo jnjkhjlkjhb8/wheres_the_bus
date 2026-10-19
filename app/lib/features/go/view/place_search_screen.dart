@@ -100,6 +100,7 @@ class PlaceSearchView extends StatefulWidget {
     this.header,
     this.headerBuilder,
     this.onBack,
+    this.bloc,
     super.key,
   });
 
@@ -128,6 +129,8 @@ class PlaceSearchView extends StatefulWidget {
   /// When set, a leading back button is shown in the built-in input row.
   final VoidCallback? onBack;
 
+  final PlaceSearchBloc? bloc;
+
   @override
   State<PlaceSearchView> createState() => _PlaceSearchViewState();
 }
@@ -138,25 +141,29 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
 
   // Held directly rather than provided: the state is per-appearance, and the
   // rows below take callbacks, so nothing looks it up from the tree.
-  final _bloc = PlaceSearchBloc()..add(const PlaceSearchStarted());
+  late final PlaceSearchBloc _bloc;
 
   LatLng? _bias;
 
   @override
   void initState() {
     super.initState();
+    _bloc = widget.bloc ?? PlaceSearchBloc();
+    _bloc.add(const PlaceSearchStarted());
     unawaited(_readBias());
-    final hosted = widget.headerBuilder != null;
-    if (hosted || (widget.showInput && widget.autofocus)) {
+    if (_wantsFocus()) {
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _focusNode.requestFocus(),
       );
     }
   }
 
+  bool _wantsFocus() =>
+      widget.headerBuilder != null || widget.showInput && widget.autofocus;
+
   @override
   void dispose() {
-    unawaited(_bloc.close());
+    if (widget.bloc == null) unawaited(_bloc.close());
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -176,8 +183,31 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
   void _onEffect(BuildContext context, PlaceSearchState state) {
     final effect = state.effect;
     if (effect == null) return;
+    _consumeEffect(effect);
+  }
+
+  void _consumeEffect(PlaceSearchEffect effect) {
+    if (effect.error != null) {
+      _showEffectError(effect.error!);
+      return;
+    }
+    final place = effect.resolved;
+    if (place == null) return;
+    _applyPlaceIntent(place, effect.intent!);
+  }
+
+  void _applyPlaceIntent(PlannedPlace place, ResolveIntent intent) {
+    switch (intent) {
+      case ResolveIntent.pick:
+        widget.onPicked(place);
+      case ResolveIntent.save:
+        unawaited(_promptSave(place));
+    }
+  }
+
+  void _showEffectError(PlaceSearchErrorKind error) {
     final i18n = AppI18n.of(context);
-    switch (effect.error) {
+    switch (error) {
       case PlaceSearchErrorKind.location:
         AppSnackbar.show(
           context,
@@ -192,16 +222,6 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
           type: SnackType.error,
         );
         return;
-      case null:
-        break;
-    }
-    final place = effect.resolved;
-    if (place == null) return;
-    switch (effect.intent!) {
-      case ResolveIntent.pick:
-        widget.onPicked(place);
-      case ResolveIntent.save:
-        unawaited(_promptSave(place));
     }
   }
 
@@ -425,7 +445,7 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
   }
 
   Widget _buildResults(BuildContext context, PlaceSearchState state) {
-    if (state.loading && state.results.isEmpty) return const _PlaceSkeleton();
+    if (_resultsLoading(state)) return const _PlaceSkeleton();
     if (state.results.isEmpty) return const _PlaceEmpty();
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: AppTheme.space24),
@@ -438,6 +458,9 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
       ),
     );
   }
+
+  bool _resultsLoading(PlaceSearchState state) =>
+      state.loading && state.results.isEmpty;
 
   Widget _buildShortcuts(BuildContext context, PlaceSearchState state) {
     return ListView(
@@ -597,10 +620,7 @@ class _SwipeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final directions = <DismissDirection>{
-      if (onSaveSwipe != null) DismissDirection.startToEnd,
-      if (onDestructiveSwipe != null) DismissDirection.endToStart,
-    };
+    final directions = _directions();
     if (directions.isEmpty) return child;
     final direction = directions.length == 2
         ? DismissDirection.horizontal
@@ -608,55 +628,72 @@ class _SwipeRow extends StatelessWidget {
     return Dismissible(
       key: dismissKey,
       direction: direction,
-      background: onSaveSwipe == null
-          ? null
-          : Container(
-              color: cs.surfaceContainerHigh,
-              alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.bookmark_add_rounded,
-                    color: cs.onSurface,
-                    size: 22,
-                  ),
-                  const SizedBox(width: AppTheme.space8),
-                  Text(
-                    AppI18n.of(context).commonSave,
-                    style: AppTextStyles.bodyRegular.copyWith(
-                      color: cs.onSurface,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-      secondaryBackground: onDestructiveSwipe == null
-          ? null
-          : Container(
-              color: cs.errorContainer,
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
-              child: Icon(
-                destructiveIcon,
-                color: cs.onErrorContainer,
-                size: 22,
-              ),
-            ),
-      confirmDismiss: (dir) async {
-        if (dir == DismissDirection.startToEnd) {
-          onSaveSwipe?.call();
-          return false; // save/edit: snap back, don't remove the row
-        }
-        return true; // destructive: confirm here, remove in onDismissed
-      },
-      onDismissed: (dir) {
-        if (dir == DismissDirection.endToStart) onDestructiveSwipe?.call();
-      },
+      background: _saveBackground(context, cs),
+      secondaryBackground: _destructiveBackground(cs),
+      confirmDismiss: _confirmDismiss,
+      onDismissed: _dismissed,
       child: child,
     );
+  }
+
+  Set<DismissDirection> _directions() {
+    final directions = <DismissDirection>{
+      if (onSaveSwipe != null) DismissDirection.startToEnd,
+      if (onDestructiveSwipe != null) DismissDirection.endToStart,
+    };
+    return directions;
+  }
+
+  Widget? _saveBackground(BuildContext context, ColorScheme cs) =>
+      onSaveSwipe == null
+      ? null
+      : Container(
+          color: cs.surfaceContainerHigh,
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.bookmark_add_rounded,
+                color: cs.onSurface,
+                size: 22,
+              ),
+              const SizedBox(width: AppTheme.space8),
+              Text(
+                AppI18n.of(context).commonSave,
+                style: AppTextStyles.bodyRegular.copyWith(
+                  color: cs.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+
+  Widget? _destructiveBackground(ColorScheme cs) => onDestructiveSwipe == null
+      ? null
+      : Container(
+          color: cs.errorContainer,
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
+          child: Icon(
+            destructiveIcon,
+            color: cs.onErrorContainer,
+            size: 22,
+          ),
+        );
+
+  Future<bool> _confirmDismiss(DismissDirection direction) async {
+    if (direction == DismissDirection.startToEnd) {
+      onSaveSwipe?.call();
+      return false;
+    }
+    return true;
+  }
+
+  void _dismissed(DismissDirection direction) {
+    if (direction == DismissDirection.endToStart) onDestructiveSwipe?.call();
   }
 }
 
@@ -758,29 +795,34 @@ class _ResultRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return _SwipeRow(
       dismissKey: ValueKey('dismiss-result-${result.placeId}'),
-      onSaveSwipe: loading ? null : onSave,
+      onSaveSwipe: _readyAction(onSave),
       child: _PlaceRow(
-        leading: loading
-            ? SizedBox(
-                width: 22,
-                height: 22,
-                child: AppSpinner(
-                  size: 18,
-                  strokeWidth: 2,
-                  color: cs.onSurfaceVariant,
-                ),
-              )
-            : Icon(
-                Icons.place_outlined,
-                size: 22,
-                color: cs.onSurfaceVariant,
-              ),
+        leading: _leading(cs),
         title: result.primaryText,
-        subtitle: result.secondaryText.isEmpty ? null : result.secondaryText,
-        onTap: loading ? null : onTap,
+        subtitle: _subtitle(),
+        onTap: _readyAction(onTap),
       ),
     );
   }
+
+  VoidCallback? _readyAction(VoidCallback action) => loading ? null : action;
+  String? _subtitle() =>
+      result.secondaryText.isEmpty ? null : result.secondaryText;
+  Widget _leading(ColorScheme cs) => loading
+      ? SizedBox(
+          width: 22,
+          height: 22,
+          child: AppSpinner(
+            size: 18,
+            strokeWidth: 2,
+            color: cs.onSurfaceVariant,
+          ),
+        )
+      : Icon(
+          Icons.place_outlined,
+          size: 22,
+          color: cs.onSurfaceVariant,
+        );
 }
 
 class _PlaceRow extends StatelessWidget {

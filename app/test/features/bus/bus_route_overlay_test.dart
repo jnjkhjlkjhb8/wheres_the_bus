@@ -218,6 +218,31 @@ void main() {
       },
     );
 
+    test(
+      'approaching and ended readings keep their visual meaning per theme',
+      () {
+        for (final colors in [AppTheme.lightScheme, AppTheme.darkScheme]) {
+          final approach = markerStyle(i18n, eta(estimateSeconds: 15), colors);
+          final countdown = markerStyle(i18n, eta(), colors);
+          expect(approach.pill, false);
+          expect(approach.text, '1');
+          expect(approach.height, greaterThan(countdown.height));
+          expect(approach.ringWidth, greaterThan(countdown.ringWidth));
+          expect(approach.zIndex, greaterThan(countdown.zIndex));
+          for (final status in [3, 4]) {
+            final ended = markerStyle(
+              i18n,
+              eta(estimateSeconds: -1, stopStatus: status),
+              colors,
+            );
+            expect(ended.glyph, Icons.close_rounded);
+            expect(ended.text, isNull);
+            expect(ended.zIndex, 0);
+          }
+        }
+      },
+    );
+
     test('a scheduled stop shows a clock glyph instead of a number', () {
       final scheduled = markerStyle(
         i18n,
@@ -366,6 +391,77 @@ void main() {
   });
 
   group('resolve', () {
+    testWidgets(
+      'duplicate frame during rasterisation preserves the pending map',
+      (tester) async {
+        final overlay = BusRouteOverlay(
+          onStopTap: (_) {},
+          onVehicleTap: (_) {},
+        );
+        final state = stateWith(stops: [stop(1, 'pending-map')]);
+        Future<BusOverlayFrame?> resolve() => overlay.resolve(
+          state: state,
+          i18n: i18n,
+          colors: AppTheme.light.colorScheme,
+          glideProgress: 1,
+          now: DateTime(2026),
+        );
+        await tester.runAsync(() async {
+          final pending = resolve();
+          expect(await resolve(), isNull);
+          final committed = await pending;
+          expect(committed, isNotNull);
+          expect(
+            committed!.stopMarkers.single.markerId.value,
+            'pending-map',
+          );
+          expect(overlay.stopPoints, [const LatLng(25, 121.5)]);
+          expect(overlay.paint(glideProgress: 1).markers, isNotEmpty);
+        });
+      },
+    );
+
+    testWidgets('warning and nonoperating vehicles retain their identity', (
+      tester,
+    ) async {
+      final overlay = BusRouteOverlay(onStopTap: (_) {}, onVehicleTap: (_) {});
+      final now = DateTime.now().toUtc();
+      final state = stateWith(
+        stops: [stop(1, 'S')],
+        vehicles: [
+          vehicle(
+            plate: 'WARNING',
+            busStatus: 2,
+            gpsTimeUnix: now.millisecondsSinceEpoch ~/ 1000,
+          ),
+          vehicle(
+            plate: 'MUTED',
+            busStatus: 99,
+            gpsTimeUnix: now.millisecondsSinceEpoch ~/ 1000,
+          ),
+        ],
+      );
+      await tester.runAsync(() async {
+        expect(
+          await overlay.resolve(
+            state: state,
+            i18n: i18n,
+            colors: AppTheme.lightScheme,
+            glideProgress: 1,
+            now: now,
+          ),
+          isNotNull,
+        );
+      });
+      expect(
+        overlay
+            .paint(glideProgress: 1)
+            .markers
+            .map((marker) => marker.markerId.value),
+        containsAll(['bus:WARNING', 'bus:MUTED']),
+      );
+    });
+
     testWidgets('a stop selection alone commits a frame', (tester) async {
       // Selecting a stop changes nothing the live feed sends, so if it is not
       // part of the frame signature the capsule waits for the next ETA frame —

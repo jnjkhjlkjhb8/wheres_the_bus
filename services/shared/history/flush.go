@@ -44,19 +44,7 @@ var _flushes = &Flusher{
 // Workers start on first use so a process that never writes history never spawns
 // them (and a test can hold the queue still by declaring zero workers).
 func (f *Flusher) submit(task Flush) {
-	f.start.Do(func() {
-		for range f.workers {
-			f.wg.Add(1)
-			go func() {
-				defer f.wg.Done()
-				for t := range f.queue {
-					ctx, cancel := context.WithTimeout(context.Background(), flushBudget(f.timeout, t.rows))
-					t.write(ctx)
-					cancel()
-				}
-			}()
-		}
-	})
+	f.start.Do(f.startWorkers)
 	select {
 	case f.queue <- task:
 	default:
@@ -68,6 +56,22 @@ func (f *Flusher) submit(task Flush) {
 			"rows", task.rows,
 			"reason", "queue_full",
 		)
+	}
+}
+
+func (f *Flusher) startWorkers() {
+	for range f.workers {
+		f.wg.Add(1)
+		go f.runWorker()
+	}
+}
+
+func (f *Flusher) runWorker() {
+	defer f.wg.Done()
+	for task := range f.queue {
+		ctx, cancel := context.WithTimeout(context.Background(), flushBudget(f.timeout, task.rows))
+		task.write(ctx)
+		cancel()
 	}
 }
 

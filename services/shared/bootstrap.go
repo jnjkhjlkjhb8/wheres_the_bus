@@ -34,20 +34,31 @@ func ConnectRedis() *redis.Client {
 		// Skip the CLIENT SETINFO handshake v9 sends on every new connection.
 		DisableIdentity: true,
 	})
-	ctx := context.Background()
+	pong, err := pingRedisWithRetry(client.Ping, time.Second)
+	if err != nil {
+		zap.S().Errorw("connect failed", "component", "redis", "action", "connect", "event", "failed", "err", err)
+		panic(err)
+	}
+	zap.S().Infow("connect success", "component", "redis", "action", "connect", "event", "success", "pong", pong)
+	return client
+}
+
+func pingRedisWithRetry(ping func(context.Context) *redis.StatusCmd, delay time.Duration) (string, error) {
+	var pong string
 	var err error
-	for i := 0; ; i++ {
-		var pong string
-		pong, err = client.Ping(ctx).Result()
+	for i := range 10 {
+		pong, err = ping(context.Background()).Result()
 		if err == nil {
-			zap.S().Infow("connect success", "component", "redis", "action", "connect", "event", "success", "pong", pong)
-			return client
+			return pong, nil
 		}
-		if i >= 9 {
-			zap.S().Errorw("connect failed", "component", "redis", "action", "connect", "event", "failed", "err", err)
-			panic(err)
-		}
-		time.Sleep(time.Second)
+		waitRedisRetry(i, delay)
+	}
+	return "", err
+}
+
+func waitRedisRetry(attempt int, delay time.Duration) {
+	if attempt < 9 {
+		time.Sleep(delay)
 	}
 }
 
@@ -74,6 +85,11 @@ func ConnectDB(maxConnsEnv string, maxConnsDefault int32) *pgxpool.Pool {
 		zap.S().Errorw("parse config failed", "component", "db", "action", "parse_config", "event", "failed", "err", err)
 		panic(err)
 	}
+	configureDatabasePool(config, maxConnsEnv, maxConnsDefault)
+	return connectDatabasePool(config)
+}
+
+func configureDatabasePool(config *pgxpool.Config, maxConnsEnv string, maxConnsDefault int32) {
 	if s := os.Getenv("PG_SCHEMA"); s != "" {
 		config.ConnConfig.RuntimeParams["search_path"] = s
 	}
@@ -84,6 +100,9 @@ func ConnectDB(maxConnsEnv string, maxConnsDefault int32) *pgxpool.Pool {
 	config.MinConns = EnvInt32(strings.Replace(maxConnsEnv, "_MAX_", "_MIN_", 1), 2)
 	config.MaxConnLifetime = 30 * time.Minute
 	config.MaxConnIdleTime = 5 * time.Minute
+}
+
+func connectDatabasePool(config *pgxpool.Config) *pgxpool.Pool {
 	conn, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
 		zap.S().Errorw("connect failed", "component", "db", "action", "connect", "event", "failed", "err", err)

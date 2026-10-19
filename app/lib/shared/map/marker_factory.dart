@@ -91,8 +91,8 @@ class MapMarkers {
           );
         }
         // Widened when a ring is coming, which eats into the halo's band.
-        canvas.drawPath(disc, outline(halo, ring == null ? 5 : 7.5));
-        if (ring != null) canvas.drawPath(disc, outline(ring, 2.5));
+        _paintBusHalo(canvas, disc, halo, ring, u);
+
         // Over both strokes, so they read as bands around the mark rather than
         // rings biting into it.
         canvas.drawPath(disc, Paint()..color = body);
@@ -114,6 +114,21 @@ class MapMarkers {
     });
   }
 
+  static void _paintBusHalo(
+    Canvas canvas,
+    Path disc,
+    Color halo,
+    Color? ring,
+    double unit,
+  ) {
+    Paint stroke(Color color, double width) => Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width * unit;
+    canvas.drawPath(disc, stroke(halo, ring == null ? 5 : 7.5));
+    if (ring != null) canvas.drawPath(disc, stroke(ring, 2.5));
+  }
+
   static Future<({BitmapDescriptor icon, Offset anchor})> stationCapsule({
     required String asset,
     required String label,
@@ -132,8 +147,7 @@ class MapMarkers {
       final margin = 8.0 * _unit;
       final padH = 10.0 * _unit;
 
-      final fill = selected ? AppTheme.inkLight : AppTheme.surfaceCardLight;
-      final ink = selected ? AppTheme.surfaceCardLight : AppTheme.inkLight;
+      final (fill, ink) = _capsuleColors(selected);
       final painter = TextPainter(
         text: TextSpan(
           text: label,
@@ -173,13 +187,7 @@ class MapMarkers {
           ..drawRRect(body, Paint()..color = fill)
           // The plate's own ground, square on the side the label meets.
           ..drawRRect(
-            RRect.fromRectAndCorners(
-              Rect.fromLTWH(plateLeft, margin, s, s),
-              topLeft: flip ? Radius.zero : radius,
-              bottomLeft: flip ? Radius.zero : radius,
-              topRight: flip ? radius : Radius.zero,
-              bottomRight: flip ? radius : Radius.zero,
-            ),
+            _capsulePlate(Rect.fromLTWH(plateLeft, margin, s, s), radius, flip),
             Paint()..color = plateGround,
           )
           ..save()
@@ -202,6 +210,22 @@ class MapMarkers {
         anchor: Offset((plateLeft + s / 2) / w, 0.5),
       );
     });
+  }
+
+  static (Color, Color) _capsuleColors(bool selected) => selected
+      ? (AppTheme.inkLight, AppTheme.surfaceCardLight)
+      : (AppTheme.surfaceCardLight, AppTheme.inkLight);
+
+  static RRect _capsulePlate(Rect rect, Radius radius, bool flip) {
+    final left = flip ? Radius.zero : radius;
+    final right = flip ? radius : Radius.zero;
+    return RRect.fromRectAndCorners(
+      rect,
+      topLeft: left,
+      bottomLeft: left,
+      topRight: right,
+      bottomRight: right,
+    );
   }
 
   static Future<BitmapDescriptor> dot(
@@ -276,51 +300,11 @@ class MapMarkers {
       final margin = 5.0 * _unit;
       final padH = 11.0 * _unit;
 
-      final contentPainter = TextPainter(
-        text: TextSpan(
-          text: glyph != null
-              ? String.fromCharCode(glyph.codePoint)
-              : (text ?? ''),
-          style: TextStyle(
-            color: content,
-            fontSize: switch ((glyph, pill)) {
-              (final IconData _, _) => h * 0.5,
-              (_, true) => 12 * _unit,
-              // Three characters only fit a disc at the smaller step; two or
-              // fewer (the common countdown) get the readable one.
-              _ => h * ((text?.length ?? 0) > 2 ? 0.30 : 0.42),
-            },
-            fontWeight: FontWeight.w700,
-            fontFamily:
-                glyph?.fontFamily ?? (pill ? 'IBMPlexSans' : 'IBMPlexMono'),
-            package: glyph?.fontPackage,
-            fontFeatures: const [ui.FontFeature.tabularFigures()],
-            height: 1.2,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
+      final contentPainter = _stopContentPainter(content, h, glyph, text, pill);
+      final labelPainter = _stopLabelPainter(label, labelInk);
 
-      final labelPainter = label == null
-          ? null
-          : (TextPainter(
-              text: TextSpan(
-                text: label,
-                style: TextStyle(
-                  color: labelInk,
-                  fontSize: 12 * _unit,
-                  fontWeight: FontWeight.w600,
-                  fontFamily: 'IBMPlexSans',
-                  height: 1.2,
-                ),
-              ),
-              maxLines: 1,
-              ellipsis: '…',
-              textDirection: TextDirection.ltr,
-            )..layout(maxWidth: 132 * _unit));
-
-      final plateW = pill ? contentPainter.width + padH * 2 : h;
-      final labelW = labelPainter == null ? 0.0 : labelPainter.width + padH * 2;
+      final plateW = _stopPlateWidth(pill, contentPainter.width, padH, h);
+      final labelW = _labelWidth(labelPainter, padH);
       final bodyW = plateW + labelW;
       final w = (margin * 2 + bodyW).ceil();
       final imageH = (margin * 2 + h).ceil();
@@ -350,15 +334,7 @@ class MapMarkers {
           radius,
         );
         canvas.drawRRect(plate, Paint()..color = fill);
-        if (ring != null) {
-          canvas.drawRRect(
-            plate.deflate(ringWidth * _unit / 2),
-            Paint()
-              ..color = ring
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = ringWidth * _unit,
-          );
-        }
+        _paintStopRing(canvas, plate, ring, ringWidth);
         contentPainter.paint(
           canvas,
           Offset(
@@ -366,12 +342,15 @@ class MapMarkers {
             margin + (h - contentPainter.height) / 2,
           ),
         );
-        labelPainter?.paint(
+        _paintStopLabel(
           canvas,
-          Offset(
-            (flip ? margin : plateLeft + plateW) + padH,
-            margin + (h - labelPainter.height) / 2,
-          ),
+          labelPainter,
+          flip,
+          margin,
+          plateLeft,
+          plateW,
+          padH,
+          h,
         );
       });
       return (
@@ -380,6 +359,108 @@ class MapMarkers {
         anchor: Offset((plateLeft + plateW / 2) / w, 0.5),
       );
     });
+  }
+
+  static TextPainter _stopContentPainter(
+    Color content,
+    double h,
+    IconData? glyph,
+    String? text,
+    bool pill,
+  ) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: glyph != null
+            ? String.fromCharCode(glyph.codePoint)
+            : (text ?? ''),
+        style: TextStyle(
+          color: content,
+          fontSize: switch ((glyph, pill)) {
+            (final IconData _, _) => h * 0.5,
+            (_, true) => 12 * _unit,
+            // Three characters only fit a disc at the smaller step; two or
+            // fewer (the common countdown) get the readable one.
+            _ => h * ((text?.length ?? 0) > 2 ? 0.30 : 0.42),
+          },
+          fontWeight: FontWeight.w700,
+          fontFamily:
+              glyph?.fontFamily ?? (pill ? 'IBMPlexSans' : 'IBMPlexMono'),
+          package: glyph?.fontPackage,
+          fontFeatures: const [ui.FontFeature.tabularFigures()],
+          height: 1.2,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return painter;
+  }
+
+  static TextPainter? _stopLabelPainter(String? label, Color labelInk) {
+    final painter = label == null
+        ? null
+        : (TextPainter(
+            text: TextSpan(
+              text: label,
+              style: TextStyle(
+                color: labelInk,
+                fontSize: 12 * _unit,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'IBMPlexSans',
+                height: 1.2,
+              ),
+            ),
+            maxLines: 1,
+            ellipsis: '…',
+            textDirection: TextDirection.ltr,
+          )..layout(maxWidth: 132 * _unit));
+
+    return painter;
+  }
+
+  static double _stopPlateWidth(
+    bool pill,
+    double contentWidth,
+    double padding,
+    double height,
+  ) => pill ? contentWidth + padding * 2 : height;
+  static double _labelWidth(TextPainter? painter, double padding) =>
+      painter == null ? 0 : painter.width + padding * 2;
+
+  static void _paintStopRing(
+    Canvas canvas,
+    RRect plate,
+    Color? ring,
+    double ringWidth,
+  ) {
+    if (ring != null) {
+      canvas.drawRRect(
+        plate.deflate(ringWidth * _unit / 2),
+        Paint()
+          ..color = ring
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = ringWidth * _unit,
+      );
+    }
+  }
+
+  static void _paintStopLabel(
+    Canvas canvas,
+    TextPainter? painter,
+    bool flip,
+    double margin,
+    double plateLeft,
+    double plateW,
+    double padH,
+    double h,
+  ) {
+    if (painter == null) return;
+    painter.paint(
+      canvas,
+      Offset(
+        (flip ? margin : plateLeft + plateW) + padH,
+        margin + (h - painter.height) / 2,
+      ),
+    );
   }
 
   static Future<BitmapDescriptor> navArrow(

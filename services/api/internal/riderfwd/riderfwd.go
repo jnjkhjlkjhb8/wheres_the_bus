@@ -29,9 +29,7 @@ func Outgoing(ctx context.Context) context.Context {
 	in, _ := metadata.FromIncomingContext(ctx)
 	out := metadata.MD{}
 	for _, key := range _forwardedMetadata {
-		if values := in.Get(key); len(values) > 0 {
-			out.Set(key, values...)
-		}
+		out.Set(key, in.Get(key)...)
 	}
 	return metadata.NewOutgoingContext(ctx, out)
 }

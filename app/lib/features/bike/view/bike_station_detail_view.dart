@@ -39,13 +39,15 @@ class BikeStationDetailView extends StatelessWidget {
   final double? lat;
   final double? lon;
 
+  bool _headerChanged(BikeStationState previous, BikeStationState next) =>
+      previous.name != next.name ||
+      previous.capacity != next.capacity ||
+      previous.updatedAt != next.updatedAt;
+
   @override
   Widget build(BuildContext context) {
     final content = BlocBuilder<BikeStationBloc, BikeStationState>(
-      buildWhen: (p, n) =>
-          p.name != n.name ||
-          p.capacity != n.capacity ||
-          p.updatedAt != n.updatedAt,
+      buildWhen: _headerChanged,
       builder: (context, state) {
         final title = state.name.isNotEmpty ? state.name : stationUid;
         return Column(
@@ -103,12 +105,13 @@ class _StationMeta extends StatelessWidget {
       padding: const EdgeInsets.only(top: 3),
       child: FreshnessStamp(
         at: updatedAt,
-        leading: capacity > 0
-            ? AppI18n.of(context).bikeDockCount(capacity)
-            : null,
+        leading: _dockCount(context),
       ),
     );
   }
+
+  String? _dockCount(BuildContext context) =>
+      capacity > 0 ? AppI18n.of(context).bikeDockCount(capacity) : null;
 }
 
 class _StationSheet extends StatelessWidget {
@@ -147,35 +150,40 @@ class _StationSheet extends StatelessWidget {
                 // Static station-info fetch failed outright: no name/capacity,
                 // nothing meaningful to show under it.
                 ErrorStateCard(message: state.error!),
-              ] else ...[
-                if (state.liveError != null && !state.hasLiveData)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: AppTheme.space12),
-                    child: _LiveDataNotice(error: state.liveError!),
-                  ),
-                AvailabilityGauge(
-                  available: state.available,
-                  docks: state.returnDocks,
-                  capacity: state.capacity,
-                  generalBikes: state.generalBikes,
-                  electricBikes: state.electricBikes,
-                  hasLiveData: state.hasLiveData,
-                ),
-                if (state.lat != 0 || state.lon != 0) ...[
-                  const SizedBox(height: AppTheme.space20),
-                  _WalkThereButton(
-                    lat: state.lat,
-                    lon: state.lon,
-                    name: state.name,
-                  ),
-                ],
-              ],
+              ] else
+                ..._loadedContent(context, state),
             ],
           ),
         );
       },
     );
   }
+
+  List<Widget> _loadedContent(BuildContext context, BikeStationState state) => [
+    if (state.liveError != null && !state.hasLiveData)
+      Padding(
+        padding: const EdgeInsets.only(bottom: AppTheme.space12),
+        child: _LiveDataNotice(error: state.liveError!),
+      ),
+    AvailabilityGauge(
+      available: state.available,
+      docks: state.returnDocks,
+      capacity: state.capacity,
+      generalBikes: state.generalBikes,
+      electricBikes: state.electricBikes,
+      hasLiveData: state.hasLiveData,
+    ),
+    if (_hasCoordinates(state)) ...[
+      const SizedBox(height: AppTheme.space20),
+      _WalkThereButton(
+        lat: state.lat,
+        lon: state.lon,
+        name: state.name,
+      ),
+    ],
+  ];
+  bool _hasCoordinates(BikeStationState state) =>
+      state.lat != 0 || state.lon != 0;
 }
 
 class _WalkThereButton extends StatelessWidget {

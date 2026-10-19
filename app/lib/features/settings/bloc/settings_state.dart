@@ -133,7 +133,6 @@ class SettingsState extends Equatable {
     Language? language,
     bool? pushEnabled,
     bool? pushUpdating,
-    bool? largeText,
     FareType? fareType,
     bool? liveActivityEnabled,
     bool? shakeToReport,

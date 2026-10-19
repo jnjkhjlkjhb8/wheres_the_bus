@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
@@ -97,25 +98,39 @@ func busstaticmp(ctx context.Context, db *pgxpool.Pool, city string) ([]busmodel
 		return nil, err
 	}
 	defer rows.Close()
+	return readBusStaticStops(rows)
+}
+
+func readBusStaticStops(rows pgx.Rows) ([]busmodel.StationMap, error) {
 	var list []busmodel.StationMap
 	for rows.Next() {
-		var temp busmodel.StationMap
-		err := rows.Scan(&temp.StationUID, &temp.StationName, &temp.GroupUID,
-			&temp.GroupName, &temp.SubRouteUID, &temp.RouteUID, &temp.SubRouteName, &temp.Destination, &temp.Direction, &temp.StopUID, &temp.StopSequence,
-			&temp.Lat, &temp.Lon, &temp.AliasStopUIDs)
-		if err != nil {
-			zap.S().Errorw("scan error",
-				"component", "bus_static",
-				"action", "station_map",
-				"event", "scan_error",
-				"err", err,
-			)
-			continue
+		if temp, ok := readBusStaticStop(rows); ok {
+			list = append(list, temp)
 		}
-		list = append(list, temp)
 	}
-	if err := rows.Err(); err != nil {
+	return completeStaticStops(list, rows.Err())
+}
+
+func completeStaticStops(list []busmodel.StationMap, err error) ([]busmodel.StationMap, error) {
+	if err != nil {
 		return nil, err
 	}
 	return list, nil
+}
+
+func readBusStaticStop(rows pgx.Rows) (busmodel.StationMap, bool) {
+	var temp busmodel.StationMap
+	err := rows.Scan(&temp.StationUID, &temp.StationName, &temp.GroupUID,
+		&temp.GroupName, &temp.SubRouteUID, &temp.RouteUID, &temp.SubRouteName, &temp.Destination, &temp.Direction, &temp.StopUID, &temp.StopSequence,
+		&temp.Lat, &temp.Lon, &temp.AliasStopUIDs)
+	if err != nil {
+		zap.S().Errorw("scan error",
+			"component", "bus_static",
+			"action", "station_map",
+			"event", "scan_error",
+			"err", err,
+		)
+		return temp, false
+	}
+	return temp, true
 }

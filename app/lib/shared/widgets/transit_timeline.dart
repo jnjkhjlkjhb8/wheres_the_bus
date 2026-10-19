@@ -61,12 +61,22 @@ class TimelineSpine extends StatelessWidget {
                 children: [
                   Expanded(
                     child: _Segment(
-                      color: lineAbove ? (travelledAbove ? done : ahead) : null,
+                      color: _segmentColor(
+                        lineAbove,
+                        travelledAbove,
+                        done,
+                        ahead,
+                      ),
                     ),
                   ),
                   Expanded(
                     child: _Segment(
-                      color: lineBelow ? (travelledBelow ? done : ahead) : null,
+                      color: _segmentColor(
+                        lineBelow,
+                        travelledBelow,
+                        done,
+                        ahead,
+                      ),
                     ),
                   ),
                 ],
@@ -82,6 +92,9 @@ class TimelineSpine extends StatelessWidget {
       ),
     );
   }
+
+  Color? _segmentColor(bool visible, bool travelled, Color done, Color ahead) =>
+      visible ? (travelled ? done : ahead) : null;
 }
 
 /// One half of the spine line. A null [color] leaves the gap empty, which is

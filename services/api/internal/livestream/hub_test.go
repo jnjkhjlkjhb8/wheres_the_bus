@@ -28,6 +28,24 @@ func newHubSource() *hubSource {
 	}
 }
 
+func TestLiveHubNonpositiveLimitsUseDefaults(t *testing.T) {
+	for _, limit := range []int{-1, 0} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			hub := NewLiveHubWithQueueSize(newHubSource(), limit, limit)
+			for range 2 {
+				ch, closeSub, err := hub.Subscribe(t.Context(), "channel")
+				if err != nil {
+					t.Fatalf("unlimited hub rejected a subscription: %v", err)
+				}
+				t.Cleanup(closeSub)
+				if cap(ch) != DefaultSubscriberQueueSize {
+					t.Fatalf("queue capacity = %d, want default %d", cap(ch), DefaultSubscriberQueueSize)
+				}
+			}
+		})
+	}
+}
+
 func (s *hubSource) Get(context.Context, string) ([]byte, bool) {
 	return nil, false
 }
@@ -92,18 +110,28 @@ func TestLiveHubSharesOneUpstreamSubscription(t *testing.T) {
 	}
 
 	src.publish("route:1", []byte("eta"))
-	if got := string(<-first); got != "eta" {
+	if got := string(receiveHubPayload(t, first)); got != "eta" {
 		t.Fatalf("first frame = %q", got)
 	}
-	if got := string(<-second); got != "eta" {
+	if got := string(receiveHubPayload(t, second)); got != "eta" {
 		t.Fatalf("second frame = %q", got)
 	}
 	if got := src.subscriptionCount("route:1"); got != 1 {
 		t.Fatalf("upstream subscriptions = %d, want 1", got)
 	}
 
+	if got := hub.Stats(); got.ActiveStreams != 2 || got.ActiveChannels != 1 {
+		t.Fatalf("shared channel statistics = %+v", got)
+	}
 	closeFirst()
+	if got := hub.Stats(); got.ActiveStreams != 1 || got.ActiveChannels != 1 {
+		t.Fatalf("one remaining subscriber statistics = %+v", got)
+	}
 	closeSecond()
+	closeSecond()
+	if got := hub.Stats(); got.ActiveStreams != 0 || got.ActiveChannels != 0 {
+		t.Fatalf("closed channel statistics = %+v", got)
+	}
 }
 
 func TestLiveHubOrderedDeliveryForHealthySubscriber(t *testing.T) {
@@ -222,6 +250,9 @@ func TestLiveHubOverflowEvictsOnlyTheSlowSubscriber(t *testing.T) {
 	if got := hub.Stats().EvictedSubscribers; got != 1 {
 		t.Fatalf("EvictedSubscribers = %d, want 1", got)
 	}
+	if got := hub.Stats(); got.ActiveStreams != 1 || got.ActiveChannels != 1 {
+		t.Fatalf("statistics after evicting one subscriber = %+v", got)
+	}
 	// Draining what remained buffered, the channel must still end up closed:
 	// a slow subscriber never gets a permanently-stuck stream.
 	drained := make(chan struct{})
@@ -246,6 +277,9 @@ func TestLiveHubClosesUpstreamAfterLastSubscriber(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeStream()
+	if got := hub.Stats(); got.ActiveStreams != 0 || got.ActiveChannels != 0 {
+		t.Fatalf("statistics after disconnect = %+v", got)
+	}
 	if got := src.cancellationCount("route:1"); got != 1 {
 		t.Fatalf("upstream cancellations = %d, want 1", got)
 	}
@@ -262,12 +296,20 @@ func TestLiveHubClosesUpstreamAfterSourceDisconnect(t *testing.T) {
 	defer closeStream()
 
 	src.close("route:1")
-	if _, ok := <-stream; ok {
-		t.Fatal("stream remained open after upstream disconnect")
+	select {
+	case _, ok := <-stream:
+		if ok {
+			t.Fatal("stream remained open after upstream disconnect")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not close after upstream disconnect")
 	}
 	deadline := time.Now().Add(time.Second)
 	for src.cancellationCount("route:1") == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
+	}
+	if got := hub.Stats(); got.ActiveStreams != 0 || got.ActiveChannels != 0 {
+		t.Fatalf("statistics after disconnect = %+v", got)
 	}
 	if got := src.cancellationCount("route:1"); got != 1 {
 		t.Fatalf("upstream cancellations = %d, want 1", got)
@@ -324,5 +366,19 @@ func TestLiveHubRejectsStreamAboveLimit(t *testing.T) {
 	}
 	if got := src.subscriptionCount("route:2"); got != 0 {
 		t.Fatalf("upstream subscriptions = %d, want 0", got)
+	}
+}
+
+func receiveHubPayload(t *testing.T, stream <-chan []byte) []byte {
+	t.Helper()
+	select {
+	case payload, ok := <-stream:
+		if !ok {
+			t.Fatal("hub subscription closed before delivering its frame")
+		}
+		return payload
+	case <-time.After(time.Second):
+		t.Fatal("hub subscription did not deliver its frame")
+		return nil
 	}
 }

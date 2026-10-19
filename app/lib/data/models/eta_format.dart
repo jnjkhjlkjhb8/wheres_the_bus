@@ -48,20 +48,26 @@ BusStopDisplayStatus busStopDisplayStatus({
   if (stopStatus == 0 && estimateSeconds == 0) {
     return BusStopDisplayStatus.arriving;
   }
-  if (estimateSeconds > 0 && estimateSeconds < 60) {
+  if (estimateSeconds > 0) {
+    return _estimatedBusStatus(estimateSeconds, stopStatus);
+  }
+  const statuses = {
+    1: BusStopDisplayStatus.notDeparted,
+    2: BusStopDisplayStatus.trafficControl,
+    3: BusStopDisplayStatus.lastBusPassed,
+    4: BusStopDisplayStatus.notOperating,
+  };
+  return statuses[stopStatus] ?? BusStopDisplayStatus.unknown;
+}
+
+BusStopDisplayStatus _estimatedBusStatus(int estimateSeconds, int stopStatus) {
+  if (estimateSeconds < 60) {
     return BusStopDisplayStatus.departingSoon;
   }
   if (stopStatus == 1 && estimateSeconds > busStopScheduledCountdownCap) {
     return BusStopDisplayStatus.notDeparted;
   }
-  if (estimateSeconds > 0) return BusStopDisplayStatus.minutes;
-  return switch (stopStatus) {
-    1 => BusStopDisplayStatus.notDeparted,
-    2 => BusStopDisplayStatus.trafficControl,
-    3 => BusStopDisplayStatus.lastBusPassed,
-    4 => BusStopDisplayStatus.notOperating,
-    _ => BusStopDisplayStatus.unknown,
-  };
+  return BusStopDisplayStatus.minutes;
 }
 
 /// The one display-label function. Returns the user-facing string ('2分',
@@ -75,10 +81,17 @@ String? busStopDisplayLabel({
 }) {
   // A not-yet-departed stop (status 1) is a scheduled departure: show its
   // NextBusTime clock (HH:mm) rather than the countdown derived from it.
-  if (stopStatus == 1) {
-    final clock = _clockLabel(nextBusTime);
-    if (clock != null) return clock;
-  }
+  final clock = stopStatus == 1 ? _clockLabel(nextBusTime) : null;
+  if (clock != null) return clock;
+  return _liveBusLabel(i18n, estimateSeconds, stopStatus, nextBusTime);
+}
+
+String? _liveBusLabel(
+  AppI18n i18n,
+  int estimateSeconds,
+  int stopStatus,
+  String nextBusTime,
+) {
   // Any positive live estimate shows the countdown; 進站中 is reserved for a
   // live bus at zero.
   if (estimateSeconds > 0) {

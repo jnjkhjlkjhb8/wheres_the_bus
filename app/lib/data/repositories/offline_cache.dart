@@ -12,29 +12,45 @@ Future<T> offlineCached<M extends GeneratedMessage, T>({
   required T Function(M) decode,
   Duration? maxAge,
 }) async {
-  if (maxAge != null) {
-    final fresh = HiveStore.getStaticFresh(key, maxAge);
-    if (fresh != null) {
-      try {
-        return decode(parse(fresh));
-      } on Object {
-        // Bytes an older build wrote in a shape this one cannot read. Drop
-        // them and fall through to the network — unlike the offline branch
-        // below there is a live request available, so nothing is lost.
-        unawaited(HiveStore.deleteStatic(key));
-      }
-    }
+  final fresh = maxAge == null ? null : HiveStore.getStaticFresh(key, maxAge);
+  final cached = _decodeCached(key, fresh, parse, decode);
+  if (cached != null) return cached.value;
+  final offline = _offlineValue(key, parse, decode);
+  if (offline != null) return offline.value;
+  return _fetchWithFallback(key, fetch, parse, decode);
+}
+
+({T value})? _offlineValue<M extends GeneratedMessage, T>(
+  String key,
+  M Function(List<int>) parse,
+  T Function(M) decode,
+) {
+  if (AppNetwork.online.value) return null;
+  return _decodeCached(key, HiveStore.getStatic(key), parse, decode);
+}
+
+({T value})? _decodeCached<M extends GeneratedMessage, T>(
+  String key,
+  List<int>? bytes,
+  M Function(List<int>) parse,
+  T Function(M) decode,
+) {
+  if (bytes == null) return null;
+  try {
+    return (value: decode(parse(bytes)));
+  } on Object {
+    // Old or corrupt bytes must not block a fresh request or replace its error.
+    unawaited(HiveStore.deleteStatic(key));
+    return null;
   }
-  if (!AppNetwork.online.value) {
-    final bytes = HiveStore.getStatic(key);
-    if (bytes != null) {
-      try {
-        return decode(parse(bytes));
-      } on Object {
-        unawaited(HiveStore.deleteStatic(key));
-      }
-    }
-  }
+}
+
+Future<T> _fetchWithFallback<M extends GeneratedMessage, T>(
+  String key,
+  Future<M> Function() fetch,
+  M Function(List<int>) parse,
+  T Function(M) decode,
+) async {
   try {
     final message = await fetch();
     // Unawaited: a full disk must not fail a request that already succeeded.
@@ -42,14 +58,9 @@ Future<T> offlineCached<M extends GeneratedMessage, T>({
     return decode(message);
   } on Object catch (error, stack) {
     if (!_isReachabilityFailure(error)) rethrow;
-    final bytes = HiveStore.getStatic(key);
-    if (bytes == null) rethrow;
-    try {
-      return decode(parse(bytes));
-    } on Object {
-      unawaited(HiveStore.deleteStatic(key));
-      Error.throwWithStackTrace(error, stack);
-    }
+    final cached = _decodeCached(key, HiveStore.getStatic(key), parse, decode);
+    if (cached != null) return cached.value;
+    Error.throwWithStackTrace(error, stack);
   }
 }
 

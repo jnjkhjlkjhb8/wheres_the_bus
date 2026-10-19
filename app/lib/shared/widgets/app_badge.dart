@@ -68,52 +68,10 @@ class _AppBadgeState extends State<AppBadge>
     // from the animated Ink status badge below.
     final dataColor = widget.color;
     if (widget._variant == _BadgeVariant.filled && dataColor != null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppTheme.space8,
-          vertical: 3,
-        ),
-        decoration: BoxDecoration(
-          color: dataColor,
-          borderRadius: BorderRadius.circular(AppTheme.radiusChip),
-        ),
-        child: Text(
-          widget.label ?? '',
-          style: AppTextStyles.bodySmall.copyWith(
-            color: _badgeTextColor(dataColor),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
+      return _dataPill(dataColor);
     }
 
-    Widget badge;
-    if (widget._variant == _BadgeVariant.dot) {
-      badge = Container(
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(color: cs.error, shape: BoxShape.circle),
-      );
-    } else {
-      final isOutlined = widget._variant == _BadgeVariant.outlined;
-      badge = Container(
-        height: 20,
-        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
-        decoration: BoxDecoration(
-          color: isOutlined ? Colors.transparent : cs.primary,
-          borderRadius: BorderRadius.circular(AppTheme.radiusStadium),
-          border: isOutlined ? Border.all(color: cs.primary) : null,
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          widget.label ?? '',
-          style: AppTextStyles.bodySmall.copyWith(
-            color: isOutlined ? cs.primary : cs.onPrimary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
-    }
+    final badge = _statusBadge(cs);
 
     if (MediaQuery.disableAnimationsOf(context)) {
       return badge;
@@ -121,6 +79,58 @@ class _AppBadgeState extends State<AppBadge>
     return FadeTransition(
       opacity: _opacity,
       child: ScaleTransition(scale: _scale, child: badge),
+    );
+  }
+
+  Widget _dataPill(Color dataColor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space8,
+        vertical: 3,
+      ),
+      decoration: BoxDecoration(
+        color: dataColor,
+        borderRadius: BorderRadius.circular(AppTheme.radiusChip),
+      ),
+      child: Text(
+        widget.label ?? '',
+        style: AppTextStyles.bodySmall.copyWith(
+          color: _badgeTextColor(dataColor),
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _statusBadge(ColorScheme cs) {
+    if (widget._variant == _BadgeVariant.dot) {
+      return Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: cs.error, shape: BoxShape.circle),
+      );
+    }
+    return _labelBadge(cs);
+  }
+
+  Widget _labelBadge(ColorScheme cs) {
+    final isOutlined = widget._variant == _BadgeVariant.outlined;
+    return Container(
+      height: 20,
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space6),
+      decoration: BoxDecoration(
+        color: isOutlined ? Colors.transparent : cs.primary,
+        borderRadius: BorderRadius.circular(AppTheme.radiusStadium),
+        border: isOutlined ? Border.all(color: cs.primary) : null,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        widget.label ?? '',
+        style: AppTextStyles.bodySmall.copyWith(
+          color: isOutlined ? cs.primary : cs.onPrimary,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }

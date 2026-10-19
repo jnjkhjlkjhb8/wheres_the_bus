@@ -39,34 +39,7 @@ class LegChip extends StatelessWidget {
     final mode = _modeKey(section);
     final label = _durationLabel(AppI18n.of(context), duration);
 
-    Widget icon;
-
-    if (mode == 'walk') {
-      icon = const Icon(
-        Icons.directions_walk_rounded,
-        size: 24,
-        color: Colors.grey,
-      );
-    } else if (mode == 'subway' || mode == 'tram') {
-      final svg = _mrtSvg(section);
-      icon = svg != null
-          ? SvgPicture.asset(svg, width: 45, height: 45)
-          : const Icon(Icons.directions_subway, size: 45);
-    } else if (mode == 'rail' && section.transport.category == 'HSR') {
-      icon = SvgPicture.asset(
-        'assets/rails/thsr_logo.svg',
-        width: 70,
-        height: 45,
-      );
-    } else if (mode == 'bus') {
-      icon = _BusIconWithBadge(shortName: section.transport.shortName);
-    } else {
-      icon = Icon(
-        Icons.directions_transit_filled_rounded,
-        size: 24,
-        color: Theme.of(context).colorScheme.primary,
-      );
-    }
+    final icon = _iconForMode(context, mode);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -75,6 +48,43 @@ class LegChip extends StatelessWidget {
         const SizedBox(height: AppTheme.space2),
         Text(label, style: AppTextStyles.bodyVerySmall),
       ],
+    );
+  }
+
+  Widget _iconForMode(BuildContext context, String mode) {
+    if (mode == 'walk') {
+      return const Icon(
+        Icons.directions_walk_rounded,
+        size: 24,
+        color: Colors.grey,
+      );
+    }
+    if (const {'subway', 'tram'}.contains(mode)) return _metroIcon();
+    return _vehicleIcon(context, mode);
+  }
+
+  Widget _metroIcon() {
+    final svg = _mrtSvg(section);
+    return svg != null
+        ? SvgPicture.asset(svg, width: 45, height: 45)
+        : const Icon(Icons.directions_subway, size: 45);
+  }
+
+  Widget _vehicleIcon(BuildContext context, String mode) {
+    if (mode == 'rail' && section.transport.category == 'HSR') {
+      return SvgPicture.asset(
+        'assets/rails/thsr_logo.svg',
+        width: 70,
+        height: 45,
+      );
+    }
+    if (mode == 'bus') {
+      return _BusIconWithBadge(shortName: section.transport.shortName);
+    }
+    return Icon(
+      Icons.directions_transit_filled_rounded,
+      size: 24,
+      color: Theme.of(context).colorScheme.primary,
     );
   }
 }

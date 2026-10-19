@@ -64,10 +64,7 @@ class GoPlanOverlay {
     LatLng? fix,
     double puckHeading = 0,
   }) {
-    if (!identical(_memoResult, result) ||
-        _memoSelected != selectedIndex ||
-        _memoLeg != activeLeg ||
-        !identical(_memoScheme, colors)) {
+    if (!_memoMatches(result, selectedIndex, activeLeg, colors)) {
       _memoResult = result;
       _memoSelected = selectedIndex;
       _memoLeg = activeLeg;
@@ -93,6 +90,17 @@ class GoPlanOverlay {
       polylines: _memoPolylines,
     );
   }
+
+  bool _memoMatches(
+    PlanResult result,
+    int selectedIndex,
+    int? activeLeg,
+    ColorScheme colors,
+  ) =>
+      identical(_memoResult, result) &&
+      _memoSelected == selectedIndex &&
+      _memoLeg == activeLeg &&
+      identical(_memoScheme, colors);
 
   GoMapLayer pending({
     required LatLng? origin,
@@ -146,25 +154,32 @@ class GoPlanOverlay {
   ) {
     final lines = <Polyline>{};
     if (activeLeg == null) {
-      for (final (i, route) in result.routes.indexed) {
-        if (i == selectedIndex) continue;
-        final pts = routePoints(route);
-        if (pts.length < 2) continue;
-        lines.add(
-          Polyline(
-            polylineId: PolylineId('alt_$i'),
-            points: pts,
-            width: 4,
-            color: kAltRouteColor,
-            consumeTapEvents: true,
-            onTap: () => onAlternateTap(i),
-          ),
-        );
-      }
+      lines.addAll(_alternatePolylines(result, selectedIndex));
     }
     lines.addAll(
       routePolylines(result.routes[selectedIndex], cs, activeLeg: activeLeg),
     );
+    return lines;
+  }
+
+  Set<Polyline> _alternatePolylines(PlanResult result, int selectedIndex) {
+    final lines = <Polyline>{};
+    for (final (i, route) in result.routes.indexed.where(
+      (row) => row.$1 != selectedIndex,
+    )) {
+      final pts = routePoints(route);
+      if (pts.length < 2) continue;
+      lines.add(
+        Polyline(
+          polylineId: PolylineId('alt_$i'),
+          points: pts,
+          width: 4,
+          color: kAltRouteColor,
+          consumeTapEvents: true,
+          onTap: () => onAlternateTap(i),
+        ),
+      );
+    }
     return lines;
   }
 
@@ -235,27 +250,9 @@ class GoPlanOverlay {
   Set<Marker> _planMarkers(PlanRoute route, int? activeLeg, ColorScheme cs) {
     final sections = route.sections;
     if (sections.isEmpty) return const {};
-    final markers = <Marker>{};
-    // Higher-priority markers claim a coordinate first; a lower-priority marker
-    // at the same spot (a transfer boundary under the origin, say) is skipped.
-    final used = <String>{};
-    String posKey(PlanPoint p) =>
-        '${p.lat.toStringAsFixed(6)},${p.lng.toStringAsFixed(6)}';
-    bool valid(PlanPoint p) => p.lat != 0 || p.lng != 0;
-    bool dimLeg(int i) => activeLeg != null && i < activeLeg;
-
-    void place(String id, PlanPoint p, BitmapDescriptor? icon, int z) {
-      if (icon == null || !valid(p) || !used.add(posKey(p))) return;
-      markers.add(
-        Marker(
-          markerId: MarkerId(id),
-          position: LatLng(p.lat, p.lng),
-          icon: icon,
-          anchor: const Offset(0.5, 0.5),
-          zIndexInt: z,
-        ),
-      );
-    }
+    final placements = _MarkerPlacements();
+    bool dimLeg(int i) => _legDimmed(activeLeg, i);
+    final place = placements.place;
 
     place(
       'origin',
@@ -269,6 +266,19 @@ class GoPlanOverlay {
       _destMarker(cs, dim: dimLeg(sections.length - 1)),
       30,
     );
+    _placeBoundaries(placements, sections, activeLeg, cs);
+    _placeIntermediateStops(placements, sections, activeLeg, cs);
+    return placements.markers;
+  }
+
+  void _placeBoundaries(
+    _MarkerPlacements placements,
+    List<PlanSection> sections,
+    int? activeLeg,
+    ColorScheme cs,
+  ) {
+    final place = placements.place;
+    bool dimLeg(int i) => _legDimmed(activeLeg, i);
     for (final (i, s) in sections.indexed) {
       if (isWalk(s)) continue;
       final icon = _boundaryMarker(
@@ -278,27 +288,42 @@ class GoPlanOverlay {
       place('board_$i', s.departure.location, icon, 20);
       place('alight_$i', s.arrival.location, icon, 20);
     }
+  }
+
+  void _placeIntermediateStops(
+    _MarkerPlacements placements,
+    List<PlanSection> sections,
+    int? activeLeg,
+    ColorScheme cs,
+  ) {
     for (final (i, s) in sections.indexed) {
       if (isWalk(s)) continue;
-      final dim = dimLeg(i);
-      for (final (j, stop) in s.intermediateStops.indexed) {
-        place('stop_${i}_$j', stop.location, _stopMarker(cs, dim: dim), 10);
-      }
+      _placeSectionStops(placements, i, s, _legDimmed(activeLeg, i), cs);
     }
-    return markers;
+  }
+
+  void _placeSectionStops(
+    _MarkerPlacements placements,
+    int index,
+    PlanSection section,
+    bool dim,
+    ColorScheme cs,
+  ) {
+    for (final (j, stop) in section.intermediateStops.indexed) {
+      placements.place(
+        'stop_${index}_$j',
+        stop.location,
+        _stopMarker(cs, dim: dim),
+        10,
+      );
+    }
   }
 
   Marker? _navPuck(ColorScheme cs, {required double heading, LatLng? fix}) {
     if (fix == null) return null;
     // Card colour matches the nav header's card (white in light, elevated
     // surface in dark); it forms the puck's ring and arrow glyph.
-    final card = cs.brightness == Brightness.light
-        ? Colors.white
-        : cs.surfaceContainerHigh;
-    final icon = _resolveMarker(
-      'go_nav_puck|${cs.onSurface.toARGB32()}|${card.toARGB32()}',
-      () => MapMarkers.navArrow(cs.onSurface, card),
-    );
+    final icon = _puckIcon(cs);
     if (icon == null) return null;
     return Marker(
       markerId: const MarkerId('nav_puck'),
@@ -312,6 +337,16 @@ class GoPlanOverlay {
       // back to the user. Harmless while already following (the puck is
       // centred); it only matters after a gesture pause.
       onTap: onPuckTap,
+    );
+  }
+
+  BitmapDescriptor? _puckIcon(ColorScheme cs) {
+    final card = cs.brightness == Brightness.light
+        ? Colors.white
+        : cs.surfaceContainerHigh;
+    return _resolveMarker(
+      'go_nav_puck|${cs.onSurface.toARGB32()}|${card.toARGB32()}',
+      () => MapMarkers.navArrow(cs.onSurface, card),
     );
   }
 }
@@ -335,70 +370,130 @@ Set<Polyline> routePolylines(
 }) {
   final lines = <Polyline>{};
   for (final (i, s) in route.sections.indexed) {
-    final walk = isWalk(s);
-    final pts = <LatLng>[];
-    void add(PlanPoint point) {
-      if (point.lat != 0 || point.lng != 0) {
-        pts.add(LatLng(point.lat, point.lng));
-      }
-    }
-
-    if (walk && s.walkPath.isNotEmpty) {
-      s.walkPath.forEach(add);
-    } else if (!walk && s.transitPath.isNotEmpty) {
-      s.transitPath.forEach(add);
-    } else {
-      add(s.departure.location);
-      for (final stop in s.intermediateStops) {
-        add(stop.location);
-      }
-      add(s.arrival.location);
-    }
-    if (pts.length < 2) continue;
-    final dim = activeLeg != null && i < activeLeg;
-    Color d(Color c) => dim ? c.withValues(alpha: 0.3) : c;
-    if (walk) {
-      // White-cased ink dots: a wide card-coloured casing under narrower ink
-      // dots, both on the same points and pattern so the dots read against any
-      // map background. Card colour matches the nav header's card.
-      final card = cs.brightness == Brightness.light
-          ? Colors.white
-          : cs.surfaceContainerHigh;
-      final pattern = [PatternItem.dot, PatternItem.gap(16)];
-      lines
-        ..add(
-          Polyline(
-            polylineId: PolylineId('leg_${i}_casing'),
-            points: pts,
-            width: 11,
-            color: d(card),
-            // Casing sits below its dots, both above the muted alternates.
-            zIndex: 2,
-            patterns: pattern,
-          ),
-        )
-        ..add(
-          Polyline(
-            polylineId: PolylineId('leg_$i'),
-            points: pts,
-            width: 7,
-            color: d(cs.onSurface),
-            zIndex: 3,
-            patterns: pattern,
-          ),
-        );
-    } else {
-      lines.add(
-        Polyline(
-          polylineId: PolylineId('leg_$i'),
-          points: pts,
-          width: 6,
-          color: d(transitColor(s.transport, cs)),
-          // Sits above the muted alternates.
-          zIndex: 2,
-        ),
-      );
-    }
+    lines.addAll(_sectionPolylines(i, s, cs, activeLeg));
   }
   return lines;
 }
+
+bool _legDimmed(int? activeLeg, int index) =>
+    activeLeg != null && index < activeLeg;
+Set<Polyline> _sectionPolylines(
+  int i,
+  PlanSection s,
+  ColorScheme cs,
+  int? activeLeg,
+) {
+  final lines = <Polyline>{};
+  final walk = isWalk(s);
+  final pts = _sectionPoints(s);
+  if (pts.length < 2) return lines;
+  final dim = _legDimmed(activeLeg, i);
+  Color d(Color c) => dim ? c.withValues(alpha: 0.3) : c;
+  if (walk) {
+    lines.addAll(_walkPolylines(i, pts, cs, d));
+  } else {
+    lines.add(_transitPolyline(i, pts, s, cs, d));
+  }
+  return lines;
+}
+
+List<LatLng> _sectionPoints(PlanSection section) => [
+  for (final point in _sectionGeometry(section))
+    if (_validPoint(point)) LatLng(point.lat, point.lng),
+];
+
+Iterable<PlanPoint> _sectionGeometry(PlanSection section) {
+  final path = isWalk(section) ? section.walkPath : section.transitPath;
+  if (path.isNotEmpty) return path;
+  return _fallbackSectionGeometry(section);
+}
+
+Iterable<PlanPoint> _fallbackSectionGeometry(PlanSection section) {
+  return [
+    section.departure.location,
+    for (final stop in section.intermediateStops) stop.location,
+    section.arrival.location,
+  ];
+}
+
+bool _validPoint(PlanPoint point) => point.lat != 0 || point.lng != 0;
+
+Set<Polyline> _walkPolylines(
+  int i,
+  List<LatLng> pts,
+  ColorScheme cs,
+  Color Function(Color) d,
+) {
+  final lines = <Polyline>{};
+
+  // White-cased ink dots: a wide card-coloured casing under narrower ink
+  // dots, both on the same points and pattern so the dots read against any
+  // map background. Card colour matches the nav header's card.
+  final card = cs.brightness == Brightness.light
+      ? Colors.white
+      : cs.surfaceContainerHigh;
+  final pattern = [PatternItem.dot, PatternItem.gap(16)];
+  lines
+    ..add(
+      Polyline(
+        polylineId: PolylineId('leg_${i}_casing'),
+        points: pts,
+        width: 11,
+        color: d(card),
+        // Casing sits below its dots, both above the muted alternates.
+        zIndex: 2,
+        patterns: pattern,
+      ),
+    )
+    ..add(
+      Polyline(
+        polylineId: PolylineId('leg_$i'),
+        points: pts,
+        width: 7,
+        color: d(cs.onSurface),
+        zIndex: 3,
+        patterns: pattern,
+      ),
+    );
+  return lines;
+}
+
+Polyline _transitPolyline(
+  int i,
+  List<LatLng> pts,
+  PlanSection section,
+  ColorScheme cs,
+  Color Function(Color) d,
+) => Polyline(
+  polylineId: PolylineId('leg_$i'),
+  points: pts,
+  width: 6,
+  color: d(transitColor(section.transport, cs)),
+  zIndex: 2,
+);
+
+class _MarkerPlacements {
+  final markers = <Marker>{};
+  final _used = <String>{};
+
+  void place(String id, PlanPoint point, BitmapDescriptor? icon, int z) {
+    // Origin and destination claim coordinates before transfer/intermediate
+    // markers so coincident stops do not hide the route's endpoints.
+    if (!_canPlaceMarker(icon, point)) return;
+    final key =
+        '${point.lat.toStringAsFixed(6)},${point.lng.toStringAsFixed(6)}';
+    if (!_used.add(key)) return;
+    markers.add(
+      Marker(
+        markerId: MarkerId(id),
+        position: LatLng(point.lat, point.lng),
+        icon: icon!,
+        anchor: const Offset(0.5, 0.5),
+        zIndexInt: z,
+      ),
+    );
+  }
+}
+
+bool _canPlaceMarker(BitmapDescriptor? icon, PlanPoint point) =>
+    icon != null && _validPoint(point);

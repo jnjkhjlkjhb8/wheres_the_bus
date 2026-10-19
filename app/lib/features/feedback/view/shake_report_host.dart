@@ -250,11 +250,7 @@ class _SheetButton extends StatelessWidget {
       child: Container(
         height: 48,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: primary ? cs.onSurface : null,
-          borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-          border: primary ? null : Border.all(color: cs.outline),
-        ),
+        decoration: _decoration(cs),
         child: Text(
           label,
           style: AppTextStyles.bodyLarge.copyWith(
@@ -265,4 +261,10 @@ class _SheetButton extends StatelessWidget {
       ),
     );
   }
+
+  BoxDecoration _decoration(ColorScheme cs) => BoxDecoration(
+    color: primary ? cs.onSurface : null,
+    borderRadius: BorderRadius.circular(AppTheme.radiusButton),
+    border: primary ? null : Border.all(color: cs.outline),
+  );
 }

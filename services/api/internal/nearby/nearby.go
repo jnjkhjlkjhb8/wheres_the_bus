@@ -154,54 +154,89 @@ func (d *NearbyDiscovery) cacheResponse(key string, response *pb.RespNear) {
 func receiveNearbyModeResult(ctx context.Context, results <-chan nearbyModeResult) (nearbyModeResult, error) {
 	select {
 	case result := <-results:
-		if err := ctx.Err(); err != nil {
-			return nearbyModeResult{}, err
-		}
-		return result, nil
+		return nearbyModeResultWithContext(ctx, result)
 	case <-ctx.Done():
 		return nearbyModeResult{}, ctx.Err()
 	}
 }
 
+func nearbyModeResultWithContext(ctx context.Context, result nearbyModeResult) (nearbyModeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nearbyModeResult{}, err
+	}
+	return result, nil
+}
+
 func validateNearbyQuery(query NearbyQuery) (NearbyQuery, error) {
-	if math.IsNaN(query.Origin.Lon) || math.IsInf(query.Origin.Lon, 0) ||
-		query.Origin.Lon < -180 || query.Origin.Lon > 180 {
-		return NearbyQuery{}, _oops.Wrapf(ErrInvalidNearbyQuery, "longitude must be finite and between -180 and 180")
+	if err := validateNearbyOrigin(query.Origin); err != nil {
+		return NearbyQuery{}, err
 	}
-	if math.IsNaN(query.Origin.Lat) || math.IsInf(query.Origin.Lat, 0) ||
-		query.Origin.Lat < -90 || query.Origin.Lat > 90 {
-		return NearbyQuery{}, _oops.Wrapf(ErrInvalidNearbyQuery, "latitude must be finite and between -90 and 90")
+	radius, err := nearbyRadius(query.RadiusMeters)
+	if err != nil {
+		return NearbyQuery{}, err
 	}
-	if query.RadiusMeters == 0 {
-		query.RadiusMeters = _defaultNearbyRadius
-	}
-	if query.RadiusMeters < 0 || query.RadiusMeters > _maxNearbyRadius {
-		return NearbyQuery{}, _oops.With("_max_nearby_radius", _maxNearbyRadius).Wrapf(ErrInvalidNearbyQuery, "radius must be zero or between 1 and metres")
-	}
+	query.RadiusMeters = radius
 	if query.Limit <= 0 {
 		query.Limit = _defaultNearbyLimit
 	}
-	query.RadiusMeters = (query.RadiusMeters + _nearbyRadiusBucket - 1) /
-		_nearbyRadiusBucket * _nearbyRadiusBucket
+	return query, nil
+}
+
+func validateNearbyOrigin(origin GeoPoint) error {
+	if !validNearbyCoordinate(origin.Lon, 180) {
+		return _oops.Wrapf(ErrInvalidNearbyQuery, "longitude must be finite and between -180 and 180")
+	}
+	if !validNearbyCoordinate(origin.Lat, 90) {
+		return _oops.Wrapf(ErrInvalidNearbyQuery, "latitude must be finite and between -90 and 90")
+	}
+	return nil
+}
+
+func nearbyRadius(radius int) (int, error) {
+	if radius == 0 {
+		radius = _defaultNearbyRadius
+	}
+	if radius < 0 || radius > _maxNearbyRadius {
+		return 0, _oops.With("_max_nearby_radius", _maxNearbyRadius).Wrapf(ErrInvalidNearbyQuery, "radius must be zero or between 1 and metres")
+	}
+	return (radius + _nearbyRadiusBucket - 1) / _nearbyRadiusBucket * _nearbyRadiusBucket, nil
+}
+
+func validNearbyCoordinate(value, limit float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= -limit && value <= limit
+}
+
+func validateNearbyRequest(ctx context.Context, query NearbyQuery) (NearbyQuery, error) {
+	if err := ctx.Err(); err != nil {
+		return NearbyQuery{}, err
+	}
+	query, err := validateNearbyQuery(query)
+	if err != nil {
+		return NearbyQuery{}, err
+	}
+	return nearbyQueryWithContext(ctx, query)
+}
+
+func nearbyQueryWithContext(ctx context.Context, query NearbyQuery) (NearbyQuery, error) {
+	if err := ctx.Err(); err != nil {
+		return NearbyQuery{}, err
+	}
 	return query, nil
 }
 
 func (d *NearbyDiscovery) Discover(ctx context.Context, query NearbyQuery) (*pb.RespNear, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	query, err := validateNearbyQuery(query)
+	query, err := validateNearbyRequest(ctx, query)
 	if err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	cacheKey := nearbyCacheKey(query)
 	if cached, ok := d.cachedResponse(cacheKey); ok {
 		return cached, nil
 	}
+	return d.discoverFresh(ctx, query, cacheKey)
+}
 
+func (d *NearbyDiscovery) discoverFresh(ctx context.Context, query NearbyQuery, cacheKey string) (*pb.RespNear, error) {
 	workCtx, cancel := context.WithTimeout(ctx, _nearbyRequestTimeout)
 	defer cancel()
 	select {
@@ -210,6 +245,15 @@ func (d *NearbyDiscovery) Discover(ctx context.Context, query NearbyQuery) (*pb.
 	case <-workCtx.Done():
 		return nil, workCtx.Err()
 	}
+	response, err := d.discoverUncached(ctx, workCtx, query)
+	if err != nil {
+		return nil, err
+	}
+	d.cacheResponse(cacheKey, response)
+	return response, nil
+}
+
+func (d *NearbyDiscovery) discoverUncached(ctx, workCtx context.Context, query NearbyQuery) (*pb.RespNear, error) {
 	candidates, err := d.findAll(workCtx, query)
 	if err != nil {
 		return nil, err
@@ -217,12 +261,7 @@ func (d *NearbyDiscovery) Discover(ctx context.Context, query NearbyQuery) (*pb.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	response, err := d.enrich(workCtx, query.Origin, candidates)
-	if err != nil {
-		return nil, err
-	}
-	d.cacheResponse(cacheKey, response)
-	return response, nil
+	return d.enrich(workCtx, query.Origin, candidates)
 }
 
 // findAll queries every mode concurrently and fails the whole request as soon
@@ -238,40 +277,58 @@ func (d *NearbyDiscovery) findAll(ctx context.Context, query NearbyQuery) (map[N
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			candidates, err := d.store.Find(workerCtx, mode, query)
-			select {
-			case results <- nearbyModeResult{mode: mode, candidates: candidates, queryError: err}:
-			case <-workerCtx.Done():
-			}
+			d.findMode(workerCtx, mode, query, results)
 		}()
 	}
 
+	return collectNearbyModes(ctx, results)
+}
+
+func collectNearbyModes(ctx context.Context, results <-chan nearbyModeResult) (map[NearbyMode][]NearbyCandidate, error) {
 	byMode := make(map[NearbyMode][]NearbyCandidate, len(AllNearbyModes))
 	for range AllNearbyModes {
 		result, err := receiveNearbyModeResult(ctx, results)
 		if err != nil {
 			return nil, err
 		}
-		if result.queryError != nil {
-			if isContextError(result.queryError) {
-				return nil, result.queryError
-			}
-			zap.S().Errorw("failed",
-				"component", "near",
-				"action", "query",
-				"mode", result.mode,
-				"event", "failed",
-				"err", result.queryError,
-			)
-			cancel()
-			return nil, ErrNearbyUnavailable
+		if err := nearbyModeError(result); err != nil {
+			return nil, err
 		}
 		byMode[result.mode] = result.candidates
 	}
 	return byMode, nil
 }
 
+func nearbyModeError(result nearbyModeResult) error {
+	if result.queryError == nil {
+		return nil
+	}
+	if isContextError(result.queryError) {
+		return result.queryError
+	}
+	zap.S().Errorw("failed", "component", "near", "action", "query", "mode", result.mode,
+		"event", "failed", "err", result.queryError)
+	return ErrNearbyUnavailable
+}
+
+func (d *NearbyDiscovery) findMode(ctx context.Context, mode NearbyMode, query NearbyQuery, results chan<- nearbyModeResult) {
+	candidates, err := d.store.Find(ctx, mode, query)
+	select {
+	case results <- nearbyModeResult{mode: mode, candidates: candidates, queryError: err}:
+	case <-ctx.Done():
+	}
+}
+
 func (d *NearbyDiscovery) enrich(ctx context.Context, origin GeoPoint, byMode map[NearbyMode][]NearbyCandidate) (*pb.RespNear, error) {
+	points := nearbyPoints(byMode)
+	metrics, err := d.walkingMetrics(ctx, origin, points)
+	if err != nil {
+		return nil, err
+	}
+	return nearbyResponse(byMode, metrics)
+}
+
+func nearbyPoints(byMode map[NearbyMode][]NearbyCandidate) []GeoPoint {
 	points := make([]GeoPoint, 0, len(byMode)*_defaultNearbyLimit)
 	for _, mode := range AllNearbyModes {
 		for _, item := range byMode[mode] {
@@ -279,11 +336,11 @@ func (d *NearbyDiscovery) enrich(ctx context.Context, origin GeoPoint, byMode ma
 		}
 	}
 
-	var metrics []WalkingMetric
-	var routeErr error
-	if d.router != nil && len(points) > 0 {
-		metrics, routeErr = d.router.RouteMany(ctx, origin, points)
-	}
+	return points
+}
+
+func (d *NearbyDiscovery) walkingMetrics(ctx context.Context, origin GeoPoint, points []GeoPoint) ([]WalkingMetric, error) {
+	metrics, routeErr := d.routeNearbyPoints(ctx, origin, points)
 	if isContextError(routeErr) {
 		return nil, routeErr
 	}
@@ -298,14 +355,22 @@ func (d *NearbyDiscovery) enrich(ctx context.Context, origin GeoPoint, byMode ma
 		metrics = nil
 	}
 
+	return metrics, nil
+}
+
+func (d *NearbyDiscovery) routeNearbyPoints(ctx context.Context, origin GeoPoint, points []GeoPoint) ([]WalkingMetric, error) {
+	if d.router == nil || len(points) == 0 {
+		return nil, nil
+	}
+	return d.router.RouteMany(ctx, origin, points)
+}
+
+func nearbyResponse(byMode map[NearbyMode][]NearbyCandidate, metrics []WalkingMetric) (*pb.RespNear, error) {
 	response := &pb.RespNear{NearBusStations: make(map[string]*pb.ArrayNear)}
 	offset := 0
 	for _, mode := range AllNearbyModes {
 		candidates := byMode[mode]
-		if len(candidates) == 0 {
-			continue
-		}
-		if err := appendNearbyResult(response, mode, nearbyStations(candidates, metrics[min(offset, len(metrics)):])); err != nil {
+		if err := appendNearbyMode(response, mode, candidates, metrics[min(offset, len(metrics)):]); err != nil {
 			return nil, err
 		}
 		offset += len(candidates)
@@ -313,21 +378,19 @@ func (d *NearbyDiscovery) enrich(ctx context.Context, origin GeoPoint, byMode ma
 	return response, nil
 }
 
+func appendNearbyMode(response *pb.RespNear, mode NearbyMode, candidates []NearbyCandidate, metrics []WalkingMetric) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+	return appendNearbyResult(response, mode, nearbyStations(candidates, metrics))
+}
+
 // nearbyStations pairs candidates with the leading window of metrics; a short
 // or absent window falls back to the geodesic estimate at 80 m per minute.
 func nearbyStations(candidates []NearbyCandidate, metrics []WalkingMetric) []*pb.NearStation {
 	stations := make([]*pb.NearStation, 0, len(candidates))
 	for i, item := range candidates {
-		walk := int32(item.GeodesicMeters / 80)
-		distance := int32(item.GeodesicMeters)
-		routed := false
-		if i < len(metrics) && metrics[i].DurationSeconds != nil {
-			walk = int32(*metrics[i].DurationSeconds / 60)
-			routed = true
-			if metrics[i].DistanceMeters != nil {
-				distance = int32(*metrics[i].DistanceMeters)
-			}
-		}
+		walk, distance, routed := nearbyStationTravel(item, i, metrics)
 		stations = append(stations, &pb.NearStation{
 			Type: int32(item.Mode), StationID: item.ID, StationName: item.Name,
 			City: item.City, PositionLon: item.Point.Lon, PositionLat: item.Point.Lat,
@@ -337,23 +400,35 @@ func nearbyStations(candidates []NearbyCandidate, metrics []WalkingMetric) []*pb
 	return stations
 }
 
+func nearbyStationTravel(item NearbyCandidate, index int, metrics []WalkingMetric) (int32, int32, bool) {
+	walk, distance := int32(item.GeodesicMeters/80), int32(item.GeodesicMeters)
+	if index >= len(metrics) || metrics[index].DurationSeconds == nil {
+		return walk, distance, false
+	}
+	walk = int32(*metrics[index].DurationSeconds / 60)
+	if metrics[index].DistanceMeters != nil {
+		distance = int32(*metrics[index].DistanceMeters)
+	}
+	return walk, distance, true
+}
+
 func appendNearbyResult(response *pb.RespNear, mode NearbyMode, stations []*pb.NearStation) error {
-	switch mode {
-	case NearbyBus:
+	if mode == NearbyBus {
 		for _, station := range stations {
 			response.NearBusStations[station.StationID] = &pb.ArrayNear{NearStations: []*pb.NearStation{station}}
 		}
-	case _nearbyBike:
-		response.NearBikeStations = stations
-	case _nearbyMRT:
-		response.NearMrtStations = stations
-	case _nearbyTRA:
-		response.NearTraStations = stations
-	case _nearbyTHSR:
-		response.NearThsrStations = stations
-	default:
+		return nil
+	}
+	destination, ok := map[NearbyMode]*[]*pb.NearStation{
+		_nearbyBike: &response.NearBikeStations,
+		_nearbyMRT:  &response.NearMrtStations,
+		_nearbyTRA:  &response.NearTraStations,
+		_nearbyTHSR: &response.NearThsrStations,
+	}[mode]
+	if !ok {
 		return _oops.With("mode", mode).Errorf("unknown nearby mode")
 	}
+	*destination = stations
 	return nil
 }
 

@@ -63,26 +63,46 @@ type BoundFetch func(ctx context.Context, url, name string) (*shared.TDXFetch, e
 func BindFetch(src LiveSource, sink LiveSink, spec LiveSpec) BoundFetch {
 	return func(ctx context.Context, url, name string) (*shared.TDXFetch, error) {
 		fetch, err := src.Fetch(ctx, url, name)
-		if err == nil && fetch != nil && !fetch.Modified && spec.OwnedKey != nil {
-			if refreshErr := sink.RefreshOwnedTTL(ctx, spec.OwnedKey(name), spec.OwnedTTL); refreshErr != nil {
-				invalidateErr := InvalidateTDXFetch(fetch)
-				if invalidateErr != nil {
-					invalidateErr = _oops.With("name", name).Wrapf(invalidateErr, "invalidate marker after owned-key refresh failure")
-				}
-				return nil, errors.Join(
-					_oops.With("name", name).Wrapf(refreshErr, "refresh owned live keys"),
-					invalidateErr,
-				)
-			}
-		} else if err == nil && fetch != nil && !fetch.Modified && spec.TTLPatterns != nil {
-			// 304 Not-Modified: the cached live data is still valid, so re-arm its
-			// TTL instead of letting it expire mid-validity (CONTEXT.md).
-			if refreshErr := sink.RefreshTTL(ctx, spec.TTLPatterns(name)); refreshErr != nil {
-				return nil, _oops.With("name", name).Wrapf(refreshErr, "refresh live TTLs")
-			}
+		if err != nil || unchangedRefreshNotRequired(fetch) {
+			return fetch, err
 		}
-		return fetch, err
+		if err := refreshNotModified(ctx, fetch, sink, spec, name); err != nil {
+			return nil, err
+		}
+		return fetch, nil
 	}
+}
+
+func unchangedRefreshNotRequired(fetch *shared.TDXFetch) bool {
+	return fetch == nil || fetch.Modified
+}
+
+func refreshNotModified(ctx context.Context, fetch *shared.TDXFetch, sink LiveSink, spec LiveSpec, name string) error {
+	if spec.OwnedKey != nil {
+		if err := sink.RefreshOwnedTTL(ctx, spec.OwnedKey(name), spec.OwnedTTL); err != nil {
+			return failedOwnedRefresh(fetch, name, err)
+		}
+		return nil
+	}
+	return refreshLivePatterns(ctx, sink, spec, name)
+}
+
+func refreshLivePatterns(ctx context.Context, sink LiveSink, spec LiveSpec, name string) error {
+	if spec.TTLPatterns == nil {
+		return nil
+	}
+	if err := sink.RefreshTTL(ctx, spec.TTLPatterns(name)); err != nil {
+		return _oops.With("name", name).Wrapf(err, "refresh live TTLs")
+	}
+	return nil
+}
+
+func failedOwnedRefresh(fetch *shared.TDXFetch, name string, refreshErr error) error {
+	invalidateErr := InvalidateTDXFetch(fetch)
+	if invalidateErr != nil {
+		invalidateErr = _oops.With("name", name).Wrapf(invalidateErr, "invalidate marker after owned-key refresh failure")
+	}
+	return errors.Join(_oops.With("name", name).Wrapf(refreshErr, "refresh owned live keys"), invalidateErr)
 }
 
 // bufferedPrefix returns what the decoder has already buffered, capped so a
@@ -98,25 +118,16 @@ func bufferedPrefix(dec *json.Decoder) string {
 }
 
 func DecodeLiveItems[T any](dec *json.Decoder, fn func(T) error) error {
-	opening, err := dec.Token()
-	if err != nil {
+	if err := openLiveArray(dec); err != nil {
 		return err
 	}
-	if opening != json.Delim('[') {
-		// The token alone ("{") does not say whether TDX wrapped the array in an
-		// envelope or returned an error object, and the body is gone by the time
-		// the error is read. Carry a bounded prefix of what is still buffered.
-		return _oops.With("opening", opening).With("prefix", bufferedPrefix(dec)).Errorf("TDX payload is not a JSON array")
+	if err := readLiveItems(dec, fn); err != nil {
+		return err
 	}
-	for dec.More() {
-		var value T
-		if err := dec.Decode(&value); err != nil {
-			return err
-		}
-		if err := fn(value); err != nil {
-			return err
-		}
-	}
+	return finishLiveArray(dec)
+}
+
+func finishLiveArray(dec *json.Decoder) error {
 	closing, err := dec.Token()
 	if err != nil {
 		return err
@@ -124,36 +135,47 @@ func DecodeLiveItems[T any](dec *json.Decoder, fn func(T) error) error {
 	if closing != json.Delim(']') {
 		return _oops.With("closing", closing).Errorf("TDX payload ends with, want array")
 	}
-	var trailing any
-	if err := dec.Decode(&trailing); errors.Is(err, io.EOF) {
-		return nil
-	} else if err != nil {
-		return _oops.Wrapf(err, "decode TDX payload trailer")
-	}
-	return errors.New("TDX payload contains trailing data")
+	return rejectLiveTrailer(dec)
 }
 
 // CommitTDXFetch acknowledges the conditional marker only after process has
 // durably published the full snapshot. Close is attempted on every path and its
 // error is joined with the primary processing or acknowledgement error.
 func CommitTDXFetch(fetch *shared.TDXFetch, process func(*json.Decoder) error) error {
-	if fetch == nil || !fetch.Modified || fetch.Decoder == nil {
+	if err := validateCommitFetch(fetch); err != nil {
+		return err
+	}
+	if err := process(fetch.Decoder); err != nil {
+		return errors.Join(err, closeTDXFetch(fetch))
+	}
+	if err := closeTDXFetch(fetch); err != nil {
+		return err
+	}
+	return AcknowledgeTDXFetch(fetch)
+}
+
+func validateCommitFetch(fetch *shared.TDXFetch) error {
+	if fetch == nil {
 		return errors.New("cannot commit an empty TDX fetch")
 	}
+	if !fetch.Modified || fetch.Decoder == nil {
+		return errors.New("cannot commit an empty TDX fetch")
+	}
+	return validateFetchClose(fetch)
+}
+
+func validateFetchClose(fetch *shared.TDXFetch) error {
 	if fetch.Close == nil {
 		return errors.New("cannot commit a TDX fetch without Close")
 	}
-	if err := process(fetch.Decoder); err != nil {
-		closeErr := fetch.Close()
-		if closeErr != nil {
-			closeErr = _oops.Wrapf(closeErr, "close TDX fetch")
-		}
-		return errors.Join(err, closeErr)
-	}
+	return nil
+}
+
+func closeTDXFetch(fetch *shared.TDXFetch) error {
 	if err := fetch.Close(); err != nil {
 		return _oops.Wrapf(err, "close TDX fetch")
 	}
-	return AcknowledgeTDXFetch(fetch)
+	return nil
 }
 
 func AcknowledgeTDXFetch(fetch *shared.TDXFetch) error {
@@ -167,22 +189,30 @@ func AcknowledgeTDXFetch(fetch *shared.TDXFetch) error {
 }
 
 func RunLive(ctx context.Context, src LiveSource, sink LiveSink, specs []LiveSpec, keys []string) {
-	if len(keys) > 0 {
-		want := map[string]bool{}
-		for _, k := range keys {
-			want[k] = true
-		}
-		filtered := specs[:0:0]
-		for _, s := range specs {
-			if want[s.Key] {
-				filtered = append(filtered, s)
-			}
-		}
-		specs = filtered
-	}
-	for _, spec := range specs {
+	for _, spec := range selectedLiveSpecs(specs, keys) {
 		RunLiveSpec(ctx, src, sink, spec)
 	}
+}
+
+func selectedLiveSpecs(specs []LiveSpec, keys []string) []LiveSpec {
+	if len(keys) == 0 {
+		return specs
+	}
+	want := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		want[key] = true
+	}
+	return filterLiveSpecs(specs, want)
+}
+
+func filterLiveSpecs(specs []LiveSpec, want map[string]bool) []LiveSpec {
+	filtered := specs[:0:0]
+	for _, spec := range specs {
+		if want[spec.Key] {
+			filtered = append(filtered, spec)
+		}
+	}
+	return filtered
 }
 
 // runLiveSpec runs one live job with panic recovery and start/complete
@@ -258,39 +288,57 @@ func (s RedisLiveSink) GetHash(ctx context.Context, key string) (map[string]stri
 // pipelined EXPIRE. Errors are logged, wrapped, and returned so a failed 304
 // refresh cannot be reported as a successful live tick.
 func (s RedisLiveSink) RefreshTTL(ctx context.Context, patterns []TTLPattern) error {
-	rc := s.rc
 	total := 0
 	var refreshErr error
 	for _, p := range patterns {
-		var cursor uint64
-		for {
-			keys, next, err := rc.Scan(ctx, cursor, p.Pattern, 500).Result()
-			if err != nil {
-				refreshErr = errors.Join(refreshErr, _oops.With("pattern", p.Pattern).Wrapf(err, "scan TTL pattern"))
-				break
-			}
-			if len(keys) > 0 {
-				pipe := rc.Pipeline()
-				for _, k := range keys {
-					pipe.Expire(ctx, k, p.TTL)
-				}
-				if _, err := pipe.Exec(ctx); err != nil {
-					refreshErr = errors.Join(refreshErr, _oops.With("pattern", p.Pattern).Wrapf(err, "expire TTL pattern"))
-					break
-				}
-				total += len(keys)
-			}
-			cursor = next
-			if cursor == 0 {
-				break
-			}
-		}
+		count, err := s.refreshPattern(ctx, p)
+		total += count
+		refreshErr = errors.Join(refreshErr, err)
 	}
 	if refreshErr != nil {
 		return refreshErr
 	}
 	zap.S().Infow("success", "component", "live", "action", "ttl_refresh", "event", "success", "keys", total)
 	return nil
+}
+
+func (s RedisLiveSink) refreshPattern(ctx context.Context, p TTLPattern) (int, error) {
+	total := 0
+	var cursor uint64
+	for {
+		count, next, err := s.refreshPatternPage(ctx, cursor, p)
+		if err != nil {
+			return total, err
+		}
+		total += count
+		cursor = next
+		if cursor == 0 {
+			return total, nil
+		}
+	}
+}
+
+func (s RedisLiveSink) refreshPatternPage(ctx context.Context, cursor uint64, p TTLPattern) (int, uint64, error) {
+	keys, next, err := s.rc.Scan(ctx, cursor, p.Pattern, 500).Result()
+	if err != nil {
+		return 0, 0, _oops.With("pattern", p.Pattern).Wrapf(err, "scan TTL pattern")
+	}
+	if err := s.expireKeys(ctx, keys, p.TTL); err != nil {
+		return 0, 0, _oops.With("pattern", p.Pattern).Wrapf(err, "expire TTL pattern")
+	}
+	return len(keys), next, nil
+}
+
+func (s RedisLiveSink) expireKeys(ctx context.Context, keys []string, ttl time.Duration) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	pipe := s.rc.Pipeline()
+	for _, key := range keys {
+		pipe.Expire(ctx, key, ttl)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (s RedisLiveSink) RefreshOwnedTTL(ctx context.Context, key string, ttl time.Duration) error {
@@ -302,37 +350,11 @@ func (s RedisLiveSink) RefreshOwnedTTL(ctx context.Context, key string, ttl time
 	if len(members) == 0 {
 		return nil
 	}
-	pipe := rc.Pipeline()
-	expires := make([]*redis.BoolCmd, 0, len(members))
-	for _, member := range members {
-		expires = append(expires, pipe.Expire(ctx, member, ttl))
-		if len(member) > len("bike_availability:") && member[:len("bike_availability:")] == "bike_availability:" {
-			pipe.Expire(ctx, shared.BikeAvailabilityObservedAtKey(member[len("bike_availability:"):]), ttl)
-		}
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return _oops.With("key", key).Wrapf(err, "refresh ownership set")
-	}
-	var missing []string
-	for i, command := range expires {
-		exists, err := command.Result()
-		if err != nil {
-			return _oops.With("members", members[i]).Wrapf(err, "inspect owned key")
-		}
-		if !exists {
-			missing = append(missing, members[i])
-		}
-	}
-	if len(missing) > 0 {
-		// Keep the stale membership until marker invalidation succeeds and the
-		// resulting full fetch atomically replaces it. Deleting it here would make
-		// a failed invalidation invisible to the next 304, preventing a retry.
-		return _oops.With("key", key).
-			With("missing_count", len(missing)).
-			With("missing_sample", missing[:min(len(missing), 5)]).
-			Errorf("ownership set contains missing live keys")
-	}
-	renewed, err := rc.Expire(ctx, key, OwnedKeysTTL).Result()
+	return s.refreshOwnedMembers(ctx, key, ttl, members)
+}
+
+func (s RedisLiveSink) renewOwnershipMetadata(ctx context.Context, key string) error {
+	renewed, err := s.rc.Expire(ctx, key, OwnedKeysTTL).Result()
 	if err != nil {
 		return _oops.With("key", key).Wrapf(err, "refresh ownership metadata")
 	}
@@ -340,6 +362,38 @@ func (s RedisLiveSink) RefreshOwnedTTL(ctx context.Context, key string, ttl time
 		return _oops.With("key", key).Errorf("refresh ownership metadata: key disappeared")
 	}
 	return nil
+}
+
+func expireOwnedObservation(ctx context.Context, pipe redis.Pipeliner, member string, ttl time.Duration) {
+	if len(member) > len("bike_availability:") && member[:len("bike_availability:")] == "bike_availability:" {
+		pipe.Expire(ctx, shared.BikeAvailabilityObservedAtKey(member[len("bike_availability:"):]), ttl)
+	}
+}
+
+func inspectOwnedKeys(key string, members []string, expires []*redis.BoolCmd) error {
+	missing, err := missingOwnedKeys(members, expires)
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	// Keep membership until invalidation succeeds so a failed invalidation remains retryable.
+	return _oops.With("key", key).With("missing_count", len(missing)).With("missing_sample", missing[:min(len(missing), 5)]).Errorf("ownership set contains missing live keys")
+}
+
+func missingOwnedKeys(members []string, expires []*redis.BoolCmd) ([]string, error) {
+	var missing []string
+	for i, command := range expires {
+		exists, err := command.Result()
+		if err != nil {
+			return nil, _oops.With("members", members[i]).Wrapf(err, "inspect owned key")
+		}
+		if !exists {
+			missing = append(missing, members[i])
+		}
+	}
+	return missing, nil
 }
 
 type redisLivePipe struct {
@@ -408,6 +462,70 @@ func LiveDemandGate(ctx context.Context, sink LiveSink, dataset, city string) bo
 		return true
 	}
 
+	if activeLiveDemand(ctx, sink, dataset, city) {
+		return true
+	}
+	return coldLiveDemandDue(ctx, sink, dataset, city)
+}
+
+func InvalidateTDXFetch(fetch *shared.TDXFetch) error {
+	if fetch == nil || fetch.Invalidate == nil {
+		return errors.New("TDX fetch has no marker invalidation callback")
+	}
+	return fetch.Invalidate()
+}
+
+// NewRESTLiveSource adapts the shared TDX client to the live fetch seam.
+func NewRESTLiveSource(tdx *shared.TDXClient) RESTLiveSource { return RESTLiveSource{tdx: tdx} }
+
+// NewRedisLiveSink adapts a Redis client to the live write seam.
+func NewRedisLiveSink(rc *redis.Client) RedisLiveSink { return RedisLiveSink{rc: rc} }
+
+func openLiveArray(dec *json.Decoder) error {
+	opening, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if opening != json.Delim('[') {
+		// The token alone ("{") does not say whether TDX wrapped the array in an
+		// envelope or returned an error object, and the body is gone by the time
+		// the error is read. Carry a bounded prefix of what is still buffered.
+		return _oops.With("opening", opening).With("prefix", bufferedPrefix(dec)).Errorf("TDX payload is not a JSON array")
+	}
+	return nil
+}
+
+func readLiveItems[T any](dec *json.Decoder, fn func(T) error) error {
+	for dec.More() {
+		if err := decodeLiveItem(dec, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func decodeLiveItem[T any](dec *json.Decoder, fn func(T) error) error {
+	var value T
+	if err := dec.Decode(&value); err != nil {
+		return err
+	}
+	if err := fn(value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func rejectLiveTrailer(dec *json.Decoder) error {
+	var trailing any
+	if err := dec.Decode(&trailing); errors.Is(err, io.EOF) {
+		return nil
+	} else if err != nil {
+		return _oops.Wrapf(err, "decode TDX payload trailer")
+	}
+	return errors.New("TDX payload contains trailing data")
+}
+
+func activeLiveDemand(ctx context.Context, sink LiveSink, dataset, city string) bool {
 	_, err := sink.GetString(ctx, shared.LiveDemandKey(dataset, city))
 	if err == nil {
 		return true
@@ -424,8 +542,12 @@ func LiveDemandGate(ctx context.Context, sink LiveSink, dataset, city string) bo
 		return true
 	}
 
+	return false
+}
+
+func coldLiveDemandDue(ctx context.Context, sink LiveSink, dataset, city string) bool {
 	coldKey := shared.LiveColdKey(dataset, city)
-	_, err = sink.GetString(ctx, coldKey)
+	_, err := sink.GetString(ctx, coldKey)
 	if err == nil {
 		return false
 	}
@@ -433,6 +555,11 @@ func LiveDemandGate(ctx context.Context, sink LiveSink, dataset, city string) bo
 		return true
 	}
 
+	claimLiveCadence(ctx, sink, dataset, city, coldKey)
+	return true
+}
+
+func claimLiveCadence(ctx context.Context, sink LiveSink, dataset, city, coldKey string) {
 	// Claim this cadence window before fetching. A failed write only costs the
 	// next tick a second fetch, so it is logged rather than turned into a skip.
 	pipe := sink.Pipe()
@@ -447,18 +574,25 @@ func LiveDemandGate(ctx context.Context, sink LiveSink, dataset, city string) bo
 			"err", err,
 		)
 	}
-	return true
 }
 
-func InvalidateTDXFetch(fetch *shared.TDXFetch) error {
-	if fetch == nil || fetch.Invalidate == nil {
-		return errors.New("TDX fetch has no marker invalidation callback")
+func (s RedisLiveSink) refreshOwnedMembers(ctx context.Context, key string, ttl time.Duration, members []string) error {
+	pipe, expires := s.ownedExpiryPipeline(ctx, members, ttl)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return _oops.With("key", key).Wrapf(err, "refresh ownership set")
 	}
-	return fetch.Invalidate()
+	if err := inspectOwnedKeys(key, members, expires); err != nil {
+		return err
+	}
+	return s.renewOwnershipMetadata(ctx, key)
 }
 
-// NewRESTLiveSource adapts the shared TDX client to the live fetch seam.
-func NewRESTLiveSource(tdx *shared.TDXClient) RESTLiveSource { return RESTLiveSource{tdx: tdx} }
-
-// NewRedisLiveSink adapts a Redis client to the live write seam.
-func NewRedisLiveSink(rc *redis.Client) RedisLiveSink { return RedisLiveSink{rc: rc} }
+func (s RedisLiveSink) ownedExpiryPipeline(ctx context.Context, members []string, ttl time.Duration) (redis.Pipeliner, []*redis.BoolCmd) {
+	pipe := s.rc.Pipeline()
+	expires := make([]*redis.BoolCmd, 0, len(members))
+	for _, member := range members {
+		expires = append(expires, pipe.Expire(ctx, member, ttl))
+		expireOwnedObservation(ctx, pipe, member, ttl)
+	}
+	return pipe, expires
+}

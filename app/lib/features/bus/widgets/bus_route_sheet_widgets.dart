@@ -74,22 +74,19 @@ class _RouteSheet extends StatelessWidget {
     // Route identity strip (finding 5): the floating app bar this doubles for
     // is painted under the sheet, so it needs the current headsign too.
     final dirName = direction == 0 ? dirNames[0] : dirNames[1];
-    final sole = routeState.route?.soleDirection;
 
     // Only the timeline observes live ETA churn; the sheet skeleton around it
     // stays put across frames.
+    // Pick mode has a single full-height snap, so this map-view timeline is
+    // hidden while the vertical list selects an alight stop.
     final timeline =
         BlocSelector<BusRouteBloc, BusRouteState, List<TimelineStop>>(
           selector: (s) => _stopsFor(AppI18n.of(context), s),
-          builder: (context, stops) => _HorizontalRouteTimeline(
+          builder: (context, stops) => HorizontalRouteTimeline(
             stops: stops,
             direction: direction,
             controller: timelineController,
             flashStopUid: flashStopUid,
-            picking: pickingStop,
-            pinnedNextStopIndex: pinnedNextStopIndex,
-            targetUid: targetStopUid,
-            onPickStop: onPickStop,
             onStopTap: onTapStop,
             onVehicleTap: onTapVehicle,
           ),
@@ -122,7 +119,7 @@ class _RouteSheet extends StatelessWidget {
                 // not the tab bar or detail tab.
                 BlocSelector<BusRouteBloc, BusRouteState, List<TimelineStop>>(
                   selector: (s) => _stopsFor(AppI18n.of(context), s),
-                  builder: (context, stops) => _StopListTab(
+                  builder: (context, stops) => StopListTab(
                     stops: stops,
                     scrollController: scrollController,
                     flashStopUid: flashStopUid,
@@ -212,30 +209,7 @@ class _RouteSheet extends StatelessWidget {
           const SizedBox(height: AppTheme.space12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
-            child: pickingStop
-                ? Center(child: AlightPickCapsule(onCancel: onCancelPick))
-                : sole != null
-                ? AppStaticSegment(
-                    label: dirNames[sole].isNotEmpty
-                        ? dirNames[sole]
-                        : routeName,
-                    leading: Icons.repeat_rounded,
-                    semanticLabel: AppI18n.of(context).busOneWayRoute(
-                      dirNames[sole].isNotEmpty ? dirNames[sole] : routeName,
-                    ),
-                  )
-                : AppSlidingSegment<int>(
-                    options: {
-                      0: dirNames[0].isNotEmpty
-                          ? dirNames[0]
-                          : AppI18n.of(context).busDirectionOutbound,
-                      1: dirNames[1].isNotEmpty
-                          ? dirNames[1]
-                          : AppI18n.of(context).busDirectionInbound,
-                    },
-                    value: direction,
-                    onChanged: onDirectionChanged,
-                  ),
+            child: _directionSelector(context),
           ),
           const SizedBox(height: AppTheme.space12),
           Expanded(
@@ -287,5 +261,37 @@ class _RouteSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _directionSelector(BuildContext context) {
+    final sole = routeState.route?.soleDirection;
+    if (pickingStop) {
+      return Center(child: AlightPickCapsule(onCancel: onCancelPick));
+    }
+    if (sole != null) return _soleDirection(context, sole);
+    return AppSlidingSegment<int>(
+      options: {
+        0: _directionName(context, 0),
+        1: _directionName(context, 1),
+      },
+      value: direction,
+      onChanged: onDirectionChanged,
+    );
+  }
+
+  Widget _soleDirection(BuildContext context, int sole) {
+    final name = dirNames[sole].isNotEmpty ? dirNames[sole] : routeName;
+    return AppStaticSegment(
+      label: name,
+      leading: Icons.repeat_rounded,
+      semanticLabel: AppI18n.of(context).busOneWayRoute(name),
+    );
+  }
+
+  String _directionName(BuildContext context, int direction) {
+    if (dirNames[direction].isNotEmpty) return dirNames[direction];
+    return direction == 0
+        ? AppI18n.of(context).busDirectionOutbound
+        : AppI18n.of(context).busDirectionInbound;
   }
 }

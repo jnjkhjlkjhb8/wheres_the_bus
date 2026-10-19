@@ -145,3 +145,31 @@ func TestBusStopTimeUpdatesClampBackwardsTimes(t *testing.T) {
 		}
 	}
 }
+
+func TestBusVehicleCoverageGatesCountMissingAndInsufficientOffsets(t *testing.T) {
+	key := gtfsRTRouteKey{subRouteUID: "TPEquality", direction: 0}
+	arrival := &models.Bus_RouteArrival{SubRouteUid: key.subRouteUID, Stops: []*models.Bus_RouteEstimate{
+		{PlateNumb: "plate", StopUid: "first", StopSequence: 1, ArrivalUnix: 1000},
+		{PlateNumb: "plate", StopUid: "second", StopSequence: 2, ArrivalUnix: 1060},
+	}}
+	for _, tc := range []struct {
+		name                              string
+		offsets                           map[string]int64
+		oneRoute                          bool
+		ambiguous, unknown, few, vehicles int
+	}{
+		{"ambiguous", map[string]int64{"first": 0, "second": 60}, false, 1, 0, 0, 0},
+		{"missing pattern", nil, true, 0, 1, 0, 0},
+		{"one known call", map[string]int64{"first": 0}, true, 0, 0, 1, 0},
+		{"complete pattern", map[string]int64{"first": 0, "second": 60}, true, 0, 0, 0, 1},
+	} {
+		stats := gtfsRTBusStats{}
+		vehicles := collectBusVehicles(arrival, map[gtfsRTRouteKey]map[string]int64{key: tc.offsets}, map[string]bool{"plate": tc.oneRoute}, &stats)
+		if stats.vehiclesSeen != 1 || stats.plateAmbiguous != tc.ambiguous || stats.patternUnknown != tc.unknown || stats.tooFewCalls != tc.few || len(vehicles[key]) != tc.vehicles {
+			t.Fatalf("%s stats=%+v vehicles=%v", tc.name, stats, vehicles)
+		}
+		if tc.vehicles == 1 && (vehicles[key][0].projected != 1000 || len(vehicles[key][0].calls) != 2) {
+			t.Fatalf("complete projection=%v", vehicles[key])
+		}
+	}
+}

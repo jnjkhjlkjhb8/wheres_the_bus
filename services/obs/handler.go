@@ -51,50 +51,49 @@ func (c *sentryCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 }
 
 func (c *sentryCore) capture(ent zapcore.Entry, fields []zapcore.Field) {
-	enc := zapcore.NewMapObjectEncoder()
-	for _, f := range c.fields {
-		f.AddTo(enc)
-	}
-	for _, f := range fields {
-		f.AddTo(enc)
-	}
-
-	errVal, hasErr := enc.Fields["err"]
-	errText := ""
-	if hasErr {
-		errText = valueText(errVal)
-		if transientErr(errText) {
-			return
-		}
+	encoded := sentryFields(c.fields, fields)
+	errVal, hasErr := encoded["err"]
+	errText := captureErrorText(errVal, hasErr)
+	if hasErr && transientErr(errText) {
+		return
 	}
 
 	hub := sentry.CurrentHub().Clone()
 	hub.Scope().SetLevel(sentry.LevelError)
 	hub.Scope().SetTag("source", "zap")
-	for k, v := range enc.Fields {
-		if k == "err" || strings.HasPrefix(k, _oopsFieldPrefix) {
-			continue
-		}
-		hub.Scope().SetTag(k, valueText(v))
-	}
-	if hasErr {
-		hub.Scope().SetContext("error", sentry.Context{"detail": errText})
-		if err, ok := errVal.(error); ok {
-			applyOopsScope(hub.Scope(), err)
-		}
-	}
+	setLogTags(hub.Scope(), encoded)
+	setCapturedError(hub.Scope(), errVal, errText, hasErr)
 	hub.CaptureMessage(ent.Message)
 }
 
-func valueText(v any) string {
-	switch t := v.(type) {
-	case string:
-		return t
-	case error:
-		return t.Error()
-	default:
-		return fmt.Sprint(v)
+func sentryFields(inherited, fields []zapcore.Field) map[string]any {
+	enc := zapcore.NewMapObjectEncoder()
+	for _, f := range inherited {
+		f.AddTo(enc)
 	}
+	for _, f := range fields {
+		f.AddTo(enc)
+	}
+	return enc.Fields
+}
+
+func setLogTags(scope *sentry.Scope, fields map[string]any) {
+	for k, v := range fields {
+		if k == "err" || strings.HasPrefix(k, _oopsFieldPrefix) {
+			continue
+		}
+		scope.SetTag(k, valueText(v))
+	}
+}
+
+func valueText(v any) string {
+	if value, ok := v.(string); ok {
+		return value
+	}
+	if err, ok := v.(error); ok {
+		return err.Error()
+	}
+	return fmt.Sprint(v)
 }
 
 func transientErr(val string) bool {
@@ -105,4 +104,20 @@ func transientErr(val string) bool {
 		}
 	}
 	return false
+}
+
+func captureErrorText(value any, present bool) string {
+	if !present {
+		return ""
+	}
+	return valueText(value)
+}
+
+func setCapturedError(scope *sentry.Scope, errVal any, errText string, hasErr bool) {
+	if hasErr {
+		scope.SetContext("error", sentry.Context{"detail": errText})
+		if err, ok := errVal.(error); ok {
+			applyOopsScope(scope, err)
+		}
+	}
 }

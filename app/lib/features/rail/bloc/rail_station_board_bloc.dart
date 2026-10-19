@@ -57,19 +57,7 @@ class RailStationBoardBloc
 
     final now = _clock();
     try {
-      final departures = system == RailSystem.tra
-          ? await _traRepository.stationBoard(
-              stationId: stationId,
-              date: _date.format(now),
-              after: _time.format(now),
-              direction: direction,
-            )
-          : await _thsrRepository.stationBoard(
-              stationId: stationId,
-              date: _date.format(now),
-              after: _time.format(now),
-              direction: direction,
-            );
+      final departures = await _loadDepartures(now, direction);
       if (generation != _generation) return;
       emit(
         RailStationBoardLoaded(
@@ -85,6 +73,25 @@ class RailStationBoardBloc
         RailStationBoardFailure(direction: direction, error: AppError.from(e)),
       );
     }
+  }
+
+  Future<List<RailStationDeparture>> _loadDepartures(
+    DateTime now,
+    RailBoardDirection direction,
+  ) async {
+    return system == RailSystem.tra
+        ? await _traRepository.stationBoard(
+            stationId: stationId,
+            date: _date.format(now),
+            after: _time.format(now),
+            direction: direction,
+          )
+        : await _thsrRepository.stationBoard(
+            stationId: stationId,
+            date: _date.format(now),
+            after: _time.format(now),
+            direction: direction,
+          );
   }
 
   void _subscribeDelays() {

@@ -63,6 +63,10 @@ func BusStationGroupMembers(ctx context.Context, db DB, groupUID string) ([]*pb.
 		return nil, err
 	}
 	defer rows.Close()
+	return collectBusStationGroupMembers(rows)
+}
+
+func collectBusStationGroupMembers(rows pgx.Rows) ([]*pb.Bus_StationGroupMember, error) {
 	var members []*pb.Bus_StationGroupMember
 	for rows.Next() {
 		m := &pb.Bus_StationGroupMember{}

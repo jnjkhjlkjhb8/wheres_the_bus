@@ -490,3 +490,33 @@ func TestStaticPipelineReturnsAcquireAndReleaseErrors(t *testing.T) {
 		t.Fatalf("combined job/release error = %v, want %v and %v", err, jobErr, releaseErr)
 	}
 }
+
+func TestStaticPipelineRejectsIncompleteBoundaries(t *testing.T) {
+	ctx := context.Background()
+	if _, err := enterStaticPipelineGate(ctx, nil); err == nil {
+		t.Fatal("nil process gate accepted")
+	}
+	if err := validateStaticPipelineConnection(nil, nil); err == nil {
+		t.Fatal("missing connection accepted")
+	}
+	closed := false
+	if err := validateStaticPipelineConnection(nil, func() error { closed = true; return nil }); err == nil || !closed {
+		t.Fatalf("partial connection cleanup = %v, %v", err, closed)
+	}
+	if err := validateStaticPipelineConnection(fakeDedicatedConn{}, nil); err == nil {
+		t.Fatal("missing close callback accepted")
+	}
+	config, err := pgxpool.ParseConfig("postgres://test:test@127.0.0.1:1/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	connector := pgStaticPipelineConnector{pool: pool, connect: func(context.Context, *pgx.ConnConfig) (staticPipelineDedicatedConn, error) { return nil, nil }}
+	if _, _, err := connector.Connect(ctx); err == nil {
+		t.Fatal("nil dedicated connection accepted")
+	}
+}

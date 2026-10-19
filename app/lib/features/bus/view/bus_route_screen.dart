@@ -20,6 +20,7 @@ import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 import 'package:wheres_the_bus/data/models/fare_type.dart';
 import 'package:wheres_the_bus/data/models/timeline_stop.dart';
+import 'package:wheres_the_bus/data/repositories/bus_repository.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
 import 'package:wheres_the_bus/data/tracking/tracking_session.dart';
@@ -66,7 +67,7 @@ part '../widgets/bus_route_timetable_widgets.dart';
 /// radius starts picking the neighbouring one.
 const _kRouteAutoFocusRadiusMeters = 200.0;
 
-// Horizontal timeline geometry, mirrored from _HorizontalRouteTimeline so the
+// Horizontal timeline geometry, mirrored from HorizontalRouteTimeline so the
 // screen can compute a scroll offset without laying the strip out first.
 const double _kTlCellWidth = 120;
 const double _kTlPadding = AppTheme.space20;
@@ -85,8 +86,9 @@ const _kRouteSnapGrid = SheetSnapGrid(
 );
 
 class BusRouteScreen extends StatefulWidget {
-  const BusRouteScreen({required this.subRouteUid, super.key});
+  const BusRouteScreen({required this.subRouteUid, this.repository, super.key});
   final String subRouteUid;
+  final BusRepository? repository;
 
   @override
   State<BusRouteScreen> createState() => _BusRouteScreenState();
@@ -160,7 +162,10 @@ class _BusRouteScreenState extends State<BusRouteScreen>
   @override
   void initState() {
     super.initState();
-    _bloc = BusRouteBloc(subRouteUid: widget.subRouteUid);
+    _bloc = BusRouteBloc(
+      subRouteUid: widget.subRouteUid,
+      busRepository: widget.repository,
+    );
     _tabController = TabController(length: 2, vsync: this);
     _sheetController = SheetController();
     // 800ms reads as a bus catching up to its reported spot; a UI-chrome-speed
@@ -180,14 +185,22 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     super.didChangeDependencies();
     final brightness = Theme.of(context).colorScheme.brightness;
     final textScale = MediaQuery.textScalerOf(context).scale(12);
-    if ((_lastBrightness != null && _lastBrightness != brightness) ||
-        (_lastTextScale != null && _lastTextScale != textScale)) {
+    if (_renderSettingsChanged(brightness, textScale)) {
       _overlay.invalidate();
       unawaited(_syncMap(_bloc.state));
     }
     _lastBrightness = brightness;
     _lastTextScale = textScale;
   }
+
+  bool _renderSettingsChanged(Brightness brightness, double textScale) =>
+      _brightnessChanged(brightness) || _textScaleChanged(textScale);
+
+  bool _brightnessChanged(Brightness brightness) =>
+      _lastBrightness != null && _lastBrightness != brightness;
+
+  bool _textScaleChanged(double scale) =>
+      _lastTextScale != null && _lastTextScale != scale;
 
   Future<void> _syncMap(BusRouteState s) async {
     // Read before the first await: every caller reaches this from
@@ -256,26 +269,32 @@ class _BusRouteScreenState extends State<BusRouteScreen>
   }
 
   Future<void> _maybeFit(BusRouteState s) async {
-    if (_fitted) return;
-    if (_mapController == null || _overlay.stopPoints.isEmpty) return;
+    if (!_canFit) return;
     _fitted = true;
     final stop = await _nearestStopOnEntry(s);
     final c = _mapController;
     if (!mounted || c == null) return;
-    if (stop == null) {
-      unawaited(c.animateCamera(_fitUpdate()));
-      return;
-    }
-    unawaited(
-      c.animateCamera(
-        CameraUpdate.newLatLngZoom(LatLng(stop.lat, stop.lon), 16),
-      ),
-    );
+    _fitCamera(c, stop);
+    _flashFittedStop(stop);
+  }
+
+  void _flashFittedStop(BusStopModel? stop) {
+    if (stop == null) return;
     // After a frame: the sheet's stop list and horizontal timeline have to be
     // laid out before their controllers can be scrolled to the stop.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _flashStop(stop.stopUid, moveCamera: false);
     });
+  }
+
+  bool get _canFit =>
+      !_fitted && _mapController != null && _overlay.stopPoints.isNotEmpty;
+
+  void _fitCamera(GoogleMapController controller, BusStopModel? stop) {
+    final update = stop == null
+        ? _fitUpdate()
+        : CameraUpdate.newLatLngZoom(LatLng(stop.lat, stop.lon), 16);
+    unawaited(controller.animateCamera(update));
   }
 
   Future<BusStopModel?> _nearestStopOnEntry(BusRouteState s) async {
@@ -327,19 +346,31 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     }
     // Deselecting is a dismissal — the rider closed the capsule, so leave the
     // camera where they left it.
-    if (moveCamera && selecting) {
-      final stop = _currentStops(
-        _bloc.state,
-      ).where((st) => st.stopUid == stopUid).firstOrNull;
-      if (stop != null && (stop.lat != 0 || stop.lon != 0)) {
-        _focusCameraOn(LatLng(stop.lat, stop.lon));
-      }
-    }
+    _focusSelection(stopUid, moveCamera: moveCamera, selecting: selecting);
     _flashTimer?.cancel();
     setState(() => _flashStopUid = stopUid);
-    _flashTimer = Timer(const Duration(milliseconds: 2500), () {
-      if (mounted) setState(() => _flashStopUid = null);
-    });
+    _flashTimer = Timer(const Duration(milliseconds: 2500), _clearFlash);
+  }
+
+  void _clearFlash() {
+    if (mounted) setState(() => _flashStopUid = null);
+  }
+
+  void _focusSelection(
+    String stopUid, {
+    required bool moveCamera,
+    required bool selecting,
+  }) {
+    if (moveCamera && selecting) _focusStop(stopUid);
+  }
+
+  void _focusStop(String stopUid) {
+    final stop = _currentStops(
+      _bloc.state,
+    ).where((st) => st.stopUid == stopUid).firstOrNull;
+    if (stop != null && (stop.lat != 0 || stop.lon != 0)) {
+      _focusCameraOn(LatLng(stop.lat, stop.lon));
+    }
   }
 
   void _scrollListTo(int index) {
@@ -522,7 +553,12 @@ class _BusRouteScreenState extends State<BusRouteScreen>
   void _confirmPick() {
     final plate = _pinnedPlate;
     final target = _targetStopUid;
-    if (plate == null || target == null) return;
+    if ((plate, target) case (final String plate, final String target)) {
+      _confirmTarget(plate, target);
+    }
+  }
+
+  void _confirmTarget(String plate, String target) {
     final s = _bloc.state;
     final route = s.route;
     if (route == null) return;
@@ -537,7 +573,7 @@ class _BusRouteScreenState extends State<BusRouteScreen>
           busTrackingLeg(
             route: route,
             stops: stops,
-            boardIndex: _pinnedNextStopIndex ?? -1,
+            boardIndex: _boardingIndex,
             targetIndex: idx,
             direction: s.direction,
           ),
@@ -555,6 +591,15 @@ class _BusRouteScreenState extends State<BusRouteScreen>
         event: AlightEvent.alight,
       ),
     );
+    _armLeadReminder(target, plate);
+    setState(() => _pickingStop = false);
+    _repaintPins();
+    _liftSheet(false);
+  }
+
+  int get _boardingIndex => _pinnedNextStopIndex ?? -1;
+
+  void _armLeadReminder(String target, String plate) {
     if (_leadStops > 0) {
       final trigger = resolveTriggerStopUid(
         _stopUidsInOrder,
@@ -574,9 +619,6 @@ class _BusRouteScreenState extends State<BusRouteScreen>
         );
       }
     }
-    setState(() => _pickingStop = false);
-    _repaintPins();
-    _liftSheet(false);
   }
 
   @override
@@ -593,6 +635,53 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     unawaited(_bloc.close());
     super.dispose();
   }
+
+  bool _staticChromeChanged(BusRouteState previous, BusRouteState current) =>
+      (
+        previous.route,
+        previous.direction,
+        previous.fare,
+        previous.bufferSequences,
+        previous.daily,
+        previous.loading,
+        previous.error,
+      ) !=
+      (
+        current.route,
+        current.direction,
+        current.fare,
+        current.bufferSequences,
+        current.daily,
+        current.loading,
+        current.error,
+      );
+
+  bool _sheetAtRest(double? offset) {
+    final metrics = _sheetController.metrics;
+    return metrics == null || offset == null || offset <= metrics.minOffset + 1;
+  }
+
+  void _onSheetPop(bool didPop) {
+    if (!didPop) _liftSheet(_pickingStop);
+  }
+
+  void _changeDirection(
+    BuildContext context,
+    BusRouteState state,
+    int direction,
+  ) {
+    if (state.direction == direction) return;
+    context.read<BusRouteBloc>().add(BusRouteDirectionToggled(direction));
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  (String, List<String>) _routeNames(BusRouteState state) => (
+    state.route?.routeName ?? '',
+    [state.route?.headsignGo ?? '', state.route?.headsignReturn ?? ''],
+  );
+
+  String _directionName(List<String> names, int direction) =>
+      names[direction == 0 ? 0 : 1];
 
   @override
   Widget build(BuildContext context) {
@@ -612,38 +701,20 @@ class _BusRouteScreenState extends State<BusRouteScreen>
         // etaMap is deliberately excluded: live ETA frames must not rebuild the
         // static chrome (map, app bar, FAB, sheet skeleton). ETA-consuming
         // subtrees observe etaMap through their own BlocSelectors instead.
-        buildWhen: (prev, curr) =>
-            prev.route != curr.route ||
-            prev.direction != curr.direction ||
-            prev.fare != curr.fare ||
-            prev.bufferSequences != curr.bufferSequences ||
-            prev.daily != curr.daily ||
-            prev.loading != curr.loading ||
-            prev.error != curr.error,
+        buildWhen: _staticChromeChanged,
         listener: (context, state) => _syncMap(state),
         builder: (context, state) {
-          final routeName = state.route?.routeName ?? '';
-          final dirNames = [
-            state.route?.headsignGo ?? '',
-            state.route?.headsignReturn ?? '',
-          ];
-          final dirName = state.direction == 0 ? dirNames[0] : dirNames[1];
+          final (routeName, dirNames) = _routeNames(state);
+          final dirName = _directionName(dirNames, state.direction);
 
           return ValueListenableBuilder<double?>(
             valueListenable: _sheetController,
             builder: (context, offset, child) {
               // minOffset rather than the peek fraction: the resting detent is
               // the pick offset mid-pick, and metrics stay honest either way.
-              final metrics = _sheetController.metrics;
-              final atRest =
-                  metrics == null ||
-                  offset == null ||
-                  offset <= metrics.minOffset + 1;
               return PopScope(
-                canPop: atRest,
-                onPopInvokedWithResult: (didPop, _) {
-                  if (!didPop) _liftSheet(_pickingStop);
-                },
+                canPop: _sheetAtRest(offset),
+                onPopInvokedWithResult: (didPop, _) => _onSheetPop(didPop),
                 child: child!,
               );
             },
@@ -790,15 +861,8 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                     flashStopUid: _flashStopUid,
                     direction: state.direction,
                     isLoading: state.loading,
-                    onDirectionChanged: (dir) {
-                      if (state.direction == dir) return;
-                      context.read<BusRouteBloc>().add(
-                        BusRouteDirectionToggled(dir),
-                      );
-                      if (_scrollController.hasClients) {
-                        _scrollController.jumpTo(0);
-                      }
-                    },
+                    onDirectionChanged: (dir) =>
+                        _changeDirection(context, state, dir),
                     sheetAnimation: sheetAnimation,
                     routeName: routeName,
                     dirNames: dirNames,

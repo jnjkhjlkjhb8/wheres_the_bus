@@ -10,6 +10,38 @@ import 'package:wheres_the_bus/features/metro/bloc/metro_eta_event.dart';
 import 'package:wheres_the_bus/features/metro/bloc/metro_eta_state.dart';
 
 void main() {
+  test(
+    'loading the same station again cancels its prior feed '
+    'and retries metadata',
+    () async {
+      final source = StreamController<MetroLiveArrival>.broadcast();
+      addTearDown(source.close);
+      final repository = _FakeMrtRepository(etaSource: () => source.stream)
+        ..scheduleFailure = true;
+      final bloc = MetroEtaBloc(repository: repository);
+      addTearDown(bloc.close);
+      bloc.add(const LoadMetroEta('TRTC', 'BL13'));
+      await bloc.stream.firstWhere((s) => s.error != null);
+      expect(repository.schedules, 1);
+      repository.scheduleFailure = false;
+      bloc.add(const LoadMetroEta('TRTC', 'BL13'));
+      await bloc.stream.firstWhere((s) => s.loading && s.error == null);
+      await pumpEventQueue();
+      expect(repository.schedules, 2);
+      source.add(
+        const MetroLiveArrival(
+          line: 'BL',
+          destination: '南港展覽館',
+          estimateSeconds: 120,
+        ),
+      );
+      final live = await bloc.stream.firstWhere((s) => s.arrivals.isNotEmpty);
+      expect(live.loading, isFalse);
+      expect(live.error, isNull);
+      expect(live.arrivals.single.destination, '南港展覽館');
+    },
+  );
+
   test('MetroEtaBloc has empty arrivals initially', () {
     final bloc = MetroEtaBloc();
     addTearDown(bloc.close);
@@ -96,6 +128,8 @@ void main() {
 class _FakeMrtRepository extends MrtRepository {
   _FakeMrtRepository({required this.etaSource});
   final Stream<MetroLiveArrival> Function() etaSource;
+  bool scheduleFailure = false;
+  int schedules = 0;
 
   @override
   Stream<MetroLiveArrival> eta(String system, String stationId) => etaSource();
@@ -104,5 +138,9 @@ class _FakeMrtRepository extends MrtRepository {
   Future<List<MetroScheduleEntry>> schedule(
     String system,
     String stationId,
-  ) async => [];
+  ) async {
+    schedules++;
+    if (scheduleFailure) throw const GrpcError.unavailable('no schedule');
+    return [];
+  }
 }

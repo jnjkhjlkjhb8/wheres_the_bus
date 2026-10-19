@@ -38,6 +38,30 @@ thsr_available_seats _example() => thsr_available_seats(
 );
 
 void main() {
+  test('timetable durations accept clocks and operator minute strings', () {
+    final cases = <String, int>{
+      '1:36': 96,
+      '0:01': 1,
+      'x:12': 12,
+      '2:x': 120,
+      '96分': 96,
+      '15': 15,
+      '1:2:3': 0,
+      'invalid': 0,
+      '': 0,
+    };
+    final rows = _decoder.decodeTimetable(
+      thsr_timetables(
+        items: [
+          for (final duration in cases.keys)
+            thsa_timetable(travelTime: duration),
+        ],
+      ),
+    );
+    expect(rows.map((row) => row.travelMinutes), cases.values);
+    expect(_decoder.decodeTimetable(thsr_timetables()), isEmpty);
+  });
+
   group('decodeSeatStatus', () {
     ThsrSeatStatus status(String from, String to, {bool business = false}) =>
         _decoder.decodeSeatStatus(

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:wheres_the_bus/data/repositories/near_repository.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_bloc.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_event.dart';
@@ -217,6 +218,72 @@ void main() {
     expect(bloc.state.stations.single.stationId, 'live');
   });
 
+  test('a dropped stream is cancelled before its replacement opens', () async {
+    final repository = _FakeNearRepository([_vm('replayed', 100)])
+      ..holdResponses = true;
+    final bloc = NearbyBloc(repository: repository);
+    addTearDown(bloc.close);
+
+    bloc.add(const NearbyRequested(radius: 500, lat: 25.2, lon: 121.7));
+    await pumpEventQueue();
+    expect(repository.cancelled, 0);
+    repository
+      ..dropStream()
+      ..holdResponses = false;
+    await bloc.stream.firstWhere((s) => !s.loading && s.stations.isNotEmpty);
+
+    expect(repository.cancelled, 1);
+    expect(repository.streamsOpened, 2);
+  });
+
+  test('a new query raises loading and clears the previous error', () async {
+    final repository = _FakeNearRepository.throwing();
+    final bloc = NearbyBloc(repository: repository);
+    addTearDown(bloc.close);
+
+    bloc.add(const NearbyRequested(radius: 800, lat: 25, lon: 121.5));
+    await bloc.stream.firstWhere((s) => s.error != null);
+    expect(bloc.state.loading, isFalse);
+
+    repository
+      ..shouldThrow = false
+      ..holdResponses = true;
+    bloc.add(const NearbyRetried());
+    await pumpEventQueue();
+
+    expect(bloc.state.loading, isTrue);
+    expect(bloc.state.error, isNull);
+  });
+
+  group('a request missing either coordinate falls back to the GPS fix', () {
+    late GeolocatorPlatform original;
+    late _GpsFix gps;
+    setUp(() {
+      original = GeolocatorPlatform.instance;
+      gps = _GpsFix();
+      GeolocatorPlatform.instance = gps;
+    });
+    tearDown(() => GeolocatorPlatform.instance = original);
+
+    for (final (name, event) in [
+      ('lat only', const NearbyRequested(radius: 800, lat: 1)),
+      ('lon only', const NearbyRequested(radius: 800, lon: 2)),
+      ('neither', const NearbyRequested(radius: 800)),
+    ]) {
+      test(name, () async {
+        final repository = _FakeNearRepository([_vm('here', 10)]);
+        final bloc = NearbyBloc(repository: repository);
+        addTearDown(bloc.close);
+
+        bloc.add(event);
+        await bloc.stream.firstWhere((s) => !s.loading);
+
+        expect(gps.reads, 1);
+        expect(repository.queries.single, (25.5, 121.9, 800));
+      });
+    }
+  });
+
   test('retry is a no-op before any query has been attempted', () async {
     final bloc = NearbyBloc(repository: _FakeNearRepository([]));
     addTearDown(bloc.close);
@@ -249,6 +316,9 @@ class _FakeNearRepository implements NearRepository {
   int streamsOpened = 0;
   final queries = <(double, double, int)>[];
 
+  /// How many response streams the bloc has cancelled.
+  int cancelled = 0;
+
   StreamController<List<NearStationViewModel>>? _open;
 
   /// Breaks the open stream the way a dropped connection does — an error on
@@ -270,7 +340,10 @@ class _FakeNearRepository implements NearRepository {
       final scripted = _perQuery;
       responses.add(scripted == null ? result : scripted[queries.length - 1]);
     });
-    responses.onCancel = subscription.cancel;
+    responses.onCancel = () {
+      cancelled++;
+      return subscription.cancel();
+    };
     return responses.stream;
   }
 
@@ -283,5 +356,35 @@ class _FakeNearRepository implements NearRepository {
     queries.add((lat, lon, radius));
     if (shouldThrow) throw Exception('boom');
     yield result;
+  }
+}
+
+class _GpsFix extends GeolocatorPlatform {
+  int reads = 0;
+
+  @override
+  Future<bool> isLocationServiceEnabled() async => true;
+
+  @override
+  Future<LocationPermission> checkPermission() async =>
+      LocationPermission.whileInUse;
+
+  @override
+  Future<Position> getCurrentPosition({
+    LocationSettings? locationSettings,
+  }) async {
+    reads++;
+    return Position(
+      latitude: 25.5,
+      longitude: 121.9,
+      timestamp: DateTime.utc(2026, 10, 10),
+      accuracy: 5,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
   }
 }

@@ -18,10 +18,7 @@ type UpstreamObs struct {
 func latestUpstreamDelay(obs []UpstreamObs, targetSeq int, now time.Time) (delay float64, seq int, ok bool) {
 	seq = -1
 	for _, o := range obs {
-		if o.StopSequence >= targetSeq {
-			continue
-		}
-		if now.Sub(o.ObservedAt) > _propagationStaleAfter {
+		if !usableUpstreamObservation(o, targetSeq, now) {
 			continue
 		}
 		if o.StopSequence > seq {
@@ -31,6 +28,10 @@ func latestUpstreamDelay(obs []UpstreamObs, targetSeq int, now time.Time) (delay
 		}
 	}
 	return delay, seq, ok
+}
+
+func usableUpstreamObservation(observation UpstreamObs, targetSeq int, now time.Time) bool {
+	return observation.StopSequence < targetSeq && now.Sub(observation.ObservedAt) <= _propagationStaleAfter
 }
 
 // decayDelay applies the per-stop exponential decay across a sequence gap. A

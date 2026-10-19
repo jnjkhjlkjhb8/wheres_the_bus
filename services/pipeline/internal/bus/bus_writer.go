@@ -40,9 +40,10 @@ type busTempSpec struct {
 }
 
 func writeBusCitySnapshot(ctx context.Context, db busTxBeginner, snapshot *busCitySnapshot) error {
-	if db == nil || snapshot == nil {
-		return errors.New("write bus city snapshot: nil database or snapshot")
+	if err := validateBusSnapshotWrite(db, snapshot); err != nil {
+		return err
 	}
+
 	tx, err := db.BeginBusTx(ctx)
 	if err != nil {
 		return _oops.With("city", snapshot.city).Wrapf(err, "write bus city snapshot: begin")
@@ -53,10 +54,28 @@ func writeBusCitySnapshot(ctx context.Context, db busTxBeginner, snapshot *busCi
 		_ = tx.Rollback(rollbackCtx)
 	}()
 
-	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '20s'"); err != nil {
-		return _oops.With("city", snapshot.city).Wrapf(err, "write bus city snapshot: set lock timeout")
+	return commitBusCitySnapshot(ctx, tx, snapshot)
+}
+
+func validateBusSnapshotWrite(db busTxBeginner, snapshot *busCitySnapshot) error {
+	if db == nil || snapshot == nil {
+		return errors.New("write bus city snapshot: nil database or snapshot")
+	}
+	return nil
+}
+
+func commitBusCitySnapshot(ctx context.Context, tx busTx, snapshot *busCitySnapshot) error {
+	if err := applyBusSnapshot(ctx, tx, snapshot); err != nil {
+		return err
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return _oops.With("city", snapshot.city).Wrapf(err, "write bus city snapshot: commit")
+	}
+	return nil
+}
+
+func stageBusSnapshot(ctx context.Context, tx busTx, snapshot *busCitySnapshot) error {
 	temps := []busTempSpec{
 		{
 			name: "temp_bus", create: `CREATE TEMP TABLE temp_bus (
@@ -117,14 +136,24 @@ func writeBusCitySnapshot(ctx context.Context, db busTxBeginner, snapshot *busCi
 		},
 	}
 	for _, temp := range temps {
-		if _, err := tx.Exec(ctx, temp.create); err != nil {
-			return _oops.With("city", snapshot.city).With("temp_name", temp.name).Wrapf(err, "write bus city snapshot: create")
-		}
-		if _, err := tx.CopyFrom(ctx, pgx.Identifier{temp.name}, temp.columns, pgx.CopyFromRows(temp.rows)); err != nil {
-			return _oops.With("city", snapshot.city).With("temp_name", temp.name).Wrapf(err, "write bus city snapshot: copy")
+		if err := stageBusTemp(ctx, tx, snapshot.city, temp); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+func stageBusTemp(ctx context.Context, tx busTx, city string, temp busTempSpec) error {
+	if _, err := tx.Exec(ctx, temp.create); err != nil {
+		return _oops.With("city", city).With("temp_name", temp.name).Wrapf(err, "write bus city snapshot: create")
+	}
+	if _, err := tx.CopyFrom(ctx, pgx.Identifier{temp.name}, temp.columns, pgx.CopyFromRows(temp.rows)); err != nil {
+		return _oops.With("city", city).With("temp_name", temp.name).Wrapf(err, "write bus city snapshot: copy")
+	}
+	return nil
+}
+
+func validateBusStationGroupRekey(ctx context.Context, tx busTx, city string) error {
 	// A changed group_uid under an existing (city, group_id) would hit the
 	// secondary unique constraint. Member FKs make an implicit destructive rekey
 	// unsafe, so diagnose it before the first target upsert.
@@ -135,13 +164,36 @@ func writeBusCitySnapshot(ctx context.Context, db busTxBeginner, snapshot *busCi
 		JOIN bus_station_groups current
 		  ON current.city = $1 AND current.group_id = incoming.group_id
 		WHERE current.group_uid <> incoming.group_uid
-	)`, snapshot.city).Scan(&unsafeGroupRekey); err != nil {
-		return _oops.With("city", snapshot.city).Wrapf(err, "write bus city snapshot: inspect station-group rekey")
+	)`, city).Scan(&unsafeGroupRekey); err != nil {
+		return _oops.With("city", city).Wrapf(err, "write bus city snapshot: inspect station-group rekey")
 	}
 	if unsafeGroupRekey {
-		return _oops.With("city", snapshot.city).Wrapf(errBusSnapshotConflict, "city station group changed UID for an existing group_id")
+		return _oops.With("city", city).Wrapf(errBusSnapshotConflict, "city station group changed UID for an existing group_id")
 	}
 
+	return nil
+}
+
+func applyBusSnapshot(ctx context.Context, tx busTx, snapshot *busCitySnapshot) error {
+	if err := prepareBusSnapshotWrite(ctx, tx, snapshot); err != nil {
+		return err
+	}
+	return writeBusSnapshotTargets(ctx, tx, snapshot)
+}
+
+func prepareBusSnapshotWrite(ctx context.Context, tx busTx, snapshot *busCitySnapshot) error {
+	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '20s'"); err != nil {
+		return _oops.With("city", snapshot.city).Wrapf(err, "write bus city snapshot: set lock timeout")
+	}
+
+	if err := stageBusSnapshot(ctx, tx, snapshot); err != nil {
+		return err
+	}
+
+	return validateBusStationGroupRekey(ctx, tx, snapshot.city)
+}
+
+func writeBusSnapshotTargets(ctx context.Context, tx busTx, snapshot *busCitySnapshot) error {
 	steps := []struct {
 		name string
 		sql  string
@@ -278,8 +330,5 @@ func writeBusCitySnapshot(ctx context.Context, db busTxBeginner, snapshot *busCi
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return _oops.With("city", snapshot.city).Wrapf(err, "write bus city snapshot: commit")
-	}
 	return nil
 }

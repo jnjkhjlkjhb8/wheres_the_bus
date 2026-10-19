@@ -20,7 +20,7 @@ class TrackNotification(private val context: Context) {
         const val NOTIF_CHANNEL_ID = "live_activity"
 
         // Broadcast fired by the card's 取消追蹤 action.
-        const val CANCEL_ACTION = "com.wheres.bus.action.CANCEL_TRACK"
+        const val CANCEL_ACTION = "me.rabbitsayhello.wheresthebus.action.CANCEL_TRACK"
 
         const val EXTRA_TRACK_ID = "track_id"
 

@@ -101,6 +101,39 @@ void main() {
   });
   tearDown(() => Future.wait([etaCtrl.close(), routeEtaCtrl.close()]));
 
+  test('a pinned route failure preserves the last stop distance', () async {
+    final b = bloc();
+    addTearDown(b.close);
+    b.add(JourneyStarted(legs: [_leg()], trackOnly: true, plate: 'ABC'));
+    await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+    routeEtaCtrl.add([
+      const BusStopEtaViewModel(
+        stopUid: 'stop-1',
+        direction: 0,
+        sequence: 5,
+        estimateSeconds: 300,
+        nextBusTime: '',
+        stopStatus: 0,
+        vehiclePlates: ['ABC'],
+      ),
+      const BusStopEtaViewModel(
+        stopUid: 'behind',
+        direction: 0,
+        sequence: 2,
+        estimateSeconds: 0,
+        nextBusTime: '',
+        stopStatus: 0,
+        vehiclePlates: ['ABC'],
+        plate: 'ABC',
+      ),
+    ]);
+    await b.stream.firstWhere((s) => s.pinnedStopsRemaining == 3);
+    routeEtaCtrl.addError(StateError('route stream disconnected'));
+    await Future<void>.delayed(Duration.zero);
+    expect(b.state.pinnedStopsRemaining, 3);
+    expect(b.state.phase, JourneyPhase.waiting);
+  });
+
   test('trackOnly session waits without suggesting boarding at zero', () async {
     final b = bloc()..add(JourneyStarted(legs: [_leg()], trackOnly: true));
     final started = await b.stream.firstWhere(

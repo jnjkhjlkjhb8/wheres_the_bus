@@ -50,13 +50,7 @@ class SubscriptionSync {
     }
     _sending = true;
     try {
-      do {
-        _stale = false;
-        final scope = _currentScope();
-        if (setEquals(scope, _sent)) break;
-        await _replace(scope);
-        _sent = scope;
-      } while (_stale);
+      await _flushScopes();
     } on Object catch (_) {
       // Drop what we believed the server had, so the next attempt resends even
       // if 收藏 is back at the last successfully stored scope.
@@ -64,5 +58,15 @@ class SubscriptionSync {
     } finally {
       _sending = false;
     }
+  }
+
+  Future<void> _flushScopes() async {
+    do {
+      _stale = false;
+      final scope = _currentScope();
+      if (setEquals(scope, _sent)) break;
+      await _replace(scope);
+      _sent = scope;
+    } while (_stale);
   }
 }

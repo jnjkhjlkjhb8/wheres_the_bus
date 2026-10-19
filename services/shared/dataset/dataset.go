@@ -1,6 +1,7 @@
 package dataset
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
@@ -47,25 +48,31 @@ func (d Spec) LoadPartitions() []string {
 }
 
 // url builds the landing URL for one partition of a fetched dataset.
+var _familyURLFormats = map[LandFamily]string{
+	FamilyBikeCity:    "/v2/Bike/%s/City/%s",
+	FamilyMetroSystem: "/v2/Rail/Metro/%s/%s",
+	FamilyRailDate:    "/v2/Rail/%s/TrainDate/%s",
+}
+
 func (d Spec) URL(part string) string {
-	switch d.Family {
-	case FamilyBusCity:
-		if part == "InterCity" {
-			return "/v2/Bus/" + d.APISeg + "/InterCity"
-		}
-		return "/v2/Bus/" + d.APISeg + "/City/" + part
-	case FamilyBikeCity:
-		return "/v2/Bike/" + d.APISeg + "/City/" + part
-	case FamilyMetroSystem:
-		return "/v2/Rail/Metro/" + d.APISeg + "/" + part
-	case FamilyRailSingle:
-		return "/v2/Rail/" + d.APISeg
-	case FamilyRailDate:
-		return "/v2/Rail/" + d.APISeg + "/TrainDate/" + part
-	case FamilyNone:
-		// Zero value: no registry entry, so no URL.
+	if d.Family == FamilyBusCity {
+		return d.busURL(part)
 	}
-	return ""
+	if d.Family == FamilyRailSingle {
+		return "/v2/Rail/" + d.APISeg
+	}
+	format, ok := _familyURLFormats[d.Family]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(format, d.APISeg, part)
+}
+
+func (d Spec) busURL(part string) string {
+	if part == "InterCity" {
+		return "/v2/Bus/" + d.APISeg + "/InterCity"
+	}
+	return "/v2/Bus/" + d.APISeg + "/City/" + part
 }
 
 // Partition enumerators shared by landing and loading so the two stages read the
@@ -76,13 +83,15 @@ func AllCities() []string { return busmodel.Cities }
 func BusLoadCities() []string {
 	out := make([]string, 0, len(busmodel.Cities)-1)
 	for _, city := range busmodel.Cities {
-		if city == "LienchiangCounty" || city == "InterCity" {
+		if excludedBusLoadCity(city) {
 			continue
 		}
 		out = append(out, city)
 	}
 	return append(out, "InterCity")
 }
+
+func excludedBusLoadCity(city string) bool { return city == "LienchiangCounty" || city == "InterCity" }
 
 var _displayStopCities = []string{"Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan"}
 
@@ -265,8 +274,12 @@ var BikeSkip = map[string]bool{
 // BusDailyTimetableSkip lists cities whose daily-timetable feed TDX does not
 // serve, so the TDX landing Partitions skip them.
 func BusDailyTimetableSkip(city string) bool {
-	return city == "Taipei" || city == "NewTaipei" || city == "Tainan" ||
-		city == "KinmenCounty" || city == "LienchiangCounty"
+	switch city {
+	case "Taipei", "NewTaipei", "Tainan", "KinmenCounty", "LienchiangCounty":
+		return true
+	default:
+		return false
+	}
 }
 
 // RailDateWindow returns today..today+n as YYYY-MM-DD strings, matching the

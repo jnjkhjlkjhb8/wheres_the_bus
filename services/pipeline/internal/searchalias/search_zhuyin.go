@@ -10,13 +10,11 @@ func syllableZhuyin(syllable string) string {
 		return z
 	}
 	initial, final := splitPinyinSyllable(syllable)
-	// ju/que/xuan spell ü as a plain u — there is no j/q/x syllable with a
-	// true /u/, so the rewrite is unambiguous. Only a leading u is the ü:
-	// the u in jiu belongs to the final ㄧㄡ.
-	if strings.HasPrefix(final, "u") &&
-		(initial == "j" || initial == "q" || initial == "x") {
-		final = "v" + final[len("u"):]
-	}
+	final = normalizeZhuyinFinal(initial, final)
+	return combineZhuyin(initial, final)
+}
+
+func combineZhuyin(initial, final string) string {
 	zi, iok := _zhuyinInitial[initial]
 	zf, fok := _zhuyinFinal[final]
 	if !iok || !fok {
@@ -24,6 +22,18 @@ func syllableZhuyin(syllable string) string {
 	}
 	return zi + zf
 }
+
+func normalizeZhuyinFinal(initial, final string) string {
+	// ju/que/xuan spell ü as a plain u — there is no j/q/x syllable with a
+	// true /u/, so the rewrite is unambiguous. Only a leading u is the ü:
+	// the u in jiu belongs to the final ㄧㄡ.
+	if strings.HasPrefix(final, "u") && _umlautInitials[initial] {
+		final = "v" + final[len("u"):]
+	}
+	return final
+}
+
+var _umlautInitials = map[string]bool{"j": true, "q": true, "x": true}
 
 // splitPinyinSyllable takes the longest initial that leaves a non-empty
 // final. Longest-first matters for the two-letter initials: "shan" is sh+an,

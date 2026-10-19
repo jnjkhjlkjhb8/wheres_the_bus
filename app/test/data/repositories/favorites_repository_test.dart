@@ -26,6 +26,44 @@ void main() {
   });
 
   test(
+    'toggle, pinning and duplicate adds preserve identity and timestamps',
+    () async {
+      const saved = Favorite(
+        type: FavoriteType.busStop,
+        refId: 'saved',
+        title: 'Saved',
+        createdAt: 1234,
+      );
+      expect(repo.isFavorite(saved.id), isFalse);
+      expect(await repo.toggle(saved), isTrue);
+      expect(repo.isFavorite(saved.id), isTrue);
+      expect(repo.all().single.createdAt, 1234);
+      await repo.add(saved.copyWith(title: 'Duplicate'));
+      expect(repo.all().single.title, 'Saved');
+      await repo.setPinned(saved.id, pinned: true);
+      expect(repo.pinned().single.id, saved.id);
+      await repo.setPinned('missing', pinned: true);
+      await repo.setPinned(saved.id, pinned: false);
+      expect(repo.pinned(), isEmpty);
+      expect(await repo.toggle(saved), isFalse);
+      expect(repo.isFavorite(saved.id), isFalse);
+      await Hive.box<dynamic>('favorites').put('invalid', 4);
+      await repo.setPinned('invalid', pinned: true);
+      expect(Hive.box<dynamic>('favorites').get('invalid'), 4);
+    },
+  );
+
+  test('add appends after the greatest saved order', () async {
+    await repo.add(_favorite('first'));
+    await repo.add(_favorite('second'));
+    await repo.saveOrder(repo.all().reversed.toList());
+    await repo.add(_favorite('third'));
+    expect(repo.all().map((f) => f.refId), ['second', 'first', 'third']);
+    expect(repo.all().last.order, 2);
+    expect(repo.all().last.createdAt, greaterThan(0));
+  });
+
+  test(
     'saveOrder emits exactly one coalesced refresh for an N-item reorder',
     () async {
       await repo.add(_favorite('a'));
@@ -69,4 +107,39 @@ void main() {
       expect(third.map((f) => f.refId).toList(), ['a', 'b', 'c']);
     },
   );
+
+  test('a write is signalled only after the coalesce window', () async {
+    await repo.add(_favorite('a'));
+    await _settle();
+    var refreshes = 0;
+    final sub = repo.changes().listen((_) => refreshes++);
+    addTearDown(sub.cancel);
+
+    await repo.add(_favorite('b'));
+    // Shorter than the 16ms window, so a debounce that fires at once would
+    // already have signalled.
+    await Future<void>.delayed(const Duration(milliseconds: 4));
+    expect(refreshes, 0);
+
+    await _settle();
+    expect(refreshes, 1);
+  });
+
+  test('the box watcher is released when the last listener leaves', () async {
+    await repo.add(_favorite('a'));
+    final sub = repo.changes().listen((_) {});
+    await sub.cancel();
+    await _settle();
+    final cached = repo.all();
+
+    // A write that bypasses the repository can only invalidate the cache
+    // through the watcher, so a stale cache proves the watcher is gone.
+    await Hive.box<dynamic>('favorites').put(
+      'busStop:direct',
+      _favorite('direct').toMap(),
+    );
+    await _settle();
+
+    expect(identical(repo.all(), cached), isTrue);
+  });
 }

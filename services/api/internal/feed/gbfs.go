@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/store"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -113,23 +115,31 @@ func sharedGBFSStations(ctx context.Context, db *pgxpool.Pool, cache *gbfsCache)
 		return snapshot.stations, nil
 	}
 	resultCh := cache.flight.DoChan("stations", func() (any, error) {
-		buildCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		cache.Lock()
-		current := cache.station
-		cache.Unlock()
-		if time.Now().Before(current.expiresAt) {
-			return current.stations, nil
-		}
-		stations, queryErr := gbfsStations(buildCtx, db)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		cache.Lock()
-		cache.station = gbfsStationSnapshot{stations: stations, expiresAt: time.Now().Add(_gbfsStaticTTL * time.Second)}
-		cache.Unlock()
-		return stations, nil
+		return refreshGBFSStations(db, cache)
 	})
+	return awaitGBFSStations(ctx, resultCh)
+}
+
+func refreshGBFSStations(db *pgxpool.Pool, cache *gbfsCache) ([]gbfsStation, error) {
+	buildCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cache.Lock()
+	current := cache.station
+	cache.Unlock()
+	if time.Now().Before(current.expiresAt) {
+		return current.stations, nil
+	}
+	stations, err := gbfsStations(buildCtx, db)
+	if err != nil {
+		return nil, err
+	}
+	cache.Lock()
+	cache.station = gbfsStationSnapshot{stations: stations, expiresAt: time.Now().Add(_gbfsStaticTTL * time.Second)}
+	cache.Unlock()
+	return stations, nil
+}
+
+func awaitGBFSStations(ctx context.Context, resultCh <-chan singleflight.Result) ([]gbfsStation, error) {
 	select {
 	case result := <-resultCh:
 		if result.Err != nil {
@@ -141,7 +151,7 @@ func sharedGBFSStations(ctx context.Context, db *pgxpool.Pool, cache *gbfsCache)
 	}
 }
 
-func gbfsStations(ctx context.Context, db *pgxpool.Pool) ([]gbfsStation, error) {
+func gbfsStations(ctx context.Context, db store.DB) ([]gbfsStation, error) {
 	rows, err := db.Query(ctx, `
 		SELECT station_uid, name, ST_Y(geom), ST_X(geom), COALESCE(address, ''), COALESCE(capacity, 0)
 		FROM bike_stations
@@ -151,6 +161,10 @@ func gbfsStations(ctx context.Context, db *pgxpool.Pool) ([]gbfsStation, error) 
 		return nil, _oops.Wrapf(err, "gbfs stations: query")
 	}
 	defer rows.Close()
+	return collectGBFSStations(rows)
+}
+
+func collectGBFSStations(rows pgx.Rows) ([]gbfsStation, error) {
 	stations := make([]gbfsStation, 0, 12000)
 	for rows.Next() {
 		var s gbfsStation
@@ -195,57 +209,63 @@ type gbfsStatus struct {
 
 func handleGBFSStationStatus(db *pgxpool.Pool, rc *redis.Client, cache *gbfsCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx := c.Request.Context()
-		cache.Lock()
-		cached := cache.status
-		cache.Unlock()
-		if time.Now().Before(cached.expiresAt) {
-			gbfsWrite(c, _gbfsStatusTTL, gin.H{"stations": cached.statuses})
-			return
-		}
-		resultCh := cache.flight.DoChan("status", func() (any, error) {
-			buildCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			cache.Lock()
-			current := cache.status
-			cache.Unlock()
-			if time.Now().Before(current.expiresAt) {
-				return current, nil
-			}
-			stations, stationsErr := sharedGBFSStations(buildCtx, db, cache)
-			if stationsErr != nil {
-				return nil, stationsErr
-			}
-			statuses, statusErr := buildGBFSStatuses(buildCtx, rc, stations)
-			if statusErr != nil {
-				return nil, statusErr
-			}
-			result := gbfsStatusSnapshot{statuses: statuses, expiresAt: time.Now().Add(_gbfsStatusTTL * time.Second), generatedAt: time.Now().Unix()}
-			cache.Lock()
-			cache.status = result
-			cache.Unlock()
-			return result, nil
-		})
-		var value any
-		var err error
-		select {
-		case result := <-resultCh:
-			if result.Err != nil {
-				err = result.Err
-			} else {
-				value = result.Val
-			}
-		case <-ctx.Done():
-			err = ctx.Err()
-		}
+		snapshot, err := sharedGBFSStatuses(c.Request.Context(), db, rc, cache)
 		if err != nil {
 			zap.S().Errorw("failed", "component", "gbfs", "action", "station_status", "event", "failed", "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "station status unavailable"})
 			return
 		}
-		snapshot := value.(gbfsStatusSnapshot)
 		gbfsWrite(c, _gbfsStatusTTL, gin.H{"stations": snapshot.statuses})
 	}
+}
+
+func sharedGBFSStatuses(ctx context.Context, db *pgxpool.Pool, rc *redis.Client, cache *gbfsCache) (gbfsStatusSnapshot, error) {
+	cache.Lock()
+	cached := cache.status
+	cache.Unlock()
+	if time.Now().Before(cached.expiresAt) {
+		return cached, nil
+	}
+	resultCh := cache.flight.DoChan("status", func() (any, error) {
+		return refreshGBFSStatuses(db, rc, cache)
+	})
+	return awaitGBFSStatuses(ctx, resultCh)
+}
+
+func awaitGBFSStatuses(ctx context.Context, resultCh <-chan singleflight.Result) (gbfsStatusSnapshot, error) {
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return gbfsStatusSnapshot{}, result.Err
+		}
+		return result.Val.(gbfsStatusSnapshot), nil
+	case <-ctx.Done():
+		return gbfsStatusSnapshot{}, ctx.Err()
+	}
+}
+
+func refreshGBFSStatuses(db *pgxpool.Pool, rc *redis.Client, cache *gbfsCache) (gbfsStatusSnapshot, error) {
+	buildCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cache.Lock()
+	current := cache.status
+	cache.Unlock()
+	if time.Now().Before(current.expiresAt) {
+		return current, nil
+	}
+	stations, stationsErr := sharedGBFSStations(buildCtx, db, cache)
+	if stationsErr != nil {
+		return gbfsStatusSnapshot{}, stationsErr
+	}
+	statuses, statusErr := buildGBFSStatuses(buildCtx, rc, stations)
+	if statusErr != nil {
+		return gbfsStatusSnapshot{}, statusErr
+	}
+	result := gbfsStatusSnapshot{statuses: statuses, expiresAt: time.Now().Add(_gbfsStatusTTL * time.Second), generatedAt: time.Now().Unix()}
+	cache.Lock()
+	cache.status = result
+	cache.Unlock()
+	return result, nil
 }
 
 func buildGBFSStatuses(ctx context.Context, rc *redis.Client, stations []gbfsStation) ([]gbfsStatus, error) {
@@ -253,37 +273,11 @@ func buildGBFSStatuses(ctx context.Context, rc *redis.Client, stations []gbfsSta
 	for start := 0; start < len(stations); start += _gbfsStatusChunk {
 		end := min(start+_gbfsStatusChunk, len(stations))
 		chunk := stations[start:end]
-		keys := make([]string, len(chunk))
-		observedKeys := make([]string, len(chunk))
-		for i, s := range chunk {
-			keys[i] = shared.BikeAvailabilityKey(s.StationID)
-			observedKeys[i] = shared.BikeAvailabilityObservedAtKey(s.StationID)
-		}
-		values, err := rc.MGet(ctx, keys...).Result()
-		if err != nil {
-			zap.S().Errorw("mget failed",
-				"component", "gbfs",
-				"action", "station_status",
-				"event", "mget_failed",
-				"err", err,
-			)
-			return nil, err
-		}
-		observedValues, err := rc.MGet(ctx, observedKeys...).Result()
+		chunkStatuses, err := gbfsStatusChunk(ctx, rc, chunk)
 		if err != nil {
 			return nil, err
 		}
-		for i, value := range values {
-			observedAt := int64(0)
-			if raw, ok := observedValues[i].(string); ok {
-				observedAt, _ = strconv.ParseInt(raw, 10, 64)
-			}
-			status, ok := decodeBikeStatus(chunk[i].StationID, value, observedAt)
-			if !ok {
-				continue
-			}
-			statuses = append(statuses, status)
-		}
+		statuses = append(statuses, chunkStatuses...)
 	}
 	if len(statuses) < len(stations) {
 		zap.S().Infow("partial",
@@ -295,6 +289,50 @@ func buildGBFSStatuses(ctx context.Context, rc *redis.Client, stations []gbfsSta
 		)
 	}
 	return statuses, nil
+}
+
+func gbfsStatusChunk(ctx context.Context, rc *redis.Client, chunk []gbfsStation) ([]gbfsStatus, error) {
+	keys, observedKeys := gbfsStationStatusKeys(chunk)
+	values, err := rc.MGet(ctx, keys...).Result()
+	if err != nil {
+		zap.S().Errorw("mget failed", "component", "gbfs", "action", "station_status", "event", "mget_failed", "err", err)
+		return nil, err
+	}
+	observedValues, err := rc.MGet(ctx, observedKeys...).Result()
+	if err != nil {
+		return nil, err
+	}
+	return decodeGBFSStatusChunk(chunk, values, observedValues), nil
+}
+
+func gbfsStationStatusKeys(chunk []gbfsStation) ([]string, []string) {
+	keys := make([]string, len(chunk))
+	observedKeys := make([]string, len(chunk))
+	for i, s := range chunk {
+		keys[i] = shared.BikeAvailabilityKey(s.StationID)
+		observedKeys[i] = shared.BikeAvailabilityObservedAtKey(s.StationID)
+	}
+	return keys, observedKeys
+}
+
+func decodeGBFSStatusChunk(chunk []gbfsStation, values, observedValues []any) []gbfsStatus {
+	statuses := make([]gbfsStatus, 0, len(chunk))
+	for i, value := range values {
+		status, ok := decodeBikeStatus(chunk[i].StationID, value, gbfsObservedTime(observedValues[i]))
+		if !ok {
+			continue
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
+func gbfsObservedTime(value any) int64 {
+	if raw, ok := value.(string); ok {
+		observedAt, _ := strconv.ParseInt(raw, 10, 64)
+		return observedAt
+	}
+	return 0
 }
 
 // decodeBikeStatus turns one cached Bike_eta into a GBFS status row. It reports

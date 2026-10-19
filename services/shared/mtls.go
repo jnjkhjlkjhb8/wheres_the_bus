@@ -23,6 +23,14 @@ func MTLSConfig(dir string, server bool, serverName string) (*tls.Config, error)
 	if err != nil {
 		return nil, _oops.With("dir", dir).Wrapf(err, "mtls: load key pair")
 	}
+	pool, err := readMTLSCertificatePool(dir)
+	if err != nil {
+		return nil, err
+	}
+	return configuredMTLS(cert, pool, server, serverName), nil
+}
+
+func readMTLSCertificatePool(dir string) (*x509.CertPool, error) {
 	caPEM, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
 	if err != nil {
 		return nil, _oops.With("dir", dir).Wrapf(err, "mtls: read CA")
@@ -31,6 +39,10 @@ func MTLSConfig(dir string, server bool, serverName string) (*tls.Config, error)
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, _oops.With("dir", dir).Errorf("mtls: CA bundle holds no certificate")
 	}
+	return pool, nil
+}
+
+func configuredMTLS(cert tls.Certificate, pool *x509.CertPool, server bool, serverName string) *tls.Config {
 	cfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
@@ -42,7 +54,7 @@ func MTLSConfig(dir string, server bool, serverName string) (*tls.Config, error)
 		cfg.RootCAs = pool
 		cfg.ServerName = serverName
 	}
-	return cfg, nil
+	return cfg
 }
 
 // GRPCServerCreds is MTLSConfig for a gRPC server, or nil (plaintext) when dir

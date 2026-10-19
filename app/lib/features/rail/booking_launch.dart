@@ -135,35 +135,49 @@ Future<String?> fetchRailBookingUrl(
   try {
     final res = await HttpClient.instance.dio.get<Map<String, dynamic>>(
       '/api/booking/deeplink',
-      queryParameters: <String, String>{
-        'agency': request.isThsr ? 'hsr' : 'tra',
-        'kind': useApp ? 'direct' : 'web',
-        'start_station': request.origin,
-        'end_station': request.destination,
-        'train_date': request.date,
-        'train_number': request.trainNumber,
-        // The two operators take unrelated ticket parameters — THSR counts per
-        // passenger category, TRA takes one quantity plus a booking class — so
-        // each agency sends only its own. The router maps them per variant.
-        if (request.isThsr) ...{
-          'train_time': request.time,
-          'carriage_type': request.business ? 'J' : 'Y',
-          for (final entry in request.tickets.entries)
-            '${entry.key.param}_ticket': '${entry.value}',
-        } else ...{
-          'ticket_type': '${request.traClass.code}',
-          'ticket_count': '${request.traCount}',
-        },
-      },
+      queryParameters: _bookingQuery(request, useApp: useApp),
     );
-    final url = res.data?['url'];
-    return url is String && url.isNotEmpty ? url : null;
+    return _bookingUrl(res.data?['url']);
   } on Object catch (_) {
     // Router unavailable (e.g. non-prod has no TDX credentials → 503) or
     // network error: the caller falls back to the plain booking site.
     return null;
   }
 }
+
+String? _bookingUrl(Object? value) =>
+    value is String && value.isNotEmpty ? value : null;
+
+Map<String, String> _bookingQuery(
+  RailBookingRequest request, {
+  required bool useApp,
+}) => <String, String>{
+  'agency': request.isThsr ? 'hsr' : 'tra',
+  'kind': useApp ? 'direct' : 'web',
+  'start_station': request.origin,
+  'end_station': request.destination,
+  'train_date': request.date,
+  'train_number': request.trainNumber,
+  // The two operators take unrelated ticket parameters — THSR counts per
+  // passenger category, TRA takes one quantity plus a booking class — so
+  // each agency sends only its own. The router maps them per variant.
+  ..._ticketParameters(request),
+};
+
+Map<String, String> _ticketParameters(RailBookingRequest request) =>
+    request.isThsr
+    ? _thsrTicketParameters(request)
+    : {
+        'ticket_type': '${request.traClass.code}',
+        'ticket_count': '${request.traCount}',
+      };
+
+Map<String, String> _thsrTicketParameters(RailBookingRequest request) => {
+  'train_time': request.time,
+  'carriage_type': request.business ? 'J' : 'Y',
+  for (final entry in request.tickets.entries)
+    '${entry.key.param}_ticket': '${entry.value}',
+};
 
 /// Opens [url] when the exchange produced one, else the operator's plain
 /// booking site. Returns what the user actually got.

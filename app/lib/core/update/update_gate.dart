@@ -22,6 +22,7 @@ class UpdateGate extends StatefulWidget {
     this.latestVersionOf,
     this.dismissedVersionOf,
     this.maintenanceOf,
+    this.storeUrlOf = storeUrl,
   });
 
   final Widget child;
@@ -41,6 +42,10 @@ class UpdateGate extends StatefulWidget {
 
   /// Injectable for tests; defaults to reading the maintenance keys.
   final ({bool enabled, String message}) Function()? maintenanceOf;
+
+  /// Injectable for tests; defaults to the allowlisted store URL from
+  /// [AppConfig].
+  final Uri? Function() storeUrlOf;
 
   @override
   State<UpdateGate> createState() => _UpdateGateState();
@@ -92,32 +97,41 @@ class _UpdateGateState extends State<UpdateGate> {
         () => _maintenance = maintenance.enabled ? maintenance.message : null,
       );
       final latest = _latestVersion;
-      switch (resolveUpdateStatus(
-        current: info.version,
-        minSupported: _minVersion,
-        latest: latest,
-      )) {
-        case UpdateStatus.blocked:
-          availableUpdate.value = null;
-          setState(() => _blockedAt = info.version);
-        case UpdateStatus.available:
-          // A dismissal only covers the exact version it was made against, so
-          // a newer release re-arms the nudge on its own.
-          availableUpdate.value = _dismissedVersion == latest ? null : latest;
-        case UpdateStatus.upToDate:
-          availableUpdate.value = null;
-      }
+      _applyVersionStatus(info.version, latest);
     } on Object catch (_) {
       // Fail open: any failure reading the version leaves the app usable.
     }
   }
+
+  void _applyVersionStatus(String current, String latest) {
+    switch (resolveUpdateStatus(
+      current: current,
+      minSupported: _minVersion,
+      latest: latest,
+    )) {
+      case UpdateStatus.blocked:
+        availableUpdate.value = null;
+        setState(() => _blockedAt = current);
+      case UpdateStatus.available:
+        // A dismissal only covers the exact version it was made against, so
+        // a newer release re-arms the nudge on its own.
+        availableUpdate.value = _availableVersion(latest);
+      case UpdateStatus.upToDate:
+        availableUpdate.value = null;
+    }
+  }
+
+  String? _availableVersion(String latest) =>
+      _dismissedVersion == latest ? null : latest;
 
   @override
   Widget build(BuildContext context) {
     final maintenance = _maintenance;
     if (maintenance != null) return _MaintenanceScreen(message: maintenance);
     final blocked = _blockedAt;
-    return blocked == null ? widget.child : _ForceUpdateScreen(blocked);
+    return blocked == null
+        ? widget.child
+        : _ForceUpdateScreen(blocked, storeUrl: widget.storeUrlOf());
   }
 }
 
@@ -205,9 +219,10 @@ class _MaintenanceScreen extends StatelessWidget {
 
 /// Blocking interstitial for an unsupported build.
 class _ForceUpdateScreen extends StatelessWidget {
-  const _ForceUpdateScreen(this.currentVersion);
+  const _ForceUpdateScreen(this.currentVersion, {required this.storeUrl});
 
   final String currentVersion;
+  final Uri? storeUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -216,7 +231,7 @@ class _ForceUpdateScreen extends StatelessWidget {
     // Only render the direct-open button for a URL that passes the allowlist
     // (F44); anything else falls back to the "search the store" copy instead
     // of a button that silently no-ops on tap.
-    final url = storeUrl();
+    final url = storeUrl;
 
     return _BlockingScreen(
       icon: Icons.system_update_rounded,

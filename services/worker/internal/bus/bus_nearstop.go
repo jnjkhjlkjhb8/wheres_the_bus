@@ -3,7 +3,6 @@ package bus
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
@@ -56,10 +55,7 @@ const (
 const _busNearStopMaxAge = 90 * time.Second
 
 func nearStopRecords(ctx context.Context, fetch pipeline.BoundFetch, city string) ([]rawBusNearStop, error) {
-	url := fmt.Sprintf("/v2/Bus/RealTimeNearStop/City/%s", city)
-	if city == "InterCity" {
-		url = "/v2/Bus/RealTimeNearStop/InterCity"
-	}
+	url := busCityFeedURL("RealTimeNearStop", city)
 	result, err := fetch(ctx, url, "bus_RealTimeNearStop"+city)
 	if err != nil {
 		return nil, _oops.With("city", city).Wrapf(err, "fetch bus near-stop events")
@@ -67,6 +63,10 @@ func nearStopRecords(ctx context.Context, fetch pipeline.BoundFetch, city string
 	if !result.Modified {
 		return nil, pipeline.InvalidateTDXFetch(result)
 	}
+	return decodeNearStopRecords(result, city)
+}
+
+func decodeNearStopRecords(result *shared.TDXFetch, city string) ([]rawBusNearStop, error) {
 	rows := make([]rawBusNearStop, 0)
 	if err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error {
 		return pipeline.DecodeLiveItems(dec, func(r rawBusNearStop) error {
@@ -83,23 +83,32 @@ func buildNearStopIndex(city string, rows []rawBusNearStop, now time.Time) map[b
 	index := make(map[busAtStopKey]stopPresence, len(rows))
 	for _, r := range rows {
 		plate := normalizeArrivalPlate(r.PlateNumb)
-		if r.StopUID == "" || plate == "" {
-			continue
-		}
-		if r.A2EventType != _busA2EventArrive {
-			continue
-		}
-		if r.DutyStatus == _busDutyStatusEnded || r.BusStatus == _busStatusNotInService {
-			continue
-		}
-		at := parseGPSTimeUnix(r.GPSTime)
-		if at == 0 || now.Sub(time.Unix(at, 0)) > _busNearStopMaxAge {
+		if !usableNearStop(r, plate, now) {
 			continue
 		}
 		uid, direction := shared.CanonicalSubroute(city, r.SubRouteUID, r.Direction)
 		index[busAtStopKey{uid, direction, r.StopUID}] = stopPresence{plate: plate}
 	}
 	return index
+}
+
+func usableNearStop(r rawBusNearStop, plate string, now time.Time) bool {
+	if !validNearStopIdentity(r, plate) || !nearStopInService(r) {
+		return false
+	}
+	at := parseGPSTimeUnix(r.GPSTime)
+	return freshNearStop(at, now)
+}
+
+func validNearStopIdentity(r rawBusNearStop, plate string) bool {
+	return r.StopUID != "" && plate != ""
+}
+func nearStopInService(r rawBusNearStop) bool {
+	return r.A2EventType == _busA2EventArrive && r.DutyStatus != _busDutyStatusEnded && r.BusStatus != _busStatusNotInService
+}
+
+func freshNearStop(at int64, now time.Time) bool {
+	return at != 0 && now.Sub(time.Unix(at, 0)) <= _busNearStopMaxAge
 }
 
 func (j *busLiveJob) nearStops(ctx context.Context, city string, now time.Time) map[busAtStopKey]stopPresence {
@@ -125,18 +134,25 @@ func busStopEventRows(city string, rows []rawBusNearStop, now time.Time) [][]any
 	for _, r := range rows {
 		plate := normalizeArrivalPlate(r.PlateNumb)
 		at := parseGPSTimeUnix(r.GPSTime)
-		if plate == "" || r.StopUID == "" || at == 0 {
+		if !archivableNearStop(plate, r.StopUID, at) {
 			continue
 		}
 		uid, direction := shared.CanonicalSubroute(city, r.SubRouteUID, r.Direction)
-		var tripStart any
-		if t, ok := parseSrcUpdateTime(r.TripStartTime); ok {
-			tripStart = t
-		}
+		tripStart := nearStopTripStart(r.TripStartTime)
 		out = append(out, []any{
 			plate, city, uid, int16(direction), r.StopUID, int16(r.StopSequence),
 			int16(r.A2EventType), time.Unix(at, 0), tripStart, int16(r.TripStartTimeType), now,
 		})
 	}
 	return out
+}
+
+func archivableNearStop(plate, stop string, at int64) bool {
+	return plate != "" && stop != "" && at != 0
+}
+func nearStopTripStart(raw string) any {
+	if t, ok := parseSrcUpdateTime(raw); ok {
+		return t
+	}
+	return nil
 }

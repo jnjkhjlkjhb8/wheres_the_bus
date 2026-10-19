@@ -10,6 +10,7 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/riderfwd"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 // riderLink is api's connection to rider-api: gRPC for the forwarded RPCs and
@@ -26,35 +27,62 @@ func dialRider() (riderLink, error) {
 	addr := envOr("RIDER_API_ADDR", "rider-api:50052")
 	httpURL := envOr("RIDER_HTTP_URL", "http://rider-api:8090")
 	tlsDir := os.Getenv("RIDER_TLS_DIR")
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return riderLink{}, _oops.With("addr", addr).Wrapf(err, "parse RIDER_API_ADDR")
-	}
-	creds, err := shared.GRPCClientCreds(tlsDir, host)
+	conn, err := dialRiderGRPC(addr, tlsDir)
 	if err != nil {
 		return riderLink{}, err
 	}
-	conn, err := riderfwd.Dial(addr, grpc.WithTransportCredentials(creds))
-	if err != nil {
-		return riderLink{}, _oops.Wrapf(err, "dial rider-api")
-	}
-	target, err := url.Parse(httpURL)
+	link, err := riderHTTPLink(conn, httpURL, tlsDir)
 	if err != nil {
 		_ = conn.Close()
+		return riderLink{}, err
+	}
+	return link, nil
+}
+
+func dialRiderGRPC(addr, tlsDir string) (*grpc.ClientConn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, _oops.With("addr", addr).Wrapf(err, "parse RIDER_API_ADDR")
+	}
+	creds, err := shared.GRPCClientCreds(tlsDir, host)
+	if err != nil {
+		return nil, err
+	}
+	return dialRiderConnection(addr, creds)
+}
+
+func dialRiderConnection(addr string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+	conn, err := riderfwd.Dial(addr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return nil, _oops.Wrapf(err, "dial rider-api")
+	}
+	return conn, nil
+}
+
+func riderHTTPLink(conn *grpc.ClientConn, httpURL, tlsDir string) (riderLink, error) {
+	target, err := url.Parse(httpURL)
+	if err != nil {
 		return riderLink{}, _oops.With("url", httpURL).Wrapf(err, "parse RIDER_HTTP_URL")
 	}
+	transport, err := riderHTTPTransport(tlsDir, target.Hostname())
+	if err != nil {
+		return riderLink{}, err
+	}
+	return riderLink{conn: conn, trackCancel: riderfwd.TrackCancelProxy(target, transport)}, nil
+}
+
+func riderHTTPTransport(tlsDir, hostname string) (http.RoundTripper, error) {
 	transport := http.DefaultTransport
 	if tlsDir != "" {
-		cfg, err := shared.MTLSConfig(tlsDir, false, target.Hostname())
+		cfg, err := shared.MTLSConfig(tlsDir, false, hostname)
 		if err != nil {
-			_ = conn.Close()
-			return riderLink{}, err
+			return nil, err
 		}
 		t := http.DefaultTransport.(*http.Transport).Clone()
 		t.TLSClientConfig = cfg
 		transport = t
 	}
-	return riderLink{conn: conn, trackCancel: riderfwd.TrackCancelProxy(target, transport)}, nil
+	return transport, nil
 }
 
 func envOr(key, fallback string) string {

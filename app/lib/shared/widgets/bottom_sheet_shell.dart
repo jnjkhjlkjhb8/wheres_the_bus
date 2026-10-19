@@ -475,37 +475,47 @@ class _SheetEdgeGestureDetectorState extends State<SheetEdgeGestureDetector>
     super.dispose();
   }
 
+  bool _onNotification(SheetNotification notification) =>
+      switch (notification) {
+        SheetDragStartNotification() => _startDrag(),
+        SheetDragEndNotification(:final dragDetails) => _endDrag(
+          -dragDetails.velocityY,
+        ),
+        // Arena cancellation must release the floor just like a completed drag.
+        SheetDragCancelNotification() => _endDrag(0),
+        SheetOverflowNotification(:final overflow, :final metrics) =>
+          _applyOverflow(metrics, overflow),
+        _ => false,
+      };
+
+  bool _startDrag() {
+    _dragging = true;
+    return false;
+  }
+
+  bool _endDrag(double velocity) {
+    _dragging = false;
+    // Downward floor overflow has the opposite sign to finger velocity.
+    _cleanup(velocity: velocity);
+    return false;
+  }
+
+  bool _applyOverflow(SheetMetrics metrics, double overflow) {
+    if (_dragging && _isFloor(metrics, overflow)) {
+      _onFloorOverflow(overflow);
+    } else {
+      _cleanup();
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     // The give is positional, so reduce-motion drops it
     // (see AppMotion.reduced).
     final reduced = AppMotion.reduced(context);
     return NotificationListener<SheetNotification>(
-      onNotification: (notification) {
-        switch (notification) {
-          case SheetDragStartNotification():
-            _dragging = true;
-          // Cancel matters as much as end: a drag the gesture arena takes away
-          // mid-pull would otherwise leave the sheet held off its detent.
-          case SheetDragEndNotification(:final dragDetails):
-            _dragging = false;
-            // The give grows as the sheet is pushed *down* past its lowest
-            // detent, so its rate is the finger's vertical velocity inverted.
-            _cleanup(velocity: -dragDetails.velocityY);
-          case SheetDragCancelNotification():
-            _dragging = false;
-            _cleanup();
-          case SheetOverflowNotification(:final overflow, :final metrics):
-            if (_dragging && _isFloor(metrics, overflow)) {
-              _onFloorOverflow(overflow);
-            } else {
-              _cleanup();
-            }
-          default:
-            break;
-        }
-        return false;
-      },
+      onNotification: _onNotification,
       child: AnimatedBuilder(
         animation: _overflow,
         // Passed through untouched: the give is a transform, so the sheet's

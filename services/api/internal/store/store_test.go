@@ -244,3 +244,35 @@ func TestBikeStaticDataNullGeom(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBusStationGroupMembersDiscardPartialResultsOnReadFailure(t *testing.T) {
+	for _, kind := range []string{"query", "scan", "iteration"} {
+		t.Run(kind, func(t *testing.T) {
+			db, err := pgxmock.NewPool()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			want := errors.New("member read failed")
+			expect := db.ExpectQuery("FROM bus_station_group_members").WithArgs("group")
+			if kind == "query" {
+				expect.WillReturnError(want)
+			} else {
+				data := pgxmock.NewRows([]string{"uid", "id", "name", "lng", "lat"}).AddRow("uid", "id", "name", 121.0, 25.0)
+				if kind == "scan" {
+					data.AddRow("uid2", "id2", want, 121.0, 25.0)
+				} else {
+					data.CloseError(want)
+				}
+				expect.WillReturnRows(data).RowsWillBeClosed()
+			}
+			members, err := BusStationGroupMembers(t.Context(), db, "group")
+			if members != nil || err == nil {
+				t.Fatalf("partial members=%v, error=%v", members, err)
+			}
+			if err := db.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

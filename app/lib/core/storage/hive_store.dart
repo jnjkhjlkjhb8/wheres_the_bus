@@ -133,13 +133,19 @@ class HiveStore {
 
   static List<int>? getStaticFresh(String key, Duration maxAge) {
     if (!staticCacheReady) return null;
-    final value = staticCache.get(key);
+    return _freshBytes(staticCache.get(key), maxAge);
+  }
+
+  static List<int>? _freshBytes(Object? value, Duration maxAge) {
     if (value is! Map) return null;
-    final writtenAt = value['t'];
-    if (writtenAt is! int) return null;
-    final age = DateTime.now().millisecondsSinceEpoch - writtenAt;
-    if (age < 0 || age > maxAge.inMilliseconds) return null;
+    if (!_freshTimestamp(value['t'], maxAge)) return null;
     return _bytesOf(value);
+  }
+
+  static bool _freshTimestamp(Object? timestamp, Duration maxAge) {
+    if (timestamp is! int) return false;
+    final age = DateTime.now().millisecondsSinceEpoch - timestamp;
+    return age >= 0 && age <= maxAge.inMilliseconds;
   }
 
   static List<int>? _bytesOf(Object? value) {
@@ -162,6 +168,10 @@ class HiveStore {
     await init();
     if (savedPlansReady) return;
     await _openSavedPlans();
+    _requireSavedPlansReady();
+  }
+
+  static void _requireSavedPlansReady() {
     if (!savedPlansReady) {
       throw StateError('saved_plans could not be opened');
     }
@@ -298,9 +308,16 @@ class HiveStore {
 
   static List<double>? get lastDevicePosition {
     if (!settingsReady) return null;
-    final raw = settings.get('last_device_position');
+    return _positionCoordinates(settings.get('last_device_position'));
+  }
+
+  static List<double>? _positionCoordinates(Object? raw) {
     if (raw is! List || raw.length != 2) return null;
-    final [lat, lon] = raw;
+    return _numericCoordinates(raw);
+  }
+
+  static List<double>? _numericCoordinates(List<dynamic> pair) {
+    final [lat, lon] = pair;
     if (lat is! num || lon is! num) return null;
     return [lat.toDouble(), lon.toDouble()];
   }
@@ -389,11 +406,16 @@ class HiveStore {
     final out = <String, String>{};
     raw.forEach((k, v) {
       final entry = (v as Map).cast<String, dynamic>();
-      final exp = entry['exp'] as int?;
-      if (exp != null && exp < nowMs) return;
-      out[k as String] = entry['id'] as String;
+      final id = _activeReminderId(entry, nowMs);
+      if (id != null) out[k as String] = id;
     });
     return out;
+  }
+
+  static String? _activeReminderId(Map<String, dynamic> entry, int nowMs) {
+    final expiry = entry['exp'] as int?;
+    if (expiry != null && expiry < nowMs) return null;
+    return entry['id'] as String;
   }
 
   static Future<void> putReminder(

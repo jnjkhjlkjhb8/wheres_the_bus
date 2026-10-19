@@ -199,6 +199,14 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
       return;
     }
     final latest = _latestVersionOf();
+    _publishUpdateComparison(current, latest, emit);
+  }
+
+  void _publishUpdateComparison(
+    String current,
+    String latest,
+    Emitter<SettingsState> emit,
+  ) {
     emit(
       isBelowVersion(current, latest)
           ? state.copyWith(

@@ -55,13 +55,22 @@ class MrtTrackBlocState extends Equatable {
   /// one, else by terminal destination.
   bool tracks(MetroArrival arrival) {
     final s = session;
-    if (s == null || s.status.isTerminal) return false;
-    if (s.line != arrival.line) return false;
-    if (s.tripId.isNotEmpty && arrival.trainNumber.isNotEmpty) {
+    if (s == null) return false;
+    if (!_activeOnLine(s, arrival.line)) return false;
+    if (_identifiedTrip(s, arrival)) {
       return s.tripId == arrival.trainNumber;
     }
-    return s.targetStationName.isNotEmpty || arrival.destination.isNotEmpty;
+    return _namedDestination(s, arrival);
   }
+
+  bool _activeOnLine(MrtTrackSession session, String line) =>
+      !session.status.isTerminal && session.line == line;
+
+  bool _identifiedTrip(MrtTrackSession session, MetroArrival arrival) =>
+      session.tripId.isNotEmpty && arrival.trainNumber.isNotEmpty;
+
+  bool _namedDestination(MrtTrackSession session, MetroArrival arrival) =>
+      session.targetStationName.isNotEmpty || arrival.destination.isNotEmpty;
 
   MrtTrackBlocState copyWith({
     MrtTrackSession? session,
@@ -82,12 +91,25 @@ class MrtTrackBlocState extends Equatable {
     boardEtaSeconds: clearBoardEta
         ? null
         : (boardEtaSeconds ?? this.boardEtaSeconds),
-    pickArrival: clearPick ? null : (pickArrival ?? this.pickArrival),
-    pickTargetStationId: clearPick || clearPickTarget
-        ? null
-        : (pickTargetStationId ?? this.pickTargetStationId),
-    pickLead: clearPick ? 0 : (pickLead ?? this.pickLead),
+    pickArrival: _pickedArrival(pickArrival, clearPick),
+    pickTargetStationId: _pickedTarget(
+      pickTargetStationId,
+      clearPick: clearPick,
+      clearTarget: clearPickTarget,
+    ),
+    pickLead: _pickedLead(pickLead, clearPick),
   );
+
+  MetroArrival? _pickedArrival(MetroArrival? arrival, bool clear) =>
+      clear ? null : (arrival ?? pickArrival);
+
+  String? _pickedTarget(
+    String? stationId, {
+    required bool clearPick,
+    required bool clearTarget,
+  }) => clearPick || clearTarget ? null : (stationId ?? pickTargetStationId);
+
+  int _pickedLead(int? lead, bool clear) => clear ? 0 : (lead ?? pickLead);
 
   @override
   List<Object?> get props => [

@@ -106,35 +106,42 @@ class _FeedbackViewState extends State<FeedbackView> {
           duration: reduceMotion ? Duration.zero : AppMotion.medium,
           switchInCurve: AppMotion.easeOut,
           switchOutCurve: AppMotion.easeOut,
-          transitionBuilder: (child, animation) {
-            final fade = FadeTransition(opacity: animation, child: child);
-            if (reduceMotion) return fade;
-            return SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.03),
-                end: Offset.zero,
-              ).animate(animation),
-              child: fade,
-            );
-          },
-          child: state.status == FeedbackStatus.sent && state.receipt != null
-              ? _ReceiptPanel(
-                  key: const ValueKey('sent'),
-                  receipt: state.receipt!,
-                )
-              : _Composer(
-                  key: const ValueKey('composing'),
-                  controller: _controller,
-                  category: _category,
-                  onCategoryChanged: _selectCategory,
-                  onSubmit: _submit,
-                  body: _body,
-                  state: state,
-                ),
+          transitionBuilder: (child, animation) =>
+              _transition(child, animation, reduceMotion),
+          child: _panel(state),
         ),
       ),
     );
   }
+
+  Widget _transition(
+    Widget child,
+    Animation<double> animation,
+    bool reduceMotion,
+  ) {
+    final fade = FadeTransition(opacity: animation, child: child);
+    if (reduceMotion) return fade;
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 0.03),
+        end: Offset.zero,
+      ).animate(animation),
+      child: fade,
+    );
+  }
+
+  Widget _panel(FeedbackState state) =>
+      state.status == FeedbackStatus.sent && state.receipt != null
+      ? _ReceiptPanel(key: const ValueKey('sent'), receipt: state.receipt!)
+      : _Composer(
+          key: const ValueKey('composing'),
+          controller: _controller,
+          category: _category,
+          onCategoryChanged: _selectCategory,
+          onSubmit: _submit,
+          body: _body,
+          state: state,
+        );
 }
 
 class _Composer extends StatelessWidget {
@@ -312,12 +319,7 @@ class _CategoryChip extends StatelessWidget {
             horizontal: AppTheme.space14,
             vertical: 9,
           ),
-          decoration: BoxDecoration(
-            // Selection is carried by the ink fill, not by a second hue: the
-            // accent is the only one this interface has.
-            color: selected ? cs.onSurface : cs.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-          ),
+          decoration: _decoration(cs),
           child: Text(
             category.labelOf(AppI18n.of(context)),
             style: AppTextStyles.bodyRegular.copyWith(
@@ -329,6 +331,13 @@ class _CategoryChip extends StatelessWidget {
       ),
     );
   }
+
+  BoxDecoration _decoration(ColorScheme cs) => BoxDecoration(
+    // Selection is carried by the ink fill, not by a second hue: the
+    // accent is the only one this interface has.
+    color: selected ? cs.onSurface : cs.surfaceContainerHighest,
+    borderRadius: BorderRadius.circular(AppTheme.radiusButton),
+  );
 }
 
 /// Appears only near the ceiling. A counter that is always on tells the rider
@@ -353,7 +362,7 @@ class _Counter extends StatelessWidget {
         child: Text(
           AppI18n.of(context).feedbackCharsLeft(remaining),
           style: AppTextStyles.memo.copyWith(
-            color: remaining <= 0 ? cs.error : cs.onSurfaceVariant,
+            color: remaining > 0 ? cs.onSurfaceVariant : cs.error,
           ),
         ),
       ),
@@ -431,25 +440,24 @@ class _SubmitButton extends StatelessWidget {
           color: enabled ? cs.onSurface : cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(AppTheme.radiusButton),
         ),
-        child: busy
-            ? SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: cs.surface,
-                ),
-              )
-            : Text(
-                AppI18n.of(context).feedbackSubmit,
-                style: AppTextStyles.bodyLarge.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: enabled ? cs.surface : cs.onSurfaceVariant,
-                ),
-              ),
+        child: _content(context, cs),
       ),
     );
   }
+
+  Widget _content(BuildContext context, ColorScheme cs) => busy
+      ? SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2.5, color: cs.surface),
+        )
+      : Text(
+          AppI18n.of(context).feedbackSubmit,
+          style: AppTextStyles.bodyLarge.copyWith(
+            fontWeight: FontWeight.w700,
+            color: enabled ? cs.surface : cs.onSurfaceVariant,
+          ),
+        );
 }
 
 /// The terminal state. It states the case number and, because this release has

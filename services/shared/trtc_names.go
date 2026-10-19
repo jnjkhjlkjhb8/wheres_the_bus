@@ -22,12 +22,16 @@ func ParseMMSS(s string) (int, bool) {
 	if !found {
 		return 0, false
 	}
+	return parseCountdownParts(minutes, seconds)
+}
+
+func parseCountdownParts(minutes, seconds string) (int, bool) {
 	mi, errMin := strconv.Atoi(minutes)
 	si, errSec := strconv.Atoi(seconds)
 	if errMin != nil || errSec != nil {
 		return 0, false
 	}
-	if mi < 0 || si < 0 || si > 59 {
+	if !countdownInRange(mi, si) {
 		return 0, false
 	}
 	return mi*60 + si, true
@@ -41,4 +45,8 @@ func TrtcLinePrefix(stationID string) string {
 		}
 	}
 	return stationID
+}
+
+func countdownInRange(minutes, seconds int) bool {
+	return minutes >= 0 && seconds >= 0 && seconds <= 59
 }

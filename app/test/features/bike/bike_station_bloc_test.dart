@@ -112,6 +112,28 @@ void main() {
     },
   );
 
+  test('the recovery event clears a live error and nothing else', () async {
+    final repository = _FakeBikeRepository(
+      etaSource: Stream<BikeAvailability>.empty,
+    );
+    final bloc = BikeStationBloc(
+      stationUid: 'bike-tpe',
+      repository: repository,
+    );
+    addTearDown(bloc.close);
+
+    await bloc.stream.firstWhere((s) => !s.loading);
+    bloc.add(const BikeStationEtaFailed(OfflineError()));
+    final failed = await bloc.stream.firstWhere((s) => s.liveError != null);
+
+    bloc.add(const BikeStationEtaRecovered());
+    final recovered = await bloc.stream.firstWhere((s) => s.liveError == null);
+
+    expect(recovered.hasLiveData, failed.hasLiveData);
+    expect(recovered.name, failed.name);
+    expect(recovered.capacity, failed.capacity);
+  });
+
   test(
     'a static fetch with no landed point keeps the caller-seeded coordinates '
     'instead of overwriting them with 0/0',

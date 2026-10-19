@@ -16,6 +16,72 @@ AlertRepository _repo() => AlertRepository(
 );
 
 void main() {
+  testWidgets('read untitled notice expands, collapses, clears and restores', (
+    tester,
+  ) async {
+    final bloc = AlertBloc(repository: _repo());
+    addTearDown(bloc.close);
+    const source = AlertSource(AlertSourceKind.tra);
+    final alert = AlertViewModel(
+      message: '時刻表異動',
+      level: AlertSeverity.yellow,
+      time: DateTime.now(),
+      source: source,
+    );
+    bloc.add(AlertReceived(source, [alert]));
+    await bloc.stream.first;
+    bloc.add(const AlertAllRead());
+    await tester.pumpWidget(
+      i18nApp(
+        BlocProvider.value(
+          value: bloc,
+          child: Builder(
+            builder: (context) => Scaffold(
+              body: Column(
+                children: [
+                  const UnreadBadge(count: 4),
+                  const UnreadBadge(count: 12),
+                  ElevatedButton(
+                    onPressed: () => showNotificationSheet(context),
+                    child: const Text('open'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('4'), findsOneWidget);
+    expect(find.text('9+'), findsOneWidget);
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
+    final title = tester.widget<Text>(find.text('時刻表異動'));
+    expect(title.maxLines, 2);
+    await tester.tap(find.text('時刻表異動'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
+    expect(tester.widget<Text>(find.text('時刻表異動')).maxLines, isNull);
+    expect(find.textContaining('發布'), findsOneWidget);
+    await tester.tap(find.text('時刻表異動'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(find.text('時刻表異動')).maxLines, 2);
+    await tester.tap(find.text(zhStrings.alertsClearAll));
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(bloc.state.visibleAlerts, isEmpty);
+    await tester.tapAt(const Offset(10, 20));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(zhStrings.commonUndo));
+    await tester.pumpAndSettle();
+    expect(bloc.state.visibleAlerts.single.message, '時刻表異動');
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('時刻表異動'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('row shows source chip, relative time, and expands to footer', (
     tester,
   ) async {

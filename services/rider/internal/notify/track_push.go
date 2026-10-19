@@ -75,21 +75,40 @@ func (p *TrackPusher) PushCard(ctx context.Context, card AlightCard, target Card
 	if p == nil {
 		return nil
 	}
-	var errs []error
+	fcmErr := p.pushFCMCard(ctx, card, target)
+	apnsErr := p.pushAPNSCard(ctx, card, target, alert)
+	return errors.Join(fcmErr, apnsErr)
+}
+
+func (p *TrackPusher) pushFCMCard(ctx context.Context, card AlightCard, target CardTarget) error {
 	if p.fcm != nil && target.FCMToken != "" {
 		if err := p.fcm.Send(ctx, cardMessage(target.FCMToken, card)); err != nil {
-			errs = append(errs, _oops.Wrapf(err, "fcm send"))
+			return _oops.Wrapf(err, "fcm send")
 		}
 	}
-	if p.apns != nil && target.ActivityToken != "" {
-		payload, err := liveActivityPayload(card, alert)
-		if err != nil {
-			errs = append(errs, _oops.Wrapf(err, "apns payload"))
-		} else if err := p.apns.SendLiveActivity(ctx, target.ActivityToken, payload); err != nil {
-			errs = append(errs, _oops.Wrapf(err, "apns"))
-		}
+	return nil
+}
+
+func (p *TrackPusher) pushAPNSCard(ctx context.Context, card AlightCard, target CardTarget, alert *CardAlert) error {
+	if p.apnsCardConfigured(target) {
+		return p.sendAPNSCard(ctx, card, target, alert)
 	}
-	return errors.Join(errs...)
+	return nil
+}
+
+func (p *TrackPusher) apnsCardConfigured(target CardTarget) bool {
+	return p.apns != nil && target.ActivityToken != ""
+}
+
+func (p *TrackPusher) sendAPNSCard(ctx context.Context, card AlightCard, target CardTarget, alert *CardAlert) error {
+	payload, err := liveActivityPayload(card, alert)
+	if err != nil {
+		return _oops.Wrapf(err, "apns payload")
+	}
+	if err := p.apns.SendLiveActivity(ctx, target.ActivityToken, payload); err != nil {
+		return _oops.Wrapf(err, "apns")
+	}
+	return nil
 }
 
 func cardMessage(token string, card AlightCard) *messaging.Message {
@@ -138,6 +157,30 @@ func liveActivityPayload(card AlightCard, alert *CardAlert) ([]byte, error) {
 		"walkMinutes":    0,
 		"asOfUnix":       card.AsOf.Unix(),
 	}
+	addOptionalCardState(state, card)
+
+	aps := map[string]any{
+		"timestamp":     card.AsOf.Unix(),
+		"event":         "update",
+		"content-state": state,
+	}
+	setCardLifetime(aps, card)
+	if alert != nil {
+		aps["alert"] = map[string]any{"title": alert.Title, "body": alert.Body}
+	}
+	return json.Marshal(map[string]any{"aps": aps})
+}
+
+func setCardLifetime(aps map[string]any, card AlightCard) {
+	if cardPhaseIsLive(card.Phase) {
+		aps["stale-date"] = card.AsOf.Add(card.StaleAfter).Unix()
+	} else {
+		aps["event"] = "end"
+		aps["dismissal-date"] = card.AsOf.Add(_cardDismissalLinger).Unix()
+	}
+}
+
+func addOptionalCardState(state map[string]any, card AlightCard) {
 	if card.VehicleID != "" {
 		state["vehicleId"] = card.VehicleID
 	}
@@ -148,21 +191,6 @@ func liveActivityPayload(card AlightCard, alert *CardAlert) ([]byte, error) {
 		state["lineColorHex"] = card.LineColorHex
 	}
 
-	aps := map[string]any{
-		"timestamp":     card.AsOf.Unix(),
-		"event":         "update",
-		"content-state": state,
-	}
-	if cardPhaseIsLive(card.Phase) {
-		aps["stale-date"] = card.AsOf.Add(card.StaleAfter).Unix()
-	} else {
-		aps["event"] = "end"
-		aps["dismissal-date"] = card.AsOf.Add(_cardDismissalLinger).Unix()
-	}
-	if alert != nil {
-		aps["alert"] = map[string]any{"title": alert.Title, "body": alert.Body}
-	}
-	return json.Marshal(map[string]any{"aps": aps})
 }
 
 func cardPhaseIsLive(phase string) bool {

@@ -150,4 +150,85 @@ void main() {
     expect(find.byKey(const Key('bootstrapRetryButton')), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
+
+  testWidgets(
+    'bootstrap completion makes initialization available to listeners',
+    (
+      tester,
+    ) async {
+      final initialized = App.isInitialized.value;
+      addTearDown(() => App.isInitialized.value = initialized);
+      App.isInitialized.value = true;
+      final controller = AppBootstrapController(
+        initHive: () async {},
+        initGrpc: () async {},
+        initFirebase: () async {},
+        initPowerSync: () async {},
+      );
+      addTearDown(controller.dispose);
+      final router = testRouter();
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(App(bootstrap: controller, debugRouter: router));
+      expect(App.isInitialized.value, isFalse);
+
+      await controller.start();
+      await tester.pumpAndSettle();
+      expect(controller.state, AppBootstrapState.ready);
+      expect(App.isInitialized.value, isTrue);
+      expect(find.text('home-placeholder'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('best-effort failure still makes the main app available', (
+    tester,
+  ) async {
+    final initialized = App.isInitialized.value;
+    addTearDown(() => App.isInitialized.value = initialized);
+    App.isInitialized.value = false;
+    final controller = AppBootstrapController(
+      initHive: () async {},
+      initGrpc: () async {},
+      initFirebase: () async =>
+          throw StateError('optional service unavailable'),
+      initPowerSync: () async {},
+    );
+    addTearDown(controller.dispose);
+    final router = testRouter();
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(App(bootstrap: controller, debugRouter: router));
+    await controller.start();
+    await tester.pumpAndSettle();
+    expect(controller.state, AppBootstrapState.degraded);
+    expect(App.isInitialized.value, isTrue);
+    expect(find.text('home-placeholder'), findsOneWidget);
+    expect(find.byKey(const Key('bootstrapRetryButton')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('disposed app does not publish a later bootstrap completion', (
+    tester,
+  ) async {
+    final initialized = App.isInitialized.value;
+    addTearDown(() => App.isInitialized.value = initialized);
+    App.isInitialized.value = false;
+    final controller = AppBootstrapController(
+      initHive: () async {},
+      initGrpc: () async {},
+      initFirebase: () async {},
+      initPowerSync: () async {},
+    );
+    addTearDown(controller.dispose);
+    final router = testRouter();
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(App(bootstrap: controller, debugRouter: router));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.start();
+    expect(controller.state, AppBootstrapState.ready);
+    expect(App.isInitialized.value, isFalse);
+    expect(tester.takeException(), isNull);
+  });
 }

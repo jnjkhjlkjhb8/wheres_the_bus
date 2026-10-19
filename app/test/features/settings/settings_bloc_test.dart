@@ -118,6 +118,46 @@ void main() {
       expect(bloc.state.liveActivityEnabled, isFalse);
       expect(settings.liveActivityEnabled, isFalse);
     });
+
+    test('shake-to-report toggle persists', () async {
+      final settings = repo();
+      final bloc = build(settings: settings)
+        ..add(const ShakeToReportToggled(value: false));
+      await bloc.stream.first;
+
+      expect(bloc.state.shakeToReport, isFalse);
+      expect(settings.shakeToReport, isFalse);
+    });
+
+    test('step-free routing toggle persists', () async {
+      final settings = repo();
+      final bloc = build(settings: settings)
+        ..add(const StepFreeRoutingToggled(value: true));
+      await bloc.stream.first;
+
+      expect(bloc.state.stepFreeRouting, isTrue);
+      expect(settings.stepFreeRouting, isTrue);
+    });
+
+    test('walk pace selection persists its speed', () async {
+      final settings = repo();
+      final bloc = build(settings: settings)
+        ..add(const WalkPaceSelected(WalkPace.faster));
+      await bloc.stream.first;
+
+      expect(bloc.state.walkPace, WalkPace.faster);
+      expect(settings.walkSpeedCmPerSec, 180);
+    });
+
+    test('language selection persists its key', () async {
+      final settings = repo();
+      final bloc = build(settings: settings)
+        ..add(const LanguageSelected(Language.en));
+      await bloc.stream.first;
+
+      expect(bloc.state.language, Language.en);
+      expect(settings.languageCode, Language.en.key);
+    });
   });
 
   group('push toggle', () {

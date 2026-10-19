@@ -86,49 +86,62 @@ func Wait(
 	sleep func(context.Context, time.Duration) error,
 ) error {
 	deadlineAt := now().Add(deadline)
-	var lastErr error
 	for {
-		ok, err := reader.MarkerExists(ctx, job, runDate)
-		if err != nil {
-			lastErr = err
-			zap.S().Errorw("read error",
-				"component", "pipeline",
-				"action", "wait_marker",
-				"event", "read_error",
-				"job", job,
-				"run_date", runDate.Format(time.DateOnly),
-				"err", err,
-			)
-		} else {
-			lastErr = nil
-			if ok {
-				return nil
-			}
-			zap.S().Warnw("not ready",
-				"component", "pipeline",
-				"action", "wait_marker",
-				"event", "not_ready",
-				"job", job,
-				"run_date", runDate.Format(time.DateOnly),
-			)
+		ready, err := readMarkerStatus(ctx, reader, job, runDate)
+		if ready {
+			return nil
 		}
-		if !now().Before(deadlineAt) {
-			zap.S().Errorw("give up",
-				"component", "pipeline",
-				"action", "wait_marker",
-				"event", "give_up",
-				"job", job,
-				"run_date", runDate.Format(time.DateOnly),
-			)
-			if lastErr != nil {
-				return _oops.With("job", job).With("run_date", runDate.Format(time.DateOnly)).Wrapf(lastErr, "pipeline marker not confirmed for by deadline")
-			}
-			return _oops.With("job", job).With("run_date", runDate.Format(time.DateOnly)).Errorf("pipeline marker not found for by deadline")
-		}
-		if err := sleep(ctx, interval); err != nil {
+		if err := waitMarkerInterval(ctx, job, runDate, deadlineAt, interval, now, sleep, err); err != nil {
 			return err
 		}
 	}
+}
+
+func readMarkerStatus(ctx context.Context, reader Reader, job string, runDate time.Time) (bool, error) {
+	ok, err := reader.MarkerExists(ctx, job, runDate)
+	if err != nil {
+		zap.S().Errorw("read error",
+			"component", "pipeline",
+			"action", "wait_marker",
+			"event", "read_error",
+			"job", job,
+			"run_date", runDate.Format(time.DateOnly),
+			"err", err,
+		)
+	} else {
+		if ok {
+			return true, nil
+		}
+		zap.S().Warnw("not ready",
+			"component", "pipeline",
+			"action", "wait_marker",
+			"event", "not_ready",
+			"job", job,
+			"run_date", runDate.Format(time.DateOnly),
+		)
+	}
+	return false, err
+}
+
+func waitMarkerInterval(ctx context.Context, job string, runDate, deadlineAt time.Time, interval time.Duration, now func() time.Time, sleep func(context.Context, time.Duration) error, lastErr error) error {
+	if !now().Before(deadlineAt) {
+		return markerDeadlineError(job, runDate, lastErr)
+	}
+	return sleep(ctx, interval)
+}
+
+func markerDeadlineError(job string, runDate time.Time, lastErr error) error {
+	zap.S().Errorw("give up",
+		"component", "pipeline",
+		"action", "wait_marker",
+		"event", "give_up",
+		"job", job,
+		"run_date", runDate.Format(time.DateOnly),
+	)
+	if lastErr != nil {
+		return _oops.With("job", job).With("run_date", runDate.Format(time.DateOnly)).Wrapf(lastErr, "pipeline marker not confirmed for by deadline")
+	}
+	return _oops.With("job", job).With("run_date", runDate.Format(time.DateOnly)).Errorf("pipeline marker not found for by deadline")
 }
 
 // SleepCtx waits d or returns ctx.Err() if ctx is done first. It is the

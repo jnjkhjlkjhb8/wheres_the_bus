@@ -55,32 +55,48 @@ func (r *Limiter) Allow(scope, caller string, limit int, window time.Duration) b
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
-	if r.nextCleanup.IsZero() || !now.Before(r.nextCleanup) {
-		r.nextCleanup = time.Time{}
-		for key, bucket := range r.buckets {
-			if !now.Before(bucket.expiresAt) {
-				delete(r.buckets, key)
-				continue
-			}
-			if r.nextCleanup.IsZero() || bucket.expiresAt.Before(r.nextCleanup) {
-				r.nextCleanup = bucket.expiresAt
-			}
-		}
-	}
+	r.cleanupExpired(now)
 	key := scope + "\x00" + caller
-	bucket, ok := r.buckets[key]
-	if !ok || !now.Before(bucket.expiresAt) {
-		bucket = rateBucket{expiresAt: now.Add(window)}
-	}
-	if r.nextCleanup.IsZero() || bucket.expiresAt.Before(r.nextCleanup) {
-		r.nextCleanup = bucket.expiresAt
-	}
+	bucket := r.bucketForWindow(key, now, window)
+	r.scheduleCleanup(bucket.expiresAt)
 	if bucket.count >= limit {
 		return false
 	}
 	bucket.count++
 	r.buckets[key] = bucket
 	return true
+}
+
+func (r *Limiter) bucketForWindow(key string, now time.Time, window time.Duration) rateBucket {
+	bucket, ok := r.buckets[key]
+	if !ok || !now.Before(bucket.expiresAt) {
+		return rateBucket{expiresAt: now.Add(window)}
+	}
+	return bucket
+}
+
+func (r *Limiter) scheduleCleanup(expiry time.Time) {
+	if r.nextCleanup.IsZero() || expiry.Before(r.nextCleanup) {
+		r.nextCleanup = expiry
+	}
+}
+
+// The caller holds r.mu so expiry and the next request share one window.
+func (r *Limiter) cleanupExpired(now time.Time) {
+	if r.cleanupDue(now) {
+		r.nextCleanup = time.Time{}
+		for key, bucket := range r.buckets {
+			if !now.Before(bucket.expiresAt) {
+				delete(r.buckets, key)
+				continue
+			}
+			r.scheduleCleanup(bucket.expiresAt)
+		}
+	}
+}
+
+func (r *Limiter) cleanupDue(now time.Time) bool {
+	return r.nextCleanup.IsZero() || !now.Before(r.nextCleanup)
 }
 func UnaryInterceptor(rl *Limiter, limit int, window time.Duration) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -107,57 +123,68 @@ func Allow(ctx context.Context, rl *Limiter, scope string, limit int, window tim
 	if addr == "" {
 		return true
 	}
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	return rl.Allow(scope, host, limit, window)
+	return rl.Allow(scope, hostAddress(addr), limit, window)
 }
 
 func callerAddress(ctx context.Context, p *peer.Peer, trusted []netip.Prefix) string {
-	addr := p.Addr.String()
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	peerIP, err := netip.ParseAddr(host)
-	if err != nil || len(trusted) == 0 {
-		return host
-	}
-	trustedPeer := false
-	for _, prefix := range trusted {
-		if prefix.Contains(peerIP) {
-			trustedPeer = true
-			break
-		}
-	}
-	if !trustedPeer {
+	host := hostAddress(p.Addr.String())
+	if !trustedPeer(host, trusted) {
 		return host
 	}
 	values := metadata.ValueFromIncomingContext(ctx, "x-forwarded-for")
 	if len(values) != 1 {
 		return host
 	}
-	parts := strings.Split(values[0], ",")
-	addresses := make([]netip.Addr, len(parts))
-	for i, part := range parts {
-		parsed, parseErr := netip.ParseAddr(strings.TrimSpace(part))
-		if parseErr != nil {
-			return host
-		}
-		addresses[i] = parsed.Unmap()
+	return forwardedCaller(values[0], trusted, host)
+}
+
+func hostAddress(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return host
+}
+
+func trustedPeer(host string, trusted []netip.Prefix) bool {
+	peerIP, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return isTrustedProxy(peerIP, trusted)
+}
+
+func forwardedCaller(value string, trusted []netip.Prefix, host string) string {
+	addresses, valid := forwardedAddresses(value)
+	if !valid {
+		return host
 	}
 	for i := len(addresses) - 1; i >= 0; i-- {
-		trustedHop := false
-		for _, prefix := range trusted {
-			if prefix.Contains(addresses[i]) {
-				trustedHop = true
-				break
-			}
-		}
-		if !trustedHop {
+		if !isTrustedProxy(addresses[i], trusted) {
 			return addresses[i].String()
 		}
 	}
 	return host
+}
+
+func forwardedAddresses(value string) ([]netip.Addr, bool) {
+	parts := strings.Split(value, ",")
+	addresses := make([]netip.Addr, len(parts))
+	for i, part := range parts {
+		parsed, parseErr := netip.ParseAddr(strings.TrimSpace(part))
+		if parseErr != nil {
+			return nil, false
+		}
+		addresses[i] = parsed.Unmap()
+	}
+	return addresses, true
+}
+
+func isTrustedProxy(address netip.Addr, trusted []netip.Prefix) bool {
+	for _, prefix := range trusted {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
