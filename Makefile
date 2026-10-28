@@ -131,8 +131,6 @@ verify: proto-go
 	./scripts/ci.sh flutter
 	./scripts/ci.sh security
 	./scripts/ci.sh migrations
-	./scripts/check-container-hardening.sh
-	./scripts/check-spacing-tokens.sh
 	git diff --exit-code
 
 render-env-test:

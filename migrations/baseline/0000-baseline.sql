@@ -8,7 +8,8 @@
 --   * `OWNER TO postgres` lines are removed, so those objects belong to the
 --     superuser that applies this file;
 --   * the service roles below are created first, because pg_dump does not
---     dump roles. Passwords are set by scripts/k3s-db-credentials.sh.
+--     dump roles. Passwords are set by bus-infra's
+--     scripts/k3s-db-credentials.sh passwords.
 --
 -- Apply it once, as a superuser, to an empty database; it is not idempotent.
 -- New schema changes go in new dated files next to this directory.

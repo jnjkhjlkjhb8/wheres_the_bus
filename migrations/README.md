@@ -1,6 +1,6 @@
 # Database Migrations
 
-SQL migrations in this directory are the single source of truth for the PostgreSQL schema. Every main release applies the pending files automatically: the migrate image (`docker/migrate/Dockerfile`, which runs `scripts/migrate-all.sh`) runs as a Job before the rollout (ADR-0027). `scripts/apply-migration.sh` applies one file by hand. Agents cannot reach the database directly. See ADR-0010 for the full lifecycle decision.
+SQL migrations in this directory are the single source of truth for the PostgreSQL schema. Every main release applies the pending files automatically: the migrate image (`docker/migrate/Dockerfile`, which runs `scripts/migrate-all.sh`) runs as a Job before the rollout (ADR-0027). bus-infra's `scripts/apply-migration.sh` applies one file by hand. Agents cannot reach the database directly. See ADR-0010 for the full lifecycle decision.
 
 `mysql/` holds the hand-applied DDL for the MySQL history archive (`services/shared/history`); it is not part of the PostgreSQL sequence.
 
@@ -20,7 +20,7 @@ for f in migrations/*.sql; do
 done
 ```
 
-The baseline is not idempotent: apply it once, as a superuser, to an empty database. It creates the service roles without passwords; `scripts/k3s-db-credentials.sh passwords` sets them. `scripts/check-migrations.sh` proves this exact sequence — baseline then every dated file — replays cleanly on an empty database whenever Docker is available (see "CI replay" below).
+The baseline is not idempotent: apply it once, as a superuser, to an empty database. It creates the service roles without passwords; bus-infra's `scripts/k3s-db-credentials.sh passwords` sets them. `scripts/check-migrations.sh` proves this exact sequence — baseline then every dated file — replays cleanly on an empty database whenever Docker is available (see "CI replay" below).
 
 The dated files the baseline replaced are in git history. The production `schema_migrations` ledger still lists them; `scripts/migrate-all.sh` only looks at files that exist, so those rows are inert.
 
@@ -34,15 +34,16 @@ Do not edit a migration after it has been merged to main (the migrate Job applie
 
 ## Ledger
 
-Every environment's schema carries a `schema_migrations` table (created by the baseline): `filename` primary key, `sha256`, `applied_at`, `applied_by`. `scripts/apply-migration.sh` is the only writer — it applies one file with `psql`, then records `(filename, sha256sum(file), now(), $USER)`. Applying the same already-recorded filename again is a no-op if the checksum matches, and a hard failure if it doesn't (the file was edited after being applied — see "Naming" above for why that must never happen). This is the operator-facing counterpart to the CI replay gate: CI proves the *sequence* replays clean on a disposable database; the ledger proves *which files have actually been applied* to a real, persistent one.
+Every environment's schema carries a `schema_migrations` table (created by the baseline): `filename` primary key, `sha256`, `applied_at`, `applied_by`. `scripts/migrate-all.sh` (the migrate Job) and bus-infra's `scripts/apply-migration.sh` write it — each applies a file with `psql`, then records `(filename, sha256sum(file), now(), $USER)`. Applying the same already-recorded filename again is a no-op if the checksum matches, and a hard failure if it doesn't (the file was edited after being applied — see "Naming" above for why that must never happen). This is the operator-facing counterpart to the CI replay gate: CI proves the *sequence* replays clean on a disposable database; the ledger proves *which files have actually been applied* to a real, persistent one.
 
 ```bash
-DATABASE_URL=... scripts/apply-migration.sh migrations/<file>.sql
+# from a bus-infra checkout, with this repo linked as bus/
+DATABASE_URL=... scripts/apply-migration.sh bus/migrations/<file>.sql
 ```
 
 The k3s migrate Job (bus-infra's `k8s/migrate/job.yaml`, run by its `scripts/k3s-deploy.sh` before every rollout) applies pending files and records them in this ledger.
 
-**Superuser-only files**: the k3s migrate Job runs as `bus_migrator`, which cannot create or drop roles or alter a publication it does not own. A file that needs that stops the Job with a hint naming `scripts/k3s-db-credentials.sh apply-superuser migrations/<file>.sql`, which applies it as `postgres` and records it so the next Job skips it. 
+**Superuser-only files**: the k3s migrate Job runs as `bus_migrator`, which cannot create or drop roles or alter a publication it does not own. A file that needs that stops the Job with a hint naming bus-infra's `scripts/k3s-db-credentials.sh apply-superuser bus/migrations/<file>.sql`, which applies it as `postgres` and records it so the next Job skips it. 
 ## CI replay
 
 `scripts/check-migrations.sh` builds `docker/postgres` (the PostgreSQL 18 + PostGIS + pgvector image the cluster runs), applies the baseline plus every non-`-- REPLAY: skip` dated migration against an empty `public` schema, and fails (exit 1) on any error. It is wired into `make verify` (`migrations-check`) and requires Docker; without Docker it prints `SKIPPED` and exits 0 (CI always has Docker, so the gate is never silently skipped there).
@@ -70,7 +71,7 @@ A file that only `TRUNCATE`s or `DELETE`s data (no compensating schema change) m
 
 - carry a header comment explaining why the action is safe and, where feasible, a row-count preview query an operator can run first (`SELECT count(*) FROM <table> WHERE ...`);
 - have its preview query run against the cluster database before the change is merged, since merging applies it;
-- be marked `-- REPLAY: skip` on its first line once applied, so `scripts/check-migrations.sh` does not re-run a one-shot cleanup against every fresh environment forever (`scripts/apply-migration.sh`'s ledger is the operator-side guard against an accidental second real apply).
+- be marked `-- REPLAY: skip` on its first line once applied, so `scripts/check-migrations.sh` does not re-run a one-shot cleanup against every fresh environment forever (the ledger is the operator-side guard against an accidental second real apply).
 
 ## Apply
 
