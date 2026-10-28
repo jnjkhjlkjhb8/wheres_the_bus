@@ -30,6 +30,8 @@ recorded="$(psql "$DATABASE_URL" "${psql_args[@]}" -At -F' ' -c 'SELECT filename
 
 pending=()
 for f in "$dir"/*.sql; do
+    # An empty directory leaves the glob unexpanded.
+    [ -e "$f" ] || continue
     name="$(basename "$f")"
     want="$(sha "$f")"
     have="$(printf '%s\n' "$recorded" | awk -v n="$name" '$1 == n { print $2 }')"

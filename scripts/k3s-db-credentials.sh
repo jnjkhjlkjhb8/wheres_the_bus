@@ -8,13 +8,10 @@
 #       a password that is already in place, so it is safe to re-run.
 #   prepare
 #       Creates the `bus` and `powersync` databases and the powersync_svc
-#       login (REPLICATION). Run before restoring the dump.
-#   finish <env-file>
-#       After the dump is restored: applies the service-roles migration and the
-#       files Azure never received as the superuser, backfills schema_migrations
-#       for the rest of the history Azure already reflects (the migrate Job runs
-#       as a non-superuser and would otherwise replay it all), sets the passwords from
-#       <env-file> and grants powersync_svc read access.
+#       login (REPLICATION). Run before applying migrations/baseline/.
+#   passwords <env-file>
+#       Sets every login's password from the URLs gen wrote to <env-file>.
+#       Run after the baseline has created the roles.
 #   apply-superuser <migration>
 #       Applies one migration that needs the superuser (the migrate Job runs as
 #       bus_migrator) and records it in schema_migrations, so the Job skips it.
@@ -33,14 +30,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 INFRA_DIR="${INFRA_DIR:-$repo_root/../bus-infra}"
-MIGRATION=2026-10-07-service-roles-k3s.sql
-# The Azure database has no schema_migrations, and its schema already reflects
-# every dated file up to AZURE_LAST except these, which never reached it
-# (checked against the 2026-10-09 dump, FDPL-119/FDPL-120). finish applies them
-# and records the rest without running them, so the migrate Job starts after
-# AZURE_LAST instead of replaying history onto live data.
-AZURE_LAST=2026-10-08-static-release-gtfs-rt-snapshot.sql
-AZURE_MISSING="2026-07-30-drop-bus-eta-history.sql 2026-07-31-drop-bus-travel-avg.sql 2026-08-08-drop-unread-export-tables.sql 2026-08-21-drop-bike-availability-history.sql 2026-09-19-arrival-reminder-retention.sql 2026-10-08-route-alert-outbox.sql 2026-10-08-static-release-gtfs-rt-snapshot.sql"
 # <env key>:<role>:<database>
 URLS="API_DATABASE_URL:api_svc:bus REALTIME_DATABASE_URL:realtime_svc:bus RIDER_DATABASE_URL:rider_svc:bus PIPELINE_DATABASE_URL:pipeline_svc:bus MIGRATE_DATABASE_URL:bus_migrator:bus PS_SOURCE_DATABASE_URL:powersync_svc:bus PS_DATABASE_URL:powersync_svc:powersync"
 
@@ -106,13 +95,11 @@ EOF
 }
 
 # apply_superuser <migration file>: applies it as the superuser once and records
-# it in the ledger. The Azure dump carries no ledger, so the table is created
-# first (the ledger migration is idempotent).
+# it in the ledger.
 apply_superuser() {
     local file="$1" name applied
     name="$(basename "$file")"
     [ -f "$file" ] || die "$file not found (run from the repo)"
-    "${psql[@]}" -d bus -v target_schema=public <migrations/2026-07-17-schema-migrations-ledger.sql >/dev/null
     applied="$("${psql[@]}" -d bus -At -c "SELECT 1 FROM schema_migrations WHERE filename = '$name'")"
     if [ -n "$applied" ]; then
         echo "k3s-db-credentials: $name already recorded; skipping"
@@ -123,57 +110,9 @@ apply_superuser() {
     echo "k3s-db-credentials: applied and recorded $name"
 }
 
-# backfill_ledger records every dated file up to AZURE_LAST that is not in the
-# ledger yet, without running it.
-backfill_ledger() {
-    local f name
-    for f in migrations/*.sql; do
-        name="$(basename "$f")"
-        [[ "$name" > "$AZURE_LAST" ]] && continue
-        printf "INSERT INTO schema_migrations (filename, sha256, applied_by) VALUES ('%s', '%s', 'azure-backfill') ON CONFLICT (filename) DO NOTHING;\n" "$name" "$(sha "$f")"
-    done | "${psql[@]}" -d bus
-}
-
-# The files applied above run as the superuser after 2026-10-07 has already
-# moved ownership, so what they create (route_alert_outbox, static_release, ...)
-# would stay owned by postgres and the migrate Job (bus_migrator) could not
-# alter it later. Hand every table and standalone sequence to bus_migrator.
-reown() {
-    "${psql[@]}" -d bus <<'SQL'
-DO $$
-DECLARE r record;
-BEGIN
-  FOR r IN
-    SELECT n.nspname, c.relname,
-           CASE c.relkind WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS kind
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname IN ('public', 'raw_tdx')
-      AND c.relkind IN ('r', 'p', 'S')
-      AND pg_get_userbyid(c.relowner) <> 'bus_migrator'
-      AND NOT (n.nspname = 'public' AND c.relname = 'spatial_ref_sys')
-      -- extension members stay with the extension
-      AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
-      -- a serial/identity sequence follows its table
-      AND NOT (c.relkind = 'S' AND EXISTS (SELECT 1 FROM pg_depend d
-                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype IN ('a', 'i')))
-  LOOP
-    EXECUTE format('ALTER %s %I.%I OWNER TO bus_migrator', r.kind, r.nspname, r.relname);
-  END LOOP;
-END
-$$;
-SQL
-}
-
-finish() {
-    local env_file="$1" f
+passwords() {
+    local env_file="$1"
     [ -f "$env_file" ] || die "env file not found: $env_file"
-    apply_superuser "migrations/$MIGRATION"
-    for f in $AZURE_MISSING; do
-        apply_superuser "migrations/$f"
-    done
-    reown
-    backfill_ledger
     python3 - "$env_file" "$URLS" <<'EOF' | "${psql[@]}" -d bus
 import re, sys
 path, spec = sys.argv[1], [s.split(":") for s in sys.argv[2].split()]
@@ -187,19 +126,6 @@ for key, role, _ in spec:
     if role not in done:
         print(f"ALTER ROLE {role} WITH LOGIN PASSWORD '{m.group(2)}';")
         done.add(role)
-print("GRANT USAGE ON SCHEMA public TO powersync_svc;")
-# Only what the sync rules read; the rider tables hold device tokens and stay
-# readable by rider_svc alone.
-print("GRANT SELECT ON public.mrt_journey_matrix, public.mrt_schedule TO powersync_svc;")
-# Azure's publication also lists tables the app no longer syncs; keep only what
-# the sync rules read.
-print("""DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'powersync') THEN
-    ALTER PUBLICATION powersync SET TABLE public.mrt_journey_matrix, public.mrt_schedule;
-  ELSE
-    CREATE PUBLICATION powersync FOR TABLE public.mrt_journey_matrix, public.mrt_schedule;
-  END IF;
-END $$;""")
 EOF
     "${psql[@]}" -d bus -At -c "SELECT rolname || ' password=' || (rolpassword IS NOT NULL) FROM pg_authid WHERE rolname IN ('bus_migrator','api_svc','realtime_svc','rider_svc','pipeline_svc','powersync_svc') ORDER BY 1"
 }
@@ -251,8 +177,8 @@ PY
 case "${1:-}" in
     gen) [ "$#" -eq 2 ] || die "usage: $0 gen <env-file>"; gen "$2" ;;
     prepare) prepare ;;
-    finish) [ "$#" -eq 2 ] || die "usage: $0 finish <env-file>"; finish "$2" ;;
+    passwords) [ "$#" -eq 2 ] || die "usage: $0 passwords <env-file>"; passwords "$2" ;;
     apply-superuser) [ "$#" -eq 2 ] || die "usage: $0 apply-superuser <migration>"; apply_superuser "$2" ;;
     rotate) [ "$#" -eq 4 ] || die "usage: $0 rotate <env-file> <secret-files-dir> <role>"; rotate "$2" "$3" "$4" ;;
-    *) die "usage: $0 <gen <env-file>|prepare|finish <env-file>|apply-superuser <migration>|rotate <env-file> <secret-files-dir> <role>>" ;;
+    *) die "usage: $0 <gen <env-file>|prepare|passwords <env-file>|apply-superuser <migration>|rotate <env-file> <secret-files-dir> <role>>" ;;
 esac

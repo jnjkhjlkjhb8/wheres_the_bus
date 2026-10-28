@@ -73,6 +73,7 @@ run_round() {
     echo "  OK        baseline/0000-baseline.sql"
 
     for f in migrations/*.sql; do
+        [ -e "$f" ] || continue
         name="$(basename "$f")"
         if is_replay_skip "$f"; then
             echo "  SKIP      $name (marked -- REPLAY: skip)"

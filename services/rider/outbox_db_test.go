@@ -31,7 +31,7 @@ func outboxTestPool(t *testing.T) *pgxpool.Pool {
 	var exists bool
 	if err := pool.QueryRow(context.Background(),
 		`SELECT to_regclass('route_alert_outbox') IS NOT NULL`).Scan(&exists); err != nil || !exists {
-		t.Fatalf("route_alert_outbox missing (err=%v); apply migrations/2026-10-08-route-alert-outbox.sql", err)
+		t.Fatalf("route_alert_outbox missing (err=%v); apply migrations/baseline/0000-baseline.sql", err)
 	}
 	if _, err := pool.Exec(context.Background(), `DELETE FROM route_alert_outbox`); err != nil {
 		t.Fatal(err)

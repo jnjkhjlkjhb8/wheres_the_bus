@@ -1,5 +1,5 @@
 // Package dbgrants checks the per-service PostgreSQL grants from
-// migrations/2026-10-07-service-roles-k3s.sql (ADR-0026) against a database
+// migrations/baseline/0000-baseline.sql (ADR-0026) against a database
 // the migrations have been applied to. It has no non-test code.
 package dbgrants
 
@@ -50,7 +50,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	}
 	if missing > 0 {
 		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
-			t.Fatal("service roles missing; apply migrations/2026-10-07-service-roles-k3s.sql")
+			t.Fatal("service roles missing; apply migrations/baseline/0000-baseline.sql")
 		}
 		t.Skip("service roles not provisioned; skipping grant tests")
 	}

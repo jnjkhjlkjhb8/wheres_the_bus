@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	_syncRulesFrom   = regexp.MustCompile(`(?i)\bFROM\s+([a-z_]+)`)
-	_publicTableList = regexp.MustCompile(`public\.([a-z_]+)`)
-	_finishPubLine   = regexp.MustCompile(`(?m)^.*(?:SET TABLE|FOR TABLE|GRANT SELECT ON) public\..*$`)
+	_syncRulesFrom = regexp.MustCompile(`(?i)\bFROM\s+([a-z_]+)`)
+	_pubTableLine  = regexp.MustCompile(`(?m)^ALTER PUBLICATION powersync ADD TABLE ONLY public\.([a-z_]+);$`)
+	_grantLine     = regexp.MustCompile(`(?m)^GRANT SELECT ON TABLE public\.([a-z_]+) TO powersync_svc;$`)
 )
 
 // syncRuleTables returns the tables powersync/sync-rules.yaml reads, sorted.
@@ -31,27 +31,23 @@ func syncRuleTables(t *testing.T) []string {
 	return slices.Compact(tables)
 }
 
-// TestFinishPublishesSyncRuleTables keeps the publication and the powersync_svc
-// grants that scripts/k3s-db-credentials.sh finish sets up equal to what the
-// sync rules read, so neither can drift from the other.
-func TestFinishPublishesSyncRuleTables(t *testing.T) {
+// TestBaselinePublishesSyncRuleTables keeps the publication and the
+// powersync_svc grants in the baseline equal to what the sync rules read, so
+// neither can drift from the other.
+func TestBaselinePublishesSyncRuleTables(t *testing.T) {
 	want := syncRuleTables(t)
-	raw, err := os.ReadFile("../../../scripts/k3s-db-credentials.sh")
+	raw, err := os.ReadFile("../../../migrations/baseline/0000-baseline.sql")
 	if err != nil {
-		t.Fatalf("read credentials script: %v", err)
+		t.Fatalf("read baseline: %v", err)
 	}
-	lines := _finishPubLine.FindAllString(string(raw), -1)
-	if len(lines) != 3 {
-		t.Fatalf("want the GRANT, SET TABLE and FOR TABLE lines in finish, found %d: %q", len(lines), lines)
-	}
-	for _, line := range lines {
+	for name, rx := range map[string]*regexp.Regexp{"publication": _pubTableLine, "powersync_svc grants": _grantLine} {
 		var got []string
-		for _, m := range _publicTableList.FindAllStringSubmatch(line, -1) {
+		for _, m := range rx.FindAllStringSubmatch(string(raw), -1) {
 			got = append(got, m[1])
 		}
 		slices.Sort(got)
 		if !slices.Equal(got, want) {
-			t.Errorf("%q lists %v, sync rules read %v", line, got, want)
+			t.Errorf("baseline %s list %v, sync rules read %v", name, got, want)
 		}
 	}
 }
