@@ -67,9 +67,6 @@ docs/requirements.md
 /functions
 /router
 secrets/
-!k8s/infra/secrets/
-k8s/infra/secrets/*
-!k8s/infra/secrets/*.enc.yaml
 env/.rendered/
 osrm-data/
 motis-data/
@@ -111,9 +108,11 @@ temp/
 .tmp-gocache/
 app/android/build/
 /.tools/
-k8s/.release/
 *.dump
 
 # Served by the router from /api/assets instead of bundled (FDPL-125)
 app/assets/mrt/TRTC_map_*.svg
 app/assets/rails/notes/
+
+# Local security scan reports; never publish.
+CLAUDE-SECURITY-COMBINED-*/

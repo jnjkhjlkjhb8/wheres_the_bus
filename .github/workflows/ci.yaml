@@ -122,28 +122,6 @@ jobs:
       - name: migration lint (squawk) + replay gate (baseline + full history)
         run: ./scripts/ci.sh migrations
 
-  manifests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-      - run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
-      - name: render + kubeconform (k8s/infra, k8s/app, k8s/migrate, k8s/restore)
-        run: |
-          d="sha256:$(printf '0%.0s' $(seq 64))"
-          jq -n --arg d "$d" '{commit: "ci", images: ({} | .api = "ghcr.io/x/bus-api@\($d)"
-            | .realtime = "ghcr.io/x/bus-realtime@\($d)" | .rider = "ghcr.io/x/bus-rider@\($d)"
-            | .pipeline = "ghcr.io/x/bus-pipeline@\($d)")}' > release.json
-          ./scripts/k3s-deploy.sh render release.json app.yaml
-          kubectl kustomize --load-restrictor LoadRestrictionsNone k8s/infra > infra.yaml
-          # CRDs (cert-manager, k3s HelmChart) have no bundled schema.
-          kubeconform -strict -summary -ignore-missing-schemas infra.yaml app.yaml k8s/migrate/job.yaml k8s/restore/postgres-restore.yaml
-
   # Old code on the new schema: the release running in the cluster (the last
   # successful deploy) must keep working after this change's migrations, since
   # migrations run before the rollout and are never rolled back.
@@ -152,7 +130,7 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: read
-      actions: read
+      deployments: read
     services:
       redis:
         image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
@@ -173,17 +151,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # deploy.yaml 404s until it reaches the default branch; that means no
-          # deploy has ever succeeded. Any other error must still fail the job.
-          if out=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yaml --branch main \
-            --status success --limit 1 --json headSha --jq '.[0].headSha // empty' 2>&1); then
-            sha="$out"
-          elif grep -q 'HTTP 404' <<<"$out"; then
-            sha=""
-          else
-            echo "$out" >&2
-            exit 1
-          fi
+          # bus-infra's deploy records each successful rollout as a production
+          # deployment here; the newest one whose latest status is success is live.
+          sha=""
+          # Assigned first so an API error fails the job instead of reading as "never deployed".
+          deployments=$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=production&per_page=20" \
+            --jq '.[] | "\(.id):\(.sha)"')
+          for d in $deployments; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/deployments/${d%%:*}/statuses?per_page=1" --jq '.[0].state // empty')
+            if [ "$state" = success ]; then sha="${d#*:}"; break; fi
+          done
           if [ -z "$sha" ]; then
             echo "::notice::no successful deploy yet; nothing is live to stay compatible with"
           fi

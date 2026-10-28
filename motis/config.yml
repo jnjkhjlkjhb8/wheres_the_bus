@@ -1,7 +1,7 @@
 # MOTIS v2 configuration (ADR-0022).
 #
 # This file is a template, not the file MOTIS reads. `motis-import` in
-# docker/docker-compose.yaml substitutes __GTFS_RT_CREDENTIAL__ and writes the
+# The `motis-import` job in bus-infra's k8s/app/pipeline.yaml substitutes __GTFS_RT_CREDENTIAL__ and writes the
 # result into the data directory, because `motis server` reads config.yml from
 # inside the directory `motis import` produced -- not from here. Changing
 # anything below therefore takes effect on the next import, not on restart.

@@ -44,7 +44,7 @@ jobs:
           - { name: rider, file: services/rider/Dockerfile, context: . }
           - { name: pipeline, file: services/pipeline/Dockerfile, context: . }
           - { name: migrate, file: docker/migrate/Dockerfile, context: . }
-          # Infrastructure: the operator pins this digest in k8s/infra; the
+          # Infrastructure: the operator pins this digest in bus-infra's k8s/infra; the
           # deploy workflow never rolls it out.
           - { name: postgres, file: docker/postgres/Dockerfile, context: docker/postgres }
     steps:
@@ -114,3 +114,17 @@ jobs:
           name: release-manifest
           path: release-manifest.json
           retention-days: 90
+      # Deployment lives in the private bus-infra repository; workflow_run does
+      # not fire across repositories, so hand it the manifest directly. A manual
+      # run is not a main merge and does not deploy.
+      - name: hand the release to bus-infra
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::INFRA_DISPATCH_TOKEN is unset; this release is not deployed"
+            exit 0
+          fi
+          jq '{event_type: "bus-release", client_payload: {manifest: .}}' release-manifest.json \
+            | gh api "repos/$GITHUB_REPOSITORY_OWNER/bus-infra/dispatches" --input -
