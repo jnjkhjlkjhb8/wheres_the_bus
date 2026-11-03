@@ -37,7 +37,7 @@ func transitTestServices(t *testing.T) (*pgxpool.Pool, *redis.Client) {
 func TestBikeStaticLoadsCoordinatesAndUsesCachedPayload(t *testing.T) {
 	db, rc := transitTestServices(t)
 	uid := fmt.Sprintf("quality-bike-static-%d", os.Getpid())
-	if _, err := db.Exec(t.Context(), `INSERT INTO bike_stations(station_uid,name,capacity,service_type,address,geom) VALUES($1,'自行車站',15,2,'路口',ST_SetSRID(ST_MakePoint(121.5,25.25),4326))`, uid); err != nil {
+	if _, err := db.Exec(t.Context(), `INSERT INTO bike_stations(station_uid,station_id,city,name,capacity,service_type,address,geom) VALUES($1,$1,'Taipei','自行車站',15,2,'路口',ST_SetSRID(ST_MakePoint(121.5,25.25),4326))`, uid); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = db.Exec(context.Background(), "DELETE FROM bike_stations WHERE station_uid=$1", uid) })

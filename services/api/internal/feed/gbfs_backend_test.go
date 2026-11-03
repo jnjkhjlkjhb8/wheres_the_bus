@@ -159,7 +159,7 @@ func TestGBFSStationsReadAndShareDatabaseSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(t.Context(), `INSERT INTO bike_stations(station_uid,name,geom,address,capacity) VALUES ('b','B',ST_SetSRID(ST_MakePoint(121,25),4326),NULL,NULL),('a','A',ST_SetSRID(ST_MakePoint(120,24),4326),'road',10),('no-point','hidden',NULL,NULL,NULL)`); err != nil {
+	if _, err := db.Exec(t.Context(), `INSERT INTO bike_stations(station_uid,station_id,city,name,geom,address,capacity) VALUES ('b','b','Taipei','B',ST_SetSRID(ST_MakePoint(121,25),4326),NULL,0),('a','a','Taipei','A',ST_SetSRID(ST_MakePoint(120,24),4326),'road',10),('no-point','no-point','Taipei','hidden',NULL,NULL,0)`); err != nil {
 		t.Fatal(err)
 	}
 	cache := &gbfsCache{}
