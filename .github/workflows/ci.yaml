@@ -38,6 +38,8 @@ jobs:
         with:
           # The quality gates diff against the push/PR base commit.
           fetch-depth: 0
+      # pg_isready over TCP: the image entrypoint's init server answers on the
+      # socket only, then restarts, so a socket probe passes too early.
       - name: start postgres (docker/postgres image)
         run: |
           docker build -q -t bus-postgres:ci docker/postgres
@@ -45,10 +47,10 @@ jobs:
             -e POSTGRES_DB=bus_test -e POSTGRES_USER=bus -e POSTGRES_PASSWORD=bus \
             bus-postgres:ci
           for _ in $(seq 1 30); do
-            docker exec postgres pg_isready -U bus -d bus_test && break
+            docker exec postgres pg_isready -h 127.0.0.1 -U bus -d bus_test && break
             sleep 2
           done
-          docker exec postgres pg_isready -U bus -d bus_test
+          docker exec postgres pg_isready -h 127.0.0.1 -U bus -d bus_test
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
@@ -173,10 +175,10 @@ jobs:
             -e POSTGRES_DB=bus_test -e POSTGRES_USER=bus -e POSTGRES_PASSWORD=bus \
             bus-postgres:ci
           for _ in $(seq 1 30); do
-            docker exec postgres pg_isready -U bus -d bus_test && break
+            docker exec postgres pg_isready -h 127.0.0.1 -U bus -d bus_test && break
             sleep 2
           done
-          docker exec postgres pg_isready -U bus -d bus_test
+          docker exec postgres pg_isready -h 127.0.0.1 -U bus -d bus_test
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         if: steps.lkg.outputs.sha != ''
         with:
