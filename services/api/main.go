@@ -82,11 +82,14 @@ func installationRateLimitInterceptor(rl *ratelimit.Limiter, limit int, window t
 func productionUnaryInterceptors(
 	appCheckVerifier firebase.AppCheckVerifier,
 	enforceAppCheck bool,
+	callerRL *ratelimit.Limiter,
 	maasRL *ratelimit.Limiter,
 ) []grpc.UnaryServerInterceptor {
 	return []grpc.UnaryServerInterceptor{
 		obs.UnaryInterceptor(),
-		ratelimit.UnaryInterceptor(ratelimit.New(), 30, time.Second),
+		// callerRL must be proxy-aware: every rider arrives from the cloudflared
+		// pod, so a peer-keyed limiter puts the whole user base in one bucket.
+		ratelimit.UnaryInterceptor(callerRL, 30, time.Second),
 		maas.MaasResourceInterceptor(maasRL, maas.DefaultMaasResourceConfig),
 		firebase.AppCheckUnaryInterceptor(appCheckVerifier, enforceAppCheck),
 		installationRateLimitInterceptor(ratelimit.New(), 30, time.Second),
@@ -379,7 +382,7 @@ func grpcOptionsFromEnv(httpConfig httpServerConfig, rl *ratelimit.Limiter) ([]g
 		// Stop is the bounded GracefulStop fallback. Waiting for handlers here
 		// keeps backend ownership valid until canceled RPC handlers return.
 		grpc.WaitForHandlers(true),
-		grpc.ChainUnaryInterceptor(productionUnaryInterceptors(appCheckVerifier, enforceAppCheck, maasRL)...),
+		grpc.ChainUnaryInterceptor(productionUnaryInterceptors(appCheckVerifier, enforceAppCheck, rl, maasRL)...),
 		grpc.ChainStreamInterceptor(
 			obs.StreamInterceptor(),
 			ratelimit.StreamInterceptor(rl, 30, time.Second),

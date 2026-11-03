@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -488,7 +489,7 @@ func invokeUnaryChain(interceptors []grpc.UnaryServerInterceptor, ctx context.Co
 }
 
 func TestProductionFirebaseUnaryChainBoundsRotatingInstallIDsByPeer(t *testing.T) {
-	interceptors := productionUnaryInterceptors(mainAppCheckVerifier{}, true, ratelimit.New())
+	interceptors := productionUnaryInterceptors(mainAppCheckVerifier{}, true, ratelimit.New(), ratelimit.New())
 	info := &grpc.UnaryServerInfo{FullMethod: pb.Firebase_Service_UpsertDevice_FullMethodName}
 	handlerCalls := 0
 	handler := func(context.Context, any) (any, error) {
@@ -511,6 +512,31 @@ func TestProductionFirebaseUnaryChainBoundsRotatingInstallIDsByPeer(t *testing.T
 	}
 	if handlerCalls != 30 {
 		t.Fatalf("handler calls = %d, want 30", handlerCalls)
+	}
+}
+
+func TestProductionUnaryChainKeysQuotaByForwardedCaller(t *testing.T) {
+	proxies := []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")}
+	interceptors := productionUnaryInterceptors(mainAppCheckVerifier{}, false,
+		ratelimit.NewWithTrustedProxies(proxies), ratelimit.NewWithTrustedProxies(proxies))
+	info := &grpc.UnaryServerInfo{FullMethod: pb.Bus_Station_Service_Group_FullMethodName}
+	handler := func(context.Context, any) (any, error) { return "ok", nil }
+	tunnel := &peer.Peer{Addr: limiterTestAddr(net.JoinHostPort("10.42.0.6", "443"))}
+	callerContext := func(client string) context.Context {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-forwarded-for", client))
+		return peer.NewContext(ctx, tunnel)
+	}
+
+	for range 30 {
+		if _, err := invokeUnaryChain(interceptors, callerContext("198.51.100.1"), info, handler); err != nil {
+			t.Fatalf("caller A within quota failed: %v", err)
+		}
+	}
+	if _, err := invokeUnaryChain(interceptors, callerContext("198.51.100.1"), info, handler); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("caller A request 31 code = %v, want %v", status.Code(err), codes.ResourceExhausted)
+	}
+	if _, err := invokeUnaryChain(interceptors, callerContext("198.51.100.2"), info, handler); err != nil {
+		t.Fatalf("caller B behind the same tunnel shared caller A's quota: %v", err)
 	}
 }
 
