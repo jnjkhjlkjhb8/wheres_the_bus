@@ -6,7 +6,6 @@ import 'package:wheres_the_bus/data/models/timeline_stop.dart';
 import 'package:wheres_the_bus/features/bus/view/bus_route_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
-import '../../support/helpers/i18n.dart';
 
 typedef _Call = String;
 

@@ -1,0 +1,20 @@
+# The filename `l10n.yaml` is fixed by Flutter's tooling. Everything it
+# produces follows the repo's i18n naming instead: `AppI18n`, `app_i18n.dart`,
+# `i18n_missing.json`.
+#
+# Source language is Traditional Chinese: the app is authored in zh-TW and
+# every other locale is a Crowdin translation of it, so app_zh.arb is the
+# template and the only ARB edited by hand.
+arb-dir: lib/l10n
+template-arb-file: app_zh.arb
+output-localization-file: app_i18n.dart
+output-class: AppI18n
+
+# `AppI18n.of(context)` returns non-null: the delegate is always installed in
+# app.dart, so a null check at every call site is dead weight.
+nullable-getter: false
+
+# A locale with no translation for a key falls back to the zh-TW template
+# rather than throwing, so a half-translated Crowdin pull still ships. The
+# report of what is still missing goes to a file instead of the console.
+untranslated-messages-file: i18n_missing.json

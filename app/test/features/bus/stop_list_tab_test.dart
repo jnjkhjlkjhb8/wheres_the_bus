@@ -11,7 +11,6 @@ import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_swipe_row.dart';
 import 'package:wheres_the_bus/shared/widgets/transit_timeline.dart';
 
-import '../../support/helpers/i18n.dart';
 
 TimelineStop _stop(
   String uid, {

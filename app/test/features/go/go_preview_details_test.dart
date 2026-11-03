@@ -195,10 +195,10 @@ void main() {
     );
     await tester.pump();
     final p = connectors(tester);
-    expect(p[0].shouldRepaint(p[1] as dynamic), isFalse);
-    expect(p[0].shouldRepaint(p[2] as dynamic), isTrue);
-    expect(p[2].shouldRepaint(p[3] as dynamic), isTrue);
-    expect(p[3].shouldRepaint(p[0] as dynamic), isTrue);
+    expect(p[0].shouldRepaint(p[1]), isFalse);
+    expect(p[0].shouldRepaint(p[2]), isTrue);
+    expect(p[2].shouldRepaint(p[3]), isTrue);
+    expect(p[3].shouldRepaint(p[0]), isTrue);
     await harness.dispose(tester);
   });
 

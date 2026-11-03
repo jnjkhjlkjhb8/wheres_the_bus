@@ -6,7 +6,6 @@ import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/data/repositories/maas_repository.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_event.dart';
-import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
 
 // Kept out of plan_bloc_test.dart: opening a real saved_plans box here must
 // not leak into the tests that rely on storage being unavailable.
