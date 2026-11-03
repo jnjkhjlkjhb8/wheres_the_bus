@@ -191,6 +191,7 @@ class DetailAppBar extends StatefulWidget implements PreferredSizeWidget {
     this.onBack,
     this.actions,
     this.centerTitle = false,
+    this.toolbarHeight = AppBarMetrics.barHeight,
     super.key,
   });
   final String? title;
@@ -198,9 +199,10 @@ class DetailAppBar extends StatefulWidget implements PreferredSizeWidget {
   final VoidCallback? onBack;
   final List<Widget>? actions;
   final bool centerTitle;
+  final double toolbarHeight;
 
   @override
-  Size get preferredSize => const Size.fromHeight(AppBarMetrics.barHeight);
+  Size get preferredSize => Size.fromHeight(toolbarHeight);
 
   @override
   State<DetailAppBar> createState() => _DetailAppBarState();
@@ -270,7 +272,7 @@ class _DetailAppBarState extends State<DetailAppBar> {
       child: SafeArea(
         bottom: false,
         child: SizedBox(
-          height: AppBarMetrics.barHeight,
+          height: widget.toolbarHeight,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(
               AppTheme.space4,

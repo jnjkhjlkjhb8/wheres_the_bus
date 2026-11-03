@@ -452,6 +452,18 @@
   "@favoritesTitle": {
     "description": "Title of the favorites screen."
   },
+  "favoritesSearchHint": "搜尋收藏名稱或說明",
+  "@favoritesSearchHint": {
+    "description": "Search field hint on the favorites screen. Matches favorite titles and subtitles."
+  },
+  "favoritesNoMatches": "找不到符合的收藏",
+  "@favoritesNoMatches": {
+    "description": "Empty state when the favorites search has no matching items."
+  },
+  "favoritesNoMatchesHint": "試試其他關鍵字，或清除搜尋以顯示所有收藏",
+  "@favoritesNoMatchesHint": {
+    "description": "Hint for recovering from an empty favorites search."
+  },
   "favoritesRemoved": "已移除收藏",
   "@favoritesRemoved": {
     "description": "Confirmation after removing a favorite."

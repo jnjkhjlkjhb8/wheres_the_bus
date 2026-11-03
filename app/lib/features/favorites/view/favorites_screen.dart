@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -18,8 +19,37 @@ import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
-class FavoritesScreen extends StatelessWidget {
+class FavoritesScreen extends StatefulWidget {
   const FavoritesScreen({super.key});
+
+  @override
+  State<FavoritesScreen> createState() => _FavoritesScreenState();
+}
+
+class _FavoritesScreenState extends State<FavoritesScreen> {
+  final _searchController = TextEditingController();
+
+  double _toolbarHeight(BuildContext context, {required bool hasSubtitle}) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final titleHeight =
+        scaler.scale(AppTextStyles.bodyLarge.fontSize!) *
+        (hasSubtitle ? 1.2 : AppTextStyles.bodyLarge.height!);
+    final subtitleHeight = hasSubtitle
+        ? scaler.scale(AppTextStyles.bodySmall.fontSize!) * 1.2
+        : 0.0;
+    return math
+        .max(
+          AppBarMetrics.barHeight,
+          titleHeight + subtitleHeight + AppTheme.space8,
+        )
+        .ceilToDouble();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,16 +58,36 @@ class FavoritesScreen extends StatelessWidget {
         builder: (context, state) {
           final items = state.items;
           final pinnedCount = state.pinned.length;
+          final query = _searchController.text.trim().toLowerCase();
+          final visibleItems = query.isEmpty
+              ? items
+              : items
+                    .where(
+                      (item) =>
+                          item.title.toLowerCase().contains(query) ||
+                          item.subtitle.toLowerCase().contains(query),
+                    )
+                    .toList();
           return Column(
             children: [
               DetailAppBar(
                 title: AppI18n.of(context).favoritesTitle,
+                toolbarHeight: _toolbarHeight(
+                  context,
+                  hasSubtitle: items.isNotEmpty,
+                ),
                 subtitle: items.isEmpty
                     ? null
                     : AppI18n.of(
                         context,
                       ).favoritesSummary(items.length, pinnedCount),
               ),
+              if (items.isNotEmpty || _searchController.text.isNotEmpty)
+                _FavoritesSearchField(
+                  controller: _searchController,
+                  onChanged: (_) => setState(() {}),
+                  onClear: () => setState(_searchController.clear),
+                ),
               Expanded(
                 child: AnimatedSwitcher(
                   duration: MediaQuery.disableAnimationsOf(context)
@@ -45,11 +95,14 @@ class FavoritesScreen extends StatelessWidget {
                       : AppMotion.short,
                   switchInCurve: AppMotion.easeOut,
                   switchOutCurve: AppMotion.easeOut,
-                  child: items.isEmpty
-                      ? const _FavoritesEmpty()
+                  child: visibleItems.isEmpty
+                      ? _FavoritesEmpty(filtered: items.isNotEmpty)
                       : KeyedSubtree(
                           key: const ValueKey('favorites-list'),
-                          child: _FavoritesList(items: items),
+                          child: _FavoritesList(
+                            items: visibleItems,
+                            canReorder: query.isEmpty,
+                          ),
                         ),
                 ),
               ),
@@ -61,15 +114,72 @@ class FavoritesScreen extends StatelessWidget {
   }
 }
 
-class _FavoritesList extends StatelessWidget {
-  const _FavoritesList({required this.items});
+class _FavoritesSearchField extends StatelessWidget {
+  const _FavoritesSearchField({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
 
-  final List<Favorite> items;
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
+    final i18n = AppI18n.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        AppTheme.space4,
+        AppTheme.space16,
+        AppTheme.space12,
+      ),
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        textInputAction: TextInputAction.search,
+        style: AppTextStyles.bodyRegular,
+        decoration: InputDecoration(
+          hintText: i18n.favoritesSearchHint,
+          prefixIcon: const Icon(Icons.search_rounded),
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: i18n.commonClear,
+                  onPressed: onClear,
+                  icon: const Icon(Icons.close_rounded),
+                ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusButton),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FavoritesList extends StatelessWidget {
+  const _FavoritesList({required this.items, required this.canReorder});
+
+  final List<Favorite> items;
+  final bool canReorder;
+
+  @override
+  Widget build(BuildContext context) {
+    // Reordering a filtered subset would overwrite the order of hidden items.
+    if (!canReorder) {
+      return ListView.builder(
+        padding: const EdgeInsets.only(bottom: AppTheme.space32),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        itemCount: items.length,
+        itemBuilder: (context, index) =>
+            _FavoriteListRow(key: ValueKey(items[index].id), fav: items[index]),
+      );
+    }
     return ReorderableListView.builder(
       padding: const EdgeInsets.only(bottom: AppTheme.space32),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       itemCount: items.length,
       onReorderStart: (_) => unawaited(HapticService.instance.lightTap()),
       onReorderItem: (oldIndex, newIndex) {
@@ -77,31 +187,21 @@ class _FavoritesList extends StatelessWidget {
         next.insert(newIndex, next.removeAt(oldIndex));
         context.read<FavoritesBloc>().add(FavoritesReordered(next));
       },
-      proxyDecorator: (child, index, animation) => Material(
-        color: Colors.transparent,
-        child: child,
-      ),
+      proxyDecorator: (child, index, animation) =>
+          Material(color: Colors.transparent, child: child),
       itemBuilder: (context, index) {
         final fav = items[index];
-        return _FavoriteListRow(
-          key: ValueKey(fav.id),
-          fav: fav,
-          index: index,
-        );
+        return _FavoriteListRow(key: ValueKey(fav.id), fav: fav, index: index);
       },
     );
   }
 }
 
 class _FavoriteListRow extends StatelessWidget {
-  const _FavoriteListRow({
-    required this.fav,
-    required this.index,
-    super.key,
-  });
+  const _FavoriteListRow({required this.fav, this.index, super.key});
 
   final Favorite fav;
-  final int index;
+  final int? index;
 
   @override
   Widget build(BuildContext context) {
@@ -184,19 +284,20 @@ class _FavoriteListRow extends StatelessWidget {
                     ),
                   ),
                   _PinButton(fav: fav),
-                  ReorderableDragStartListener(
-                    index: index,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppTheme.space8,
-                      ),
-                      child: Icon(
-                        Symbols.drag_handle_rounded,
-                        size: 22,
-                        color: cs.onSurfaceVariant,
+                  if (index case final reorderIndex?)
+                    ReorderableDragStartListener(
+                      index: reorderIndex,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppTheme.space8,
+                        ),
+                        child: Icon(
+                          Symbols.drag_handle_rounded,
+                          size: 22,
+                          color: cs.onSurfaceVariant,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -240,45 +341,53 @@ class _PinButton extends StatelessWidget {
 }
 
 class _FavoritesEmpty extends StatelessWidget {
-  const _FavoritesEmpty();
+  const _FavoritesEmpty({this.filtered = false});
+
+  final bool filtered;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppTheme.space32,
-          0,
-          AppTheme.space32,
-          AppTheme.space48,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Symbols.bookmark_rounded,
-              size: 44,
-              color: AppTheme.inkTertiary(cs.brightness),
-            ),
-            const SizedBox(height: AppTheme.space16),
-            Text(
-              AppI18n.of(context).favoritesEmpty,
-              style: AppTextStyles.bodyLarge.copyWith(
-                fontWeight: FontWeight.w600,
-                color: cs.onSurface,
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space32,
+            0,
+            AppTheme.space32,
+            AppTheme.space48,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                filtered ? Icons.search_off_rounded : Symbols.bookmark_rounded,
+                size: 44,
+                color: AppTheme.inkTertiary(cs.brightness),
               ),
-            ),
-            const SizedBox(height: AppTheme.space6),
-            Text(
-              AppI18n.of(context).favoritesEmptyHint,
-              textAlign: TextAlign.center,
-              style: AppTextStyles.bodySmall.copyWith(
-                color: cs.onSurfaceVariant,
-                height: 1.5,
+              const SizedBox(height: AppTheme.space16),
+              Text(
+                filtered
+                    ? AppI18n.of(context).favoritesNoMatches
+                    : AppI18n.of(context).favoritesEmpty,
+                style: AppTextStyles.bodyLarge.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: AppTheme.space6),
+              Text(
+                filtered
+                    ? AppI18n.of(context).favoritesNoMatchesHint
+                    : AppI18n.of(context).favoritesEmptyHint,
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: cs.onSurfaceVariant,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
