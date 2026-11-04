@@ -79,22 +79,30 @@ func (s *stream) beat(idle time.Duration, marker any) {
 func (s *stream) keepAlive(idle time.Duration, marker any) func() {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Go(func() {
-		ticker := time.NewTicker(idle)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-s.Context().Done():
-				return
-			case <-ticker.C:
-				s.beat(idle, marker)
-			}
-		}
-	})
+	wg.Go(func() { s.loop(idle, marker, done) })
 	return func() {
 		close(done)
 		wg.Wait()
+	}
+}
+
+func (s *stream) loop(idle time.Duration, marker any, done <-chan struct{}) {
+	ticker := time.NewTicker(idle)
+	defer ticker.Stop()
+	for s.tick(ticker.C, done) {
+		s.beat(idle, marker)
+	}
+}
+
+// tick waits for the next check and reports false once the handler has
+// returned or the client has gone.
+func (s *stream) tick(ticks <-chan time.Time, done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return false
+	case <-s.Context().Done():
+		return false
+	case <-ticks:
+		return true
 	}
 }
