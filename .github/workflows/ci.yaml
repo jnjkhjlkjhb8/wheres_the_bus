@@ -13,7 +13,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Skips jobs at job level, not with `on.push.paths`: build-images runs on
+  # this workflow's success, so a filtered-out workflow would silently skip the
+  # deploy. A skipped job still leaves the run green.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      go: ${{ steps.diff.outputs.go }}
+      flutter: ${{ steps.diff.outputs.flutter }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/ci-changes.sh "$BASE" >> "$GITHUB_OUTPUT"
+
   go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -112,6 +134,8 @@ jobs:
         run: ./scripts/ci.sh contracts
 
   migrations:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -125,6 +149,8 @@ jobs:
   # successful deploy) must keep working after this change's migrations, since
   # migrations run before the rollout and are never rolled back.
   schema-compat:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -225,6 +251,8 @@ jobs:
         run: ./scripts/check-govulncheck.sh
 
   flutter:
+    needs: changes
+    if: needs.changes.outputs.flutter == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
