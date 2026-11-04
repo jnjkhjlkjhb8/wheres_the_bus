@@ -27,8 +27,8 @@ func contractPublishedSubroutes(t *testing.T, snapshot *busCitySnapshot) map[str
 	t.Helper()
 	published := make(map[string]*models.BusSubroute, len(snapshot.staticRows))
 	for _, row := range snapshot.staticRows {
-		if len(row) != 8 {
-			t.Fatalf("static persistence row has %d fields, want 8", len(row))
+		if len(row) != 9 {
+			t.Fatalf("static persistence row has %d fields, want 9", len(row))
 		}
 		payload, ok := row[7].([]byte)
 		if !ok {

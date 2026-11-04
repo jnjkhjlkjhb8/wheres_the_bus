@@ -121,15 +121,17 @@ func (r *busCitySnapshot) resolveStop(b busmodel.StationMap) {
 	eta, fillSource := r.fillScheduleOnlyStop(b, eta, status)
 	source := estimateSourceFor(status, fillSource)
 	arrivalUnix := computeArrivalUnix(status, est, eta.NextBusTime, r.now)
-	r.appendStationStop(b, eta, status, est, stime, positionKey, arrivalUnix, plateNumb, source)
-	if shouldDispatchBusArrival(ok, status, est) {
-		r.arrivalEvents = append(r.arrivalEvents, riderevent.ArrivalEvent{
-			RouteType: "bus", RouteKey: uid, StopKey: b.StopUID,
-			Direction: strconv.Itoa(int(dir)), ETASeconds: est,
-			ArrivingPlate: normalizeArrivalPlate(eta.PlateNumb),
-		})
+	r.appendStationStop(stationView(b), eta, status, est, stime, positionKey, arrivalUnix, plateNumb, source)
+	for _, view := range routeViews(b) {
+		if shouldDispatchBusArrival(ok, status, est) {
+			r.arrivalEvents = append(r.arrivalEvents, riderevent.ArrivalEvent{
+				RouteType: "bus", RouteKey: uid, StopKey: view.StopUID,
+				Direction: strconv.Itoa(int(view.Direction)), ETASeconds: est,
+				ArrivingPlate: normalizeArrivalPlate(eta.PlateNumb),
+			})
+		}
+		r.appendRouteStop(view, eta, status, est, stime, positionKey, arrivalUnix, plateNumb, source)
 	}
-	r.appendRouteStop(b, eta, status, est, stime, positionKey, arrivalUnix, plateNumb, source)
 }
 
 // fillScheduleOnlyStop returns the history.Source* label of the prediction it

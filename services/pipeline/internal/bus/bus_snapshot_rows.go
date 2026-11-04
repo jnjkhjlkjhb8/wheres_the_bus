@@ -28,12 +28,25 @@ func (s *busCitySnapshot) buildWriteRows() error {
 }
 func (s *busCitySnapshot) buildSubrouteRows(uid string) error {
 	sub := s.subroutes[uid]
-	pb, err := (proto.MarshalOptions{Deterministic: true}).Marshal(sub)
+	// Only the served payload is split; every other row keeps the loop as TDX
+	// publishes it, which is what live estimates and the GTFS feed key on.
+	view, turnaround := sub, turnaroundSequence(sub, s.turnarounds[uid])
+	if turnaround > 0 {
+		view = splitAtTurnaround(sub, turnaround)
+	}
+	pb, err := (proto.MarshalOptions{Deterministic: true}).Marshal(view)
 	if err != nil {
 		return _oops.With("uid", uid).Wrapf(err, "marshal protobuf")
 	}
-	s.staticRows = append(s.staticRows, []any{sub.SubRouteName, sub.RouteName, sub.SubRouteUID, sub.RouteUID, sub.City, sub.DepartureStopName, sub.DestinationStopName, pb})
+	s.staticRows = append(s.staticRows, []any{sub.SubRouteName, sub.RouteName, sub.SubRouteUID, sub.RouteUID, sub.City, sub.DepartureStopName, sub.DestinationStopName, pb, nullableSequence(turnaround)})
 	return s.buildSubrouteDirections(uid, sub)
+}
+
+func nullableSequence(seq int32) *int32 {
+	if seq == 0 {
+		return nil
+	}
+	return &seq
 }
 
 func sortedBusDirections(sub *models.BusSubroute) []int {

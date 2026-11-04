@@ -120,8 +120,8 @@ func stageBusSnapshot(ctx context.Context, tx busTx, snapshot *busCitySnapshot) 
 		{
 			name: "temp_bus_static", create: `CREATE TEMP TABLE temp_bus_static (
 				sname text, rname text, uid text, rid text, city text,
-				depart text, destin text, pb bytea) ON COMMIT DROP`,
-			columns: []string{"sname", "rname", "uid", "rid", "city", "depart", "destin", "pb"}, rows: snapshot.staticRows,
+				depart text, destin text, pb bytea, turnaround smallint) ON COMMIT DROP`,
+			columns: []string{"sname", "rname", "uid", "rid", "city", "depart", "destin", "pb", "turnaround"}, rows: snapshot.staticRows,
 		},
 		{
 			name: "temp_bus_stop_map", create: `CREATE TEMP TABLE temp_bus_stop_map (
@@ -262,8 +262,8 @@ func writeBusSnapshotTargets(ctx context.Context, tx busTx, snapshot *busCitySna
 		{name: "replace schedule partition", sql: `DELETE FROM bus_schedule WHERE sub_route_uid LIKE $1`, args: []any{snapshot.prefix + "%"}},
 		{name: "insert schedule", sql: _busScheduleInsertSQL},
 		{name: "upsert static protobufs", sql: `INSERT INTO bus_static (
-			sub_route_name, route_name, sub_route_uid, route_uid, city, depart, destin, pb)
-		SELECT sname, rname, uid, rid, city, depart, destin, pb
+			sub_route_name, route_name, sub_route_uid, route_uid, city, depart, destin, pb, turnaround_stop_sequence)
+		SELECT sname, rname, uid, rid, city, depart, destin, pb, turnaround
 		FROM temp_bus_static
 		ON CONFLICT (sub_route_uid) DO UPDATE SET
 			sub_route_name = EXCLUDED.sub_route_name,
@@ -273,6 +273,7 @@ func writeBusSnapshotTargets(ctx context.Context, tx busTx, snapshot *busCitySna
 			depart = EXCLUDED.depart,
 			destin = EXCLUDED.destin,
 			pb = EXCLUDED.pb,
+			turnaround_stop_sequence = EXCLUDED.turnaround_stop_sequence,
 			updated_at = NOW()`},
 		{name: "delete old stop map partition", sql: `DELETE FROM bus_station_stop_map WHERE sub_route_uid LIKE $1`, args: []any{snapshot.prefix + "%"}},
 		{name: "insert stop map", sql: `INSERT INTO bus_station_stop_map (

@@ -196,6 +196,9 @@ func Registry() []Spec {
 		// never fetched and never loaded. The whitelist/DDL entry is kept because
 		// the table may already exist on Azure.
 		{RawTable: "bus_stop", LandOnly: true},
+		// Landed by its own XML fetch (bus.LandTaoyuanTurnarounds), outside the
+		// Bus/City family, and read only as an optional Taoyuan enrichment.
+		{RawTable: "bus_taoyuanroute"},
 		{RawTable: "bike_station", PartCol: "city", Partitions: BikeCities,
 			Family: FamilyBikeCity, APISeg: "Station",
 			Name: func(p string) string { return "bike_" + p }, LoadKey: "bike"},

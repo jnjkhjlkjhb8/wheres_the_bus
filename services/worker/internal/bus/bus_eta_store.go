@@ -77,7 +77,8 @@ func busstaticmp(ctx context.Context, db *pgxpool.Pool, city string) ([]busmodel
 	                 COALESCE(bsr.destin, bst.destin, ''),
 	                 bssm.direction, bssm.stop_uid, bssm.stop_sequence,
 	                 COALESCE(ST_Y(bs.position), 0), COALESCE(ST_X(bs.position), 0),
-	                 COALESCE(alias.uids, ARRAY[]::text[])
+	                 COALESCE(alias.uids, ARRAY[]::text[]),
+	                 COALESCE(bst.turnaround_stop_sequence, 0), COALESCE(turn.station_name, '')
 	          FROM bus_station_stop_map bssm
 	          LEFT JOIN LATERAL (
 	            SELECT array_agg(a.alias_stop_uid) AS uids
@@ -87,6 +88,14 @@ func busstaticmp(ctx context.Context, db *pgxpool.Pool, city string) ([]busmodel
 	              AND a.stop_uid = bssm.stop_uid
 	          ) alias ON true
 	          LEFT JOIN bus_static bst ON bst.sub_route_uid = bssm.sub_route_uid
+	          LEFT JOIN LATERAL (
+	            SELECT t.station_name
+	            FROM bus_station_stop_map t
+	            WHERE t.sub_route_uid = bssm.sub_route_uid
+	              AND t.direction = bssm.direction
+	              AND t.stop_sequence = bst.turnaround_stop_sequence
+	            LIMIT 1
+	          ) turn ON true
 	          LEFT JOIN bus_subroutes bsr ON bsr.sub_route_uid = bssm.sub_route_uid
 	                                     AND bsr.direction = bssm.direction
 	          LEFT JOIN bus_stations bs ON bs.station_uid = bssm.station_id
@@ -122,7 +131,7 @@ func readBusStaticStop(rows pgx.Rows) (busmodel.StationMap, bool) {
 	var temp busmodel.StationMap
 	err := rows.Scan(&temp.StationUID, &temp.StationName, &temp.GroupUID,
 		&temp.GroupName, &temp.SubRouteUID, &temp.RouteUID, &temp.SubRouteName, &temp.Destination, &temp.Direction, &temp.StopUID, &temp.StopSequence,
-		&temp.Lat, &temp.Lon, &temp.AliasStopUIDs)
+		&temp.Lat, &temp.Lon, &temp.AliasStopUIDs, &temp.TurnaroundSequence, &temp.TurnaroundName)
 	if err != nil {
 		zap.S().Errorw("scan error",
 			"component", "bus_static",

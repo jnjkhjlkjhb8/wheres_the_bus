@@ -192,6 +192,10 @@ type StationMap struct {
 	Lat           float64
 	Lon           float64
 	AliasStopUIDs []string
+	// TurnaroundSequence is the StopSequence the served static payload splits
+	// this loop at (0 = not split); TurnaroundName is that stop's name.
+	TurnaroundSequence uint8
+	TurnaroundName     string
 }
 
 // RawShape decodes a TDX Bus/Shape element: the WKT geometry of a route or

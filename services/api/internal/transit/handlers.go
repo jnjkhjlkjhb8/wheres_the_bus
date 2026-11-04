@@ -155,6 +155,9 @@ func (s *BusRouteserver) BusDailytable(ctx context.Context, in *pb.Bus_Ask_Route
 	if err != nil {
 		return nil, err
 	}
+	if seq := s.turnaroundSequence(ctx, route); seq > 0 {
+		splitDailyAtTurnaround(tt, seq)
+	}
 	return &pb.Resp_BusDailyTimetable{Data: tt}, nil
 }
 

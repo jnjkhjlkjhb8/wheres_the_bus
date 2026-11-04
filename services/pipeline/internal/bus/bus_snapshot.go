@@ -57,6 +57,8 @@ type busCitySnapshot struct {
 	prefix       string
 	landingCycle string
 	subroutes    map[string]*models.BusSubroute
+	// turnarounds maps a subroute UID to its turnaround StopUID (Taoyuan only).
+	turnarounds  map[string]string
 	operatorRows [][]any
 	subrouteRows [][]any
 	stationRows  [][]any
@@ -100,7 +102,7 @@ func readBusSnapshotDatasets(ctx context.Context, cycleSource raw.LandingCycleSo
 		snapshot:   &busCitySnapshot{city: city, prefix: prefix, subroutes: make(map[string]*models.BusSubroute)},
 		quarantine: pipeline.NewQuarantine("bus", city)}
 	defer b.quarantine.Report()
-	for _, read := range []func() error{b.readOperators, b.readRoutes, b.readStops, b.readShapes, b.readSchedules, b.readStations, b.readGroups, b.readFares} {
+	for _, read := range []func() error{b.readOperators, b.readRoutes, b.readStops, b.readShapes, b.readSchedules, b.readStations, b.readGroups, b.readFares, b.readTurnarounds} {
 		if err := read(); err != nil {
 			return nil, err
 		}

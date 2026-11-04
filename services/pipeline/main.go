@@ -18,6 +18,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/bus"
@@ -238,8 +239,21 @@ func ingestHourlyDailyTimetable(ctx context.Context, d deps) error {
 func stepIngest(ctx context.Context, d deps) error {
 	runner := newStaticPipelineRunner(d.rawPool, _ingestTimeout)
 	return runner.Run(ctx, func(ctx context.Context) error {
-		return ingestRaw(ctx, d.tdx)
+		err := ingestRaw(ctx, d.tdx)
+		landTaoyuanTurnarounds(ctx, d.tdx.NewAuthedClient(bus.TaoyuanRouteBaseURL))
+		return err
 	})
+}
+
+// landTaoyuanTurnarounds never fails the ingest: without a fresh landing the
+// loader serves Taoyuan's loops unsplit, which is what TDX itself publishes.
+func landTaoyuanTurnarounds(ctx context.Context, client *resty.Client) {
+	if !hasTDXCredentials() {
+		return
+	}
+	if err := bus.LandTaoyuanTurnarounds(ctx, client); err != nil {
+		zap.S().Warnw("failed", "component", "ingest", "action", "taoyuan_route", "event", "failed", "err", err)
+	}
 }
 
 // stepLoad transforms raw_tdx into the catalog and records the "load" marker

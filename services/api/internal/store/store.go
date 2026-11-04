@@ -23,6 +23,14 @@ func BusStaticPayload(ctx context.Context, db DB, subRouteUID string) ([]byte, e
 	return data, nil
 }
 
+// BusTurnaroundSequence returns the StopSequence a subroute's static payload
+// was split at, 0 when it was not.
+func BusTurnaroundSequence(ctx context.Context, db DB, subRouteUID string) (int32, error) {
+	var seq int32
+	err := db.QueryRow(ctx, `SELECT COALESCE(turnaround_stop_sequence, 0) FROM bus_static WHERE sub_route_uid = $1`, subRouteUID).Scan(&seq)
+	return seq, err
+}
+
 // BusStationGroupCity resolves a station group's city from the loaded env
 // schema, used to key the live-ETA stream when the request omits the city.
 func BusStationGroupCity(ctx context.Context, db DB, groupUID string) (string, error) {
