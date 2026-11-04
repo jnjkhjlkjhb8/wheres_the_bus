@@ -110,6 +110,17 @@ func mrtEtaStations(system, stationIDs string) ([]string, error) {
 	if !mrtIDPattern.MatchString(system) {
 		return nil, status.Error(codes.InvalidArgument, "invalid system")
 	}
+	stations, err := splitMrtStations(stationIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(stations) > maxMrtEtaStations {
+		return nil, status.Error(codes.InvalidArgument, "too many station ids")
+	}
+	return stations, nil
+}
+
+func splitMrtStations(stationIDs string) ([]string, error) {
 	var stations []string
 	for _, station := range strings.Split(stationIDs, "_") {
 		if station == "" {
@@ -119,9 +130,6 @@ func mrtEtaStations(system, stationIDs string) ([]string, error) {
 			return nil, status.Error(codes.InvalidArgument, "invalid station id")
 		}
 		stations = append(stations, station)
-	}
-	if len(stations) > maxMrtEtaStations {
-		return nil, status.Error(codes.InvalidArgument, "too many station ids")
 	}
 	return stations, nil
 }
