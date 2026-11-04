@@ -334,3 +334,29 @@ func installationContext(installID, secret string) context.Context {
 		installid.SecretMetadataKey, secret,
 	))
 }
+
+func TestFeedbackWebhookContentCannotForgeMarkdown(t *testing.T) {
+	content := feedbackWebhookContent(feedbackNotice{
+		ThreadID: "a1b2c3d4-0000-4000-8000-000000000000",
+		Category: "eta",
+		Body:     "[官方公告](https://attacker.example) **粗體**",
+		Diagnostics: map[string]string{
+			"app_version": "1.0\n**新回報** `crash` # notice\r\n[login](https://attacker.example)",
+		},
+	})
+	lines := strings.Split(content, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("diagnostics broke onto new lines: %q", content)
+	}
+	if !strings.HasPrefix(lines[0], "**新回報** `eta`") || strings.Contains(strings.Join(lines[1:], "\n"), "**新回報**") {
+		t.Fatalf("rider text forged a report header: %q", content)
+	}
+	for _, forged := range []string{"[官方公告](", "[login](", "**粗體**", "`crash`"} {
+		if strings.Contains(content, forged) {
+			t.Fatalf("unescaped markdown %q in %q", forged, content)
+		}
+	}
+	if !strings.Contains(content, `\[官方公告\]\(https`) {
+		t.Fatalf("masked link not escaped: %q", content)
+	}
+}

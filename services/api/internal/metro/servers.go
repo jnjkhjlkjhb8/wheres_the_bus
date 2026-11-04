@@ -2,6 +2,7 @@ package metro
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -76,16 +77,17 @@ func (s *MrtServer) MrtEta(in *pb.AskMrt, stream pb.Mrt_Service_EtaServer) error
 
 	// stream.Send is not safe for concurrent use, so the per-station streams
 	// serialize their sends through one mutex.
+	stations, err := mrtEtaStations(in.System, in.StationID)
+	if err != nil {
+		return err
+	}
 	var mu sync.Mutex
 	send := func(data []byte) error {
 		return sendMrtEta(stream, &mu, data)
 	}
 
 	g, ctx := errgroup.WithContext(stream.Context())
-	for _, station := range strings.Split(in.StationID, "_") {
-		if station == "" {
-			continue
-		}
+	for _, station := range stations {
 		g.Go(func() error {
 			return livestream.StreamLive(ctx, s.live, livestream.LiveStreamSpec{
 				Channel:  shared.MrtLiveChannel(in.System, station),
@@ -94,6 +96,34 @@ func (s *MrtServer) MrtEta(in *pb.AskMrt, stream pb.Mrt_Service_EtaServer) error
 		})
 	}
 	return g.Wait()
+}
+
+// System and station IDs become part of a Redis SCAN MATCH glob, so anything
+// outside this charset could widen the scan (`*`, `?`, `[`) or bloat it.
+var mrtIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
+
+// A transfer station joins at most a handful of per-line IDs; each one opens
+// a hub subscription, so the cap bounds what one request can register.
+const maxMrtEtaStations = 8
+
+func mrtEtaStations(system, stationIDs string) ([]string, error) {
+	if !mrtIDPattern.MatchString(system) {
+		return nil, status.Error(codes.InvalidArgument, "invalid system")
+	}
+	var stations []string
+	for _, station := range strings.Split(stationIDs, "_") {
+		if station == "" {
+			continue
+		}
+		if !mrtIDPattern.MatchString(station) {
+			return nil, status.Error(codes.InvalidArgument, "invalid station id")
+		}
+		stations = append(stations, station)
+	}
+	if len(stations) > maxMrtEtaStations {
+		return nil, status.Error(codes.InvalidArgument, "too many station ids")
+	}
+	return stations, nil
 }
 
 func sendMrtEta(stream pb.Mrt_Service_EtaServer, mu *sync.Mutex, data []byte) error {

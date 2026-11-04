@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
@@ -267,7 +268,7 @@ func feedbackWebhookContent(notice feedbackNotice) string {
 	fmt.Fprintf(&content, "**新回報** `%s` · `%s`\n", notice.Category, shortThreadReference(notice.ThreadID))
 	for _, line := range strings.Split(truncateRunes(notice.Body, _feedbackNoticeBodyLimit), "\n") {
 		content.WriteString("> ")
-		content.WriteString(line)
+		content.WriteString(escapeDiscordMarkdown(line))
 		content.WriteString("\n")
 	}
 	if summary := feedbackDiagnosticsSummary(notice.Diagnostics); summary != "" {
@@ -282,10 +283,34 @@ func feedbackDiagnosticsSummary(diagnostics map[string]string) string {
 	parts := make([]string, 0, 5)
 	for _, name := range []string{"app_version", "platform", "os_version", "locale", "screen"} {
 		if value := diagnostics[name]; value != "" {
-			parts = append(parts, value)
+			parts = append(parts, escapeDiscordMarkdown(flattenLine(value)))
 		}
 	}
 	return strings.Join(parts, " · ")
+}
+
+// Rider text is rendered as Discord markdown, so every formatting character
+// is escaped: otherwise a report could forge headings, a fake "新回報" header
+// or a masked link whose label hides its URL in the maintainer's channel.
+var discordMarkdownEscaper = strings.NewReplacer(
+	`\`, `\\`, "*", `\*`, "_", `\_`, "~", `\~`, "`", "\\`", "|", `\|`,
+	">", `\>`, "<", `\<`, "[", `\[`, "]", `\]`, "(", `\(`, ")", `\)`,
+	"#", `\#`,
+)
+
+func escapeDiscordMarkdown(text string) string {
+	return discordMarkdownEscaper.Replace(text)
+}
+
+// flattenLine keeps a diagnostics value on the summary line: it is written
+// unquoted, so a line break would start a top-level line of the rider's choosing.
+func flattenLine(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return ' '
+		}
+		return r
+	}, value)
 }
 
 func shortThreadReference(threadID string) string {

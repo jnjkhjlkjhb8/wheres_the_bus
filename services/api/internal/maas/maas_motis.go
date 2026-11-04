@@ -636,8 +636,8 @@ func motisTransitModes(modes []int32) []string {
 		8: {"FERRY"},
 		9: {"AERIAL_LIFT"},
 	}
-	seen := make(map[string]struct{}, len(modes))
-	out := make([]string, 0, len(modes))
+	seen := make(map[string]struct{}, len(byID))
+	out := make([]string, 0, len(byID))
 	for _, id := range modes {
 		for _, mode := range byID[id] {
 			if _, dup := seen[mode]; dup {

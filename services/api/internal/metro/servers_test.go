@@ -3,6 +3,7 @@ package metro
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,5 +107,36 @@ func TestMetroWatchTrackValidationAndSeed(t *testing.T) {
 	}
 	if err := server.WatchTrack(&pb.WatchMrtTrackRequest{TrackId: "track-1"}, stream); !errors.Is(err, sendErr) {
 		t.Fatalf("track stream error = %v, want send error", err)
+	}
+}
+
+func TestMetroEtaRejectsGlobAndOversizedRequests(t *testing.T) {
+	server := NewMrtServer(nil, nil, &metroSource{}, nil)
+	stream := &metroEtaStream{ctx: t.Context(), t: t}
+	for name, req := range map[string]*pb.AskMrt{
+		"glob system":   {System: "*", StationID: "BL12"},
+		"glob station":  {System: "TRTC", StationID: "*"},
+		"bracket":       {System: "TRTC", StationID: "BL[0-9]"},
+		"empty system":  {System: "", StationID: "BL12"},
+		"long system":   {System: strings.Repeat("A", 17), StationID: "BL12"},
+		"too many":      {System: "TRTC", StationID: strings.Repeat("BL12_", maxMrtEtaStations+1)},
+		"key separator": {System: "TRTC", StationID: "BL12:x"},
+	} {
+		if err := server.Eta(req, stream); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s: error = %v, want InvalidArgument", name, err)
+		}
+	}
+}
+
+func TestMetroEtaStationsKeepsTransferStationIDs(t *testing.T) {
+	got, err := mrtEtaStations("TRTC", "_BL12_R10_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "BL12,R10" {
+		t.Fatalf("stations = %v, want [BL12 R10]", got)
+	}
+	if _, err := mrtEtaStations("TRTC", strings.TrimSuffix(strings.Repeat("BL12_", maxMrtEtaStations), "_")); err != nil {
+		t.Fatalf("stations at cap rejected: %v", err)
 	}
 }

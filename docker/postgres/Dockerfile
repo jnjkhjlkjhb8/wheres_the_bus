@@ -17,3 +17,8 @@ RUN apt-get update \
         pgbackrest \
     && rm -rf /var/lib/apt/lists/* \
     && dpkg -l postgresql-18-pgvector pgbackrest postgresql-18-postgis-3 | tail -n 3
+
+# powersync_svc holds REPLICATION, and test_decoding would let it decode every
+# table's changes regardless of its grants or the publication. PowerSync only
+# needs pgoutput, which is bound to the two-table publication.
+RUN rm /usr/lib/postgresql/18/lib/test_decoding.so

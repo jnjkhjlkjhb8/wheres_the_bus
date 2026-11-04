@@ -229,7 +229,22 @@ type tdxAPIResponse struct {
 	} `json:"data"`
 }
 
+// No legitimate request repeats a transit mode, and only seven exist; the cap
+// stops a 4 MB packed field from being formatted into the cache key and
+// presizing the mode set before any work slot is taken.
+const maxTransitModes = 16
+
+func checkTransitModes(req *pb.MaasPlanRequest) error {
+	if len(req.TransitModes) > maxTransitModes {
+		return status.Error(codes.InvalidArgument, "too many transit modes")
+	}
+	return nil
+}
+
 func (s *MaasServer) Plan(ctx context.Context, req *pb.MaasPlanRequest) (*pb.MaasPlanResponse, error) {
+	if err := checkTransitModes(req); err != nil {
+		return nil, err
+	}
 	cacheKey := maasKey(req)
 	result := s.sfGroup.DoChan(cacheKey, func() (any, error) {
 		return s.sharedPlan(cacheKey, req)
@@ -284,6 +299,9 @@ func unavailablePlanError(err error) error {
 }
 
 func (s *MaasServer) PlanStream(req *pb.MaasPlanRequest, stream pb.MaasService_PlanStreamServer) error {
+	if err := checkTransitModes(req); err != nil {
+		return err
+	}
 	if !s.beginSharedFlight() {
 		return errMaasServerClosing
 	}

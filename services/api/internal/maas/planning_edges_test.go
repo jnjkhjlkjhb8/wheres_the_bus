@@ -198,3 +198,23 @@ func TestMotisPlanNotFoundAndFailureClassification(t *testing.T) {
 		t.Fatalf("transport failure response=%v, error=%v", got, err)
 	}
 }
+
+func TestOversizedTransitModesAreRejectedBeforeAnyWork(t *testing.T) {
+	cache := newControlledMaasCache()
+	server := NewMaasServerWithCache(cache, nil, DefaultMaasSharedWorkConfig)
+	defer server.Close()
+	req := &pb.MaasPlanRequest{TransitModes: make([]int32, maxTransitModes+1)}
+	if _, err := server.Plan(t.Context(), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("plan error = %v, want InvalidArgument", err)
+	}
+	stream := &recordingPlanStream{ctx: t.Context()}
+	if err := server.PlanStream(req, stream); status.Code(err) != codes.InvalidArgument || len(stream.updates) != 0 {
+		t.Fatalf("stream error = %v, updates = %v", err, stream.updates)
+	}
+	if err := checkTransitModes(&pb.MaasPlanRequest{TransitModes: make([]int32, maxTransitModes)}); err != nil {
+		t.Fatalf("modes at cap rejected: %v", err)
+	}
+	if got := motisTransitModes([]int32{5, 5, 6, 99}); strings.Join(got, ",") != "BUS,COACH,SUBWAY" {
+		t.Fatalf("modes = %v", got)
+	}
+}
