@@ -44,7 +44,7 @@ func TestBusStaticStopsQueriesGroupingAliasesAndDestination(t *testing.T) {
 	t.Cleanup(db.Close)
 	if _, err := db.Exec(ctx, `
  CREATE TABLE bus_station_stop_map(station_id text,station_name text,sub_route_uid text,route_name text,direction int,stop_uid text,stop_sequence int);
- CREATE TABLE bus_static(sub_route_uid text,route_uid text,destin text);
+ CREATE TABLE bus_static(sub_route_uid text,route_uid text,destin text,turnaround_stop_sequence smallint);
  CREATE TABLE bus_subroutes(sub_route_uid text,direction int,destin text);
  CREATE TABLE bus_stations(station_uid text,position geometry(Point,4326));
  CREATE TABLE bus_stop_alias(sub_route_uid text,direction int,stop_uid text,alias_stop_uid text);
