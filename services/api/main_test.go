@@ -489,7 +489,7 @@ func invokeUnaryChain(interceptors []grpc.UnaryServerInterceptor, ctx context.Co
 }
 
 func TestProductionFirebaseUnaryChainBoundsRotatingInstallIDsByPeer(t *testing.T) {
-	interceptors := productionUnaryInterceptors(mainAppCheckVerifier{}, true, ratelimit.New(), ratelimit.New())
+	interceptors := productionUnaryInterceptors(mainAppCheckVerifier{}, true, ratelimit.New(), ratelimit.New(), 100)
 	info := &grpc.UnaryServerInfo{FullMethod: pb.Firebase_Service_UpsertDevice_FullMethodName}
 	handlerCalls := 0
 	handler := func(context.Context, any) (any, error) {
@@ -518,7 +518,7 @@ func TestProductionFirebaseUnaryChainBoundsRotatingInstallIDsByPeer(t *testing.T
 func TestProductionUnaryChainKeysQuotaByForwardedCaller(t *testing.T) {
 	proxies := []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")}
 	interceptors := productionUnaryInterceptors(mainAppCheckVerifier{}, false,
-		ratelimit.NewWithTrustedProxies(proxies), ratelimit.NewWithTrustedProxies(proxies))
+		ratelimit.NewWithTrustedProxies(proxies), ratelimit.NewWithTrustedProxies(proxies), 100)
 	info := &grpc.UnaryServerInfo{FullMethod: pb.Bus_Station_Service_Group_FullMethodName}
 	handler := func(context.Context, any) (any, error) { return "ok", nil }
 	tunnel := &peer.Peer{Addr: limiterTestAddr(net.JoinHostPort("10.42.0.6", "443"))}

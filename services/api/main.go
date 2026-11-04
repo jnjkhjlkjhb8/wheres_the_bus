@@ -84,9 +84,14 @@ func productionUnaryInterceptors(
 	enforceAppCheck bool,
 	callerRL *ratelimit.Limiter,
 	maasRL *ratelimit.Limiter,
+	maxInFlight int,
 ) []grpc.UnaryServerInterceptor {
 	return []grpc.UnaryServerInterceptor{
 		obs.UnaryInterceptor(),
+		// The tunnel holds one connection to one api pod, so this per-pod cap
+		// is in practice the whole system's: past ~800 concurrent calls the
+		// pod OOMKilled at its 512Mi limit instead of rejecting work.
+		ratelimit.InFlightUnaryInterceptor(maxInFlight),
 		// callerRL must be proxy-aware: every rider arrives from the cloudflared
 		// pod, so a peer-keyed limiter puts the whole user base in one bucket.
 		ratelimit.UnaryInterceptor(callerRL, 30, time.Second),
@@ -382,7 +387,8 @@ func grpcOptionsFromEnv(httpConfig httpServerConfig, rl *ratelimit.Limiter) ([]g
 		// Stop is the bounded GracefulStop fallback. Waiting for handlers here
 		// keeps backend ownership valid until canceled RPC handlers return.
 		grpc.WaitForHandlers(true),
-		grpc.ChainUnaryInterceptor(productionUnaryInterceptors(appCheckVerifier, enforceAppCheck, rl, maasRL)...),
+		grpc.ChainUnaryInterceptor(productionUnaryInterceptors(appCheckVerifier, enforceAppCheck, rl, maasRL,
+			int(shared.EnvInt32("ROUTER_MAX_INFLIGHT_UNARY", 300)))...),
 		grpc.ChainStreamInterceptor(
 			obs.StreamInterceptor(),
 			ratelimit.StreamInterceptor(rl, 30, time.Second),
