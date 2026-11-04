@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Runs the CRAP and mutation quality gate on the code this push changes, so a
+# red CI run is caught here first. Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# QUALITY_BASE is the commit the remote already has (what CI diffs against), so
+# only the code in this push is judged. The gate runs on the working tree, not
+# the pushed commit.
+#
+# PREPUSH_QUALITY=0  turn the gate off.
+# PREPUSH_STEPS      extra scripts/ci.sh jobs to run first (default: none).
+# PREPUSH_DRY_RUN=1  print the commands without running them.
+# SKIP_PREPUSH=1     skip everything for this push (git push --no-verify also works).
+set -euo pipefail
+
+if [ "${SKIP_PREPUSH:-}" = 1 ]; then
+  echo "pre-push: skipped (SKIP_PREPUSH=1)"
+  exit 0
+fi
+
+# A push that only deletes refs has nothing to test. For the first real ref,
+# remember what the remote has: that is the diff base.
+zero=0000000000000000000000000000000000000000
+pushes_code=0
+remote_base=""
+while read -r _ local_sha _ remote_sha; do
+  if [ -n "$local_sha" ] && [ "$local_sha" != "$zero" ]; then
+    pushes_code=1
+    [ -z "$remote_base" ] && remote_base="$remote_sha"
+  fi
+done
+if [ "$pushes_code" = 0 ]; then
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# A brand-new branch has no remote commit; fall back to where it left main.
+if [ -z "$remote_base" ] || [ "$remote_base" = "$zero" ]; then
+  remote_base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD^)"
+fi
+export QUALITY_BASE="$remote_base"
+
+run() {
+  echo "pre-push: $*"
+  if [ "${PREPUSH_DRY_RUN:-}" = 1 ]; then
+    return 0
+  fi
+  "$@"
+}
+
+for step in ${PREPUSH_STEPS:-}; do
+  run ./scripts/ci.sh "$step"
+done
+
+if [ "${PREPUSH_QUALITY:-1}" = 0 ]; then
+  echo "pre-push: quality gate off (PREPUSH_QUALITY=0)"
+  exit 0
+fi
+
+if ! git diff --quiet; then
+  echo "pre-push: warning: unstaged changes present; the gate runs on the working tree, not the pushed commit" >&2
+fi
+
+# The helpers `make quality` (changed scope) runs; the QUALITY_SCOPE=all ones
+# are not needed here.
+for helper in quality-changed.py quality-report.py quality-crap4dart.py; do
+  if [ ! -f "scripts/$helper" ]; then
+    echo "pre-push: scripts/$helper is missing, so the quality gate cannot run" >&2
+    echo "pre-push: restore it, or push with SKIP_PREPUSH=1" >&2
+    exit 1
+  fi
+done
+
+echo "pre-push: quality gate on changes since $QUALITY_BASE"
+run make quality
+echo "pre-push: quality gate passed"

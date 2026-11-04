@@ -36,6 +36,12 @@ gremlins_version=v0.6.0
 crap4go_version=bee16dbdadb4
 crap4dart_version=0.9.5
 mutation_test_version=1.8.1
+# Changed Go code goes through Uncle Bob's crapper/dryer/mutator; the
+# QUALITY_SCOPE=all pass still uses crap4go and gremlins above. None of the
+# three reads Dart. They have no tags, so they are pinned to commits.
+ub_tools_pins="crapper@6fd92c4 dryer@66ff6d2 mutator@a5a0cb8"
+ub_bin=""
+dry_max=0.8
 tools_bin="$repo_root/.tools/bin"
 # Every tool below diffs through git, crap4dart and gremlins with their own
 # fixed arguments. Copy detection keeps moved or copy-then-trimmed code from
@@ -275,12 +281,6 @@ run_go() {
     echo "check-quality: $cover missing; run go test -coverprofile=$cover ./... first" >&2
     exit 1
   fi
-  echo "== quality: go CRAP <= $crap_max in files changed since $base =="
-  # crap4go has no diff mode, threshold, or exit status, and reruns go test
-  # itself: hand it the existing profile instead, limit it to changed files
-  # (whole files, not just changed functions), and fail on any score over the
-  # limit or N/A (a file with no coverage data at all).
-  GOBIN="$tools_bin" go install "github.com/unclebob/crap4go/cmd/crap4go@$crap4go_version"
   local reports
   reports="$(mktemp -d "$report_root/go-changed.XXXXXX")"
   python3 "$changed_tool" inventory "$repo_root" "$base" "$reports"
@@ -289,46 +289,69 @@ run_go() {
   if [ "${#files[@]}" -eq 0 ]; then
     echo "no changed go files"
     return
-  else
-    local cover_abs
-    cover_abs="$(cd "$(dirname "$cover")" && pwd)/$(basename "$cover")"
-    local normalized tool_module
-    normalized="$reports/coverage.normalized.out"
-    python3 "$report_tool" normalize-go-coverage "$cover_abs" "$normalized" "$reports/coverage-normalization.json"
-    tool_module="$(go list -m -f '{{.Dir}}' "github.com/unclebob/crap4go@$crap4go_version")"
-    cp -R "$tool_module" "$tmp/crap4go-source"
-    chmod -R u+w "$tmp/crap4go-source"
-    python3 "$report_tool" go-precision "$tmp/crap4go-source/internal/crap/crap.go"
-    printf 'crap4go %s; calculation unchanged; temporary report precision patch:\n' "$crap4go_version" >"$reports/crap4go-provenance.txt"
-    diff -u "$tool_module/internal/crap/crap.go" "$tmp/crap4go-source/internal/crap/crap.go" >>"$reports/crap4go-provenance.txt" || [ "$?" = 1 ]
-    (cd "$tmp/crap4go-source" && go build -o "$tmp/crap4go" ./cmd/crap4go)
-    make_worktree
-    (cd "$tmp/wt" && "$tmp/crap4go" --test-command "cp '$normalized' target/coverage/coverage.out # {coverprofile}" "${files[@]}") | tee "$reports/crap.log"
-    awk -v max="$crap_max" '
-      /^-+$/ { body = 1; next }
-      body && NF { if ($NF == "N/A" || $NF + 0 > max) { bad++; print "over " max ": " $0 } }
-      END { exit !body || bad > 0 }' "$reports/crap.log"
+  fi
+  install_ub_tools
+  # The tools write .metrics/ and target/ into the project root they run in,
+  # and their --changed reads git status, which is empty in CI: run them in the
+  # worktree on the inventory's explicit file list.
+  make_worktree
+  mkdir -p "$tmp/wt/target/coverage/go"
+  python3 "$report_tool" normalize-go-coverage "$cover" "$reports/coverage.normalized.out" "$reports/coverage-normalization.json"
+  # mutator cannot map import paths to files (crapper can); repo-relative paths work for both.
+  sed "s#^$(go list -m)/##" "$reports/coverage.normalized.out" >"$tmp/wt/target/coverage/go/coverage.out"
+
+  echo "== quality: go CRAP <= $crap_max in files changed since $base =="
+  # --threshold compares the unrounded score; a function it could not score
+  # (no coverage data at all) is nil and would slip past it.
+  (cd "$tmp/wt" && "$ub_bin/crapper" --use-existing-coverage --threshold "$crap_max" "${files[@]}") | tee "$reports/crap.log"
+  if grep -q ':crap nil' "$tmp/wt/.metrics/crap.edn"; then
+    echo "go CRAP: functions without coverage data ($tmp/wt/.metrics/crap.edn)" >&2
+    return 1
   fi
 
-  echo "== quality: go mutation efficacy and coverage >= $mutation_min% on lines changed since $base =="
-  GOBIN="$tools_bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@$gremlins_version"
-  local gremlins_tool
-  gremlins_tool="$(python3 "$repo_root/scripts/quality-gremlins.py")"
-  make_worktree
-  mkdir -p "$tmp/gotmp"
-  # gremlins v0.6.0 silently ignores the --threshold-* flags; only a config
-  # file enforces them. It also derives mutant timeouts from the coverage
-  # run, which the test cache can shrink to milliseconds, hence -count=1 and
-  # the coefficient.
-  python3 "$changed_tool" go-config "$reports/manifest.json" "$tmp/gremlins.yaml"
-  local tool_status=0
-  # Shared DB/Redis fixtures require one mutant and one test package at a time.
-  (cd "$tmp/wt" && GOFLAGS="${GOFLAGS:-} -count=1 -p=1" TMPDIR="$tmp/gotmp" "$gremlins_tool" unleash \
-    --config "$tmp/gremlins.yaml" --diff "$base" --integration --coverpkg=./... \
-    --workers "${QUALITY_WORKERS:-1}" --output "$reports/mutation.json" --output-statuses ltc .) >"$reports/mutation.log" 2>&1 || tool_status=$?
-  cat "$reports/mutation.log"
-  python3 "$report_tool" validate-go "$reports/mutation.json" "$reports/mutation.log" "$tool_status"
+  echo "== quality: go duplication < $dry_max on lines changed since $base =="
+  (cd "$tmp/wt" && "$ub_bin/dryer" --edn --threshold "$dry_max") >"$reports/dry.edn"
+  python3 "$changed_tool" go-dry "$reports/manifest.json" "$reports/dry.edn"
 
+  echo "== quality: go mutation efficacy and coverage >= $mutation_min% on lines changed since $base =="
+  python3 "$changed_tool" go-tests "$tmp/wt" "$reports/manifest.json" "$reports/go-tests.json"
+  local logs=() log tool_status
+  for file in "${files[@]}"; do
+    log="$reports/mutation/$file.log"
+    mkdir -p "$(dirname "$log")"
+    tool_status=0
+    # Exit 3 means at least one survivor, stricter than the threshold, so the
+    # score is computed from the site log instead. Exit 2 is a failing baseline.
+    (cd "$tmp/wt" && "$ub_bin/mutator" --use-existing-coverage --max-workers 1 \
+      --lines "$(python3 "$changed_tool" go-lines "$reports/manifest.json" "$file")" \
+      --test-command "$(python3 "$changed_tool" go-test-command "$reports/go-tests.json" "$file")" \
+      "$file") >"$log" 2>&1 || tool_status=$?
+    cat "$log"
+    case "$tool_status" in
+      0|3) logs+=("$log") ;;
+      *) echo "$file: mutator failed (exit $tool_status, $log)" >&2; return 1 ;;
+    esac
+  done
+  python3 "$changed_tool" go-mutation "$reports/manifest.json" "${logs[@]}"
+}
+
+# crapper, dryer and mutator: Python tools fetched at pinned commits into one
+# virtualenv. mutator imports crapper, which the shared venv provides.
+install_ub_tools() {
+  local dir="$tools_bin/../ub" pin name commit
+  if [ "$(cat "$dir/.installed" 2>/dev/null)" != "$ub_tools_pins" ]; then
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    for pin in $ub_tools_pins; do
+      name="${pin%%@*}" commit="${pin#*@}"
+      git clone -q "https://github.com/unclebob/$name" "$dir/$name"
+      git -C "$dir/$name" checkout -q "$commit"
+    done
+    python3 -m venv "$dir/.venv"
+    "$dir/.venv/bin/pip" install -q "$dir/crapper" "$dir/dryer" "$dir/mutator"
+    printf '%s' "$ub_tools_pins" >"$dir/.installed"
+  fi
+  ub_bin="$(cd "$dir/.venv/bin" && pwd)"
 }
 
 run_flutter() {
