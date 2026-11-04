@@ -1,10 +1,10 @@
 // Command pipeline runs the static data batches as one-shot processes, one per
 // Kubernetes CronJob or manual Job (ADR-0026):
 //
-//	pipeline run nightly   ingest, load, vector refresh, segment times, GTFS export, prediction-error upkeep
+//	pipeline run nightly   ingest, load, vector refresh, segment times, GTFS export, prediction-error upkeep, MRT sync
 //	pipeline run hourly    bus daily timetable: re-land, then load the cities that changed
 //	pipeline run publish   make the run's GTFS export the published one (after MOTIS imported it)
-//	pipeline run <step>    one step on its own: ingest, load, vector, gtfs
+//	pipeline run <step>    one step on its own: ingest, load, vector, gtfs, mrt_sync
 //
 // PIPELINE_RUN_ID names the run (the Job UID in Kubernetes); nightly's gtfs
 // step and the publish container of the same Job share it.
@@ -25,6 +25,7 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/cleanup"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/gtfs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/marker"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/mrtsync"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/raw"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/dataset"
@@ -42,6 +43,7 @@ const (
 
 	_segmentTimeTimeout     = 15 * time.Minute
 	_predictionErrorTimeout = 10 * time.Minute
+	_mrtSyncTimeout         = 5 * time.Minute
 )
 
 func main() {
@@ -81,7 +83,7 @@ func run(args []string) error {
 
 func validatePipelineArgs(args []string) error {
 	if len(args) != 2 || args[0] != "run" {
-		return errors.New("usage: pipeline run <nightly|hourly|publish|ingest|load|vector|gtfs>")
+		return errors.New("usage: pipeline run <nightly|hourly|publish|ingest|load|vector|gtfs|mrt_sync>")
 	}
 	return nil
 }
@@ -119,13 +121,14 @@ func runConfiguredPipeline(db *pgxpool.Pool, rc *redis.Client, name string) erro
 
 func runPipelineStep(ctx context.Context, d deps, name string) error {
 	runners := map[string]func(context.Context, deps) error{
-		"nightly": runNightly,
-		"hourly":  runHourly,
-		"ingest":  stepIngest,
-		"load":    stepLoad,
-		"vector":  stepVector,
-		"gtfs":    stepGTFS,
-		"publish": runPublish,
+		"nightly":  runNightly,
+		"hourly":   runHourly,
+		"ingest":   stepIngest,
+		"load":     stepLoad,
+		"vector":   stepVector,
+		"gtfs":     stepGTFS,
+		"publish":  runPublish,
+		"mrt_sync": stepMRTSync,
 	}
 	run := runners[name]
 	if run == nil {
@@ -149,6 +152,7 @@ func nightlySteps() []step {
 		{"segment_times", stepSegmentTimes},
 		{"gtfs", stepGTFS},
 		{"prediction_errors", stepPredictionErrors},
+		{"mrt_sync", reportMRTSync},
 	}
 }
 
@@ -293,6 +297,31 @@ func stepSegmentTimes(ctx context.Context, d deps) error {
 	}
 	return pipeline.RunWithTimeout(ctx, _segmentTimeTimeout, func(ctx context.Context) error {
 		return history.FillSegmentTimesFromDistance(ctx, d.db)
+	})
+}
+
+// reportMRTSync is mrt_sync inside nightly. nightly runs as the Job's init
+// container, so a failed step would also skip motis-import and publish; a
+// powersync-db outage only leaves the MRT copies a day stale, so it is
+// reported instead. `pipeline run mrt_sync` stays strict.
+func reportMRTSync(ctx context.Context, d deps) error {
+	if err := stepMRTSync(ctx, d); err != nil {
+		zap.S().Errorw("failed", "component", "pipeline", "action", "mrt_sync", "event", "failed", "err", err)
+	}
+	return nil
+}
+
+// stepMRTSync copies the tables PowerSync serves to powersync-db (ADR-0028).
+// Without MRT_SYNC_DATABASE_URL it skips, which is the state until that
+// instance exists.
+func stepMRTSync(ctx context.Context, d deps) error {
+	dsn := os.Getenv("MRT_SYNC_DATABASE_URL")
+	if dsn == "" {
+		zap.S().Infow("skipped", "component", "pipeline", "action", "mrt_sync", "event", "skipped", "reason", "no_mrt_sync_database_url")
+		return nil
+	}
+	return pipeline.RunWithTimeout(ctx, _mrtSyncTimeout, func(ctx context.Context) error {
+		return mrtsync.Run(ctx, d.db, dsn)
 	})
 }
 

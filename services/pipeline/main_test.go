@@ -100,7 +100,7 @@ func TestNightlyStepOrder(t *testing.T) {
 	for _, s := range nightlySteps() {
 		got = append(got, s.name)
 	}
-	want := []string{"ingest", "load", "vector", "segment_times", "gtfs", "prediction_errors"}
+	want := []string{"ingest", "load", "vector", "segment_times", "gtfs", "prediction_errors", "mrt_sync"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("nightly steps = %v, want %v", got, want)
 	}
@@ -122,5 +122,20 @@ func TestPipelineStepUnknownNameNeverRunsWork(t *testing.T) {
 	t.Setenv("TDX_CLIENT_SECRET", "")
 	if err := runPipelineStep(context.Background(), deps{}, "ingest"); err == nil || !strings.Contains(err.Error(), "raw lock pool is nil") {
 		t.Fatalf("ingest without lock pool = %v", err)
+	}
+}
+
+func TestMRTSyncSkipsWithoutPowersyncDB(t *testing.T) {
+	t.Setenv("MRT_SYNC_DATABASE_URL", "")
+	if err := stepMRTSync(t.Context(), deps{}); err != nil {
+		t.Fatalf("mrt_sync without a URL = %v, want a skip", err)
+	}
+	t.Setenv("MRT_SYNC_DATABASE_URL", "postgres://nobody@127.0.0.1:1/mrt?sslmode=disable&connect_timeout=1")
+	if err := stepMRTSync(t.Context(), deps{}); err == nil {
+		t.Fatal("mrt_sync against an unreachable powersync-db succeeded")
+	}
+	// Inside nightly the same failure must not fail the init container.
+	if err := reportMRTSync(t.Context(), deps{}); err != nil {
+		t.Fatalf("nightly mrt_sync failure = %v, want it reported, not returned", err)
 	}
 }
