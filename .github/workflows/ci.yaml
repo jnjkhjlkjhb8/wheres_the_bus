@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       go: ${{ steps.diff.outputs.go }}
       flutter: ${{ steps.diff.outputs.flutter }}
@@ -28,10 +29,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      # On main, diff against the last green push run, not github.event.before:
+      # a run that was cancelled (cancel-in-progress) or went red in between
+      # would otherwise drop its changes from the diff, and this run's success
+      # would deploy them untested.
       - id: diff
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: ./scripts/ci-changes.sh "$BASE" >> "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="$PR_BASE"
+          if [ -z "$base" ]; then
+            base=$(gh run list --workflow ci.yaml --branch main --event push --status success \
+              --limit 1 --json headSha --jq '.[0].headSha // empty')
+          fi
+          ./scripts/ci-changes.sh "$base" >> "$GITHUB_OUTPUT"
 
   go:
     needs: changes

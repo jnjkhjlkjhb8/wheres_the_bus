@@ -11,7 +11,9 @@ if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/
   exit 0
 fi
 
-files=$(git diff --name-only "$base" HEAD)
+# --no-renames lists both paths of a move; with rename detection a file moved
+# from services/ into app/ would show only its app/ path and skip go.
+files=$(git diff --no-renames --name-only "$base" HEAD)
 shared='^(\.github/workflows/|scripts/|Makefile$|models/)'
 
 go=false
