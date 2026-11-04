@@ -28,6 +28,7 @@ type MaasServer struct {
 
 	cache       MaasCache
 	db          maasDB
+	railShapes  *railShapeCache
 	maasClient  *resty.Client
 	motisClient *motisClient
 	health      *PlannerHealthMonitor
@@ -160,7 +161,7 @@ func NewMaasServerWithCache(cache MaasCache, db maasDB, tdx *shared.TDXClient, w
 	}
 	lifecycleCtx, cancel := context.WithCancel(context.Background())
 	return &MaasServer{
-		cache: cache, db: db, maasClient: c,
+		cache: cache, db: db, maasClient: c, railShapes: newRailShapeCache(),
 		motisClient: workConfig.Motis, health: workConfig.Health,
 		osrmClient: resty.New().SetTimeout(5 * time.Second),
 		workSlots:  make(chan struct{}, workConfig.MaxConcurrent), workTimeout: workConfig.Timeout,
@@ -522,10 +523,10 @@ func (s *MaasServer) enrich(ctx context.Context, refs []maasSectionRef, walks []
 				"geometry", len(walks),
 			)
 		}
-		enrichTransitPaths(ctx, s.db, refs)
+		enrichTransitPaths(ctx, s.db, s.railShapes, refs)
 		return
 	}
-	enrichGeometry(ctx, s.db, s.osrmClient, refs)
+	enrichGeometry(ctx, s.db, s.railShapes, s.osrmClient, refs)
 }
 
 // rank applies the rider's price/time preference. Only MOTIS needs it: TDX
@@ -599,7 +600,7 @@ type maasSectionRef struct {
 
 func convert(ctx context.Context, db maasDB, osrmClient *resty.Client, api *tdxAPIResponse) *pb.MaasPlanResponse {
 	out, refs := convertRoutes(ctx, db, api)
-	enrichGeometry(ctx, db, osrmClient, refs)
+	enrichGeometry(ctx, db, nil, osrmClient, refs)
 	return out
 }
 
@@ -683,9 +684,9 @@ func convertAlternative(sec tdxSection) *pb.Section {
 	}
 }
 
-func enrichGeometry(ctx context.Context, db maasDB, osrmClient *resty.Client, refs []maasSectionRef) {
+func enrichGeometry(ctx context.Context, db maasDB, shapes *railShapeCache, osrmClient *resty.Client, refs []maasSectionRef) {
 	enrichWalkSections(ctx, osrmClient, refs)
-	enrichTransitPaths(ctx, db, refs)
+	enrichTransitPaths(ctx, db, shapes, refs)
 }
 
 func convertSection(sec tdxSection) *pb.Section {

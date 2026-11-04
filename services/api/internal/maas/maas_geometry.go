@@ -419,12 +419,12 @@ func transitStopUsable(point transitStopPoint) bool {
 	return point.lat != 0 || point.lng != 0
 }
 
-func buildTransitPath(ctx context.Context, db maasDB, mode string, sec tdxSection) []*pb.Location {
+func buildTransitPath(ctx context.Context, db maasDB, shapes *railShapeCache, mode string, sec tdxSection) []*pb.Location {
 	stops := sectionStopPoints(sec)
 	var path []*pb.Location
 	for i := 0; i+1 < len(stops); i++ {
 		a, b := stops[i], stops[i+1]
-		seg, ok := clipRailShape(ctx, db, mode, a, b)
+		seg, ok := shapes.clip(ctx, db, mode, a, b)
 		if !ok {
 			seg = []*pb.Location{{Lat: a.lat, Lng: a.lng}, {Lat: b.lat, Lng: b.lng}}
 		}
@@ -433,15 +433,15 @@ func buildTransitPath(ctx context.Context, db maasDB, mode string, sec tdxSectio
 	return path
 }
 
-func enrichTransitPath(ctx context.Context, db maasDB, mode string, ref maasSectionRef) error {
+func enrichTransitPath(ctx context.Context, db maasDB, shapes *railShapeCache, mode string, ref maasSectionRef) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	ref.target.TransitPath = buildTransitPath(ctx, db, mode, ref.source)
+	ref.target.TransitPath = buildTransitPath(ctx, db, shapes, mode, ref.source)
 	return nil
 }
 
-func enrichTransitPaths(ctx context.Context, db maasDB, refs []maasSectionRef) {
+func enrichTransitPaths(ctx context.Context, db maasDB, shapes *railShapeCache, refs []maasSectionRef) {
 	if db == nil {
 		return
 	}
@@ -453,7 +453,7 @@ func enrichTransitPaths(ctx context.Context, db maasDB, refs []maasSectionRef) {
 			continue
 		}
 
-		group.Go(func() error { return enrichTransitPath(groupCtx, db, mode, ref) })
+		group.Go(func() error { return enrichTransitPath(groupCtx, db, shapes, mode, ref) })
 	}
 	_ = group.Wait()
 }

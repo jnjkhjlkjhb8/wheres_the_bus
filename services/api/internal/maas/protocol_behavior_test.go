@@ -115,7 +115,7 @@ func TestTransitEnrichmentBuildsOrderedShapeAndHonorsGuards(t *testing.T) {
 	target := &pb.Section{}
 	ref := maasSectionRef{source: source, target: target}
 	db.ExpectQuery("WITH candidates").WithArgs("metro", 121.0, 25.0, 122.0, 26.0, _railShapeSnapMeters, _railShapeSimplifyTolerance).WillReturnRows(pgxmock.NewRows([]string{"wkt"}).AddRow("LINESTRING(121 25,121.5 25.5,122 26)")).RowsWillBeClosed()
-	enrichTransitPaths(t.Context(), db, []maasSectionRef{ref})
+	enrichTransitPaths(t.Context(), db, nil, []maasSectionRef{ref})
 	want := []*pb.Location{{Lat: 25, Lng: 121}, {Lat: 25.5, Lng: 121.5}, {Lat: 26, Lng: 122}}
 	if !reflect.DeepEqual(target.TransitPath, want) {
 		t.Fatalf("transit path = %v, want %v", target.TransitPath, want)
@@ -125,12 +125,12 @@ func TestTransitEnrichmentBuildsOrderedShapeAndHonorsGuards(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := enrichTransitPath(ctx, db, "metro", ref); !errors.Is(err, context.Canceled) || !reflect.DeepEqual(target.TransitPath, want) {
+	if err := enrichTransitPath(ctx, db, nil, "metro", ref); !errors.Is(err, context.Canceled) || !reflect.DeepEqual(target.TransitPath, want) {
 		t.Fatalf("cancelled enrichment error = %v, path %v", err, target.TransitPath)
 	}
-	enrichTransitPaths(t.Context(), nil, []maasSectionRef{ref})
+	enrichTransitPaths(t.Context(), nil, nil, []maasSectionRef{ref})
 	ref.source.Transport.Mode = "BUS"
-	enrichTransitPaths(t.Context(), db, []maasSectionRef{ref})
+	enrichTransitPaths(t.Context(), db, nil, []maasSectionRef{ref})
 	if !reflect.DeepEqual(target.TransitPath, want) {
 		t.Fatal("unavailable or inapplicable enrichment overwrote existing shape")
 	}
