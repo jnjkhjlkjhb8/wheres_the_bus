@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -387,6 +388,11 @@ func grpcOptionsFromEnv(httpConfig httpServerConfig, rl *ratelimit.Limiter) ([]g
 		// Stop is the bounded GracefulStop fallback. Waiting for handlers here
 		// keeps backend ownership valid until canceled RPC handlers return.
 		grpc.WaitForHandlers(true),
+		// cloudflared reaches api over one HTTP/2 connection, and kube-proxy
+		// balances per connection, so every call lands on one pod. With a
+		// per-connection stream cap, cloudflared's pool dials another
+		// connection once one is full, and those spread across pods.
+		grpc.MaxConcurrentStreams(uint32(shared.EnvInt32("ROUTER_GRPC_MAX_STREAMS_PER_CONN", math.MaxInt32))),
 		grpc.ChainUnaryInterceptor(productionUnaryInterceptors(appCheckVerifier, enforceAppCheck, rl, maasRL,
 			int(shared.EnvInt32("ROUTER_MAX_INFLIGHT_UNARY", 300)))...),
 		grpc.ChainStreamInterceptor(
