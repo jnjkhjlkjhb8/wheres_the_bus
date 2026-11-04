@@ -97,5 +97,8 @@ message thsr_available_seats {
 // Wire-compatible with the former `bytes data = 1`: field 1 still carries a
 // marshaled thsr_available_seats, now typed for the interface.
 message Resp_thsr_seats {
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   thsr_available_seats data = 1;
 }

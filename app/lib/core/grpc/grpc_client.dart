@@ -3,6 +3,7 @@ import 'package:grpc/grpc.dart';
 import 'package:wheres_the_bus/core/grpc/grpc_compression_interceptor.dart';
 import 'package:wheres_the_bus/core/grpc/grpc_deadline_interceptor.dart';
 import 'package:wheres_the_bus/core/grpc/grpc_error_interceptor.dart';
+import 'package:wheres_the_bus/core/grpc/grpc_heartbeat_interceptor.dart';
 import 'package:wheres_the_bus/core/lifecycle/app_foreground.dart';
 import 'package:wheres_the_bus/data/generated/alert.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/bike.pbgrpc.dart';
@@ -131,6 +132,7 @@ class GrpcClient {
     GrpcCompressionInterceptor(),
     GrpcDeadlineInterceptor(),
     GrpcErrorInterceptor(),
+    GrpcHeartbeatInterceptor(),
   ];
 
   Bus_Route_ServiceClient get busRoute =>

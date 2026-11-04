@@ -21,6 +21,7 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/alert"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/cache"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/firebase"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/heartbeat"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/livestream"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/maas"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/metro"
@@ -400,6 +401,8 @@ func grpcOptionsFromEnv(httpConfig httpServerConfig, rl *ratelimit.Limiter) ([]g
 			ratelimit.StreamInterceptor(rl, 30, time.Second),
 			maas.MaasResourceStreamInterceptor(maasRL, maas.DefaultMaasResourceConfig),
 			firebase.AppCheckStreamInterceptor(appCheckVerifier, enforceAppCheck),
+			// Innermost, so it wraps only the handler's own sends.
+			heartbeat.StreamInterceptor(heartbeat.Idle),
 		),
 	}
 	if tlsCredentials != nil {

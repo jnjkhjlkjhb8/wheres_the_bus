@@ -11,6 +11,9 @@ message Ask_Near{
   int32 Radius = 3;
 }
 message resp_near {
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   map<string,array_near> near_bus_stations = 1;
   repeated NearStation near_bike_stations = 2;
   repeated NearStation near_mrt_stations = 3;

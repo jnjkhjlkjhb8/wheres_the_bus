@@ -27,12 +27,18 @@ message Resp_Bus_static{
 }
 // Route ETA envelope. data is a Bus_RouteArrival (Bus_Route_Service.eta).
 message Resp_Bus_eta{
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   Bus_RouteArrival data = 1;
 }
 // Station-group ETA envelope. data is a Bus_StationArrival
 // (Bus_Station_Service.eta). Split from Resp_Bus_eta so each RPC carries its
 // own payload schema.
 message Resp_Bus_station_eta{
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   Bus_StationArrival data = 1;
 }
 message Resp_Bus_daily_timetable{

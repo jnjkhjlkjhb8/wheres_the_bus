@@ -11,6 +11,9 @@ message Bike_request{
 // Wire-compatible with the former `bytes data = 1`: field 1 still carries a
 // marshaled Bike_eta, now typed for the interface.
 message Resp_Bike_eta{
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   Bike_eta data = 1;
 }
 message Bike_static{

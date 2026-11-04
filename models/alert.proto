@@ -18,6 +18,9 @@ message Alert_Metro_Ask {
 // three different envelopes; the ingestor unwraps all of them, so every payload
 // on the wire is this one shape and carries the channel's current snapshot.
 message Alert_Msg {
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   reserved 1;  // was: bytes data, the verbatim TDX payload
   repeated Alert_Item items = 2;
 }

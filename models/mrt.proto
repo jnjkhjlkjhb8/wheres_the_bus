@@ -10,6 +10,9 @@ service Mrt_Service{
 // Wire-compatible with the former `bytes data = 1`: field 1 still carries a
 // marshaled Mrt_live, now typed for the interface.
 message Resp_Mrt_eta{
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   Mrt_live data = 1;
 }
 message Ask_mrt{
@@ -63,6 +66,9 @@ message MrtTrackAck {
   bool ok = 1;
 }
 message MrtTrackState {
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   string track_id = 1;
   string trip_id = 2;
   string car_id = 3;

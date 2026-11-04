@@ -7,6 +7,9 @@ service MaasService {
 }
 
 message MaasPlanUpdate {
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
   MaasPlanResponse plan = 1;
   // False on the routes-only message, true on the last message of the stream.
   // A cache hit sends a single message with complete = true.
