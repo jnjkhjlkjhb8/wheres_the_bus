@@ -15,7 +15,6 @@ import (
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/ratelimit"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/redistest"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/pashagolub/pgxmock/v4"
 	redisv9 "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -24,23 +23,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
-
-type maasTDXStore struct {
-	token  string
-	getErr error
-	gets   int32
-}
-
-func (s *maasTDXStore) Get(context.Context, string) (string, error) {
-	atomic.AddInt32(&s.gets, 1)
-	if s.getErr != nil {
-		return "", s.getErr
-	}
-	return s.token, nil
-}
-
-func (*maasTDXStore) Set(context.Context, string, string, time.Duration) error { return nil }
-func (*maasTDXStore) Del(context.Context, ...string) error                     { return nil }
 
 var errMaasCacheMiss = errors.New("cache miss")
 
@@ -158,59 +140,6 @@ func (c *doneObservedContext) Done() <-chan struct{} {
 	return c.Context.Done()
 }
 
-func TestMaasCanceledRequestDoesNotRetryOrReachUpstream(t *testing.T) {
-	var hits int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&hits, 1)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer upstream.Close()
-
-	store := &maasTDXStore{token: "tok"}
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: store, IMSKey: shared.TDXLegacyIMSKey})
-	client := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, DefaultMaasSharedWorkConfig).maasClient.SetBaseURL(upstream.URL)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	started := time.Now()
-	_, err := client.R().SetContext(ctx).Get("/routing")
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("MaaS canceled error = %v, want context.Canceled", err)
-	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("canceled MaaS request took %v", elapsed)
-	}
-	if got := atomic.LoadInt32(&hits); got != 0 {
-		t.Fatalf("upstream hits = %d, want 0", got)
-	}
-}
-
-func TestMaasAuthCacheErrorIsNotRetried(t *testing.T) {
-	var hits int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&hits, 1)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer upstream.Close()
-
-	cacheErr := errors.New("token cache unavailable")
-	store := &maasTDXStore{getErr: cacheErr}
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: store, IMSKey: shared.TDXLegacyIMSKey})
-	client := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, DefaultMaasSharedWorkConfig).maasClient.
-		SetBaseURL(upstream.URL).
-		SetRetryWaitTime(time.Nanosecond).
-		SetRetryMaxWaitTime(time.Nanosecond)
-	_, err := client.R().SetContext(context.Background()).Get("/routing")
-	if !errors.Is(err, cacheErr) {
-		t.Fatalf("MaaS auth error = %v, want %v", err, cacheErr)
-	}
-	if got := atomic.LoadInt32(&store.gets); got != 1 {
-		t.Fatalf("token cache reads = %d, want 1 (no retry)", got)
-	}
-	if got := atomic.LoadInt32(&hits); got != 0 {
-		t.Fatalf("upstream hits = %d, want 0", got)
-	}
-}
-
 func TestRedisContextErrorHandlesSocketDeadlineTimerRace(t *testing.T) {
 	timeoutErr := fakeTimeoutError{}
 	pastDeadline := pendingDeadlineContext{Context: context.Background(), deadline: time.Now().Add(-time.Second)}
@@ -220,6 +149,14 @@ func TestRedisContextErrorHandlesSocketDeadlineTimerRace(t *testing.T) {
 	futureDeadline := pendingDeadlineContext{Context: context.Background(), deadline: time.Now().Add(time.Hour)}
 	if err := redisContextError(futureDeadline, timeoutErr); !errors.Is(err, timeoutErr) {
 		t.Fatalf("early Redis timeout error = %v, want original %v", err, timeoutErr)
+	}
+	if err := redisContextError(context.Background(), nil); err != nil {
+		t.Fatalf("nil Redis error = %v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := redisContextError(canceled, timeoutErr); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled context error = %v, want %v", err, context.Canceled)
 	}
 }
 
@@ -305,8 +242,7 @@ func TestRedisMaasCacheCommandRetainsSharedPermitUntilTermination(t *testing.T) 
 	defer func() { _ = cache.Close() }()
 	processDone := make(chan struct{})
 	cache.client.AddHook(&commandCompletionHook{target: "get", done: processDone})
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(cache, nil, tdx, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 80 * time.Millisecond})
+	server := NewMaasServerWithCache(cache, nil, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 80 * time.Millisecond})
 	request := &pb.MaasPlanRequest{FromLat: 25, FromLon: 121.5, ToLat: 25.1, ToLon: 121.6, Date: "2027-01-01", Time: "08:00"}
 	firstDone := make(chan error, 1)
 	go func() {
@@ -334,55 +270,6 @@ func TestRedisMaasCacheCommandRetainsSharedPermitUntilTermination(t *testing.T) 
 	if got := len(server.workSlots); got != 0 {
 		t.Fatalf("shared permit leaked after Redis command termination: %d", got)
 	}
-}
-
-func TestMaasTimeParam(t *testing.T) {
-	now := time.Date(2026, 7, 11, 23, 0, 0, 0, time.Local)
-	layout := "2006-01-02T15:04:05"
-
-	// TDX requires both depart and arrival present (else 40001); every case
-	// must return the two equal and non-empty.
-	assertBoth := func(t *testing.T, depart, arrival, want string) {
-		t.Helper()
-		if depart != arrival {
-			t.Fatalf("depart %q != arrival %q, TDX needs both equal", depart, arrival)
-		}
-		if want != "" && depart != want {
-			t.Fatalf("got %q, want %q", depart, want)
-		}
-	}
-
-	t.Run("arriveBy sends the requested time with padded seconds", func(t *testing.T) {
-		d, a := maasTimeParam("2026-07-12", "08:30", true, now)
-		assertBoth(t, d, a, "2026-07-12T08:30:00")
-	})
-
-	t.Run("future depart is passed through unchanged", func(t *testing.T) {
-		d, a := maasTimeParam("2026-07-11", "23:30", false, now)
-		assertBoth(t, d, a, "2026-07-11T23:30:00")
-	})
-
-	for _, tt := range []struct{ name, date, tm string }{
-		{"now", "2026-07-11", "23:00"},
-		{"past", "2026-07-11", "22:00"},
-	} {
-		t.Run("depart "+tt.name+" is bumped into the future", func(t *testing.T) {
-			d, a := maasTimeParam(tt.date, tt.tm, false, now)
-			assertBoth(t, d, a, "")
-			got, err := time.ParseInLocation(layout, d, time.Local)
-			if err != nil {
-				t.Fatalf("unparseable depart %q: %v", d, err)
-			}
-			if !got.After(now) {
-				t.Fatalf("depart %v not after now %v", got, now)
-			}
-		})
-	}
-
-	t.Run("unparseable time falls through unchanged", func(t *testing.T) {
-		d, a := maasTimeParam("", "", false, now)
-		assertBoth(t, d, a, "T")
-	})
 }
 
 func TestConvertBatchesIdentityAndFareQueries(t *testing.T) {
@@ -442,7 +329,7 @@ func TestConvertBatchesIdentityAndFareQueries(t *testing.T) {
 		section("SUBWAY", "", "西門", "龍山寺"),
 	}}}
 
-	out := convert(context.Background(), db, nil, api)
+	out := convert(context.Background(), db, api)
 	if err := db.ExpectationsWereMet(); err != nil {
 		t.Fatalf("database queries were not batched to a constant count: %v", err)
 	}
@@ -537,15 +424,13 @@ func TestMaasSharedFlightSurvivesLeaderCancellationAndOwnsPermit(t *testing.T) {
 		}
 		<-releaseUpstream
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"result":"success","data":{"routes":[]}}`)
+		_, _ = io.WriteString(w, _motisTestPlan)
 	}))
 	defer upstream.Close()
 	defer release()
 
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
 	cache := newControlledMaasCache()
-	server := NewMaasServerWithCache(cache, nil, tdx, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 2 * time.Second})
-	server.maasClient.SetBaseURL(upstream.URL).SetRetryCount(0)
+	server := newMotisTestServer(cache, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 2 * time.Second}, upstream.URL)
 	interceptor := MaasResourceInterceptor(ratelimit.New(), MaasResourceConfig{
 		RateLimit: 100, RateWindow: time.Minute,
 	})
@@ -627,7 +512,6 @@ func TestMaasSharedFlightSurvivesLeaderCancellationAndOwnsPermit(t *testing.T) {
 
 func TestMaasSharedCacheGetAndSetHonorContexts(t *testing.T) {
 	request := &pb.MaasPlanRequest{FromLat: 25.0, FromLon: 121.5, ToLat: 25.1, ToLon: 121.6, Date: "2027-01-01", Time: "08:00"}
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
 
 	t.Run("caller cancellation returns while shared Get remains bounded", func(t *testing.T) {
 		getStarted := make(chan struct{})
@@ -635,7 +519,7 @@ func TestMaasSharedCacheGetAndSetHonorContexts(t *testing.T) {
 		getCtxEnd := make(chan struct{})
 		cache := newControlledMaasCache()
 		cache.getStart, cache.getBlock, cache.getCtxEnd = getStarted, getRelease, getCtxEnd
-		server := NewMaasServerWithCache(cache, nil, tdx, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 40 * time.Millisecond})
+		server := NewMaasServerWithCache(cache, nil, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 40 * time.Millisecond})
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() {
@@ -667,11 +551,10 @@ func TestMaasSharedCacheGetAndSetHonorContexts(t *testing.T) {
 		cache.setStart, cache.setBlock, cache.setCtxEnd = setStarted, setRelease, setCtxEnd
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"result":"success","data":{"routes":[]}}`)
+			_, _ = io.WriteString(w, _motisTestPlan)
 		}))
 		defer upstream.Close()
-		server := NewMaasServerWithCache(cache, nil, tdx, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 40 * time.Millisecond})
-		server.maasClient.SetBaseURL(upstream.URL).SetRetryCount(0)
+		server := newMotisTestServer(cache, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 40 * time.Millisecond}, upstream.URL)
 		done := make(chan error, 1)
 		go func() {
 			_, err := server.Plan(context.Background(), request)
@@ -701,8 +584,7 @@ func TestMaasServerCloseJoinsFlightAfterCallerCancels(t *testing.T) {
 	getCtxEnd := make(chan struct{})
 	cache := newControlledMaasCache()
 	cache.getStart, cache.getBlock, cache.getCtxEnd = getStarted, getRelease, getCtxEnd
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(cache, nil, tdx, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 5 * time.Second})
+	server := NewMaasServerWithCache(cache, nil, maasSharedWorkConfig{MaxConcurrent: 1, Timeout: 5 * time.Second})
 
 	request := &pb.MaasPlanRequest{FromLat: 25, FromLon: 121.5, ToLat: 25.1, ToLon: 121.6, Date: "2027-01-01", Time: "08:00"}
 	callerCtx, cancelCaller := context.WithCancel(context.Background())
@@ -744,17 +626,15 @@ func TestMaasServerCloseJoinsFlightAfterCallerCancels(t *testing.T) {
 
 func TestMaasServerCloseVersusPlanRaceLeavesNoLeakedPermitOrCacheCommand(t *testing.T) {
 	cache := newControlledMaasCache()
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"result":"success","data":{"routes":[]}}`)
+		_, _ = io.WriteString(w, _motisTestPlan)
 	}))
 	defer upstream.Close()
 	// MaxConcurrent covers every attempt so the shared-work permit never runs
 	// out; the only rejection this test exercises is the closing gate.
 	const attempts = 50
-	server := NewMaasServerWithCache(cache, nil, tdx, maasSharedWorkConfig{MaxConcurrent: attempts, Timeout: time.Second})
-	server.maasClient.SetBaseURL(upstream.URL).SetRetryCount(0)
+	server := newMotisTestServer(cache, maasSharedWorkConfig{MaxConcurrent: attempts, Timeout: time.Second}, upstream.URL)
 
 	var wg sync.WaitGroup
 	errs := make([]error, attempts)
@@ -810,32 +690,43 @@ func (s *recordingPlanStream) Send(update *pb.MaasPlanUpdate) error {
 	return nil
 }
 
-const _maasStreamTDXRoute = `{"result":"success","data":{"routes":[{
-  "travel_time":1500,"start_time":"2027-01-01T08:00:00","end_time":"2027-01-01T08:25:00","transfers":0,
-  "sections":[{
-    "type":"pedestrian","travelSummary":{"duration":600,"length":800},
-    "transport":{"mode":"pedestrian"},
-    "departure":{"time":"2027-01-01T08:00:00","place":{"name":"起點","location":{"lat":25.00,"lng":121.50}}},
-    "arrival":{"time":"2027-01-01T08:10:00","place":{"name":"終點","location":{"lat":25.02,"lng":121.52}}}
-  }]}]}}`
+// _motisTestPlan is the smallest MOTIS answer that converts to a plan: one
+// walk leg carrying geometry.
+const _motisTestPlan = `{"itineraries":[{"duration":1500,"startTime":"2027-01-01T08:00:00+08:00","endTime":"2027-01-01T08:25:00+08:00","legs":[{
+  "mode":"WALK","duration":600,
+  "from":{"name":"起點","lat":25.00,"lon":121.50},
+  "to":{"name":"終點","lat":25.02,"lon":121.52},
+  "legGeometry":{"points":"_p~iF~ps|U","precision":5}
+}]}]}`
+
+// newMotisTestServer builds a server whose planner is a MOTIS stand-in at upstreamURL.
+func newMotisTestServer(cache MaasCache, config maasSharedWorkConfig, upstreamURL string) *MaasServer {
+	config.Motis = NewMotisClient(upstreamURL)
+	config.Motis.http.SetRetryCount(0)
+	return NewMaasServerWithCache(cache, nil, config)
+}
+
+// convert runs the two conversion stages the server runs, minus the planner.
+func convert(ctx context.Context, db maasDB, api *tdxAPIResponse) *pb.MaasPlanResponse {
+	out, refs := convertRoutes(ctx, db, api)
+	enrichTransitPaths(ctx, db, nil, refs)
+	return out
+}
 
 // The routes must reach the rider before the map geometry is paid for: the
 // first update carries the itinerary with no walkPath, the second the same
-// route with OSRM's path attached.
+// route with MOTIS's path attached.
 func TestPlanStreamSendsRoutesBeforeGeometry(t *testing.T) {
 	var hits atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, _maasStreamTDXRoute)
+		_, _ = io.WriteString(w, _motisTestPlan)
 	}))
 	defer upstream.Close()
 
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
 	cache := newControlledMaasCache()
-	server := NewMaasServerWithCache(cache, nil, tdx, DefaultMaasSharedWorkConfig)
-	server.maasClient.SetBaseURL(upstream.URL).SetRetryCount(0)
-	server.osrmClient = osrmClientReturning(200, _osrmTransferRoute)
+	server := newMotisTestServer(cache, DefaultMaasSharedWorkConfig, upstream.URL)
 	defer server.Close()
 
 	req := &pb.MaasPlanRequest{
@@ -866,9 +757,8 @@ func TestPlanStreamSendsRoutesBeforeGeometry(t *testing.T) {
 	if !last.Complete {
 		t.Fatal("last update must be marked complete")
 	}
-	if len(last.Plan.Routes[0].Sections[0].WalkPath) != 3 {
-		t.Fatalf("walkPath len = %d, want 3 on the complete update",
-			len(last.Plan.Routes[0].Sections[0].WalkPath))
+	if len(last.Plan.Routes[0].Sections[0].WalkPath) == 0 {
+		t.Fatal("complete update must carry the walk path")
 	}
 	if got := hits.Load(); got != 1 {
 		t.Fatalf("upstream hits = %d, want 1", got)
@@ -876,21 +766,18 @@ func TestPlanStreamSendsRoutesBeforeGeometry(t *testing.T) {
 }
 
 // A cached plan is already geometry-complete, so it answers in one message and
-// never reaches TDX.
+// never reaches the planner.
 func TestPlanStreamCacheHitSendsSingleCompleteUpdate(t *testing.T) {
 	var hits atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, _maasStreamTDXRoute)
+		_, _ = io.WriteString(w, _motisTestPlan)
 	}))
 	defer upstream.Close()
 
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
 	cache := newControlledMaasCache()
-	server := NewMaasServerWithCache(cache, nil, tdx, DefaultMaasSharedWorkConfig)
-	server.maasClient.SetBaseURL(upstream.URL).SetRetryCount(0)
-	server.osrmClient = osrmClientReturning(200, _osrmTransferRoute)
+	server := newMotisTestServer(cache, DefaultMaasSharedWorkConfig, upstream.URL)
 	defer server.Close()
 
 	req := &pb.MaasPlanRequest{
@@ -908,7 +795,7 @@ func TestPlanStreamCacheHitSendsSingleCompleteUpdate(t *testing.T) {
 	if len(second.updates) != 1 || !second.updates[0].Complete {
 		t.Fatalf("cache hit updates = %+v, want one complete update", second.updates)
 	}
-	if len(second.updates[0].Plan.Routes[0].Sections[0].WalkPath) != 3 {
+	if len(second.updates[0].Plan.Routes[0].Sections[0].WalkPath) == 0 {
 		t.Fatal("cache hit must carry the enriched geometry")
 	}
 	if got := hits.Load(); got != 1 {
@@ -916,7 +803,7 @@ func TestPlanStreamCacheHitSendsSingleCompleteUpdate(t *testing.T) {
 	}
 }
 
-// TDX answering 404 is an empty result, not a router fault: the stream ends
+// MOTIS answering 404 is an empty result, not a router fault: the stream ends
 // with NotFound and no partial update is sent.
 func TestPlanStreamMapsNoRouteToNotFound(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -924,9 +811,7 @@ func TestPlanStreamMapsNoRouteToNotFound(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, DefaultMaasSharedWorkConfig)
-	server.maasClient.SetBaseURL(upstream.URL).SetRetryCount(0)
+	server := newMotisTestServer(newControlledMaasCache(), DefaultMaasSharedWorkConfig, upstream.URL)
 	defer server.Close()
 
 	stream := &recordingPlanStream{ctx: context.Background()}
@@ -939,7 +824,7 @@ func TestPlanStreamMapsNoRouteToNotFound(t *testing.T) {
 	}
 }
 
-// The TDX quota is per caller, not per method: spending it on plan must leave
+// The planner quota is per caller, not per method: spending it on plan must leave
 // nothing for planStream. Without a shared bucket the streaming method would
 // hand every caller a second allowance.
 func TestMaasQuotaIsSharedBetweenPlanAndPlanStream(t *testing.T) {

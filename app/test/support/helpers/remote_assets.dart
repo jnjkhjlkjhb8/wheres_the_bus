@@ -25,6 +25,10 @@ void seedRemoteAssets({String version = '1'}) {
   final files = <String, List<int>>{
     'mrt/TRTC_map_light.svg': _svg.codeUnits,
     'mrt/TRTC_map_dark.svg': _svg.codeUnits,
+    for (final name in const ['BL', 'R', 'G', 'O', 'BR', 'Y', 'K'])
+      'mrt/TRTC/$name.svg': _svg.codeUnits,
+    'rails/TRA.svg': _svg.codeUnits,
+    'rails/THSR.svg': _svg.codeUnits,
     for (final name in const [
       'wheelchair',
       'bicy',

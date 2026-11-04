@@ -11,8 +11,9 @@ void main() {
     await tester.pumpWidget(
       i18nApp(Scaffold(body: AlightPickCapsule(onCancel: () {}))),
     );
-    final cs = Theme.of(tester.element(find.byType(AlightPickCapsule)))
-        .colorScheme;
+    final cs = Theme.of(
+      tester.element(find.byType(AlightPickCapsule)),
+    ).colorScheme;
     final icon = tester.widget<Icon>(find.byIcon(Icons.close_rounded));
     expect(icon.color, cs.surface.withValues(alpha: 0.75));
   });

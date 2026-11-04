@@ -186,7 +186,7 @@ class MetroArrivalsEmpty extends StatelessWidget {
       padding: const EdgeInsets.all(AppTheme.space14),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

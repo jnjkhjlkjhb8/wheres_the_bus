@@ -29,10 +29,9 @@ docker run -d --name "$CONTAINER" \
     -p "127.0.0.1:${PORT}:5432" "$IMAGE" >/dev/null
 
 echo "== waiting for postgres to accept connections =="
-# Probe over TCP, not the socket: the image's entrypoint runs its init scripts
-# against a socket-only temporary server and then restarts it, and a baseline
-# started against that temporary server is cut off mid-file without an error.
-for _ in $(seq 1 60); do
+# -h forces TCP: the image entrypoint's temporary init server listens on the unix socket only,
+# so a socket pg_isready passes just before that server restarts and kills the first psql.
+for _ in $(seq 1 30); do
     if docker exec "$CONTAINER" pg_isready -h 127.0.0.1 -U "$USER" -d "$DB" >/dev/null 2>&1; then
         break
     fi

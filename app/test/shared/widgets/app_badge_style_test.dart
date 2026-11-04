@@ -35,7 +35,10 @@ void main() {
     testWidgets('is a 4-radius pill filled with the data colour', (
       tester,
     ) async {
-      await mount(tester, const AppBadge(label: '307', color: Color(0xFF123456)));
+      await mount(
+        tester,
+        const AppBadge(label: '307', color: Color(0xFF123456)),
+      );
       expect(decoration(tester).color, const Color(0xFF123456));
       expect(
         decoration(tester).borderRadius,
@@ -112,7 +115,10 @@ void main() {
         decoration(tester).borderRadius,
         BorderRadius.circular(AppTheme.radiusStadium),
       );
-      expect(tester.widget<Text>(find.text('OUT')).style?.color, scheme.primary);
+      expect(
+        tester.widget<Text>(find.text('OUT')).style?.color,
+        scheme.primary,
+      );
       expect(
         tester.widget<Text>(find.text('OUT')).style?.fontWeight,
         FontWeight.w600,

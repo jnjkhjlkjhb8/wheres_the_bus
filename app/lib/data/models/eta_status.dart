@@ -1,3 +1,13 @@
+/// How far a bus time can be trusted. Only [live] comes from a vehicle; the
+/// other two must never wear the live styling (DESIGN.md §8).
+enum EtaSource {
+  live,
+  scheduled,
+  predicted;
+
+  bool get isLive => this == live;
+}
+
 sealed class EtaStatus {
   const EtaStatus();
   factory EtaStatus.arriving() = EtaArriving;

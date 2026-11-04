@@ -144,7 +144,6 @@ func TestRouterStartsConfiguredMotisAndCleansUpOnSignal(t *testing.T) {
 		_, _ = w.Write([]byte(`{"initialized":true,"hasTimetable":true}`))
 	}))
 	defer health.Close()
-	t.Setenv("MAAS_BACKEND", "motis")
 	t.Setenv("MOTIS_BASE_URL", health.URL)
 	shutdown := make(chan os.Signal, 1)
 	shutdown <- syscall.SIGTERM

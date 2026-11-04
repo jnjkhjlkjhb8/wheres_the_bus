@@ -103,7 +103,7 @@ class _MetroPlaceholderSheetState extends State<_MetroPlaceholderSheet> {
               filled: true,
               fillColor: fieldFill,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(AppTheme.radiusCard),
                 borderSide: BorderSide.none,
               ),
             ),

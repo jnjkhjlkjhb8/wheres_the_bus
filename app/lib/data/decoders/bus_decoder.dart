@@ -2,6 +2,7 @@ import 'package:wheres_the_bus/data/generated/bus.pb.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 import 'package:wheres_the_bus/data/models/eta_format.dart';
+import 'package:wheres_the_bus/data/models/eta_status.dart';
 
 class BusDecoder {
   const BusDecoder._();
@@ -32,6 +33,7 @@ class BusDecoder {
         arrivalUnix: arrivalUnix,
         plate: s.plateNumb,
         isLastBus: s.isLastBus,
+        source: etaSourceOf(s.estimateSource),
         vehiclePlates: s.buses.map((b) => b.plateNumb).toList(),
         vehicles: [
           for (final b in s.buses)
@@ -79,6 +81,7 @@ class BusDecoder {
         arrivalUnix: arrivalUnix,
         crowdLevel: crowdLevelOf(r.crowdLevel),
         isLastBus: r.isLastBus,
+        source: etaSourceOf(r.estimateSource),
       );
     }).toList();
   }
@@ -194,6 +197,15 @@ class BusDecoder {
     );
   }
 }
+
+/// Maps the wire source enum onto the app's own. UNSPECIFIED is what a server
+/// that predates the field sends, and must keep behaving as the live ETA it
+/// always was.
+EtaSource etaSourceOf(BusEstimateSource wire) => switch (wire) {
+  BusEstimateSource.BUS_ESTIMATE_SOURCE_SCHEDULED => EtaSource.scheduled,
+  BusEstimateSource.BUS_ESTIMATE_SOURCE_PREDICTED => EtaSource.predicted,
+  _ => EtaSource.live,
+};
 
 /// Maps the wire crowding enum onto the app's own. An unrecognised value is
 /// [CrowdLevel.unknown]: a level this build does not know is not a reading it

@@ -34,7 +34,11 @@ void main() {
       );
       expect(
         transitColor(transport('bus', color: 'invalid'), colors),
-        colors.onSurface,
+        AppTheme.markerBus,
+      );
+      expect(
+        transitColor(transport('bus', color: 'FFFFFF'), colors),
+        AppTheme.markerBus,
       );
       expect(transitColor(transport('walk'), colors), colors.onSurfaceVariant);
       expect(transitColor(transport('MRT'), colors), AppTheme.mrtBL);
@@ -136,7 +140,7 @@ void main() {
     }
     for (final mode in ['bus', 'HighwayBus']) {
       expect(transitIcon(mode), bus);
-      expect(transitColor(transport(mode), colors), colors.onSurface);
+      expect(transitColor(transport(mode), colors), AppTheme.markerBus);
     }
     for (final mode in ['rail', 'TRA', 'train', 'thsr', 'HSR']) {
       expect(transitIcon(mode), train);
@@ -170,11 +174,11 @@ void main() {
     );
     expect(
       transitColor(transport('bus', color: '   '), colors),
-      colors.onSurface,
+      AppTheme.markerBus,
     );
     expect(
       transitColor(transport('bus', color: '#'), colors),
-      colors.onSurface,
+      AppTheme.markerBus,
     );
     expect(
       transitColor(transport('bus', color: 'fff'), colors),
@@ -182,7 +186,7 @@ void main() {
     );
     expect(
       transitColor(transport('bus', color: 'zzzzzz'), colors),
-      colors.onSurface,
+      AppTheme.markerBus,
     );
   });
 

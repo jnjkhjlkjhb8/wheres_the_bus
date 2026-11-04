@@ -183,7 +183,7 @@ class _TRAPickerDialogState extends State<_TRAPickerDialog> {
   Widget _hemisphereToggle(ColorScheme cs, bool motion) {
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusButton),
         border: Border.all(color: cs.outline),
       ),
       clipBehavior: Clip.antiAlias,

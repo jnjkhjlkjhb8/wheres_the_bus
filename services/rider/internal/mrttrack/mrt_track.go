@@ -39,6 +39,10 @@ const (
 	// _mrtTrackPollBuffer pads the parsed countdown so the next poll lands just
 	// after the train is due at its next station, not before.
 	_mrtTrackPollBuffer = 10 * time.Second
+	// _mrtTrackPollCap bounds the wait after a countdown so a long or stale
+	// CountdownTime cannot freeze the card for minutes; a hop is ~1-3 min, so
+	// the card refreshes about once per station.
+	_mrtTrackPollCap = 60 * time.Second
 	// _mrtTrackFallbackRetry is the retry delay after an empty/failed GetTrainInfo
 	// (including the mrt_live fallback path), where no countdown is available.
 	_mrtTrackFallbackRetry = 30 * time.Second
@@ -448,7 +452,7 @@ func nextMrtPoll(reading mrtReading, now time.Time) int64 {
 	var poll int64
 	poll = now.Add(_mrtTrackFallbackRetry).Unix()
 	if reading.gotInfo && reading.hasCountdown && reading.countdown > 0 {
-		poll = now.Add(reading.countdown + _mrtTrackPollBuffer).Unix()
+		poll = now.Add(min(reading.countdown+_mrtTrackPollBuffer, _mrtTrackPollCap)).Unix()
 	}
 	return poll
 }

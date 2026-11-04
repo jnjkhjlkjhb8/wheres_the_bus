@@ -109,7 +109,9 @@ void main() {
         ),
         ('1000', '3300', 9, 10, false),
       );
-      button(tester, find.byIcon(Icons.swap_horiz_rounded)).onTap!();
+      final swap = button(tester, find.byIcon(Icons.swap_horiz_rounded));
+      expect(swap.semanticLabel, '對調起訖點');
+      swap.onTap!();
       await tester.pumpAndSettle();
       final swapped = submissions.last as RailOdQuerySubmission;
       expect(

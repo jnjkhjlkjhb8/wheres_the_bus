@@ -11,6 +11,7 @@ class ArrivalDisplay {
     required this.rank,
     this.crowdLevel = CrowdLevel.unknown,
     this.isLastBus = false,
+    this.source = EtaSource.live,
   });
 
   factory ArrivalDisplay.fromBusStop(AppI18n i18n, BusStopArrival a) {
@@ -20,6 +21,13 @@ class ArrivalDisplay {
         ? EtaStatus.label(label)
         : EtaStatus.unknown();
     final (EtaStatus status, int rank) = switch (a.displayStatus) {
+      // 進站中 / 即將進站 say a vehicle is there; a timetable or model time
+      // can only ever claim a countdown.
+      BusStopDisplayStatus.arriving ||
+      BusStopDisplayStatus.departingSoon when !a.source.isLive => (
+        EtaStatus.minutes(1),
+        3,
+      ),
       BusStopDisplayStatus.arriving => (EtaStatus.arriving(), 0),
       BusStopDisplayStatus.departingSoon => (EtaStatus.approaching(), 1),
       BusStopDisplayStatus.minutes when minutes != null => (
@@ -45,6 +53,7 @@ class ArrivalDisplay {
       rank: rank,
       crowdLevel: a.crowdLevel,
       isLastBus: a.isLastBus,
+      source: a.source,
     );
   }
 
@@ -76,8 +85,12 @@ class ArrivalDisplay {
   /// else it stays false and nothing is marked.
   final bool isLastBus;
 
+  /// Where the time came from. Metro and every other non-bus row is live.
+  final EtaSource source;
+
   /// Whether this arrival is eligible for the coming-soon highlight: only the
-  /// soonest ranked row (rank <= 3) qualifies. The caller pairs this with the
-  /// list position so at most the first row is highlighted.
-  bool get isComingSoon => rank <= 3;
+  /// soonest ranked row (rank <= 3) qualifies, and only when a vehicle
+  /// produced the time. The caller pairs this with the list position so at
+  /// most the first row is highlighted.
+  bool get isComingSoon => source.isLive && rank <= 3;
 }

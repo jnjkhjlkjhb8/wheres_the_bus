@@ -26,7 +26,7 @@ bool _isRailLeg(PlanSection s) {
   );
 }
 
-/// Material maneuver glyph for a walk step, mapped from the OSRM
+/// Material maneuver glyph for a walk step, mapped from the
 /// maneuverType/modifier. Arrival shows a finish flag; an unresolved turn falls
 /// back to a straight arrow so the leading slot is never empty.
 IconData _maneuverIcon(PlanWalkStep step) {
@@ -74,7 +74,7 @@ class _NavHeader extends StatelessWidget {
     final reduce = MediaQuery.disableAnimationsOf(context);
     final section = route.sections[activeLeg];
     final walk = isWalk(section);
-    // Turn-by-turn takes over whenever OSRM resolved steps for this walk;
+    // Turn-by-turn takes over whenever the planner returned steps for this walk;
     // otherwise fall back to the coarse 「步行前往X」 title layout.
     final progress = _walkProgress(section, walkStepIndex);
     final (step, announced, nextStep, index, arrived) = progress;
@@ -119,6 +119,7 @@ class _NavHeader extends StatelessWidget {
                 Pressable(
                   onTap: onEnd,
                   semanticLabel: AppI18n.of(context).goEndNavigation,
+                  minTapSize: 44,
                   child: Padding(
                     padding: const EdgeInsets.all(AppTheme.space4),
                     child: Icon(
@@ -421,7 +422,7 @@ class _NavHeader extends StatelessWidget {
       label = AppI18n.of(context).busDeparture;
     } else {
       // The active section's own arrival time; legs missing a time (e.g. a
-      // trailing walk TDX left blank) fall back to the whole-route arrival.
+      // trailing walk left blank) fall back to the whole-route arrival.
       value = _plannedArrival(section);
       label = AppI18n.of(context).goExpectedArrival;
     }

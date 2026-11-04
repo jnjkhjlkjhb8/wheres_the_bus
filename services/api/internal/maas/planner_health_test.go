@@ -12,8 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// A single failed check must not move riders onto TDX. Switching backend is the
-// visible, expensive action; observing is cheap. One dropped packet or one
+// A single failed check must not flip the reported health. Flipping is the
+// visible action; observing is cheap. One dropped packet or one
 // restart mid-deploy is not evidence.
 func TestPlannerHealthRequiresConsecutiveChecksBeforeSwitching(t *testing.T) {
 	var healthy atomic.Bool
@@ -33,28 +33,28 @@ func TestPlannerHealthRequiresConsecutiveChecksBeforeSwitching(t *testing.T) {
 	ctx := t.Context()
 
 	monitor.check(ctx)
-	if !monitor.UseMotis() {
-		t.Fatal("a healthy MOTIS was not used")
+	if !monitor.Status().Healthy {
+		t.Fatal("a healthy MOTIS was reported unhealthy")
 	}
 
 	healthy.Store(false)
 	monitor.check(ctx)
-	if !monitor.UseMotis() {
-		t.Fatal("one failed check switched the backend; the threshold is 2")
+	if !monitor.Status().Healthy {
+		t.Fatal("one failed check flipped health; the threshold is 2")
 	}
 	monitor.check(ctx)
-	if monitor.UseMotis() {
-		t.Fatal("two consecutive failed checks did not switch the backend")
+	if monitor.Status().Healthy {
+		t.Fatal("two consecutive failed checks did not flip health")
 	}
 
 	// And back: a recovery needs the same evidence a failure did.
 	healthy.Store(true)
 	monitor.check(ctx)
-	if monitor.UseMotis() {
-		t.Fatal("one successful check switched back; the threshold is 2")
+	if monitor.Status().Healthy {
+		t.Fatal("one successful check flipped back; the threshold is 2")
 	}
 	monitor.check(ctx)
-	if !monitor.UseMotis() {
+	if !monitor.Status().Healthy {
 		t.Fatal("two consecutive successful checks did not restore MOTIS")
 	}
 }
@@ -76,13 +76,13 @@ func TestPlannerHealthResetsTheStreakOnDisagreement(t *testing.T) {
 		fail.Store(shouldFail)
 		monitor.check(ctx)
 	}
-	if !monitor.UseMotis() {
-		t.Fatal("alternating failures tripped the switch; the streak must reset")
+	if !monitor.Status().Healthy {
+		t.Fatal("alternating failures flipped health; the streak must reset")
 	}
 }
 
 // An unreachable MOTIS is the same verdict as a 400: neither can answer with
-// current data, and leaving riders with no plan is the worse outcome.
+// current data.
 func TestPlannerHealthTreatsUnreachableAsUnhealthy(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	serverURL := server.URL
@@ -91,79 +91,40 @@ func TestPlannerHealthTreatsUnreachableAsUnhealthy(t *testing.T) {
 	monitor := NewPlannerHealthMonitor(NewMotisHealthClient(serverURL))
 	monitor.check(t.Context())
 	monitor.check(t.Context())
-	if monitor.UseMotis() {
-		t.Fatal("an unreachable MOTIS is still being used")
+	if monitor.Status().Healthy {
+		t.Fatal("an unreachable MOTIS is still reported healthy")
 	}
-	if status := monitor.Status(); status.Backend != _plannerTDX {
-		t.Errorf("backend = %q, want tdx", status.Backend)
-	}
-}
-
-// MAAS_BACKEND=tdx builds no MOTIS client at all. The monitor must then report
-// a pinned backend rather than an opinion about a service nobody is watching.
-func TestPlannerHealthReportsPinnedWithoutAClient(t *testing.T) {
-	monitor := NewPlannerHealthMonitor(nil)
-	monitor.Start(t.Context())
-	if monitor.UseMotis() {
-		t.Fatal("a monitor with no client claimed MOTIS is live")
-	}
-	status := monitor.Status()
-	if status.Backend != _plannerTDX || !status.Pinned {
-		t.Fatalf("status = %+v, want a pinned tdx backend", status)
+	if status := monitor.Status(); status.Backend != "motis" {
+		t.Errorf("backend = %q, want motis", status.Backend)
 	}
 }
 
-// The whole point of the endpoint: the app must be able to tell which options
-// it may offer. A TDX backend must not advertise MOTIS-only capabilities.
-func TestPlannerStatusAdvertisesOnlyWhatTheLiveBackendHonours(t *testing.T) {
+// The app reads the capability list to decide which options to offer. It stays
+// the full MOTIS set even when MOTIS reports stale feeds: plans still go there.
+func TestPlannerStatusAlwaysAdvertisesTheFullCapabilitySet(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
-	read := func(monitor *PlannerHealthMonitor) plannerStatusBody {
-		t.Helper()
-		engine := gin.New()
-		RegisterPlannerStatusRoutes(engine, monitor, func(c *gin.Context) { c.Next() })
-		recorder := httptest.NewRecorder()
-		engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, PlannerStatusPath, nil))
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", recorder.Code)
-		}
-		var body plannerStatusBody
-		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-			t.Fatal(err)
-		}
-		return body
-	}
-
-	pinned := read(NewPlannerHealthMonitor(nil))
-	if pinned.Backend != _plannerTDX {
-		t.Errorf("pinned backend = %q", pinned.Backend)
-	}
-	for _, capability := range pinned.Capabilities {
-		if capability == _capWheelchair || capability == _capMaxTransfers {
-			t.Errorf("tdx advertised the MOTIS-only capability %q", capability)
-		}
-	}
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"rt":true,"gbfs":true}`))
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"rt":false,"gbfs":false}`))
 	}))
 	defer server.Close()
-	live := NewPlannerHealthMonitor(NewMotisHealthClient(server.URL))
-	live.check(t.Context())
-	motis := read(live)
-	if motis.Backend != _plannerMotis {
-		t.Fatalf("live backend = %q, want motis", motis.Backend)
+	monitor := NewPlannerHealthMonitor(NewMotisHealthClient(server.URL))
+	monitor.check(t.Context())
+	monitor.check(t.Context())
+
+	engine := gin.New()
+	RegisterPlannerStatusRoutes(engine, monitor, func(c *gin.Context) { c.Next() })
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, PlannerStatusPath, nil))
+	var body plannerStatusBody
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
 	}
-	if len(motis.Capabilities) <= len(pinned.Capabilities) {
-		t.Fatal("MOTIS advertised no more capabilities than TDX")
+	if body.Healthy || body.Backend != "motis" {
+		t.Fatalf("status = %+v, want unhealthy motis", body.PlannerStatus)
 	}
-	// The shared five lead in the same order for both, so the options sheet
-	// does not reshuffle under the rider when the backend changes.
-	for i, capability := range pinned.Capabilities {
-		if motis.Capabilities[i] != capability {
-			t.Fatalf("capability %d = %q under motis, %q under tdx", i, motis.Capabilities[i], capability)
-		}
+	if got := body.Capabilities; len(got) != len(plannerCapabilities()) || got[0] != _capTransitModes {
+		t.Fatalf("capabilities = %v", got)
 	}
 }
 

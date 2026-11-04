@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/models/search_models.dart';
 import 'package:wheres_the_bus/data/repositories/search_affinity_repository.dart';
+import 'package:wheres_the_bus/features/search/bloc/rider_city.dart';
 
 class SearchRankWeights {
   const SearchRankWeights._();
@@ -28,6 +29,11 @@ class SearchRankWeights {
   static const near = 4.0;
   static const walkableMeters = 2000.0;
   static const walkable = 2.0;
+
+  /// The route belongs to the city the rider is in. Large enough to lift a
+  /// local route over a same-numbered one from another city sitting a dozen
+  /// places up the router's list.
+  static const riderCity = 12.0;
 
   /// Picked at this hour before, during a weekday commute window.
   static const commute = 2.0;
@@ -56,6 +62,7 @@ List<SearchResult> rankSearchResults(
   required Map<String, SearchAffinity> affinity,
   required DateTime now,
   Position? fix,
+  String? riderCity,
 }) {
   if (results.length < 2) return results;
   final favoriteKeys = _favoriteKeys(favorites);
@@ -68,12 +75,29 @@ List<SearchResult> rankSearchResults(
     score -= _favoriteBonus(favoriteKeys, r);
     score -= _pickedBeforeBonus(affinity[r.storageKey], query, now, commuting);
     score -= _distanceBonus(r, fix);
+    score -= _cityBonus(r, riderCity);
     scored.add((result: r, index: i, score: score));
   }
 
   scored.sort(_compareRankedResults);
-  return scored.map((e) => e.result).toList(growable: false);
+  return _withoutDuplicateRoutes(scored.map((e) => e.result));
 }
+
+/// The router returns one row per sub-route, and a route can be listed twice
+/// with the same name, ends and city. Ranking runs first so the copy the
+/// rider has favourited or picked before is the one that survives.
+List<SearchResult> _withoutDuplicateRoutes(Iterable<SearchResult> ranked) {
+  final seen = <String>{};
+  return [
+    for (final r in ranked)
+      if (r.type != SearchResultType.busRoute ||
+          seen.add('${r.name}|${r.subtitle}|${r.city}'))
+        r,
+  ];
+}
+
+double _cityBonus(SearchResult r, String? riderCity) =>
+    sameCity(r.city, riderCity) ? SearchRankWeights.riderCity : 0;
 
 double _favoriteBonus(Set<String> keys, SearchResult result) {
   final isFavorite =

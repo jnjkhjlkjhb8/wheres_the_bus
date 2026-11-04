@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/features/go/widgets/route_option_card.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
 
 PlanRoute _route() => const PlanRoute(
   travelTime: 600,
@@ -78,5 +79,32 @@ void main() {
 
     expect(toggled, 1, reason: 'bookmark tap must reach onToggleSave');
     expect(tapped, 0, reason: 'card onTap must not fire from a bookmark tap');
+  });
+
+  testWidgets('the save toggle meets the 44pt touch target', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppI18n.localizationsDelegates,
+        supportedLocales: AppI18n.supportedLocales,
+        home: Scaffold(
+          body: RouteOptionCard(
+            route: _route(),
+            highlighted: false,
+            isSaved: true,
+            onTap: () {},
+            onToggleSave: () {},
+          ),
+        ),
+      ),
+    );
+
+    final toggle = find.ancestor(
+      of: find.byIcon(Icons.bookmark_rounded),
+      matching: find.byType(Pressable),
+    );
+    final size = tester.getSize(toggle.first);
+    expect(size.width, greaterThanOrEqualTo(44));
+    expect(size.height, greaterThanOrEqualTo(44));
   });
 }

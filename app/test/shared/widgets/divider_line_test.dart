@@ -10,7 +10,9 @@ void main() {
   Future<void> pump(WidgetTester tester, Widget child) => tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(colorScheme: scheme),
-      home: Scaffold(body: Center(child: SizedBox(width: 300, child: child))),
+      home: Scaffold(
+        body: Center(child: SizedBox(width: 300, child: child)),
+      ),
     ),
   );
 

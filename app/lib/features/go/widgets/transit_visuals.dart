@@ -28,10 +28,12 @@ Color transitColor(PlanTransport t, ColorScheme cs) {
 
 Color? _routeColor(String color) {
   final raw = color.trim().replaceAll('#', '');
-  if (raw.isEmpty) return null;
-  final padded = raw.length == 6 ? 'FF$raw' : raw;
-  final value = int.tryParse(padded, radix: 16);
-  return value == null ? null : Color(value);
+  final value = int.tryParse(raw.length == 6 ? 'FF$raw' : raw, radix: 16);
+  if (value == null) return null;
+  final parsed = Color(value);
+  // GTFS feeds fill a missing route_color with white, which is no line
+  // identity and vanishes on the map.
+  return parsed.computeLuminance() > 0.9 ? null : parsed;
 }
 
 Color _modeColor(PlanTransport t, ColorScheme cs) {
@@ -42,6 +44,7 @@ Color _modeColor(PlanTransport t, ColorScheme cs) {
     'subway' || 'metro' || 'mrt' || 'tram' => AppTheme.mrtBL,
     'thsr' || 'hsr' => AppTheme.trainThsr,
     'rail' || 'tra' || 'train' => _railColor(t.category),
+    'bus' || 'highwaybus' => AppTheme.markerBus,
     _ => cs.onSurface,
   };
 }

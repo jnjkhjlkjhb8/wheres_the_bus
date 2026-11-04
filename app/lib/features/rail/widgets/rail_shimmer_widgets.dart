@@ -19,6 +19,8 @@ class _TimetableSkeleton extends StatelessWidget {
     remark: '',
     isSuspended: false,
     isAddedService: false,
+    nextDay: false,
+    estimatedArrive: null,
   );
 
   @override
@@ -46,6 +48,7 @@ class _TimetableSkeleton extends StatelessWidget {
                   destination: '',
                   isNext: false,
                   minutesUntil: null,
+                  isPast: false,
                 ),
               ],
             ],

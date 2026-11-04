@@ -136,7 +136,7 @@ func busName(apiSeg string) func(string) string {
 // city snapshot and has no standalone target transaction.
 func busDataset(apiSeg, rawTable, loadKey, foldedInto string) Spec {
 	spec := Spec{
-		RawTable: rawTable, PartCol: "city", Partitions: AllCities,
+		RawTable: rawTable, PartCol: "city", Partitions: func() []string { return BusServedCities(rawTable) },
 		Family: FamilyBusCity, APISeg: apiSeg, Name: busName(apiSeg),
 		LoadKey: loadKey, FoldedInto: foldedInto,
 	}
@@ -223,10 +223,10 @@ func Registry() []Spec {
 		{RawTable: "metro_shape", PartCol: "system", Partitions: func() []string { return MetroStationSystems },
 			Family: FamilyMetroSystem, APISeg: "Shape",
 			Name: func(p string) string { return "metro_shape_" + p }, LoadKey: "metro_shape"},
-		{RawTable: "tra_dailytimetable", PartCol: "traindate", Partitions: func() []string { return RailDateWindow(60) },
+		{RawTable: "tra_dailytimetable", PartCol: "traindate", Partitions: func() []string { return RailDateWindow(TRADateWindow) },
 			Family: FamilyRailDate, APISeg: "TRA/DailyTimetable",
 			Name: func(p string) string { return "tra_daily_" + p }, LoadKey: "tra_timetable"},
-		{RawTable: "thsr_dailytimetable", PartCol: "traindate", Partitions: func() []string { return RailDateWindow(45) },
+		{RawTable: "thsr_dailytimetable", PartCol: "traindate", Partitions: func() []string { return RailDateWindow(THSRDateWindow) },
 			Family: FamilyRailDate, APISeg: "THSR/DailyTimetable",
 			Name: func(p string) string { return "thsr_daily_" + p }, LoadKey: "thsr_timetable"},
 		// TRA/TrainType resolves on the reverse path (its DDL/whitelist entry is
@@ -280,6 +280,41 @@ func BusDailyTimetableSkip(city string) bool {
 	default:
 		return false
 	}
+}
+
+// The last TrainDate TDX serves, in days after today (checked live 2026-10-10).
+// THSR answers 400 "no data beyond the supply date" from day 30; TRA answers
+// 200 "[]" with no Last-Modified on day 60 and 400 from day 61.
+const (
+	THSRDateWindow = 29
+	TRADateWindow  = 59
+)
+
+// _busUnserved maps a bus raw table to the cities TDX rejects with HTTP 400
+// "City: 'X' is not accepted" (checked live 2026-10-10). The ingestor lands an
+// empty partition for them instead of fetching, so a loader never pairs one
+// city's fresh tables with a months-old partition left from before TDX dropped it.
+var _busUnserved = map[string]map[string]bool{
+	"bus_stationgroup": {
+		"Taipei": true, "NewTaipei": true, "Taoyuan": true, "Taichung": true,
+		"Tainan": true, "Kaohsiung": true, "KinmenCounty": true, "LienchiangCounty": true,
+	},
+	"bus_routefare": {"Tainan": true, "LienchiangCounty": true, "Keelung": true},
+	"bus_station":   {"LienchiangCounty": true},
+}
+
+// BusUnserved reports whether TDX rejects rawTable for city.
+func BusUnserved(rawTable, city string) bool { return _busUnserved[rawTable][city] }
+
+// BusServedCities is AllCities minus the cities TDX rejects for rawTable.
+func BusServedCities(rawTable string) []string {
+	var out []string
+	for _, c := range busmodel.Cities {
+		if !BusUnserved(rawTable, c) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // RailDateWindow returns today..today+n as YYYY-MM-DD strings, matching the

@@ -352,7 +352,7 @@ String _gcLabel(AppI18n i18n, double gc) => switch (gc) {
   _ => i18n.goPrefFastest,
 };
 
-// TDX transit-mode ids the planner exposes (excludes 20:航空). Built per call
+// Transit-mode ids the planner exposes (excludes 20:航空). Built per call
 // rather than held in a const map: the names follow the rider's language.
 Map<int, String> _kTransitModes(AppI18n i18n) => {
   3: i18n.modeThsr,
@@ -371,7 +371,7 @@ Map<int?, String> _kTransferCaps(AppI18n i18n) => {
   2: i18n.goMaxTransfersCount(2),
 };
 
-// TDX first/last-mile mode ids.
+// First/last-mile mode ids.
 Map<int, String> _kMileModes(AppI18n i18n) => {
   0: i18n.modeWalking,
   1: i18n.modeBicycle,
@@ -386,6 +386,7 @@ Future<PlanOptions?> showOptionsSheet(
 }) {
   return showModalBottomSheet<PlanOptions>(
     context: context,
+    useRootNavigator: true,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (_) => _OptionsSheet(initial: current, capabilities: capabilities),

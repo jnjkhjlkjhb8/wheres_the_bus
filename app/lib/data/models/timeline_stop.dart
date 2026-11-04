@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:wheres_the_bus/data/models/eta_status.dart';
 
 enum TimelineStopState { none, approaching, arriving }
 
@@ -20,6 +21,7 @@ class TimelineStop extends Equatable {
     this.etaMinutes,
     this.serviceEnded = false,
     this.plate = '',
+    this.source = EtaSource.live,
   });
 
   final String uid;
@@ -53,6 +55,9 @@ class TimelineStop extends Equatable {
   /// plate rather than guessing which bus it is.
   final String plate;
 
+  /// Where [primaryTime] came from; a non-live clock is marked 預估.
+  final EtaSource source;
+
   @override
   List<Object?> get props => [
     uid,
@@ -66,5 +71,6 @@ class TimelineStop extends Equatable {
     isLiveEta,
     etaMinutes,
     plate,
+    source,
   ];
 }

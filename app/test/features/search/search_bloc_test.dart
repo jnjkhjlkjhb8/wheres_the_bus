@@ -492,7 +492,7 @@ SearchResult _result(String uid, {String? city}) => SearchResult(
   type: SearchResultType.busRoute,
   uid: uid,
   name: '307',
-  subtitle: '板橋',
+  subtitle: '板橋 $uid',
   city: city,
 );
 

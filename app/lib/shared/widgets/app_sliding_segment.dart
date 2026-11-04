@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -455,13 +456,9 @@ class _SegmentSkin {
                 color: Colors.black.withValues(alpha: .04),
                 width: .5,
               ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? .25 : .05),
-            blurRadius: isDark ? 2 : 4,
-            offset: Offset(0, isDark ? 1 : 2),
-          ),
-        ],
+        boxShadow: AppShadows.segmentThumbFor(
+          isDark ? Brightness.dark : Brightness.light,
+        ),
       ),
       label: cs.onSurfaceVariant,
       labelSelected: cs.onSurface,

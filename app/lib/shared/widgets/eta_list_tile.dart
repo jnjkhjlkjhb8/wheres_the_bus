@@ -63,6 +63,7 @@ class EtaListTile extends StatelessWidget {
     this.bare = false,
     this.crowdLevel = CrowdLevel.unknown,
     this.isLastBus = false,
+    this.source = EtaSource.live,
   });
 
   factory EtaListTile.fromDisplay(
@@ -91,6 +92,7 @@ class EtaListTile extends StatelessWidget {
     bare: bare,
     crowdLevel: display.crowdLevel,
     isLastBus: display.isLastBus,
+    source: display.source,
   );
 
   final String routeNo;
@@ -124,6 +126,9 @@ class EtaListTile extends StatelessWidget {
   /// destination rather than the time: it qualifies which bus this is, and the
   /// time column stays the row's one number.
   final bool isLastBus;
+
+  /// Non-live times drop the live emphasis and carry a 預估 qualifier.
+  final EtaSource source;
 
   @override
   Widget build(BuildContext context) {
@@ -248,7 +253,7 @@ class EtaListTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
           children: [
-            EtaValue(status: status, muted: muted),
+            EtaValue(status: status, muted: muted, source: source),
             if (!muted && CrowdMeter.filledFor(crowdLevel) > 0) ...[
               const SizedBox(height: AppTheme.space4),
               CrowdMeter(level: crowdLevel),
@@ -261,30 +266,59 @@ class EtaListTile extends StatelessWidget {
 }
 
 class EtaValue extends StatelessWidget {
-  const EtaValue({required this.status, this.muted = false, super.key});
+  const EtaValue({
+    required this.status,
+    this.muted = false,
+    this.source = EtaSource.live,
+    super.key,
+  });
   final EtaStatus status;
+
+  /// A scheduled or predicted time is drawn in secondary ink with a 預估
+  /// qualifier, and never takes the arriving/approaching colours.
+  final EtaSource source;
 
   /// Disabled-ink rendering for service-over rows; only the label and unknown
   /// shapes can appear muted (live countdowns are never service-over).
   final bool muted;
 
+  bool get _estimated => !source.isLive && !muted && _carriesTime(status);
+
   @override
   Widget build(BuildContext context) {
+    final value = _value(context);
+    if (!_estimated) return value;
     final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        value,
+        Text(
+          AppI18n.of(context).etaEstimatedTag,
+          style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+
+  Widget _value(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final live = source.isLive;
     return switch (status) {
-      EtaArriving() => Text(
+      EtaArriving() => _statusText(
         AppI18n.of(context).etaArriving,
-        style: AppTextStyles.heading2.copyWith(
-          fontWeight: FontWeight.w700,
-          color: AppTheme.statusArrivingText,
-        ),
+        cs,
+        live: live,
+        onDark: AppTheme.statusArriving,
+        onLight: AppTheme.statusArrivingText,
       ),
-      EtaApproaching() => Text(
+      EtaApproaching() => _statusText(
         AppI18n.of(context).etaApproaching,
-        style: AppTextStyles.heading2.copyWith(
-          fontWeight: FontWeight.w700,
-          color: AppTheme.etaApproaching,
-        ),
+        cs,
+        live: live,
+        onDark: AppTheme.statusApproach,
+        onLight: AppTheme.etaApproaching,
       ),
       EtaMinutes(:final value) => Row(
         textBaseline: TextBaseline.alphabetic,
@@ -293,7 +327,7 @@ class EtaValue extends StatelessWidget {
         children: [
           Text(
             '$value',
-            style: _bigTime(cs),
+            style: _bigTime(cs, live: live),
           ),
           const SizedBox(width: AppTheme.space2),
           Text(
@@ -309,7 +343,7 @@ class EtaValue extends StatelessWidget {
         children: [
           Text(
             '$minutes',
-            style: _bigTime(cs),
+            style: _bigTime(cs, live: live),
           ),
           Text(
             AppI18n.of(context).goMinutesUnit,
@@ -318,7 +352,7 @@ class EtaValue extends StatelessWidget {
           const SizedBox(width: AppTheme.space2),
           Text(
             seconds.toString().padLeft(2, '0'),
-            style: _bigTime(cs),
+            style: _bigTime(cs, live: live),
           ),
           Text(
             AppI18n.of(context).etaSecondsUnit,
@@ -328,7 +362,7 @@ class EtaValue extends StatelessWidget {
       ),
       EtaLabel(:final text) when _isClock(text) => Text(
         text,
-        style: _clockStyle(cs),
+        style: _clockStyle(cs, live: live),
       ),
       EtaLabel(:final text) => Text(
         text,
@@ -344,13 +378,38 @@ class EtaValue extends StatelessWidget {
     };
   }
 
-  TextStyle _clockStyle(ColorScheme cs) => AppTextStyles.timeValue(
-    size: muted
-        ? AppTextStyles.bodyRegular.fontSize
-        : AppTextStyles.heading1.fontSize,
-    weight: muted ? FontWeight.w400 : AppTextStyles.heading1.fontWeight,
-    color: muted ? AppTheme.inkTertiary(cs.brightness) : cs.onSurface,
+  // The light-surface greens and oranges fall under 4.5:1 on a dark sheet, so
+  // the dark variants are the lighter ramp steps.
+  Text _statusText(
+    String text,
+    ColorScheme cs, {
+    required bool live,
+    required Color onDark,
+    required Color onLight,
+  }) {
+    final dark = cs.brightness == Brightness.dark;
+    return Text(
+      text,
+      style: AppTextStyles.heading2.copyWith(
+        fontWeight: FontWeight.w700,
+        color: !live
+            ? cs.onSurfaceVariant
+            : dark
+            ? onDark
+            : onLight,
+      ),
+    );
+  }
+
+  TextStyle _clockStyle(ColorScheme cs, {required bool live}) =>
+      muted ? _mutedClockStyle(cs) : _bigTime(cs, live: live);
+
+  TextStyle _mutedClockStyle(ColorScheme cs) => AppTextStyles.timeValue(
+    size: AppTextStyles.bodyRegular.fontSize,
+    weight: FontWeight.w400,
+    color: AppTheme.inkTertiary(cs.brightness),
   );
+
   TextStyle _labelStyle(ColorScheme cs) => AppTextStyles.bodyLarge.copyWith(
     fontWeight: muted ? FontWeight.w400 : FontWeight.w600,
     fontSize: muted ? AppTextStyles.bodyRegular.fontSize : null,
@@ -363,8 +422,20 @@ bool _isClock(String text) => _clockPattern.hasMatch(text);
 
 /// The prominent mono time-value style (heading1 size/weight, tabular figures)
 /// shared by the minute and minute+second countdowns.
-TextStyle _bigTime(ColorScheme cs) => AppTextStyles.timeValue(
-  size: AppTextStyles.heading1.fontSize,
-  weight: AppTextStyles.heading1.fontWeight,
-  color: cs.onSurface,
-);
+TextStyle _bigTime(ColorScheme cs, {required bool live}) =>
+    AppTextStyles.timeValue(
+      size: AppTextStyles.heading1.fontSize,
+      weight: AppTextStyles.heading1.fontWeight,
+      color: live ? cs.onSurface : cs.onSurfaceVariant,
+    );
+
+/// Whether [status] is a time (as opposed to a service-state word or the
+/// no-data dash), the only shapes a non-live source qualifies.
+bool _carriesTime(EtaStatus status) => switch (status) {
+  EtaArriving() ||
+  EtaApproaching() ||
+  EtaMinutes() ||
+  EtaMinutesSeconds() => true,
+  EtaLabel(:final text) => _isClock(text),
+  EtaUnknown() => false,
+};

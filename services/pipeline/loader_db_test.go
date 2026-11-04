@@ -12,6 +12,7 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/bus"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/raw"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
@@ -442,4 +443,51 @@ func TestVerifyAndTouchRawLandingRefreshesState(t *testing.T) {
 func deleteRawLandingState(ctx context.Context, pool *pgxpool.Pool, table, partCol, partVal string) {
 	_, _ = pool.Exec(ctx, `DELETE FROM raw_tdx.landing_state
 		WHERE table_name=$1 AND partition_column=$2 AND partition_value=$3`, table, partCol, partVal)
+}
+
+// An unserved partition and a TDX empty payload both replace whatever an older
+// cycle landed, so a loader never pairs fresh tables with months-old rows.
+func TestEmptyRawLandingsReplaceOlderCyclePartition(t *testing.T) {
+	pool := loaderTestPool(t)
+	defer closeLoaderTestPool(t, pool)
+	ctx := context.Background()
+	previous := raw.DB
+	raw.DB = pool
+	defer func() { raw.DB = previous }()
+
+	const city = "ZZ_UNSERVED_CITY"
+	target := raw.Target{Table: "bus_routefare", PartCol: "city", PartVal: city}
+	cleanup := func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM raw_tdx.bus_routefare WHERE city=$1", city)
+		deleteRawLandingState(ctx, pool, "bus_routefare", "city", city)
+	}
+	cleanup()
+	defer cleanup()
+
+	for name, land := range map[string]func(cycle string) error{
+		"unserved": func(cycle string) error {
+			return landUnservedRaw(ctx, "/v2/Bus/RouteFare/City/"+city, cycle)
+		},
+		"empty payload": func(cycle string) error {
+			return rawLandingCommitter(ctx, true, target, cycle)(shared.TDXIntoCommit{
+				Body: strings.NewReader("[]"), Marker: shared.TDXEmptyPayloadMarker,
+			})
+		},
+	} {
+		stale := []byte(`[{"RouteID":"R1","RouteName":{"Zh_tw":"舊"},"IsFreeBus":0}]`)
+		if err := raw.DumpWithDB(ctx, pool, target, "TEST-OLD", "test-cycle-old", stale); err != nil {
+			t.Fatalf("%s: seed: %v", name, err)
+		}
+		cycle := "test-cycle-" + strings.ReplaceAll(name, " ", "-")
+		if err := land(cycle); err != nil {
+			t.Fatalf("%s: land: %v", name, err)
+		}
+		body, _, gotCycle, err := rawTDXSource{pool: pool}.DatasetJSONWithLandingCycle(ctx, "bus_routefare", "city", city)
+		if err != nil {
+			t.Fatalf("%s: read: %v", name, err)
+		}
+		if strings.TrimSpace(string(body)) != "[]" || gotCycle != cycle {
+			t.Fatalf("%s: read body=%s cycle=%q, want [] in %q", name, body, gotCycle, cycle)
+		}
+	}
 }

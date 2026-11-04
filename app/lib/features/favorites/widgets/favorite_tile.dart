@@ -23,7 +23,7 @@ class FavoriteTile extends StatelessWidget {
       child: Container(
         constraints: const BoxConstraints(minHeight: 62),
         padding: const EdgeInsets.symmetric(
-          horizontal: AppTheme.space20,
+          horizontal: AppTheme.space16,
           vertical: AppTheme.space12,
         ),
         decoration: BoxDecoration(

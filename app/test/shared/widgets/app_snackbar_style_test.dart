@@ -44,7 +44,10 @@ SnackBar _snackBar(WidgetTester tester) =>
     tester.widget<SnackBar>(find.byType(SnackBar));
 
 Finder get _pill => find
-    .ancestor(of: find.byType(IntrinsicHeight), matching: find.byType(Container))
+    .ancestor(
+      of: find.byType(IntrinsicHeight),
+      matching: find.byType(Container),
+    )
     .first;
 
 void main() {
@@ -163,7 +166,9 @@ void main() {
       expect(text.style?.height, 1.4);
       expect(text.style?.fontSize, AppTextStyles.bodySmall.fontSize);
       final padding = tester.widget<Padding>(
-        find.ancestor(of: find.text('hello'), matching: find.byType(Padding)).first,
+        find
+            .ancestor(of: find.text('hello'), matching: find.byType(Padding))
+            .first,
       );
       expect(
         padding.padding,
@@ -176,12 +181,19 @@ void main() {
     ) async {
       await _show(tester, (c) => AppSnackbar.show(c, 'hello'));
       final row = tester.widget<Row>(
-        find.descendant(of: find.byType(IntrinsicHeight), matching: find.byType(Row)).first,
+        find
+            .descendant(
+              of: find.byType(IntrinsicHeight),
+              matching: find.byType(Row),
+            )
+            .first,
       );
       expect(row.mainAxisSize, MainAxisSize.min);
       expect(row.crossAxisAlignment, CrossAxisAlignment.stretch);
       final center = tester.widget<Center>(
-        find.ancestor(of: find.text('hello'), matching: find.byType(Center)).first,
+        find
+            .ancestor(of: find.text('hello'), matching: find.byType(Center))
+            .first,
       );
       expect(center.widthFactor, 1);
       expect(center.heightFactor, isNull);
@@ -241,7 +253,10 @@ void main() {
             .first,
       );
       expect(box.width, greaterThanOrEqualTo(44));
-      expect(box.left - tester.getRect(find.text('msg')).right, AppTheme.space12);
+      expect(
+        box.left - tester.getRect(find.text('msg')).right,
+        AppTheme.space12,
+      );
       expect(box.height, 44);
     });
 
@@ -274,10 +289,13 @@ void main() {
 
     testWidgets('no action label means no action', (tester) async {
       await _show(tester, (c) => AppSnackbar.show(c, 'msg'));
-      expect(find.byType(ConstrainedBox).evaluate().where((e) {
-        final w = e.widget as ConstrainedBox;
-        return w.constraints == const BoxConstraints(minWidth: 44);
-      }), isEmpty);
+      expect(
+        find.byType(ConstrainedBox).evaluate().where((e) {
+          final w = e.widget as ConstrainedBox;
+          return w.constraints == const BoxConstraints(minWidth: 44);
+        }),
+        isEmpty,
+      );
     });
   });
 

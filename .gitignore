@@ -62,12 +62,11 @@ token.env
 android/app/build.gradle.kts
 android/app/src/main/AndroidManifest.xml
 services/router/server.go
-docs/requirements.md
+/docs
 .env
 /functions
 /router
 secrets/
-env/.rendered/
 osrm-data/
 motis-data/
 /model/
@@ -86,7 +85,6 @@ app/i18n_missing.json
 ds-bundle/
 /ds-bundle/
 .design-sync/
-env/*.env
 ds/dist/
 ds/node_modules/
 node_modules
@@ -112,6 +110,8 @@ app/android/build/
 
 # Served by the router from /api/assets instead of bundled (FDPL-125)
 app/assets/mrt/TRTC_map_*.svg
+app/assets/mrt/TRTC/
+app/assets/rails/*.svg
 app/assets/rails/notes/
 
 # Local security scan reports; never publish.

@@ -56,20 +56,41 @@ void main() {
     const origin = LatLng(0, 0);
 
     test('reads the intercardinal directions exactly', () {
-      expect(bearingIfMoved(origin, const LatLng(0.001, 0.001)), closeTo(45, 1e-9));
-      expect(bearingIfMoved(origin, const LatLng(-0.001, 0.001)), closeTo(135, 1e-9));
-      expect(bearingIfMoved(origin, const LatLng(-0.001, -0.001)), closeTo(225, 1e-9));
-      expect(bearingIfMoved(origin, const LatLng(0.001, -0.001)), closeTo(315, 1e-9));
+      expect(
+        bearingIfMoved(origin, const LatLng(0.001, 0.001)),
+        closeTo(45, 1e-9),
+      );
+      expect(
+        bearingIfMoved(origin, const LatLng(-0.001, 0.001)),
+        closeTo(135, 1e-9),
+      );
+      expect(
+        bearingIfMoved(origin, const LatLng(-0.001, -0.001)),
+        closeTo(225, 1e-9),
+      );
+      expect(
+        bearingIfMoved(origin, const LatLng(0.001, -0.001)),
+        closeTo(315, 1e-9),
+      );
       expect(bearingIfMoved(origin, const LatLng(0.001, 0)), closeTo(0, 1e-9));
       expect(bearingIfMoved(origin, const LatLng(0, 0.001)), closeTo(90, 1e-9));
-      expect(bearingIfMoved(origin, const LatLng(-0.001, 0)), closeTo(180, 1e-9));
-      expect(bearingIfMoved(origin, const LatLng(0, -0.001)), closeTo(270, 1e-9));
+      expect(
+        bearingIfMoved(origin, const LatLng(-0.001, 0)),
+        closeTo(180, 1e-9),
+      );
+      expect(
+        bearingIfMoved(origin, const LatLng(0, -0.001)),
+        closeTo(270, 1e-9),
+      );
     });
 
     test('a degree of latitude is 111320 metres', () {
       const oneDegreeNorth = LatLng(1, 0);
       expect(bearingIfMoved(origin, oneDegreeNorth, minMeters: 111319.5), 0);
-      expect(bearingIfMoved(origin, oneDegreeNorth, minMeters: 111320.5), isNull);
+      expect(
+        bearingIfMoved(origin, oneDegreeNorth, minMeters: 111320.5),
+        isNull,
+      );
     });
 
     test('a move of exactly the floor still counts', () {

@@ -19,14 +19,17 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
+import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
+import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/train_type_chip.dart';
 
 part '../widgets/rail_shimmer_widgets.dart';
 part '../widgets/rail_timetable_row_widgets.dart';
 
 final _dateFormat = DateFormat('yyyy-MM-dd');
+final _timeFormat = DateFormat('HH:mm');
 
 // One timetable row: the exact fields the row renders, times as "HH:mm".
 typedef _RailRow = ({
@@ -40,6 +43,8 @@ typedef _RailRow = ({
   String remark,
   bool isSuspended,
   bool isAddedService,
+  bool nextDay,
+  String? estimatedArrive,
 });
 
 // Built per call rather than held in a const map: the names follow the
@@ -74,6 +79,24 @@ int? _minutesOfDay(String hhmm) {
   final m = int.tryParse(parts[1]);
   if (h == null || m == null) return null;
   return h * 60 + m;
+}
+
+/// True when the clock reads earlier on arrival than on departure: the trip
+/// crossed midnight, and a bare `00:30` would pass for the same day.
+bool _arrivesNextDay(String departure, String arrival) {
+  final d = _minutesOfDay(_railHhmm(departure));
+  final a = _minutesOfDay(_railHhmm(arrival));
+  return d != null && a != null && a < d;
+}
+
+/// The scheduled arrival pushed back by the train's live delay, or null when
+/// it is on time. Reuses the train's reported delay as the arrival delay: the
+/// feed has one figure per train, not one per stop.
+String? _estimatedArrive(String arrival, int delay) {
+  if (delay <= 0) return null;
+  final a = _minutesOfDay(_railHhmm(arrival));
+  if (a == null) return null;
+  return _timeFormat.format(DateTime.utc(0).add(Duration(minutes: a + delay)));
 }
 
 String _computeDuration(AppI18n i18n, String depart, String arrive) {
@@ -126,6 +149,9 @@ class _RailScreenState extends State<RailScreen> {
   bool _isDeparture = true;
   bool _hasSubmittedQuery = false;
   RailQueryPreset? _preset;
+  // Bumped when the host rewrites the query (empty-state actions) so the
+  // sheet, which only seeds from its preset once, rebuilds with the new one.
+  int _sheetRev = 0;
 
   // Drives the "N 分後" countdown on the next departure. The values are
   // minute-granular, so a minute tick is as often as the display can change;
@@ -210,10 +236,12 @@ class _RailScreenState extends State<RailScreen> {
   // times; states are immutable, so identity is a sound cache key.
   RailTimetableLoaded? _rowsSource;
   late List<_RailRow> _rowsCache;
+  DateTime? _rowsLoadedAt;
 
   List<_RailRow> _rowsFor(RailTimetableLoaded state) {
     if (!identical(state, _rowsSource)) {
       _rowsSource = state;
+      _rowsLoadedAt = _now();
       _rowsCache = [
         for (final item in state.traItems)
           (
@@ -231,6 +259,11 @@ class _RailScreenState extends State<RailScreen> {
             remark: item.remark,
             isSuspended: item.isSuspended,
             isAddedService: item.isAddedService,
+            nextDay: _arrivesNextDay(item.departureTime, item.arrivalTime),
+            estimatedArrive: _estimatedArrive(
+              item.arrivalTime,
+              state.delays[item.trainNo] ?? 0,
+            ),
           ),
         for (final item in state.thsrItems)
           (
@@ -248,6 +281,11 @@ class _RailScreenState extends State<RailScreen> {
             remark: item.remark,
             isSuspended: false,
             isAddedService: false,
+            nextDay: _arrivesNextDay(item.departureTime, item.arrivalTime),
+            estimatedArrive: _estimatedArrive(
+              item.arrivalTime,
+              state.delays[item.trainNo] ?? 0,
+            ),
           ),
       ];
     }
@@ -263,6 +301,14 @@ class _RailScreenState extends State<RailScreen> {
       if (wait != null) return (i, wait);
     }
     return (null, null);
+  }
+
+  bool _hasLeft(_RailRow row, String date, int? nextIndex, int index) {
+    if (date != _dateFormat.format(_now()) || index == nextIndex) return false;
+    final depart = _minutesOfDay(row.depart);
+    if (depart == null) return false;
+    final now = _now();
+    return depart + row.delay < now.hour * 60 + now.minute;
   }
 
   int? _departureWait(_RailRow row, int nowMinutes) {
@@ -345,20 +391,97 @@ class _RailScreenState extends State<RailScreen> {
     );
   }
 
+  // Rewrites the query from the empty state and runs it. The sheet is rebuilt
+  // from the new preset so it never shows the query that was replaced.
+  void _requery({
+    bool swap = false,
+    DateTime? when,
+    bool? isDeparture,
+  }) {
+    setState(() {
+      if (swap) {
+        final name = _originName;
+        final id = _originId;
+        _originName = _destName;
+        _originId = _destId;
+        _destName = name;
+        _destId = id;
+      }
+      _selectedDate = when ?? _selectedDate;
+      _isDeparture = isDeparture ?? _isDeparture;
+      _preset = RailQueryPreset(
+        system: _system,
+        originName: _originName,
+        originId: _originId,
+        destName: _destName,
+        destId: _destId,
+        date: _selectedDate,
+        isDeparture: _isDeparture,
+      );
+      _sheetRev++;
+    });
+    _dispatchSearch();
+  }
+
+  DateTime get _tomorrowFirst {
+    final d = _selectedDate.add(const Duration(days: 1));
+    return DateTime(d.year, d.month, d.day);
+  }
+
+  void _openQuerySheet() {
+    unawaited(
+      _sheetController.animateToDetent(
+        AppSheetSnap.half,
+        reduced: AppMotion.reduced(context),
+      ),
+    );
+  }
+
+  String _pillSubtitle(AppI18n i18n, RailState state) {
+    final time = _timeFormat.format(_selectedDate);
+    final bound = _isDeparture
+        ? i18n.railDepartAfter(time)
+        : i18n.railArriveBefore(time);
+    final count = state is RailTimetableLoaded ? _rowsFor(state).length : null;
+    return [
+      _formatDateDisplay(i18n, _selectedDate),
+      bound,
+      if (count != null) i18n.railTrainCount(count),
+    ].join(' · ');
+  }
+
   Widget _timetableBody(BuildContext context, RailState state) {
     final topPad = MediaQuery.paddingOf(context).top;
 
     if (state is! RailTimetableLoaded) return _pendingTimetable(context, state);
     final items = _rowsFor(state);
     if (items.isEmpty) {
-      return ListView(
-        padding: EdgeInsets.fromLTRB(
-          AppTheme.space24,
-          topPad + 68,
-          AppTheme.space24,
-          AppTheme.space24,
-        ),
-        children: const [_NoTimetableEmpty()],
+      // Centred in what the peeked sheet leaves visible, not the whole page.
+      return CustomScrollView(
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppTheme.space24,
+                topPad + 68,
+                AppTheme.space24,
+                MediaQuery.sizeOf(context).height * AppSheetSnap.peekFrac,
+              ),
+              child: _NoTimetableEmpty(
+                isDeparture: _isDeparture,
+                onSwap: () => _requery(swap: true),
+                onTomorrow: () =>
+                    _requery(when: _tomorrowFirst, isDeparture: true),
+                onShift: () => _requery(
+                  when: _selectedDate.add(
+                    Duration(hours: _isDeparture ? -1 : 1),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       );
     }
     return _loadedTimetable(context, state, items);
@@ -384,7 +507,24 @@ class _RailScreenState extends State<RailScreen> {
               padding: EdgeInsets.only(
                 top: topPad + 68 + AppTheme.space12,
               ),
-              child: const _TimetableHeader(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppTheme.space16,
+                      0,
+                      AppTheme.space16,
+                      AppTheme.space8,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: FreshnessStamp(at: _rowsLoadedAt),
+                    ),
+                  ),
+                  const _TimetableHeader(),
+                ],
+              ),
             ),
           ),
           SliverList.separated(
@@ -403,6 +543,7 @@ class _RailScreenState extends State<RailScreen> {
               destination: state.destName,
               isNext: i == nextIndex,
               minutesUntil: minutesUntil,
+              isPast: _hasLeft(items[i], state.date, nextIndex, i),
             ),
           ),
         ],
@@ -492,48 +633,57 @@ class _RailScreenState extends State<RailScreen> {
     final cs = Theme.of(context).colorScheme;
     return BlocProvider.value(
       value: _bloc,
-      child: Scaffold(
-        body: Stack(
-          children: [
-            Positioned.fill(
-              child: ColoredBox(
-                color: cs.surface,
-                child: BlocBuilder<RailBloc, RailState>(
-                  builder: _timetableBody,
-                ),
-              ),
-            ),
-
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: FloatingAppBar(
-                middle: AppBarTitlePill(
-                  title: _hasSubmittedQuery
-                      ? '$_originName → $_destName'
-                      : AppI18n.of(context).railTimetableTitle,
-                  subtitle: _formatDateDisplay(
-                    AppI18n.of(context),
-                    _selectedDate,
+      child: SheetBackScope(
+        controller: _sheetController,
+        child: Scaffold(
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: ColoredBox(
+                  color: cs.surface,
+                  child: BlocBuilder<RailBloc, RailState>(
+                    builder: _timetableBody,
                   ),
                 ),
               ),
-            ),
 
-            // RailQuerySheetContent starts its ListView flush with the sheet's
-            // top edge and can't take a SafeArea itself; AppSheet's own
-            // status-bar padding is what keeps its handle and title clear.
-            AppSheet(
-              controller: _sheetController,
-              color: cs.surface,
-              child: RailQuerySheetContent(
-                preset: _preset,
-                onSubmit: _onSubmit,
-                onSystemChanged: _onSystemChanged,
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: BlocBuilder<RailBloc, RailState>(
+                  builder: (context, state) {
+                    final i18n = AppI18n.of(context);
+                    return FloatingAppBar(
+                      middle: AppBarTitlePill(
+                        title: _hasSubmittedQuery
+                            ? '$_originName → $_destName'
+                            : i18n.railTimetableTitle,
+                        subtitle: _hasSubmittedQuery
+                            ? _pillSubtitle(i18n, state)
+                            : _formatDateDisplay(i18n, _selectedDate),
+                        onTap: _hasSubmittedQuery ? _openQuerySheet : null,
+                        semanticLabel: i18n.railEditQuery,
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+
+              // RailQuerySheetContent starts its ListView flush with the
+              // sheet's top edge and can't take a SafeArea itself; AppSheet's
+              // own status-bar padding keeps its handle and title clear.
+              AppSheet(
+                controller: _sheetController,
+                child: RailQuerySheetContent(
+                  key: ValueKey(_sheetRev),
+                  preset: _preset,
+                  onSubmit: _onSubmit,
+                  onSystemChanged: _onSystemChanged,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -544,11 +694,22 @@ class _RailScreenState extends State<RailScreen> {
 /// window — distinct from [ErrorStateView], which implies the request
 /// itself failed and a retry might help.
 class _NoTimetableEmpty extends StatelessWidget {
-  const _NoTimetableEmpty();
+  const _NoTimetableEmpty({
+    required this.isDeparture,
+    required this.onSwap,
+    required this.onTomorrow,
+    required this.onShift,
+  });
+
+  final bool isDeparture;
+  final VoidCallback onSwap;
+  final VoidCallback onTomorrow;
+  final VoidCallback onShift;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -560,7 +721,7 @@ class _NoTimetableEmpty extends StatelessWidget {
           ),
           const SizedBox(height: AppTheme.space16),
           Text(
-            AppI18n.of(context).railNoTrains,
+            i18n.railNoTrains,
             textAlign: TextAlign.center,
             style: AppTextStyles.bodyRegular.copyWith(
               color: cs.onSurfaceVariant,
@@ -568,11 +729,31 @@ class _NoTimetableEmpty extends StatelessWidget {
           ),
           const SizedBox(height: AppTheme.space6),
           Text(
-            AppI18n.of(context).railNoTrainsHint,
+            i18n.railNoTrainsHint,
             textAlign: TextAlign.center,
             style: AppTextStyles.bodySmall.copyWith(
               color: cs.outline,
             ),
+          ),
+          const SizedBox(height: AppTheme.space16),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: AppTheme.space8,
+            runSpacing: AppTheme.space8,
+            children: [
+              AppButton.outlined(
+                label: i18n.railTomorrowFirst,
+                onPressed: onTomorrow,
+              ),
+              AppButton.outlined(
+                label: isDeparture ? i18n.railEarlierHour : i18n.railLaterHour,
+                onPressed: onShift,
+              ),
+              AppButton.outlined(
+                label: i18n.railSwapDirection,
+                onPressed: onSwap,
+              ),
+            ],
           ),
         ],
       ),

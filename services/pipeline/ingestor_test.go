@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -138,6 +139,7 @@ func TestRawDumpTargetSkipsRealtimeAndUnmapped(t *testing.T) {
 func TestIngestRaw_FetchesAllBusCityAPIs(t *testing.T) {
 	t.Setenv("TDX_CLIENT_ID", "test-id")
 	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
+	stubLandUnservedRaw(t, nil)
 
 	var mu sync.Mutex
 	seen := map[string]int{}
@@ -165,6 +167,9 @@ func TestIngestRaw_FetchesAllBusCityAPIs(t *testing.T) {
 				want = 0
 			}
 			if api == "DisplayStopOfRoute" && !slices.Contains(dataset.DisplayStopCities(), city) {
+				want = 0
+			}
+			if dataset.BusUnserved("bus_"+strings.ToLower(api), city) {
 				want = 0
 			}
 			if got := seen[path]; got != want {
@@ -279,6 +284,7 @@ func TestIngestRawAggregatesAllFetchFailures(t *testing.T) {
 func TestIngestRawKeepsThreeRequestConcurrencyLimit(t *testing.T) {
 	t.Setenv("TDX_CLIENT_ID", "test-id")
 	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
+	stubLandUnservedRaw(t, nil)
 	var active atomic.Int64
 	var maximum atomic.Int64
 	fetcher := fakeRawFetcher{getInto: func(ctx context.Context, _, _ string, _ func(shared.TDXIntoCommit) error) (shared.TDXIntoResult, error) {
@@ -450,5 +456,79 @@ func TestFetchRawFullReland(t *testing.T) {
 	if calls.Load() != 2 || invalidations.Load() != 1 || verifications.Load() != 0 {
 		t.Fatalf("calls=%d invalidations=%d verifications=%d, want 2/1/0",
 			calls.Load(), invalidations.Load(), verifications.Load())
+	}
+}
+
+func stubLandUnservedRaw(t *testing.T, land func(context.Context, string, string) error) {
+	t.Helper()
+	if land == nil {
+		land = func(context.Context, string, string) error { return nil }
+	}
+	previous := landUnservedRaw
+	landUnservedRaw = land
+	t.Cleanup(func() { landUnservedRaw = previous })
+}
+
+func TestIngestRawLandsUnservedBusPartitionsWithoutFetching(t *testing.T) {
+	t.Setenv("TDX_CLIENT_ID", "test-id")
+	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
+	var mu sync.Mutex
+	var landed []string
+	stubLandUnservedRaw(t, func(_ context.Context, url, landingCycle string) error {
+		if landingCycle == "" {
+			t.Errorf("%s landed without a landing cycle", url)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		landed = append(landed, url)
+		return nil
+	})
+	var fetched sync.Map
+	fetcher := fakeRawFetcher{getInto: func(_ context.Context, url, _ string, _ func(shared.TDXIntoCommit) error) (shared.TDXIntoResult, error) {
+		fetched.Store(url, true)
+		return shared.TDXIntoResult{Modified: true}, nil
+	}}
+	if err := ingestRaw(context.Background(), fetcher); err != nil {
+		t.Fatalf("ingestRaw: %v", err)
+	}
+	slices.Sort(landed)
+	want := []string{
+		"/v2/Bus/RouteFare/City/Keelung", "/v2/Bus/RouteFare/City/LienchiangCounty", "/v2/Bus/RouteFare/City/Tainan",
+		"/v2/Bus/Station/City/LienchiangCounty",
+		"/v2/Bus/StationGroup/City/Kaohsiung", "/v2/Bus/StationGroup/City/KinmenCounty",
+		"/v2/Bus/StationGroup/City/LienchiangCounty", "/v2/Bus/StationGroup/City/NewTaipei",
+		"/v2/Bus/StationGroup/City/Taichung", "/v2/Bus/StationGroup/City/Tainan",
+		"/v2/Bus/StationGroup/City/Taipei", "/v2/Bus/StationGroup/City/Taoyuan",
+	}
+	if !slices.Equal(landed, want) {
+		t.Fatalf("landed unserved = %v, want %v", landed, want)
+	}
+	for _, url := range landed {
+		if _, ok := fetched.Load(url); ok {
+			t.Errorf("%s was fetched from TDX", url)
+		}
+	}
+}
+
+func TestIngestRawUnservedLandingFailureIsFatal(t *testing.T) {
+	t.Setenv("TDX_CLIENT_ID", "test-id")
+	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
+	want := errors.New("land failed")
+	stubLandUnservedRaw(t, func(context.Context, string, string) error { return want })
+	fetcher := fakeRawFetcher{getInto: func(context.Context, string, string, func(shared.TDXIntoCommit) error) (shared.TDXIntoResult, error) {
+		return shared.TDXIntoResult{Modified: true}, nil
+	}}
+	if err := ingestRaw(context.Background(), fetcher, "bus_station"); !errors.Is(err, want) {
+		t.Fatalf("ingestRaw err = %v, want %v", err, want)
+	}
+}
+
+func TestLandUnservedRawNeedsRawDB(t *testing.T) {
+	previous := raw.DB
+	raw.DB = nil
+	t.Cleanup(func() { raw.DB = previous })
+	err := landUnservedRaw(context.Background(), "/v2/Bus/Station/City/LienchiangCounty", "cycle-1")
+	if err == nil || !strings.Contains(err.Error(), "land unserved raw") {
+		t.Fatalf("landUnservedRaw err = %v, want wrapped dump error", err)
 	}
 }

@@ -58,7 +58,11 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     Emitter<PlanState> emit,
   ) async {
     try {
-      await HiveStore.ensureSavedPlansReady();
+      // A Hive box open that never completes would leave the loading spinner up
+      // forever; the timeout routes it to the retry state instead.
+      await HiveStore.ensureSavedPlansReady().timeout(
+        const Duration(seconds: 5),
+      );
       emit(
         state.copyWith(
           savedRoutes: _readSavedRoutes(),

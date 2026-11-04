@@ -4,7 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/shared/widgets/line_badge.dart';
 
+import '../../support/helpers/remote_assets.dart';
+
 void main() {
+  setUp(seedRemoteAssets);
+
   const scheme = ColorScheme.light(onSurfaceVariant: Color(0xFF123456));
   const colors = <String, Color>{
     'BR': AppTheme.mrtBR,
@@ -31,7 +35,7 @@ void main() {
   });
   test('TRTC assets are exact line codes', () {
     for (final code in ['BL', 'R', 'G', 'O', 'BR', 'Y']) {
-      expect(LineBadge.trtcAsset(code), 'assets/mrt/TRTC/$code.svg');
+      expect(LineBadge.trtcAsset(code), 'mrt/TRTC/$code.svg');
     }
     for (final code in ['', 'bl', 'BL01', 'A', 'KO', 'KR']) {
       expect(LineBadge.trtcAsset(code), isNull);
@@ -91,14 +95,14 @@ void main() {
         home: LineBadge(
           label: 'G',
           color: Colors.black,
-          svgAsset: 'assets/mrt/TRTC/G.svg',
+          svgAsset: 'mrt/TRTC/G.svg',
         ),
       ),
     );
     final picture = tester.widget<SvgPicture>(find.byType(SvgPicture));
     expect(
-      (picture.bytesLoader as SvgAssetLoader).assetName,
-      'assets/mrt/TRTC/G.svg',
+      (picture.bytesLoader as SvgFileLoader).file.path,
+      endsWith('mrt/TRTC/G.svg'),
     );
     expect(picture.width, 25);
     expect(picture.height, 25);

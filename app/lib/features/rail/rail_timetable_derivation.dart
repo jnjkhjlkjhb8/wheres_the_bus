@@ -4,9 +4,9 @@ library;
 import 'package:flutter/widgets.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_train_state.dart';
 
-/// Scales a fixed column width with the user's text size, so the slots still
-/// fit their digits in the app's large-text mode instead of clipping the
-/// figures they were sized around.
+/// Scales a fixed column width with the system text size, so the slots still
+/// fit their digits at a large text size instead of clipping the figures they
+/// were sized around.
 double scaledWidth(BuildContext context, double base) =>
     MediaQuery.textScalerOf(context).scale(base);
 

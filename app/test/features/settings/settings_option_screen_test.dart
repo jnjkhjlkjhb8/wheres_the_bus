@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:wheres_the_bus/features/settings/settings_option_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_card.dart';
 
 void main() {
   testWidgets('option row tap target is at least 44x44 (HIG minimum)', (
@@ -39,20 +40,26 @@ void main() {
       routes: [
         GoRoute(
           path: '/',
-          builder: (context, _) => Scaffold(
-            body: TextButton(
-              onPressed: () async =>
-                  results.add(await context.push<String>('/pick')),
-              child: const Text('open'),
+          pageBuilder: (context, _) => MaterialPage(
+            child: Scaffold(
+              body: TextButton(
+                onPressed: () async =>
+                    results.add(await context.push<String>('/pick')),
+                child: const Text('open'),
+              ),
             ),
           ),
         ),
         GoRoute(
           path: '/pick',
-          builder: (_, _) => const SettingsOptionScreen(
-            title: 'Test',
-            options: ['A', 'B'],
-            initialSelected: 'A',
+          // go_router 18 only animates `builder:` routes under material_ui's
+          // MaterialApp; this app (like AppRouter) supplies MaterialPage itself.
+          pageBuilder: (_, _) => const MaterialPage(
+            child: SettingsOptionScreen(
+              title: 'Test',
+              options: ['A', 'B'],
+              initialSelected: 'A',
+            ),
           ),
         ),
       ],
@@ -109,5 +116,38 @@ void main() {
 
     await tester.pumpAndSettle();
     expect(results, ['B']);
+  });
+
+  testWidgets('options sit in the same outlined group as the Settings list', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('zh'),
+        localizationsDelegates: AppI18n.localizationsDelegates,
+        supportedLocales: AppI18n.supportedLocales,
+        home: SettingsOptionScreen(
+          title: 'Test',
+          options: ['A', 'B'],
+          initialSelected: 'A',
+        ),
+      ),
+    );
+
+    final group = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byType(AppCard),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final decoration = group.decoration! as BoxDecoration;
+    expect(decoration.border, isNotNull);
+    expect(decoration.boxShadow, isEmpty);
+    expect(
+      group.padding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    );
   });
 }

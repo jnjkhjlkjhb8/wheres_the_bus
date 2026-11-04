@@ -217,7 +217,7 @@ class _StationChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
         decoration: BoxDecoration(
           color: selected ? cs.primary : cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppTheme.radiusButton),
         ),
         alignment: Alignment.center,
         child: Text(

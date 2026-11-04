@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 
 class MapMarkers {
   const MapMarkers._();
@@ -39,12 +40,26 @@ class MapMarkers {
     _textScale = (textScaler.scale(12) / 12).clamp(1.0, _maxTextScale);
   }
 
-  static Future<BitmapDescriptor> svgAsset(
-    String asset, {
+  static Future<BitmapDescriptor> svgAsset(String asset, {double size = 36}) =>
+      _svg('svg:$asset:$size', SvgAssetLoader(asset), size);
+
+  /// The hash is in the key so a replaced file is not served from the cache.
+  static Future<BitmapDescriptor> svgRemote(
+    RemoteAsset asset, {
     double size = 36,
-  }) {
-    return _memo('svg:$asset:$size', () async {
-      final info = await vg.loadPicture(SvgAssetLoader(asset), null);
+  }) => _svg(
+    'svg:${asset.file.path}:${asset.hash}:$size',
+    SvgFileLoader(asset.file),
+    size,
+  );
+
+  static Future<BitmapDescriptor> _svg(
+    String key,
+    BytesLoader loader,
+    double size,
+  ) {
+    return _memo(key, () async {
+      final info = await vg.loadPicture(loader, null);
       final px = (size * _dpr).round();
       final image = await _record(px, (canvas) {
         final scale = px / info.size.width;

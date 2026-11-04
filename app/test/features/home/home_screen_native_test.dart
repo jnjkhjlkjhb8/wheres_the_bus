@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:hive_ce_flutter/adapters.dart';
+import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/app.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
@@ -374,6 +375,64 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('the sheet navigator never tells Android back is unhandled', (
+    tester,
+  ) async {
+    // The engine asks the framework to handle back only while the last
+    // navigation notification said it could. A pushed-then-popped sheet page
+    // leaves its own navigator at one route, and that notification would
+    // otherwise win, so the next back exits the app past home's PopScope.
+    final handlesBack = <Object?>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'SystemNavigator.setFrameworkHandlesBack') {
+          handlesBack.add(call.arguments);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    // WidgetsApp reports nothing to the engine until the app is resumed.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final router = await mount(tester, _Near(), _Bus());
+    router.go(AppRoutes.railQuery());
+    await flush(tester);
+    await tester.binding.handlePopRoute();
+    await flush(tester);
+
+    expect(handlesBack, isNotEmpty);
+    expect(handlesBack.last, isTrue);
+    await unmount(tester);
+  });
+
+  testWidgets('back from the raised root sheet settles at the peek first', (
+    tester,
+  ) async {
+    final router = await mount(tester, _Near(), _Bus());
+    router.go(AppRoutes.railQuery());
+    await flush(tester);
+    await tester.binding.handlePopRoute();
+    await flush(tester);
+    final controller = tester
+        .widget<PagedSheet>(find.byType(PagedSheet))
+        .controller!;
+    double fraction() =>
+        controller.metrics!.offset / controller.metrics!.viewportSize.height;
+    // The form's page is gone and the list is left where the form was.
+    expect(fraction(), greaterThan(AppSheetSnap.peekFrac + 0.05));
+
+    await tester.binding.handlePopRoute();
+    await flush(tester);
+    expect(fraction(), closeTo(AppSheetSnap.peekFrac, 0.02));
+    await unmount(tester);
+  });
+
   for (final reduced in [false, true]) {
     testWidgets('nearby filtering and return to map preserve rows ($reduced)', (
       tester,
@@ -416,6 +475,53 @@ void main() {
       expect(tester.takeException(), isNull);
       await unmount(tester);
     });
+  }
+
+  for (final reduced in [true, false]) {
+    testWidgets(
+      '${reduced ? 'reduced motion jumps' : 'normal motion animates'} '
+      'the nearby list back to the top',
+      (tester) async {
+        final near = _Near()
+          ..stations = [
+            for (var i = 0; i < 35; i++)
+              NearStationViewModel(
+                type: NearStationType.bus,
+                stationId: 'station-$i',
+                stationName: 'Bus station $i',
+                lat: 25 + i * 0.001,
+                lon: 121,
+                walkingMinutes: 1,
+                distanceMeters: i * 50,
+              ),
+          ];
+        await mount(tester, near, _Bus(), reduced: reduced);
+        await tester.drag(
+          find.byType(SheetDragHandle).first,
+          const Offset(0, -700),
+        );
+        await flush(tester);
+        await tester.drag(find.byType(ListView).first, const Offset(0, -600));
+        await flush(tester);
+        final position = tester
+            .state<ScrollableState>(
+              find.descendant(
+                of: find.byType(ListView).first,
+                matching: find.byType(Scrollable),
+              ),
+            )
+            .position;
+        expect(position.pixels, greaterThan(0));
+
+        await tester.tap(
+          find.text(lookupAppI18n(const Locale('zh')).homeBackToMap),
+        );
+        await tester.pump();
+
+        expect(position.pixels == 0, reduced);
+        await unmount(tester);
+      },
+    );
   }
 
   testWidgets(
@@ -475,6 +581,115 @@ void main() {
       await unmount(tester);
     },
   );
+
+  group('camera follows reduce motion', () {
+    const poles = [
+      BusStationMember(
+        stationId: 'a',
+        stationUid: 'pole-a',
+        stationName: 'A',
+        lat: 24.9,
+        lon: 120.9,
+      ),
+      BusStationMember(
+        stationId: 'b',
+        stationUid: 'pole-b',
+        stationName: 'B',
+        lat: 25.1,
+        lon: 121.1,
+      ),
+    ];
+
+    for (final reduced in [true, false]) {
+      final label = reduced ? 'reduced motion snaps' : 'normal motion animates';
+
+      void expectMode() {
+        expect(maps.cameraUpdates, isNotEmpty);
+        expect(maps.movedUpdates.isNotEmpty, reduced);
+        expect(maps.animatedUpdates.isNotEmpty, !reduced);
+      }
+
+      void clearUpdates() {
+        maps.cameraUpdates.clear();
+        maps.movedUpdates.clear();
+        maps.animatedUpdates.clear();
+      }
+
+      testWidgets('$label for a station tap', (tester) async {
+        await mount(tester, _Near(), _Bus(), reduced: reduced);
+        tester.widget<GoogleMap>(find.byType(GoogleMap)).onCameraMove!(
+          const CameraPosition(target: LatLng(25.001, 121.001), zoom: 16),
+        );
+        clearUpdates();
+        final mrt = tester
+            .widget<GoogleMap>(find.byType(GoogleMap))
+            .markers
+            .firstWhere((m) => m.markerId.value == 'mrt:BL15');
+
+        mrt.onTap!();
+        await flush(tester);
+
+        expectMode();
+        await unmount(tester);
+      });
+
+      testWidgets('$label when a bus group fits its poles', (tester) async {
+        final bus = _Bus()..members = poles;
+        await mount(tester, _Near(), bus, reduced: reduced);
+        clearUpdates();
+        final group = tester
+            .widget<GoogleMap>(find.byType(GoogleMap))
+            .markers
+            .firstWhere((m) => m.markerId.value == 'bus:group');
+
+        group.onTap!();
+        await flush(tester);
+
+        expect(
+          maps.cameraUpdates.whereType<CameraUpdateNewLatLngBounds>(),
+          hasLength(1),
+        );
+        expectMode();
+        await unmount(tester);
+      });
+
+      testWidgets('$label for the locate button', (tester) async {
+        await mount(tester, _Near(), _Bus(), reduced: reduced);
+        clearUpdates();
+        location.next = _position(25.5, 121.5);
+
+        await tester.tap(
+          find.byWidgetPredicate(
+            (w) => w is Pressable && w.semanticLabel == '定位目前位置',
+          ),
+        );
+        await flush(tester);
+
+        expectMode();
+        await unmount(tester);
+      });
+
+      testWidgets('$label for the live fix after the cached one', (
+        tester,
+      ) async {
+        location
+          ..cached = _position(24, 120)
+          ..cachedGate = Completer()
+          ..currentGate = Completer();
+        await mount(tester, _Near(), _Bus(), reduced: reduced);
+        clearUpdates();
+        location.cachedGate!.complete();
+        await flush(tester);
+        clearUpdates();
+
+        location.currentGate!.complete();
+        await flush(tester);
+
+        expectMode();
+        await unmount(tester);
+      });
+    }
+  });
 
   group('bus group spread', () {
     const poles = [

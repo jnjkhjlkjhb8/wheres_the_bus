@@ -291,22 +291,12 @@ class _SettingsView extends StatelessWidget {
                 _SettingsSection(
                   title: i18n.settingsSectionAbout,
                   children: [
-                    _SettingsRow(
-                      icon: Icons.help_outline_rounded,
-                      label: i18n.settingsFaq,
-                      comingSoon: true,
-                    ),
                     _SettingsSwitchRow(
                       icon: Icons.vibration_rounded,
                       label: i18n.settingsShakeToReport,
                       value: state.shakeToReport,
                       onChanged: (v) =>
                           bloc.add(ShakeToReportToggled(value: v)),
-                    ),
-                    _SettingsRow(
-                      icon: Icons.lock_outline_rounded,
-                      label: i18n.settingsPrivacyPolicy,
-                      comingSoon: true,
                     ),
                     _SettingsRow(
                       icon: Icons.info_outline_rounded,
@@ -460,7 +450,7 @@ class _BackButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Pressable(
-      onTap: () => context.pop(),
+      onTap: context.popOrHome,
       semanticLabel: AppI18n.of(context).commonBack,
       child: SizedBox(
         width: 44,
@@ -754,7 +744,6 @@ class _SettingsRow extends StatelessWidget {
     this.chevron = false,
     this.monoValue = false,
     this.onTap,
-    this.comingSoon = false,
   });
   final IconData icon;
   final String label;
@@ -767,12 +756,9 @@ class _SettingsRow extends StatelessWidget {
   final bool monoValue;
   final VoidCallback? onTap;
 
-  final bool comingSoon;
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final i18n = AppI18n.of(context);
     // Trailing detail is secondary, at label size — the label leads, the
     // value supports (HIG). Mono values keep tabular figures.
     final baseValue = monoValue ? AppTextStyles.memo : AppTextStyles.bodyLarge;
@@ -785,10 +771,8 @@ class _SettingsRow extends StatelessWidget {
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 48),
       child: Pressable(
-        onTap: comingSoon ? null : onTap,
-        semanticLabel: comingSoon
-            ? i18n.commonComingSoonSemantics(label)
-            : label,
+        onTap: onTap,
+        semanticLabel: label,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: AppTheme.space10),
           child: Row(
@@ -796,24 +780,15 @@ class _SettingsRow extends StatelessWidget {
               Icon(icon, size: 20, color: cs.onSurfaceVariant),
               const SizedBox(width: AppTheme.space12),
               Expanded(child: Text(label, style: AppTextStyles.bodyLarge)),
-              if (comingSoon)
-                Text(
-                  i18n.commonComingSoon,
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: cs.onSurfaceVariant,
-                  ),
-                )
-              else ...[
-                if (value != null)
-                  Text(value!, textAlign: TextAlign.right, style: valueStyle),
-                if (chevron) ...[
-                  const SizedBox(width: AppTheme.space4),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 20,
-                    color: cs.outline,
-                  ),
-                ],
+              if (value != null)
+                Text(value!, textAlign: TextAlign.right, style: valueStyle),
+              if (chevron) ...[
+                const SizedBox(width: AppTheme.space4),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
+                  color: cs.outline,
+                ),
               ],
             ],
           ),

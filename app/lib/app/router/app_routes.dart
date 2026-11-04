@@ -208,6 +208,25 @@ class AppRoutes {
   );
 }
 
+/// A cold link leaves nothing underneath to pop to, and go_router throws on
+/// `pop()` then; home is where back lands in that case.
+extension BackOrHome on BuildContext {
+  void popOrHome() {
+    if (canPop()) {
+      pop();
+    } else {
+      go(AppRoutes.home);
+    }
+  }
+
+  /// [Navigator.maybePop] first so a page's `PopScope` still gets its say; the
+  /// first route of a navigator reports false, which is the cold-link case.
+  Future<void> maybePopOrHome() async {
+    if (await Navigator.maybePop(this)) return;
+    if (mounted) go(AppRoutes.home);
+  }
+}
+
 const appLinkScheme = 'wheresthebus';
 
 /// Domain the app claims verified https links on.

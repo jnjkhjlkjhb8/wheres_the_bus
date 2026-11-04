@@ -66,12 +66,17 @@ void main() {
     );
     expect(decoration(tester).color, scheme.surfaceContainerHighest);
     expect(
-      tester.widget<DefaultTextStyle>(
-        find.ancestor(
-          of: find.text('台北'),
-          matching: find.byType(DefaultTextStyle),
-        ).first,
-      ).style.color,
+      tester
+          .widget<DefaultTextStyle>(
+            find
+                .ancestor(
+                  of: find.text('台北'),
+                  matching: find.byType(DefaultTextStyle),
+                )
+                .first,
+          )
+          .style
+          .color,
       scheme.onSurface,
     );
   });
@@ -119,14 +124,20 @@ void main() {
       const StationDisplayField(value: '台北', active: false),
     );
     expect(box(tester).duration, AppMotion.short);
-    expect(tester.widget<AnimatedDefaultTextStyle>(textStyle).duration, AppMotion.short);
+    expect(
+      tester.widget<AnimatedDefaultTextStyle>(textStyle).duration,
+      AppMotion.short,
+    );
     await mount(
       tester,
       const StationDisplayField(value: '台北', active: false),
       reduced: true,
     );
     expect(box(tester).duration, Duration.zero);
-    expect(tester.widget<AnimatedDefaultTextStyle>(textStyle).duration, Duration.zero);
+    expect(
+      tester.widget<AnimatedDefaultTextStyle>(textStyle).duration,
+      Duration.zero,
+    );
   });
 
   testWidgets('without a tap handler it is not pressable', (tester) async {

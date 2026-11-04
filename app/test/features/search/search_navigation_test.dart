@@ -11,6 +11,7 @@ import 'package:wheres_the_bus/data/models/search_models.dart';
 import 'package:wheres_the_bus/data/repositories/search_recent_repository.dart';
 import 'package:wheres_the_bus/data/repositories/search_repository.dart';
 import 'package:wheres_the_bus/features/search/bloc/search_bloc.dart';
+import 'package:wheres_the_bus/features/search/genui/view/genui_ask_lane.dart';
 import 'package:wheres_the_bus/features/search/view/search_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
@@ -213,14 +214,14 @@ void main() {
             type: SearchResultType.busRoute,
             uid: 'a',
             name: 'Taipei result',
-            subtitle: '',
+            subtitle: 'A → B',
             city: 'Taipei',
           ),
           SearchResult(
             type: SearchResultType.busRoute,
             uid: 'b',
             name: 'Tainan result',
-            subtitle: '',
+            subtitle: 'A → B',
             city: 'Tainan',
           ),
         ];
@@ -254,4 +255,19 @@ void main() {
       expect(find.text('Result'), findsOneWidget);
     },
   );
+
+  testWidgets('a result opened from the AI lane navigates like a list row', (
+    tester,
+  ) async {
+    final history = _History();
+    final router = await mount(tester, _Search(), history, query: 'Query');
+
+    tester
+        .widget<GenUiAskLane>(find.byType(GenUiAskLane))
+        .onOpen(_result(SearchResultType.busRoute));
+    await tester.pumpAndSettle();
+
+    expect(router.state.uri.path, '/bus/route/uid');
+    expect(history.entries.single.type, SearchResultType.busRoute);
+  });
 }

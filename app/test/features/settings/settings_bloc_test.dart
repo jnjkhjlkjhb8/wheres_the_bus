@@ -88,7 +88,6 @@ void main() {
         settings: repo({
           'appearance_mode': 'dark',
           'push_enabled': false,
-          'large_text': true,
           'live_activity_enabled': false,
         }),
       );

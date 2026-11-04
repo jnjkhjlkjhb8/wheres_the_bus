@@ -47,8 +47,13 @@ class _SettingsOptionScreenState extends State<SettingsOptionScreen> {
           AppTheme.space16,
           AppTheme.space16,
         ),
-        child: AppCard(
-          padding: const EdgeInsets.all(AppTheme.space10),
+        // Same outlined group and 16pt row inset as the Settings list it
+        // drills down from.
+        child: AppCard.outlined(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space16,
+            vertical: AppTheme.space10,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,

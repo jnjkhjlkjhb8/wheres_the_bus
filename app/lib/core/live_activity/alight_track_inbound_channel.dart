@@ -1,7 +1,9 @@
 import 'package:flutter/services.dart';
 
 abstract final class AlightTrackInboundChannel {
-  static const _channel = MethodChannel('me.rabbitsayhello.wheresthebus/live_activity');
+  static const _channel = MethodChannel(
+    'me.rabbitsayhello.wheresthebus/live_activity',
+  );
 
   static final _cancelListeners = <void Function()>[];
   static final _tokenListeners = <void Function(String token)>[];

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
@@ -93,8 +94,12 @@ class _Bus extends BusRepository {
     this.singleStop = false,
     this.startName = 'Start',
     this.endName = 'End',
+    this.hold,
   });
   bool fail;
+
+  /// While set and incomplete, the route stays loading.
+  final Completer<void>? hold;
   final bool emptyCity;
 
   /// Origins and how many destinations each lists; overrides the default OD
@@ -121,6 +126,7 @@ class _Bus extends BusRepository {
   @override
   Future<BusRouteViewModel> routeStatic(String subRouteUid) async {
     loads++;
+    await hold?.future;
     if (fail) throw StateError('route unavailable');
     return BusRouteViewModel(
       subRouteUid: subRouteUid,
@@ -329,7 +335,15 @@ void main() {
             disableAnimations: reduced,
             textScaler: TextScaler.linear(textScale),
           ),
-          child: child!,
+          // The app root applies this; without it a loading skeleton shimmers
+          // forever and pumpAndSettle never returns.
+          child: SkeletonizerConfig(
+            data: AppTheme.skeleton(
+              Theme.of(context).colorScheme,
+              reduceMotion: reduced,
+            ),
+            child: child!,
+          ),
         ),
         home: MultiBlocProvider(
           providers: [
@@ -432,6 +446,56 @@ void main() {
       },
     );
   }
+
+  testWidgets('route fit leaves room for the floating app bar', (
+    tester,
+  ) async {
+    await pump(tester, _Bus());
+    final padding = tester.widget<GoogleMap>(find.byType(GoogleMap)).padding;
+    // No safe area under test: 16 top inset + 44 bar + 8 bottom inset.
+    expect(padding.top, 68);
+    expect(padding.bottom, greaterThan(0));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('loading shows bones for the route pill and the timeline', (
+    tester,
+  ) async {
+    final hold = Completer<void>();
+    final bus = _Bus(hold: hold);
+    await pump(tester, bus, reduced: true);
+
+    bool boned(Widget w) => w is Skeletonizer && w.enabled;
+    expect(
+      find.descendant(
+        of: find.byType(FloatingAppBar),
+        matching: find.byWidgetPredicate(boned),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AppSheet),
+        matching: find.byType(HorizontalRouteTimeline),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.ancestor(
+        of: find.byType(HorizontalRouteTimeline),
+        matching: find.byWidgetPredicate(boned),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('307'), findsNothing);
+
+    hold.complete();
+    await flushLive(tester);
+    expect(find.byWidgetPredicate(boned), findsNothing);
+    expect(find.text('307'), findsWidgets);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
 
   testWidgets('buffer stop and second section remain visible in the route', (
     tester,
@@ -925,7 +989,9 @@ void main() {
     tester,
   ) async {
     final bus = _Bus(fail: true);
-    await pump(tester, bus);
+    // Reduced motion stops the loading shimmer, which would otherwise keep
+    // pumpAndSettle waiting while the first load is still in flight.
+    await pump(tester, bus, reduced: true);
     await tester.drag(find.byType(SheetDragHandle), const Offset(0, -450));
     await tester.pumpAndSettle();
     expect(find.text('Middle'), findsNothing);
@@ -1510,6 +1576,86 @@ void main() {
     expect(map.cameraUpdates.length, before + 1);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  for (final reduced in [true, false]) {
+    final label = reduced ? 'reduced motion snaps' : 'normal motion animates';
+
+    void expectMode() {
+      expect(map.cameraUpdates, isNotEmpty);
+      expect(map.movedUpdates.isNotEmpty, reduced);
+      expect(map.animatedUpdates.isNotEmpty, !reduced);
+    }
+
+    testWidgets('$label for the opening fit', (tester) async {
+      await pump(tester, _Bus(), reduced: reduced);
+
+      expectMode();
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('$label for the recenter button', (tester) async {
+      await pump(tester, _Bus(), reduced: reduced);
+      map.cameraUpdates.clear();
+      map.movedUpdates.clear();
+      map.animatedUpdates.clear();
+
+      await tester.tap(
+        find.byWidgetPredicate(
+          (widget) => widget is Pressable && widget.semanticLabel == '定位目前位置',
+        ),
+      );
+      await flushLive(tester);
+
+      expectMode();
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('$label for a stop tap on the stop list', (tester) async {
+      tester.view.physicalSize = const Size(360, 320);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await pump(tester, _Bus(), reduced: reduced);
+      await tester.drag(find.byType(SheetDragHandle), const Offset(0, -450));
+      await flushLive(tester);
+      final list = tester
+          .stateList<ScrollableState>(find.byType(Scrollable))
+          .where(
+            (s) =>
+                s.position.axis == Axis.vertical &&
+                s.position.maxScrollExtent > 0,
+          )
+          .first;
+      expect(list.position.pixels, 0);
+
+      visibleMarker(tester, 'D').onTap!();
+      await tester.pump();
+
+      expect(list.position.pixels > 0, reduced);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('$label for a stop tap on map and timeline', (tester) async {
+      tester.view.physicalSize = const Size(360, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await pump(tester, _Bus(), reduced: reduced);
+      map.cameraUpdates.clear();
+      map.movedUpdates.clear();
+      map.animatedUpdates.clear();
+      final timeline = tester
+          .widget<HorizontalRouteTimeline>(find.byType(HorizontalRouteTimeline))
+          .controller;
+      expect(timeline.offset, 0);
+
+      visibleMarker(tester, 'D').onTap!();
+      await tester.pump();
+
+      expectMode();
+      expect(timeline.position.maxScrollExtent, greaterThan(0));
+      expect(timeline.offset > 0, reduced);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
 
   testWidgets('a tapped stop stays flashed for 2.5s and a new tap restarts '
       'the clock', (tester) async {

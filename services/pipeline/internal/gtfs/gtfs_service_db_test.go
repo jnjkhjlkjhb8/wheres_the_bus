@@ -165,9 +165,9 @@ func TestBusStopBoarding(t *testing.T) {
 		VALUES ($1, 'ZZR', 'ZZB1', 0, $2::jsonb)`,
 		"ZZ_GTFS_BOARD_TEST", `[
 			{"StopUID":"ZZB_BOARD","StopBoarding":1},
-			{"StopUID":"ZZB_ALIGHT","StopBoarding":2},
+			{"StopUID":"ZZB_ALIGHT","StopBoarding":-1},
 			{"StopUID":"ZZB_BOTH","StopBoarding":0},
-			{"StopUID":"ZZB_UNKNOWN","StopBoarding":-1},
+			{"StopUID":"ZZB_UNKNOWN","StopBoarding":2},
 			{"StopUID":"ZZB_ABSENT"}
 		]`); err != nil {
 		t.Fatalf("seed stopofroute: %v", err)

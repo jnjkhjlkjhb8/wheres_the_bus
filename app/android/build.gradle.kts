@@ -26,16 +26,6 @@ subprojects {
     }
 }
 
-subprojects {
-    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-        val min = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_8
-        compilerOptions {
-            languageVersion.orNull?.let { if (it < min) languageVersion.set(min) }
-            apiVersion.orNull?.let { if (it < min) apiVersion.set(min) }
-        }
-    }
-}
-
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

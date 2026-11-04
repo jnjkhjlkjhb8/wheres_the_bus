@@ -19,6 +19,7 @@ Future<void> showRailBookingSheet(
   final cs = Theme.of(context).colorScheme;
   return showModalBottomSheet<void>(
     context: context,
+    useRootNavigator: true,
     isScrollControlled: true,
     backgroundColor: cs.surface,
     shape: const RoundedRectangleBorder(

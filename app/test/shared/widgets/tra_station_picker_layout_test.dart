@@ -28,7 +28,6 @@ void main() {
 
   setUp(() => HiveStore.settings.delete('tra_hemisphere'));
 
-
   final north = TraStations.data['北部']!;
   final south = TraStations.data['南部']!;
 
@@ -89,7 +88,10 @@ void main() {
   ) async {
     await open(tester);
     final shown = fields(tester);
-    expect(shown.map((f) => f.value), [north.keys.first, north.values.first.first]);
+    expect(shown.map((f) => f.value), [
+      north.keys.first,
+      north.values.first.first,
+    ]);
     expect(shown.map((f) => f.active), [true, false]);
     expect(dial(tester).items, north.keys.toList());
     expect(dial(tester).selectedIndex, 0);
@@ -108,48 +110,55 @@ void main() {
     expect(dial(tester).items, north.keys.toList());
   });
 
-  testWidgets('the dialog is titled, padded and rounded like the other modals', (
-    tester,
-  ) async {
-    await open(tester);
-    final scheme = Theme.of(tester.element(find.byType(Dialog))).colorScheme;
-    final dialog = tester.widget<Dialog>(find.byType(Dialog));
-    expect(dialog.backgroundColor, scheme.surfaceContainerHigh);
-    expect(
-      dialog.shape,
-      RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusModal),
-      ),
-    );
-    expect(
-      find.descendant(
-        of: find.byType(Dialog),
-        matching: find.byWidgetPredicate(
-          (w) =>
-              w is Padding &&
-              w.padding ==
-                  const EdgeInsets.fromLTRB(
-                    AppTheme.space24,
-                    AppTheme.space24,
-                    AppTheme.space24,
-                    AppTheme.space16,
-                  ),
+  testWidgets(
+    'the dialog is titled, padded and rounded like the other modals',
+    (
+      tester,
+    ) async {
+      await open(tester);
+      final scheme = Theme.of(tester.element(find.byType(Dialog))).colorScheme;
+      final dialog = tester.widget<Dialog>(find.byType(Dialog));
+      expect(dialog.backgroundColor, scheme.surfaceContainerHigh);
+      expect(
+        dialog.shape,
+        RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusModal),
         ),
-      ),
-      findsOneWidget,
-    );
-    final title = tester.widget<Text>(find.text('選擇車站'));
-    expect(title.style?.fontWeight, FontWeight.w600);
-    expect(title.style?.color, scheme.onSurfaceVariant);
-    expect(title.style?.fontSize, AppTextStyles.bodyRegular.fontSize);
-    final barrier = tester.widget<ModalBarrier>(find.byType(ModalBarrier).last);
-    expect(barrier.semanticsLabel, '選擇車站');
-  });
+      );
+      expect(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.byWidgetPredicate(
+            (w) =>
+                w is Padding &&
+                w.padding ==
+                    const EdgeInsets.fromLTRB(
+                      AppTheme.space24,
+                      AppTheme.space24,
+                      AppTheme.space24,
+                      AppTheme.space16,
+                    ),
+          ),
+        ),
+        findsOneWidget,
+      );
+      final title = tester.widget<Text>(find.text('選擇車站'));
+      expect(title.style?.fontWeight, FontWeight.w600);
+      expect(title.style?.color, scheme.onSurfaceVariant);
+      expect(title.style?.fontSize, AppTextStyles.bodyRegular.fontSize);
+      final barrier = tester.widget<ModalBarrier>(
+        find.byType(ModalBarrier).last,
+      );
+      expect(barrier.semanticsLabel, '選擇車站');
+    },
+  );
 
   testWidgets('the sections are spaced by token', (tester) async {
     await open(tester);
     final column = tester.widget<Column>(
-      find.ancestor(of: find.byType(ClockDial), matching: find.byType(Column)).first,
+      find
+          .ancestor(of: find.byType(ClockDial), matching: find.byType(Column))
+          .first,
     );
     expect(column.mainAxisSize, MainAxisSize.min);
     expect(column.crossAxisAlignment, CrossAxisAlignment.start);
@@ -157,7 +166,9 @@ void main() {
     expect(gaps, [AppTheme.space20, AppTheme.space24, AppTheme.space16]);
   });
 
-  testWidgets('releasing the dial moves on to the station tile', (tester) async {
+  testWidgets('releasing the dial moves on to the station tile', (
+    tester,
+  ) async {
     await open(tester);
     final dialRect = tester.getCenter(find.byType(ClockDial));
     final gesture = await tester.startGesture(dialRect + const Offset(0, -104));
@@ -226,21 +237,31 @@ void main() {
       await open(tester);
       final scheme = Theme.of(tester.element(find.byType(Dialog))).colorScheme;
       final toggle = tester.widget<Container>(
-        find.ancestor(of: find.text('北部'), matching: find.byType(Container)).last,
+        find
+            .ancestor(of: find.text('北部'), matching: find.byType(Container))
+            .last,
       );
       final decoration = toggle.decoration! as BoxDecoration;
       expect(decoration.borderRadius, BorderRadius.circular(8));
       expect(decoration.border, Border.all(color: scheme.outline));
       expect(toggle.clipBehavior, Clip.antiAlias);
       for (final label in ['北部', '南部']) {
-        final cell = find.ancestor(of: find.text(label), matching: find.byType(SizedBox)).first;
+        final cell = find
+            .ancestor(of: find.text(label), matching: find.byType(SizedBox))
+            .first;
         expect(tester.getSize(cell), const Size(52, 38));
       }
       final north = tester.widget<AnimatedContainer>(
-        find.ancestor(of: find.text('北部'), matching: find.byType(AnimatedContainer)),
+        find.ancestor(
+          of: find.text('北部'),
+          matching: find.byType(AnimatedContainer),
+        ),
       );
       final south = tester.widget<AnimatedContainer>(
-        find.ancestor(of: find.text('南部'), matching: find.byType(AnimatedContainer)),
+        find.ancestor(
+          of: find.text('南部'),
+          matching: find.byType(AnimatedContainer),
+        ),
       );
       expect(
         (north.decoration! as BoxDecoration).border,
@@ -250,10 +271,15 @@ void main() {
       expect(north.curve, AppMotion.easeOut);
     });
 
-    testWidgets('fades the active cell over the micro duration', (tester) async {
+    testWidgets('fades the active cell over the micro duration', (
+      tester,
+    ) async {
       await open(tester);
       final cell = tester.widget<AnimatedContainer>(
-        find.ancestor(of: find.text('北部'), matching: find.byType(AnimatedContainer)),
+        find.ancestor(
+          of: find.text('北部'),
+          matching: find.byType(AnimatedContainer),
+        ),
       );
       expect(cell.duration, AppMotion.micro);
     });
@@ -261,7 +287,10 @@ void main() {
     testWidgets('reduce motion makes the switch instant', (tester) async {
       await open(tester, reduced: true);
       final cell = tester.widget<AnimatedContainer>(
-        find.ancestor(of: find.text('北部'), matching: find.byType(AnimatedContainer)),
+        find.ancestor(
+          of: find.text('北部'),
+          matching: find.byType(AnimatedContainer),
+        ),
       );
       expect(cell.duration, Duration.zero);
     });

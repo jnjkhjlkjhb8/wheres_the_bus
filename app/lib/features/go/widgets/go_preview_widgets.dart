@@ -332,7 +332,7 @@ class _PreviewBadge extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: cs.onSurface,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(AppTheme.radiusChip),
       ),
       child: Text(
         label,

@@ -34,7 +34,7 @@ class StationDisplayField extends StatelessWidget {
       height: height,
       decoration: BoxDecoration(
         color: background,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusButton),
       ),
       alignment: Alignment.center,
       child: FittedBox(

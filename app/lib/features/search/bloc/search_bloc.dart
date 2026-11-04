@@ -11,6 +11,7 @@ import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/data/repositories/search_affinity_repository.dart';
 import 'package:wheres_the_bus/data/repositories/search_recent_repository.dart';
 import 'package:wheres_the_bus/data/repositories/search_repository.dart';
+import 'package:wheres_the_bus/features/search/bloc/rider_city.dart';
 import 'package:wheres_the_bus/features/search/bloc/search_event.dart';
 import 'package:wheres_the_bus/features/search/bloc/search_ranking.dart';
 import 'package:wheres_the_bus/features/search/bloc/search_state.dart';
@@ -59,6 +60,11 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
   /// keystroke. Null until then, and null forever without permission —
   /// ranking simply drops the distance signal.
   Position? _fix;
+
+  /// The unfiltered answer exactly as the router sent it, so a fix that lands
+  /// after the results can re-rank them. A deep link such as `/search?q=307`
+  /// asks before the location has been read.
+  ({String query, List<SearchResult> results})? _unfiltered;
 
   void _onQueryChanged(
     SearchQueryChanged event,
@@ -137,12 +143,17 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     Emitter<SearchState> emit,
   ) {
     if (!_canPublish(event.requestId)) return;
+    _unfiltered = event.city == null
+        ? (query: event.query, results: results)
+        : null;
     emit(
       state.copyWith(
         results: _rank(results, event.query),
         loading: false,
         clearError: true,
-        cityOptions: event.city == null ? _cityOptions(results) : null,
+        cityOptions: event.city == null
+            ? _cityOptions(results, riderCityFor(_fix))
+            : null,
       ),
     );
   }
@@ -158,7 +169,11 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     );
   }
 
-  static List<String> _cityOptions(List<SearchResult> results) {
+  /// The rider's own city leads, then the rest by result count.
+  static List<String> _cityOptions(
+    List<SearchResult> results,
+    String? riderCity,
+  ) {
     final counts = <String, int>{};
     for (final r in results) {
       final city = r.city;
@@ -166,11 +181,18 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       counts[city] = (counts[city] ?? 0) + 1;
     }
     final codes = counts.keys.toList()
-      ..sort((a, b) => _compareCities(counts, a, b));
+      ..sort((a, b) => _compareCities(counts, riderCity, a, b));
     return codes;
   }
 
-  static int _compareCities(Map<String, int> counts, String a, String b) {
+  static int _compareCities(
+    Map<String, int> counts,
+    String? riderCity,
+    String a,
+    String b,
+  ) {
+    if (sameCity(a, riderCity)) return -1;
+    if (sameCity(b, riderCity)) return 1;
     final byCount = counts[b]!.compareTo(counts[a]!);
     return byCount != 0 ? byCount : cityOrder(a).compareTo(cityOrder(b));
   }
@@ -185,6 +207,7 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
         affinity: _affinityRepository.all(),
         now: _now(),
         fix: _fix,
+        riderCity: riderCityFor(_fix),
       );
 
   void _onCleared(SearchCleared _, Emitter<SearchState> emit) {
@@ -201,7 +224,20 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
   ) async {
     emit(state.copyWith(recentResults: _recentRepository.all()));
     final fix = await _locationService.lastKnownPosition();
-    if (fix != null && !isClosed) _fix = fix;
+    if (fix == null || isClosed) return;
+    _fix = fix;
+    _reRankUnfiltered(emit);
+  }
+
+  void _reRankUnfiltered(Emitter<SearchState> emit) {
+    final raw = _unfiltered;
+    if (raw == null || state.city != null || raw.query != state.query) return;
+    emit(
+      state.copyWith(
+        results: _rank(raw.results, raw.query),
+        cityOptions: _cityOptions(raw.results, riderCityFor(_fix)),
+      ),
+    );
   }
 
   Future<void> _onRecentRemoved(

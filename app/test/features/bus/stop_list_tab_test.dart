@@ -11,7 +11,6 @@ import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_swipe_row.dart';
 import 'package:wheres_the_bus/shared/widgets/transit_timeline.dart';
 
-
 TimelineStop _stop(
   String uid, {
   bool live = false,
@@ -409,6 +408,19 @@ void main() {
     final arriving = tester.widget<Text>(find.text('進站中')).style!;
     expect(arriving.fontWeight, FontWeight.w700);
     expect(arriving.color, AppTheme.statusArrivingText);
+  });
+
+  testWidgets('an arriving stop reads in the lighter green on a dark theme', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      [_stop('d', time: '進站中', live: true, state: TimelineStopState.arriving)],
+      theme: ThemeData.dark(),
+    );
+
+    final arriving = tester.widget<Text>(find.text('進站中')).style!;
+    expect(arriving.color, AppTheme.statusArriving);
   });
 
   testWidgets('the 兩段票 boundary is announced before the second section', (

@@ -345,3 +345,30 @@ func TestMrtCardAlertOnlyOnACrossing(t *testing.T) {
 		t.Errorf("mrtCardAlert() = %v for the 提前提醒站 crossing", alert)
 	}
 }
+
+func TestNextMrtPoll(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	withCountdown := func(d time.Duration) mrtReading {
+		return mrtReading{gotInfo: true, hasCountdown: true, countdown: d}
+	}
+	cases := []struct {
+		name    string
+		reading mrtReading
+		want    time.Duration
+	}{
+		{"countdown longer than cap", withCountdown(9 * time.Minute), _mrtTrackPollCap},
+		{"countdown plus buffer just over cap", withCountdown(_mrtTrackPollCap - _mrtTrackPollBuffer + time.Second), _mrtTrackPollCap},
+		{"countdown plus buffer exactly cap", withCountdown(_mrtTrackPollCap - _mrtTrackPollBuffer), _mrtTrackPollCap},
+		{"countdown shorter than cap", withCountdown(30 * time.Second), 30*time.Second + _mrtTrackPollBuffer},
+		{"zero countdown", withCountdown(0), _mrtTrackFallbackRetry},
+		{"missing countdown", mrtReading{gotInfo: true, countdown: 9 * time.Minute}, _mrtTrackFallbackRetry},
+		{"no train info", mrtReading{hasCountdown: true, countdown: 9 * time.Minute}, _mrtTrackFallbackRetry},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got, want := nextMrtPoll(c.reading, now), now.Add(c.want).Unix(); got != want {
+				t.Errorf("nextMrtPoll = %d, want %d", got, want)
+			}
+		})
+	}
+}

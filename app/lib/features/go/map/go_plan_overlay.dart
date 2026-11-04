@@ -426,35 +426,33 @@ Set<Polyline> _walkPolylines(
 ) {
   final lines = <Polyline>{};
 
-  // White-cased ink dots: a wide card-coloured casing under narrower ink
-  // dots, both on the same points and pattern so the dots read against any
-  // map background. Card colour matches the nav header's card.
-  final card = cs.brightness == Brightness.light
-      ? Colors.white
-      : cs.surfaceContainerHigh;
   final pattern = [PatternItem.dot, PatternItem.gap(16)];
-  lines
-    ..add(
+  // The white casing keeps dots legible on a light map. On a dark map the
+  // card-coloured casing is near black and shows as a second, black dotted
+  // line under the coloured one, so dark draws the dots alone.
+  if (cs.brightness == Brightness.light) {
+    lines.add(
       Polyline(
         polylineId: PolylineId('leg_${i}_casing'),
         points: pts,
         width: 11,
-        color: d(card),
+        color: d(Colors.white),
         // Casing sits below its dots, both above the muted alternates.
         zIndex: 2,
         patterns: pattern,
       ),
-    )
-    ..add(
-      Polyline(
-        polylineId: PolylineId('leg_$i'),
-        points: pts,
-        width: 7,
-        color: d(cs.onSurface),
-        zIndex: 3,
-        patterns: pattern,
-      ),
     );
+  }
+  lines.add(
+    Polyline(
+      polylineId: PolylineId('leg_$i'),
+      points: pts,
+      width: 7,
+      color: d(cs.onSurface),
+      zIndex: 3,
+      patterns: pattern,
+    ),
+  );
   return lines;
 }
 
@@ -468,7 +466,7 @@ Polyline _transitPolyline(
   polylineId: PolylineId('leg_$i'),
   points: pts,
   width: 6,
-  color: d(transitColor(section.transport, cs)),
+  color: d(legibleLineColor(transitColor(section.transport, cs), cs.surface)),
   zIndex: 2,
 );
 

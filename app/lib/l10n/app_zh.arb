@@ -955,6 +955,10 @@
   "@etaLastBusTag": {
     "description": "Mark on an arrival row: TDX confirmed this is the route's last bus of the day."
   },
+  "etaEstimatedTag": "預估",
+  "@etaEstimatedTag": {
+    "description": "Small qualifier under a bus time that came from a timetable or a model rather than a vehicle."
+  },
   "etaNotOperating": "今日未營運",
   "@etaNotOperating": {
     "description": "Service state: this route is not running today."
@@ -1544,6 +1548,74 @@
   "railNoTrainsHint": "試試更換時間、日期或方向",
   "@railNoTrainsHint": {
     "description": "Suggestion to widen the time, date or direction."
+  },
+  "railSwapDirection": "對調方向",
+  "@railSwapDirection": {
+    "description": "Empty-state action: rerun the query with origin and destination swapped."
+  },
+  "railTomorrowFirst": "明天首班",
+  "@railTomorrowFirst": {
+    "description": "Empty-state action: rerun the query for the first trains of the next day."
+  },
+  "railEarlierHour": "提早 1 小時",
+  "@railEarlierHour": {
+    "description": "Empty-state action: rerun a departure query one hour earlier."
+  },
+  "railLaterHour": "延後 1 小時",
+  "@railLaterHour": {
+    "description": "Empty-state action: rerun an arrival query one hour later."
+  },
+  "railDepartAfter": "{time} 後出發",
+  "@railDepartAfter": {
+    "description": "Query header: the picked time bounds results to departures at or after it.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "23:00"
+      }
+    }
+  },
+  "railArriveBefore": "{time} 前抵達",
+  "@railArriveBefore": {
+    "description": "Query header: the picked time bounds results to arrivals at or before it.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "23:00"
+      }
+    }
+  },
+  "railTrainCount": "{count} 班",
+  "@railTrainCount": {
+    "description": "Number of trains a timetable query found.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "railEstimatedArrive": "預計 {time}",
+  "@railEstimatedArrive": {
+    "description": "Delay-adjusted arrival under the scheduled arrival time of a late train.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "08:25"
+      }
+    }
+  },
+  "railNextDayMark": "+1",
+  "@railNextDayMark": {
+    "description": "Superscript after an arrival time that falls on the day after departure."
+  },
+  "railNextDaySemantics": "隔天",
+  "@railNextDaySemantics": {
+    "description": "Accessibility label for the next-day mark on an arrival time."
+  },
+  "railEditQuery": "修改查詢條件",
+  "@railEditQuery": {
+    "description": "Accessibility label for the header pill that opens the query sheet."
   },
   "railChooseStation": "選擇車站",
   "@railChooseStation": {
@@ -3484,6 +3556,10 @@
   "metroMapModeFare": "票價 · 元",
   "@metroMapModeFare": {
     "description": "Map overlay mode showing fares in NT dollars."
+  },
+  "metroMapUnavailable": "路網圖暫時無法顯示",
+  "@metroMapUnavailable": {
+    "description": "Shown over the metro map area when the network map image has not been downloaded, instead of station labels floating on a blank canvas."
   },
   "alertPublishedAt": "發布 {time}{suffix}",
   "@alertPublishedAt": {

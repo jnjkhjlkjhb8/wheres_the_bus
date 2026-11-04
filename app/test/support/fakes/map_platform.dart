@@ -3,6 +3,8 @@ import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platf
 
 class FakeMapPlatform extends GoogleMapsFlutterPlatform {
   final cameraUpdates = <CameraUpdate>[];
+  final animatedUpdates = <CameraUpdate>[];
+  final movedUpdates = <CameraUpdate>[];
   final initialPositions = <CameraPosition>[];
   final markerUpdates = <MarkerUpdates>[];
   final created = <int>{};
@@ -36,11 +38,13 @@ class FakeMapPlatform extends GoogleMapsFlutterPlatform {
   @override
   Future<void> animateCamera(CameraUpdate update, {required int mapId}) async {
     cameraUpdates.add(update);
+    animatedUpdates.add(update);
   }
 
   @override
   Future<void> moveCamera(CameraUpdate update, {required int mapId}) async {
     cameraUpdates.add(update);
+    movedUpdates.add(update);
   }
 
   @override

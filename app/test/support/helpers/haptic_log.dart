@@ -6,13 +6,16 @@ import 'package:flutter_test/flutter_test.dart';
 /// the test ends.
 List<String?> captureHaptics() {
   final log = <String?>[];
-  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
     if (call.method == 'HapticFeedback.vibrate') {
       log.add(call.arguments as String?);
     }
     return null;
   });
-  addTearDown(() => messenger.setMockMethodCallHandler(SystemChannels.platform, null));
+  addTearDown(
+    () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+  );
   return log;
 }

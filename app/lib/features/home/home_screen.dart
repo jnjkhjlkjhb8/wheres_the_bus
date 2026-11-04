@@ -51,12 +51,15 @@ import 'package:wheres_the_bus/features/rail/view/home_rail_query_sheet.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/map/map_color_scheme.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
+import 'package:wheres_the_bus/shared/map/motion_aware_camera.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/motion_aware_scroll.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/route_tab_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
@@ -347,6 +350,18 @@ Widget buildNearbyRowForTest({
   required NearStationViewModel station,
   required ValueChanged<NearStationViewModel> onStationTap,
 }) => _NearbyStationRow(station: station, onStationTap: onStationTap);
+
+@visibleForTesting
+Widget buildFilterGroupForTest({
+  required NearbyFilter selectedFilter,
+  required ValueChanged<NearbyFilter> onFilterChanged,
+}) => _FilterButtonGroup(
+  selectedFilter: selectedFilter,
+  onFilterChanged: onFilterChanged,
+);
+
+@visibleForTesting
+Widget buildSeeMoreFavoritesForTest() => _SeeMoreButton();
 
 /// Radius and stroke opacity the scan ring paints at [t] of its sweep, for
 /// the expanding and [still] variants — see `_scanRingFrame`.

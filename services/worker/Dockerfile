@@ -1,4 +1,4 @@
-# Build context: ./docker/docker-compose.yaml
+# Build context: repo root
 # docker build -f services/worker/Dockerfile -t wheres_the_bus-worker .
 
 ARG PROTOC_GEN_GO_VERSION=v1.36.11

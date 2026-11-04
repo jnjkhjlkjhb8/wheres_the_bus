@@ -161,6 +161,7 @@ void main() {
     PlanState state, {
     bool destination = false,
     bool dark = false,
+    bool reduced = false,
   }) async {
     tester.view.physicalSize = const Size(430, 1100);
     tester.view.devicePixelRatio = 1;
@@ -180,6 +181,10 @@ void main() {
           locale: const Locale('zh'),
           localizationsDelegates: AppI18n.localizationsDelegates,
           supportedLocales: AppI18n.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: reduced),
+            child: child!,
+          ),
           home: GoScreen(
             plannerRepository: PlannerRepository(fetchBody: () async => {}),
             initialDestination: destination
@@ -198,6 +203,14 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   }
+
+  void scopeBack(WidgetTester tester) => tester
+      .widget<PopScope<Object?>>(
+        find.byWidgetPredicate(
+          (w) => w is PopScope<Object?> && w.onPopInvokedWithResult != null,
+        ),
+      )
+      .onPopInvokedWithResult!(false, null);
 
   void press(WidgetTester tester, String label) {
     final widget = tester
@@ -337,6 +350,73 @@ void main() {
       expect(maps.disposed, isNotEmpty);
     },
   );
+
+  for (final reduced in [true, false]) {
+    final label = reduced ? 'reduced motion snaps' : 'normal motion animates';
+
+    void expectMode() {
+      expect(maps.cameraUpdates, isNotEmpty);
+      expect(maps.movedUpdates.isNotEmpty, reduced);
+      expect(maps.animatedUpdates.isNotEmpty, !reduced);
+    }
+
+    testWidgets('$label when navigation starts and the GPS follows', (
+      tester,
+    ) async {
+      final trip = walkingRoute();
+      final initial = PlanState(
+        status: PlanStatus.success,
+        result: PlanResult(routes: [trip]),
+        selectedRouteIndex: 0,
+        previewing: true,
+      );
+      await pumpGo(tester, initial, destination: true, reduced: reduced);
+      await tester.pumpAndSettle();
+      maps.cameraUpdates.clear();
+      maps.movedUpdates.clear();
+      maps.animatedUpdates.clear();
+
+      tester
+          .widget<AppButton>(find.widgetWithText(AppButton, '開始導航'))
+          .onPressed!();
+      await tester.pump();
+
+      expectMode();
+      expect(
+        maps.cameraUpdates.last,
+        isA<CameraUpdateNewCameraPosition>(),
+      );
+      await disposeGo(tester);
+    });
+
+    testWidgets('$label when a planned route is framed', (tester) async {
+      final saved = route([section(walk: true)]);
+      final (plan, _) = await pumpGo(
+        tester,
+        PlanState(status: PlanStatus.failure, savedRoutesReady: true),
+        destination: true,
+        reduced: reduced,
+      );
+      await tester.pumpAndSettle();
+      maps.cameraUpdates.clear();
+      maps.movedUpdates.clear();
+      maps.animatedUpdates.clear();
+
+      plan.show(
+        PlanState(
+          status: PlanStatus.success,
+          result: PlanResult(routes: [saved]),
+          selectedRouteIndex: 0,
+          savedRoutesReady: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expectMode();
+      expect(maps.cameraUpdates.last, isA<CameraUpdateNewLatLngBounds>());
+      await disposeGo(tester);
+    });
+  }
 
   testWidgets(
     'preview starts navigation, follows GPS and pauses after a map gesture',
@@ -719,6 +799,57 @@ void main() {
       await disposeGo(tester);
     },
   );
+
+  testWidgets('back leaves only a destination the caller handed in', (
+    tester,
+  ) async {
+    final trip = route([section()]);
+    final results = PlanState(
+      status: PlanStatus.success,
+      result: PlanResult(routes: [trip]),
+      selectedRouteIndex: 0,
+    );
+    bool canPop() => tester
+        .widget<PopScope<Object?>>(
+          find.byWidgetPredicate(
+            (w) => w is PopScope<Object?> && w.onPopInvokedWithResult != null,
+          ),
+        )
+        .canPop;
+    // The entry surface animates for good, so pumpAndSettle never returns.
+    Future<void> settle() async {
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(milliseconds: 400));
+      }
+    }
+
+    final (plan, _) = await pumpGo(tester, results, destination: true);
+    await tester.pumpAndSettle();
+    expect(canPop(), isTrue);
+    plan.show(results.copyWith(previewing: true));
+    await tester.pumpAndSettle();
+    expect(canPop(), isFalse);
+    plan.show(results.copyWith(activeLegIndex: 0));
+    await tester.pumpAndSettle();
+    expect(canPop(), isFalse);
+    await disposeGo(tester);
+
+    final (picked, _) = await pumpGo(tester, const PlanState());
+    await settle();
+    expect(canPop(), isTrue);
+    press(tester, '對調起訖點');
+    await settle();
+    expect(canPop(), isFalse);
+    picked.show(results);
+    await settle();
+    expect(canPop(), isFalse);
+    scopeBack(tester);
+    await settle();
+    expect(picked.events.whereType<PlanSearchCancelled>(), hasLength(1));
+    await settle();
+    expect(canPop(), isTrue);
+    await disposeGo(tester);
+  });
 
   testWidgets(
     'live bus countdown yields to rail departure and planned arrival clocks',

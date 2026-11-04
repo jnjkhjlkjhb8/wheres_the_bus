@@ -54,28 +54,19 @@ void main() {
     expect(find.text('1.0.0'), findsNothing);
   });
 
-  testWidgets('FAQ / report-issue / privacy-policy rows are not tappable', (
+  testWidgets('FAQ and privacy-policy rows stay out until they have a target', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(_wrap(buildScreen()));
     await tester.pumpAndSettle();
 
-    for (final label in ['常見問題 FAQ', '回報問題', '隱私權政策']) {
-      final finder = find.ancestor(
-        of: find.text(label),
-        matching: find.byType(GestureDetector),
-      );
-      // No enabled tap target reaches these rows any more; each is either
-      // absent or explicitly disabled (F45).
-      for (final element in finder.evaluate()) {
-        final widget = element.widget as GestureDetector;
-        expect(
-          widget.onTap,
-          isNull,
-          reason: '$label must not have a live tap handler',
-        );
-      }
-    }
+    expect(find.text('常見問題 FAQ'), findsNothing);
+    expect(find.text('隱私權政策'), findsNothing);
+    expect(find.text('目前版本'), findsOneWidget);
   });
 
   testWidgets('the language row is a live picker showing the current choice', (

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	pgxmock "github.com/pashagolub/pgxmock/v4"
 )
 
@@ -62,27 +61,6 @@ func TestRouteRankingNormalizesAxesAndPreservesEqualCostOrder(t *testing.T) {
 	rankMotisRoutes(response, 0.5, 2)
 	if !reflect.DeepEqual(response.Routes, []*pb.Route{first, second}) || response.Routes[0] != first {
 		t.Fatal("equal-cost routes lost their upstream order")
-	}
-}
-
-func TestPlannerClientsRetainConfiguredTimeoutsAndRetryWait(t *testing.T) {
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, maasSharedWorkConfig{})
-	defer server.Close()
-	if server.maasClient.RetryWaitTime != 500*time.Millisecond || server.maasClient.RetryCount != 3 || server.osrmClient.GetClient().Timeout != 5*time.Second || server.workTimeout != 20*time.Second {
-		t.Fatalf("client retries = %d at %v, walking timeout %v, work timeout %v", server.maasClient.RetryCount, server.maasClient.RetryWaitTime, server.osrmClient.GetClient().Timeout, server.workTimeout)
-	}
-}
-
-func TestPlannerGetReturnsUpstreamCancellation(t *testing.T) {
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, DefaultMaasSharedWorkConfig)
-	defer server.Close()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	got, err := server.get(ctx, &pb.MaasPlanRequest{})
-	if got != nil || !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled plan = %v, error %v", got, err)
 	}
 }
 

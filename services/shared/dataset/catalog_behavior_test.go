@@ -121,3 +121,42 @@ func TestRailWindowIncludesBothEndpoints(t *testing.T) {
 		t.Fatal("empty past window changed")
 	}
 }
+
+// TDX's live horizons (2026-10-10): THSR 400s from day 30, TRA from day 61 with
+// day 60 an empty payload. A longer window fails the nightly ingest.
+func TestRailDateWindowsStayInsideTDXHorizon(t *testing.T) {
+	for table, want := range map[string]int{"thsr_dailytimetable": 30, "tra_dailytimetable": 60} {
+		for _, d := range Registry() {
+			if d.RawTable == table {
+				if got := len(d.Partitions()); got != want {
+					t.Errorf("%s fetches %d dates, want %d", table, got, want)
+				}
+			}
+		}
+	}
+}
+
+func TestBusServedCitiesExcludesRejectedCities(t *testing.T) {
+	cases := map[string][]string{
+		"bus_stationgroup": {"Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "KinmenCounty", "LienchiangCounty"},
+		"bus_routefare":    {"Tainan", "LienchiangCounty", "Keelung"},
+		"bus_station":      {"LienchiangCounty"},
+		"bus_route":        nil,
+	}
+	for table, rejected := range cases {
+		served := BusServedCities(table)
+		if len(served)+len(rejected) != len(AllCities()) {
+			t.Errorf("%s: %d served + %d rejected != %d cities", table, len(served), len(rejected), len(AllCities()))
+		}
+		for _, city := range rejected {
+			if !BusUnserved(table, city) || slices.Contains(served, city) {
+				t.Errorf("%s still serves %s", table, city)
+			}
+		}
+	}
+	for _, d := range Registry() {
+		if d.Family == FamilyBusCity && d.RawTable == "bus_stationgroup" && slices.Contains(d.Partitions(), "Taipei") {
+			t.Error("bus_stationgroup partitions still include Taipei")
+		}
+	}
+}

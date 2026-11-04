@@ -112,7 +112,7 @@ extension _HomeScreenScaffold on _HomeScreenState {
             height: 44,
             decoration: AppTheme.floatingControl(
               cs,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppTheme.radiusCard),
             ),
             child: Icon(
               _notificationGlyph(unread),
@@ -173,7 +173,7 @@ extension _HomeScreenScaffold on _HomeScreenState {
                     height: 44,
                     decoration: AppTheme.floatingControl(
                       cs,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusCard),
                     ),
                     child: Icon(
                       Icons.settings_rounded,
@@ -205,7 +205,9 @@ extension _HomeScreenScaffold on _HomeScreenState {
                       height: 44,
                       decoration: AppTheme.floatingControl(
                         cs,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusCard,
+                        ),
                       ),
                       child: Icon(
                         Icons.directions_subway_rounded,
@@ -222,7 +224,9 @@ extension _HomeScreenScaffold on _HomeScreenState {
                       height: 44,
                       decoration: AppTheme.floatingControl(
                         cs,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusCard,
+                        ),
                       ),
                       child: Icon(
                         Icons.train_rounded,
@@ -273,7 +277,9 @@ extension _HomeScreenScaffold on _HomeScreenState {
                       height: 44,
                       decoration: AppTheme.floatingControl(
                         cs,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusCard,
+                        ),
                       ),
                       child: Center(
                         child: AnimatedSwitcher(
@@ -303,7 +309,9 @@ extension _HomeScreenScaffold on _HomeScreenState {
                       height: 44,
                       decoration: AppTheme.floatingControl(
                         cs,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusCard,
+                        ),
                       ),
                       child: Icon(
                         Icons.directions_rounded,
@@ -317,19 +325,27 @@ extension _HomeScreenScaffold on _HomeScreenState {
             ),
           ),
 
-          AppSheet.paged(
-            controller: _sheetController,
-            navigator: Navigator(
-              key: _sheetNavigatorKey,
-              observers: [_sheetCarry],
-              onGenerateInitialRoutes: (navigator, initialRoute) => [
-                PagedSheetRoute(
-                  initialOffset: AppSheetSnap.peek,
-                  snapGrid: _sheetCarry,
-                  scrollConfiguration: const SheetScrollConfiguration(),
-                  builder: _buildSheetRoot,
-                ),
-              ],
+          // Consumed here: WidgetsApp tells the engine whether the framework
+          // handles back from the last navigation notification it hears, and
+          // this navigator, back at one route, says it cannot. Home's PopScope
+          // is what handles back, so that report would make Android exit the
+          // app on the back after a sheet page closes.
+          NotificationListener<NavigationNotification>(
+            onNotification: (_) => true,
+            child: AppSheet.paged(
+              controller: _sheetController,
+              navigator: Navigator(
+                key: _sheetNavigatorKey,
+                observers: [_sheetCarry],
+                onGenerateInitialRoutes: (navigator, initialRoute) => [
+                  PagedSheetRoute(
+                    initialOffset: AppSheetSnap.peek,
+                    snapGrid: _sheetCarry,
+                    scrollConfiguration: const SheetScrollConfiguration(),
+                    builder: _buildSheetRoot,
+                  ),
+                ],
+              ),
             ),
           ),
         ],

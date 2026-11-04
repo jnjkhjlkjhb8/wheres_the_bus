@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 
 /// A square picture served by [RemoteAssets]. The slot keeps its size while the
@@ -20,6 +21,39 @@ class RemoteImage extends StatelessWidget {
           child: asset == null
               ? null
               : Image.file(asset.file, fit: BoxFit.contain),
+        );
+      },
+    );
+  }
+}
+
+/// An SVG served by [RemoteAssets]; [fallback] stands in until the file arrives.
+class RemoteSvg extends StatelessWidget {
+  const RemoteSvg(
+    this.path, {
+    required this.width,
+    required this.height,
+    required this.fallback,
+    super.key,
+  });
+
+  final String path;
+  final double width;
+  final double height;
+  final WidgetBuilder fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: RemoteAssets.instance.revision,
+      builder: (context, _, _) {
+        final asset = RemoteAssets.instance.lookup(path);
+        if (asset == null) return fallback(context);
+        return SvgPicture.file(
+          asset.file,
+          width: width,
+          height: height,
+          placeholderBuilder: fallback,
         );
       },
     );

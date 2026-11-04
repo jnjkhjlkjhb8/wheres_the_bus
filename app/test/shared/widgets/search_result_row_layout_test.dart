@@ -186,7 +186,9 @@ void main() {
         tester,
         SearchResultRow(result: _data(AppSearchResultType.busRoute)),
       );
-      final icon = tester.widget<Icon>(find.byIcon(Symbols.arrow_insert_rounded));
+      final icon = tester.widget<Icon>(
+        find.byIcon(Symbols.arrow_insert_rounded),
+      );
       expect(icon.size, 24);
       expect(icon.color, scheme.onSurfaceVariant);
     });

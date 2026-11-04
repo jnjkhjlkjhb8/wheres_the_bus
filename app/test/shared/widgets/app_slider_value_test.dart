@@ -12,7 +12,9 @@ void main() {
   Future<void> mount(WidgetTester tester, Widget child) => tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(colorScheme: scheme),
-      home: Scaffold(body: Center(child: SizedBox(width: 300, child: child))),
+      home: Scaffold(
+        body: Center(child: SizedBox(width: 300, child: child)),
+      ),
     ),
   );
 
@@ -69,7 +71,9 @@ void main() {
         AppSlider(value: value, showValue: true, onChanged: null),
       );
       final align = tester.widget<Align>(
-        find.ancestor(of: find.byType(Text), matching: find.byType(Align)).first,
+        find
+            .ancestor(of: find.byType(Text), matching: find.byType(Align))
+            .first,
       );
       expect(align.alignment, Alignment(expected, 0), reason: '$value');
     }
@@ -160,7 +164,9 @@ void main() {
       const AppSlider(value: 0.5, showValue: true, onChanged: null),
     );
     final bubble = tester.widget<Container>(
-      find.ancestor(of: find.text('0.5'), matching: find.byType(Container)).first,
+      find
+          .ancestor(of: find.text('0.5'), matching: find.byType(Container))
+          .first,
     );
     expect(
       bubble.padding,

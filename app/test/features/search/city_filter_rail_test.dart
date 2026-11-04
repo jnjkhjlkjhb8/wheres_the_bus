@@ -88,8 +88,8 @@ void main() {
     );
     addTearDown(bloc.close);
 
-    // Settings offers a large-text mode, and a filter row is exactly the kind
-    // of small control that quietly falls under the platform minimum there.
+    // Riders with a large system text size are the ones a filter row quietly
+    // pushes under the platform minimum.
     await _pump(tester, bloc, textScale: 1.6);
     bloc.add(const SearchQueryChanged('中正路'));
     await _settle(tester);

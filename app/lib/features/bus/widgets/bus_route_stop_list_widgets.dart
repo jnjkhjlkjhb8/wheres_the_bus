@@ -464,8 +464,9 @@ class _StopListItem extends StatelessWidget {
   }
 
   Widget _scheduledEta(AppI18n i18n, ColorScheme cs, String label) {
-    // A clock is a departure time and is prefixed as such; a service-state
-    // word ('末班已過') already reads as one and takes no prefix.
+    // A clock is a departure time and is prefixed as such (預估 when it is not
+    // a vehicle's time); a service-state word ('末班已過') already reads as one
+    // and takes no prefix.
     final isClock = label.contains(':');
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -474,7 +475,7 @@ class _StopListItem extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(right: 5),
             child: Text(
-              i18n.busDeparture,
+              stop.source.isLive ? i18n.busDeparture : i18n.etaEstimatedTag,
               style: AppTextStyles.bodyVerySmall.copyWith(
                 fontSize: 11,
                 color: cs.onSurfaceVariant,
@@ -501,7 +502,11 @@ class _StopListItem extends StatelessWidget {
       style: AppTextStyles.timeValue(
         size: 15,
         weight: arriving ? FontWeight.w700 : FontWeight.w600,
-        color: arriving ? AppTheme.statusArrivingText : cs.onSurface,
+        color: arriving
+            ? (cs.brightness == Brightness.dark
+                  ? AppTheme.statusArriving
+                  : AppTheme.statusArrivingText)
+            : cs.onSurface,
       ),
     );
   }

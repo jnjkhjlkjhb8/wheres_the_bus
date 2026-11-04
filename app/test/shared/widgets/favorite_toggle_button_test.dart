@@ -54,6 +54,41 @@ void main() {
     expect(toggled, [true, false]);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('only a header given a favorite offers the bookmark', (
+    tester,
+  ) async {
+    final ready = ValueNotifier(true);
+    final repository = _FavoritesMemory();
+    final bloc = FavoritesBloc(repository, ready);
+    addTearDown(bloc.close);
+    addTearDown(repository.changed.close);
+    addTearDown(ready.dispose);
+
+    Future<void> pump(Favorite? favorite) => tester.pumpWidget(
+      i18nApp(
+        BlocProvider.value(
+          value: bloc,
+          child: Scaffold(
+            body: SheetDetailHeader(title: '頂埔', favorite: favorite),
+          ),
+        ),
+      ),
+    );
+
+    await pump(null);
+    expect(find.byType(FavoriteToggleButton), findsNothing);
+
+    await pump(
+      const Favorite(
+        type: FavoriteType.metroStation,
+        refId: 'TRTC:BL01',
+        title: '頂埔',
+      ),
+    );
+    expect(find.byType(FavoriteToggleButton), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 class _FavoritesMemory implements FavoritesRepository {

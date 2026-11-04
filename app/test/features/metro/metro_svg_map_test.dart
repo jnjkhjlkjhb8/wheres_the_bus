@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/features/metro/widgets/metro_svg_map.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import '../../support/helpers/remote_assets.dart';
 
 void main() {
@@ -318,15 +319,53 @@ void main() {
     expect(identical(second, first), isFalse);
   });
 
+  Widget mapHost({bool dark = false}) => MaterialApp(
+    theme: dark ? ThemeData.dark() : ThemeData.light(),
+    locale: const Locale('zh'),
+    localizationsDelegates: AppI18n.localizationsDelegates,
+    supportedLocales: AppI18n.supportedLocales,
+    home: Scaffold(
+      body: MetroSvgMap(
+        selectedStationId: 'BL12_R10',
+        stationLabels: const {'BL13': '12'},
+        animate: false,
+        onStationTap: (_) {},
+      ),
+    ),
+  );
+
   testWidgets(
-    'without the map file nothing is drawn and nothing throws',
-    (
-      tester,
-    ) async {
+    'without the map file the gap is named and no overlay floats on it',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
       RemoteAssets.instance.debugSeed(Directory.systemTemp, const {});
-      await tester.pumpWidget(host());
+      await tester.pumpWidget(mapHost());
       await tester.pump(const Duration(milliseconds: 400));
+
       expect(find.byType(RawImage), findsNothing);
+      expect(find.text('路網圖暫時無法顯示'), findsOneWidget);
+      expect(find.text('12'), findsNothing);
+      expect(find.bySemanticsLabel('BL21 昆陽'), findsNothing);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
     },
   );
+
+  testWidgets('the message goes away and labels return once the map arrives', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    RemoteAssets.instance.debugSeed(Directory.systemTemp, const {});
+    await tester.pumpWidget(mapHost());
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('路網圖暫時無法顯示'), findsOneWidget);
+
+    seedRemoteAssets();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('路網圖暫時無法顯示'), findsNothing);
+    expect(find.text('12'), findsOneWidget);
+    expect(find.bySemanticsLabel('BL21 昆陽'), findsOneWidget);
+    semantics.dispose();
+  });
 }

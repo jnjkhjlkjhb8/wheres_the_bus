@@ -22,6 +22,7 @@ Map<String, TextStyle> readingRoles(TextTheme text) => {
 };
 
 void main() {
+  concentricRadiusTests();
   for (final brightness in Brightness.values) {
     final dark = brightness == Brightness.dark;
     final name = brightness.name;
@@ -260,4 +261,18 @@ void main() {
       });
     }
   }
+}
+
+void concentricRadiusTests() {
+  group('AppTheme.concentric', () {
+    test('subtracts the inset from the outer radius', () {
+      expect(AppTheme.concentric(12, 4), 8);
+    });
+    test('never goes negative', () {
+      expect(AppTheme.concentric(12, 20), 0);
+    });
+    test('zero inset keeps the outer radius', () {
+      expect(AppTheme.concentric(12, 0), 12);
+    });
+  });
 }

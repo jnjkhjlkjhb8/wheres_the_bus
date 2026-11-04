@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/data/models/near_models.dart';
 import 'package:wheres_the_bus/features/home/widgets/home_marker_style.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
@@ -105,25 +107,30 @@ void main() {
         iconAsset(_station(NearStationType.bike)),
         'assets/marker/bike.svg',
       );
-      expect(iconAsset(_station(NearStationType.tra)), 'assets/rails/TRA.svg');
-      expect(
-        iconAsset(_station(NearStationType.thsr)),
-        'assets/rails/THSR.svg',
-      );
+      expect(iconAsset(_station(NearStationType.tra)), isNull);
+      expect(iconAsset(_mrt('BL12')), isNull);
+    });
+  });
+
+  group('remoteIconPath', () {
+    test('rail has fixed artwork', () {
+      expect(remoteIconPath(_station(NearStationType.tra)), 'rails/TRA.svg');
+      expect(remoteIconPath(_station(NearStationType.thsr)), 'rails/THSR.svg');
+      expect(remoteIconPath(_station(NearStationType.bus)), isNull);
     });
 
     test('Taipei metro prefixes resolve to their line icon', () {
       for (final code in ['BL', 'BR', 'G', 'O', 'R', 'Y', 'K']) {
-        expect(iconAsset(_mrt('${code}12')), 'assets/mrt/TRTC/$code.svg');
+        expect(remoteIconPath(_mrt('${code}12')), 'mrt/TRTC/$code.svg');
       }
-      expect(iconAsset(_mrt('bl_07')), 'assets/mrt/TRTC/BL.svg');
-      expect(iconAsset(_mrt('br03')), 'assets/mrt/TRTC/BR.svg');
+      expect(remoteIconPath(_mrt('bl_07')), 'mrt/TRTC/BL.svg');
+      expect(remoteIconPath(_mrt('br03')), 'mrt/TRTC/BR.svg');
     });
 
-    test('metro prefixes without bundled artwork have no icon', () {
-      expect(iconAsset(_mrt('C03')), isNull);
-      expect(iconAsset(_mrt('ZZ01')), isNull);
-      expect(iconAsset(_mrt('')), isNull);
+    test('metro prefixes without artwork have no icon', () {
+      expect(remoteIconPath(_mrt('C03')), isNull);
+      expect(remoteIconPath(_mrt('ZZ01')), isNull);
+      expect(remoteIconPath(_mrt('')), isNull);
     });
   });
 
@@ -266,6 +273,27 @@ void main() {
         expect(image.width, 132, reason: '$style');
         image.dispose();
       }
+    });
+
+    test('rail artwork mirrored from the router replaces the dot', () async {
+      final dir = Directory.systemTemp.createTempSync('remote_icon');
+      addTearDown(() {
+        RemoteAssets.instance.debugSeed(dir, const {});
+        dir.deleteSync(recursive: true);
+      });
+      Directory('${dir.path}/rails').createSync();
+      File('${dir.path}/rails/TRA.svg').writeAsStringSync(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"> '
+        '<rect width="10" height="10" fill="#ff0000"/></svg>',
+      );
+      RemoteAssets.instance.debugSeed(dir, const {'rails/TRA.svg': 'h1'});
+
+      final image = await decode(
+        await markerIcon(_station(NearStationType.tra), MarkerStyle.icon),
+      );
+      expect(image.width, 72);
+      expect(await centre(image), const Color(0xFFFF0000));
+      image.dispose();
     });
 
     test('metro lines without artwork fall back to a coloured dot', () async {

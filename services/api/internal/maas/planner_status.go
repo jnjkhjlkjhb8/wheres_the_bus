@@ -17,14 +17,12 @@ const (
 // control in the options sheet, and renders nothing for a name it does not
 // recognise, so adding one here cannot break an older build.
 const (
-	// Shared by both planners.
 	_capTransitModes    = "transitModes"
 	_capItineraryCount  = "itineraryCount"
 	_capTransferWindow  = "transferWindow"
 	_capFirstLastMile   = "firstLastMile"
 	_capPricePreference = "pricePreference"
 
-	// MOTIS only.
 	_capWheelchair        = "wheelchair"
 	_capWalkingSpeed      = "walkingSpeed"
 	_capExtraTransferTime = "extraTransferTime"
@@ -41,16 +39,13 @@ const (
 	_capIgnoreRealtime    = "ignoreRealtime"
 )
 
-func plannerCapabilities(backend PlannerBackend) []string {
+func plannerCapabilities() []string {
 	shared := []string{
 		_capTransitModes,
 		_capItineraryCount,
 		_capTransferWindow,
 		_capFirstLastMile,
 		_capPricePreference,
-	}
-	if backend != _plannerMotis {
-		return shared
 	}
 	// Grown once to its final length rather than five times by append.
 	capabilities := make([]string, 0, len(shared)+14)
@@ -93,7 +88,7 @@ func handlePlannerStatus(monitor *PlannerHealthMonitor) gin.HandlerFunc {
 		c.Header("Cache-Control", "public, max-age="+strconv.Itoa(_plannerStatusMaxAge))
 		c.JSON(http.StatusOK, plannerStatusBody{
 			PlannerStatus: status,
-			Capabilities:  plannerCapabilities(status.Backend),
+			Capabilities:  plannerCapabilities(),
 		})
 	}
 }

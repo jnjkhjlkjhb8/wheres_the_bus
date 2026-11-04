@@ -564,7 +564,7 @@ func TestSuccessWithoutLastModifiedFailsClosed(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(`[]`))
+				_, _ = w.Write([]byte(`[{"RouteUID":"X"}]`))
 			}))
 			defer srv.Close()
 
@@ -903,4 +903,160 @@ func TestGetIntoReturnsTypedMarkerAndInvalidator(t *testing.T) {
 			t.Fatalf("marker after invalidate = %q, want empty", got)
 		}
 	})
+}
+
+func TestGetIntoLandsEmptyPayloadWithoutLastModified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(" [] \n"))
+	}))
+	defer srv.Close()
+	store := newMemTDXStore()
+	store.data[TDXTokenKey] = "tok"
+	client := NewTDXClient(TDXConfig{Store: store, IMSKey: legacyIMSKey, BaseURL: srv.URL})
+
+	var landed TDXIntoCommit
+	var body []byte
+	result, err := client.GetInto(context.Background(), "/x", "thing", func(commit TDXIntoCommit) error {
+		landed = commit
+		var readErr error
+		body, readErr = io.ReadAll(commit.Body)
+		return readErr
+	})
+	if err != nil {
+		t.Fatalf("GetInto: %v", err)
+	}
+	if !result.Modified || result.Marker != TDXEmptyPayloadMarker || landed.Marker != TDXEmptyPayloadMarker {
+		t.Fatalf("result=%+v commit marker=%q, want modified with %q", result, landed.Marker, TDXEmptyPayloadMarker)
+	}
+	if string(body) != "[]" {
+		t.Fatalf("landed body = %q, want []", body)
+	}
+	if got := store.get(TDXLegacyIMSKey("thing")); got != "" {
+		t.Fatalf("IMS marker = %q, want none cached", got)
+	}
+}
+
+func TestGetIntoEmptyPayloadPropagatesCommitError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+	store := newMemTDXStore()
+	store.data[TDXTokenKey] = "tok"
+	client := NewTDXClient(TDXConfig{Store: store, IMSKey: legacyIMSKey, BaseURL: srv.URL})
+	want := errors.New("land failed")
+	_, err := client.GetInto(context.Background(), "/x", "thing", func(TDXIntoCommit) error { return want })
+	if !errors.Is(err, want) {
+		t.Fatalf("GetInto err = %v, want %v", err, want)
+	}
+}
+
+// The client's own Timeout surfaces as DeadlineExceeded while the caller's
+// context is still live; GetInto retries it, Get does not.
+func TestOwnTimeoutRetriedOnlyByGetInto(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		call      func(*TDXClient) error
+		wantCalls int32
+	}{
+		{name: "GetInto", wantCalls: 2, call: func(c *TDXClient) error {
+			_, err := c.GetInto(context.Background(), "/x", "thing", nil)
+			return err
+		}},
+		{name: "Get", wantCalls: 1, call: func(c *TDXClient) error {
+			fetch, err := c.Get(context.Background(), "/x", "thing")
+			if fetch != nil {
+				_ = fetch.Close()
+			}
+			return err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					<-r.Context().Done()
+					return
+				}
+				w.Header().Set("Last-Modified", "v1")
+				_, _ = w.Write([]byte("[]"))
+			}))
+			defer srv.Close()
+			store := newMemTDXStore()
+			store.data[TDXTokenKey] = "tok"
+			client := NewTDXClient(TDXConfig{Store: store, IMSKey: legacyIMSKey, BaseURL: srv.URL})
+			client.http.SetTimeout(50 * time.Millisecond)
+			client.retryWait = 0
+			err := tt.call(client)
+			if got := calls.Load(); got != tt.wantCalls {
+				t.Fatalf("requests = %d, want %d (err %v)", got, tt.wantCalls, err)
+			}
+			if (err == nil) != (tt.wantCalls == 2) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestRetryableTransportError(t *testing.T) {
+	live := context.Background()
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tt := range []struct {
+		name            string
+		ctx             context.Context
+		err             error
+		retryOwnTimeout bool
+		want            bool
+	}{
+		{"network", live, errors.New("reset"), false, true},
+		{"auth", live, &TDXAuthError{Err: errors.New("no token")}, true, false},
+		{"caller done", done, errors.New("reset"), true, false},
+		{"own timeout opted in", live, context.DeadlineExceeded, true, true},
+		{"own timeout opted out", live, context.DeadlineExceeded, false, false},
+		{"canceled", live, context.Canceled, true, false},
+	} {
+		if got := retryableTransportError(tt.ctx, tt.err, tt.retryOwnTimeout); got != tt.want {
+			t.Errorf("%s: retryable = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestGetIntoEmptyPayloadRejectsUndecodableBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Encoding", "br")
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+	store := newMemTDXStore()
+	store.data[TDXTokenKey] = "tok"
+	client := NewTDXClient(TDXConfig{Store: store, IMSKey: legacyIMSKey, BaseURL: srv.URL})
+	committed := false
+	_, err := client.GetInto(context.Background(), "/x", "thing", func(TDXIntoCommit) error {
+		committed = true
+		return nil
+	})
+	if err == nil || committed {
+		t.Fatalf("GetInto err=%v committed=%v, want an error and no commit", err, committed)
+	}
+}
+
+func TestGetIntoKeepsStatus400WithEmptyBodyFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+	store := newMemTDXStore()
+	store.data[TDXTokenKey] = "tok"
+	client := NewTDXClient(TDXConfig{Store: store, IMSKey: legacyIMSKey, BaseURL: srv.URL})
+	committed := false
+	_, err := client.GetInto(context.Background(), "/x", "thing", func(TDXIntoCommit) error {
+		committed = true
+		return nil
+	})
+	var statusErr *TDXStatusError
+	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusBadRequest || committed {
+		t.Fatalf("GetInto err=%v committed=%v, want status 400 and no commit", err, committed)
+	}
 }

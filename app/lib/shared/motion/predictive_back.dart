@@ -3,6 +3,7 @@ import 'dart:ui' show clampDouble;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 
 /// Drop-in replacement for [PredictiveBackPageTransitionsBuilder], tuned to
@@ -109,7 +110,15 @@ class _PredictiveBackGestureDetectorState
     with WidgetsBindingObserver {
   /// True when the predictive back gesture is enabled.
   bool get _isEnabled {
-    return widget.route.isCurrent && widget.route.popGestureEnabled;
+    final route = widget.route;
+    if (!route.isCurrent || !route.popGestureEnabled) return false;
+    // isCurrent only speaks for the route's own navigator. A shell branch's
+    // top page still reports true while a root-level page sits over the whole
+    // shell, and being registered first it would take the gesture and pop
+    // itself (and everything above it) instead of the page the rider sees.
+    final navigator = route.navigator;
+    final host = navigator == null ? null : ModalRoute.of(navigator.context);
+    return host?.isCurrent ?? true;
   }
 
   _PredictiveBackPhase get phase => _phase;
@@ -429,18 +438,7 @@ class _PredictiveBackSharedElementPageTransitionState
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   borderRadius: borderRadius,
-                  boxShadow: <BoxShadow>[
-                    BoxShadow(
-                      color: Color.fromRGBO(
-                        0,
-                        0,
-                        0,
-                        _kMaxShadowOpacity * lift,
-                      ),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+                  boxShadow: AppShadows.lifted(_kMaxShadowOpacity * lift),
                 ),
                 child: ClipRRect(borderRadius: borderRadius, child: child),
               ),

@@ -20,7 +20,7 @@ class _SearchResultRow extends StatelessWidget {
       height: 34,
       decoration: BoxDecoration(
         color: cs.surface,
-        borderRadius: BorderRadius.circular(9),
+        borderRadius: BorderRadius.circular(AppTheme.radiusButton),
       ),
       child: Center(
         child: TransportIcon(type: transportType, size: 18),
@@ -57,7 +57,7 @@ class _SearchResultRow extends StatelessWidget {
                   ),
                   const SizedBox(height: AppTheme.space2),
                   Text(
-                    result.subtitle,
+                    searchRowSubtitle(result),
                     style: AppTextStyles.bodySmall.copyWith(
                       color: cs.onSurfaceVariant,
                       height: 1.3,
@@ -79,4 +79,19 @@ class _SearchResultRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// City leads the subtitle so two rows that differ only by city read as
+/// different. Non-route rows already use the city name as their subtitle, so
+/// it is not repeated.
+@visibleForTesting
+String searchRowSubtitle(SearchResult result) {
+  final code = result.city;
+  if (code == null || code.isEmpty) return result.subtitle;
+  return _cityLeading(cityName(code), result.subtitle);
+}
+
+String _cityLeading(String city, String subtitle) {
+  if (subtitle.isEmpty || subtitle == city) return city;
+  return '$city · $subtitle';
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_bloc.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';

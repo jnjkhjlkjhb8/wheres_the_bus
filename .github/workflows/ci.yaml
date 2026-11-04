@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - dev
 
 permissions:
   contents: read
@@ -106,9 +105,10 @@ jobs:
           go-version-file: go.mod
       - name: contracts (dependency boundaries, file budgets, proto contract)
         env:
-          # Enforce wire compatibility against the PR base; on branch pushes
-          # HEAD makes the diff a no-op and the gate reduces to `buf build`.
-          PROTO_BASELINE_REF: ${{ github.event.pull_request.base.sha || 'HEAD' }}
+          # Every push to main deploys, so the baseline is what was live before
+          # it. A `[proto-break]` head commit skips the breaking check (HEAD vs
+          # HEAD); see docs/agents/workflow.md for when that is allowed.
+          PROTO_BASELINE_REF: ${{ contains(github.event.head_commit.message, '[proto-break]') && 'HEAD' || github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/ci.sh contracts
 
   migrations:

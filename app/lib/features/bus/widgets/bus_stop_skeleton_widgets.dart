@@ -12,7 +12,8 @@ class _StopSkeletonList extends StatelessWidget {
             EtaListTile(
               routeNo: BoneMock.chars(3, '囗'),
               destination: BoneMock.chars(i.isEven ? 5 : 4, '囗'),
-              status: EtaStatus.minutes(3 + i * 4),
+              // One digit each, so every row's status bone is the same width.
+              status: EtaStatus.minutes(3 + i),
             ),
         ],
       ),

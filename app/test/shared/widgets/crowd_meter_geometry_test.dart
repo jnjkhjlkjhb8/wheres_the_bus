@@ -12,7 +12,9 @@ void main() {
     MaterialApp(
       home: MediaQuery(
         data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
-        child: Scaffold(body: Center(child: CrowdMeter(level: level))),
+        child: Scaffold(
+          body: Center(child: CrowdMeter(level: level)),
+        ),
       ),
     ),
   );
@@ -43,8 +45,7 @@ void main() {
   ) async {
     await pump(tester, CrowdLevel.normal);
     final sizes = [
-      for (final bar in bars(tester))
-        tester.getSize(find.byWidget(bar)),
+      for (final bar in bars(tester)) tester.getSize(find.byWidget(bar)),
     ];
     expect(sizes, const [Size(3, 5), Size(3, 8), Size(3, 11)]);
     final radii = [
@@ -79,18 +80,18 @@ void main() {
   testWidgets('the whole meter scales with the text scale', (tester) async {
     await pump(tester, CrowdLevel.comfortable, textScale: 2);
     final sizes = [
-      for (final bar in bars(tester))
-        tester.getSize(find.byWidget(bar)),
+      for (final bar in bars(tester)) tester.getSize(find.byWidget(bar)),
     ];
     expect(sizes, const [Size(6, 10), Size(6, 16), Size(6, 22)]);
     final rects = [
       for (final bar in bars(tester)) tester.getRect(find.byWidget(bar)),
     ];
     expect(rects[1].left - rects[0].right, 4);
-    final radius = ((bars(tester).first.decoration! as BoxDecoration)
-            .borderRadius! as BorderRadius)
-        .topLeft
-        .x;
+    final radius =
+        ((bars(tester).first.decoration! as BoxDecoration).borderRadius!
+                as BorderRadius)
+            .topLeft
+            .x;
     expect(radius, 2);
   });
 
@@ -106,7 +107,9 @@ void main() {
     tester,
   ) async {
     await pump(tester, CrowdLevel.normal);
-    final scheme = Theme.of(tester.element(find.byType(CrowdMeter))).colorScheme;
+    final scheme = Theme.of(
+      tester.element(find.byType(CrowdMeter)),
+    ).colorScheme;
     final colors = [
       for (final bar in bars(tester)) (bar.decoration! as BoxDecoration).color,
     ];
@@ -121,7 +124,9 @@ void main() {
     tester,
   ) async {
     await pump(tester, CrowdLevel.comfortable);
-    final scheme = Theme.of(tester.element(find.byType(CrowdMeter))).colorScheme;
+    final scheme = Theme.of(
+      tester.element(find.byType(CrowdMeter)),
+    ).colorScheme;
     final colors = [
       for (final bar in bars(tester)) (bar.decoration! as BoxDecoration).color,
     ];
@@ -134,7 +139,9 @@ void main() {
 
   testWidgets('a crowded meter fills all three in full ink', (tester) async {
     await pump(tester, CrowdLevel.crowded);
-    final scheme = Theme.of(tester.element(find.byType(CrowdMeter))).colorScheme;
+    final scheme = Theme.of(
+      tester.element(find.byType(CrowdMeter)),
+    ).colorScheme;
     final colors = [
       for (final bar in bars(tester)) (bar.decoration! as BoxDecoration).color,
     ];

@@ -20,12 +20,17 @@ class _FloatingAppBar extends StatelessWidget {
       // the system back gesture does.
       leading: AppBarBackButton(
         floating: true,
-        onTap: () => Navigator.maybePop(context),
+        onTap: () => unawaited(context.maybePopOrHome()),
       ),
-      middle: _RoutePill(
-        routeName: routeName,
-        dirName: dirName,
-        direction: direction,
+      // The name arrives with the route; until then the pill is bones rather
+      // than a blank plate.
+      middle: Skeletonizer(
+        enabled: routeName.isEmpty,
+        child: _RoutePill(
+          routeName: routeName.isEmpty ? BoneMock.chars(3, '囗') : routeName,
+          dirName: routeName.isEmpty ? BoneMock.chars(6, '囗') : dirName,
+          direction: direction,
+        ),
       ),
       trailing: AppBarCircleButton(
         semanticLabel: AppI18n.of(context).commonFavorite,
@@ -70,7 +75,7 @@ class _RoutePill extends StatelessWidget {
         color: cs.brightness == Brightness.light
             ? Colors.white
             : cs.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
         boxShadow: AppShadows.floating,
       ),
       child: Row(

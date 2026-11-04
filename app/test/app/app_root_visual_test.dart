@@ -104,19 +104,20 @@ void main() {
       await mountReady(tester);
 
       final context = tester.element(find.text('root-visual-probe'));
-      final config = SkeletonizerConfig.of(context);
+      final effect = SkeletonizerConfig.of(
+        context,
+      ).resolveEffect(Theme.of(context).brightness);
       expect(MediaQuery.disableAnimationsOf(context), reduceMotion);
       if (reduceMotion) {
-        expect(config.effect, isA<SolidColorEffect>());
-        final effect = config.effect as SolidColorEffect;
+        expect(effect, isA<SolidColorEffect>());
         expect(effect.duration, Duration.zero);
         expect(
-          effect.color,
+          (effect as SolidColorEffect).color,
           Theme.of(context).colorScheme.surfaceContainerHighest,
         );
       } else {
-        expect(config.effect, isA<ShimmerEffect>());
-        expect(config.effect.duration, greaterThan(Duration.zero));
+        expect(effect, isA<ShimmerEffect>());
+        expect(effect.duration, greaterThan(Duration.zero));
       }
     });
   }

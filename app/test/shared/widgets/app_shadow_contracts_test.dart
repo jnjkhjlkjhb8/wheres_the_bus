@@ -98,4 +98,30 @@ void main() {
       expect(layer.offset.dy.isFinite, isTrue);
     }
   });
+
+  test('segment thumb shadow tightens and strengthens in dark mode', () {
+    final light = AppShadows.segmentThumbFor(Brightness.light).single;
+    final dark = AppShadows.segmentThumbFor(Brightness.dark).single;
+    expect(light.blurRadius, 4);
+    expect(light.offset, const Offset(0, 2));
+    expect(light.color.a, closeTo(.05, .005));
+    expect(dark.blurRadius, 2);
+    expect(dark.offset, const Offset(0, 1));
+    expect(dark.color.a, closeTo(.25, .005));
+  });
+
+  test('lifted shadow follows the gesture opacity', () {
+    final shadow = AppShadows.lifted(.3).single;
+    expect(shadow.color.a, closeTo(.3, .005));
+    expect(shadow.blurRadius, 24);
+    expect(shadow.offset, const Offset(0, 8));
+  });
+
+  test('scrolled-under shadow is the surface colour, not black', () {
+    const surface = Color(0xFF123456);
+    final shadow = AppShadows.scrolledUnder(surface).single;
+    expect(shadow.color, surface);
+    expect(shadow.blurRadius, 12);
+    expect(shadow.offset, const Offset(0, 6));
+  });
 }

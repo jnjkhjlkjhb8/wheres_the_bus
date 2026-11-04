@@ -96,7 +96,7 @@ class AlertSourceChip extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(AppTheme.radiusChip),
       ),
       child: Text(
         resolved.label,

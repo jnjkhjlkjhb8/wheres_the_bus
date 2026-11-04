@@ -50,7 +50,9 @@ extension _HomeScreenMapX on _HomeScreenState {
     final update = _stationCameraUpdate(target, spread: spread);
     if (update == null) return;
     _selfDrivenTarget = target;
-    unawaited(controller.animateCamera(update));
+    unawaited(
+      controller.moveOrAnimate(update, reduced: AppMotion.reduced(context)),
+    );
   }
 
   CameraUpdate? _stationCameraUpdate(LatLng target, {required bool spread}) {
@@ -128,11 +130,12 @@ extension _HomeScreenMapX on _HomeScreenState {
     final bounds = _memberBoundsToFit(members);
     if (bounds == null) return;
     _selfDrivenTarget = boundsCenter(bounds);
-    await controller.animateCamera(
+    await controller.moveOrAnimate(
       CameraUpdate.newLatLngBounds(
         bounds,
         _kMemberBoundsPadding,
       ),
+      reduced: AppMotion.reduced(context),
     );
   }
 

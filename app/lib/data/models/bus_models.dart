@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 import 'package:wheres_the_bus/data/models/eta_format.dart';
+import 'package:wheres_the_bus/data/models/eta_status.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 enum BusArrivalStatus { arriving, approaching, minutes, unknown }
@@ -56,6 +57,7 @@ class BusStopEtaViewModel extends Equatable {
     this.vehicles = const [],
     this.plate = '',
     this.isLastBus = false,
+    this.source = EtaSource.live,
   });
 
   final String stopUid;
@@ -76,6 +78,9 @@ class BusStopEtaViewModel extends Equatable {
   /// TDX IsLastBus: the feed confirmed the route's last bus is running. False
   /// also means "never computed", so it may not be read as 末班車已過 on its own.
   final bool isLastBus;
+
+  /// Where the time came from; an old server that sends none reads as live.
+  final EtaSource source;
 
   int get estimateMinutes => etaCeilMinutes(estimateSeconds);
 
@@ -103,6 +108,7 @@ class BusStopEtaViewModel extends Equatable {
         vehicles: vehicles,
         plate: plate,
         isLastBus: isLastBus,
+        source: source,
       );
 
   String? displayLabelOf(AppI18n i18n) => busStopDisplayLabel(
@@ -139,6 +145,7 @@ class BusStopEtaViewModel extends Equatable {
     vehicles,
     plate,
     isLastBus,
+    source,
   ];
 }
 
@@ -174,6 +181,7 @@ class BusStopArrival extends Equatable {
     this.arrivalUnix = 0,
     this.crowdLevel = CrowdLevel.unknown,
     this.isLastBus = false,
+    this.source = EtaSource.live,
   });
 
   final String stationId;
@@ -197,6 +205,9 @@ class BusStopArrival extends Equatable {
 
   /// TDX IsLastBus; see [BusStopEtaViewModel.isLastBus].
   final bool isLastBus;
+
+  /// See [BusStopEtaViewModel.source].
+  final EtaSource source;
 
   /// Remaining whole minutes (ceil), or null when no positive estimate exists.
   int? get minutes {
@@ -240,6 +251,7 @@ class BusStopArrival extends Equatable {
       arrivalUnix: arrivalUnix,
       crowdLevel: crowdLevel,
       isLastBus: isLastBus,
+      source: source,
     );
   }
 
@@ -255,6 +267,7 @@ class BusStopArrival extends Equatable {
     arrivalUnix,
     crowdLevel,
     isLastBus,
+    source,
   ];
 }
 

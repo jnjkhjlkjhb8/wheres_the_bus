@@ -104,6 +104,11 @@ class AppTheme {
   static const double radiusSlot = 2;
   static const double radiusBottomSheet = 28;
 
+  /// Radius for a child inset [inset] px inside a surface of radius [outer],
+  /// so both curves share one centre.
+  static double concentric(double outer, double inset) =>
+      (outer - inset).clamp(0, outer);
+
   static const double space2 = 2;
   static const double space4 = 4;
   static const double space6 = 6;
@@ -385,18 +390,22 @@ class AppTheme {
     margin: EdgeInsets.zero,
   );
 
-  static SkeletonizerConfigData _skeleton(ColorScheme cs) =>
-      SkeletonizerConfigData(
-        effect: ShimmerEffect(
-          baseColor: cs.surfaceContainerHighest,
-          highlightColor: cs.surfaceContainer,
-          duration: AppMotion.shimmerLoop,
-        ),
-        textBorderRadius: TextBoneBorderRadius(
-          BorderRadius.circular(radiusChip),
-        ),
-        containersColor: cs.surfaceContainerHighest,
-      );
+  // Reduce-motion swaps the shimmer sweep for a flat fill: the skeleton still
+  // says "this is content, not chrome" without a moving highlight.
+  static SkeletonizerConfigData skeleton(
+    ColorScheme cs, {
+    required bool reduceMotion,
+  }) => SkeletonizerConfigData(
+    effectResolver: (_) => reduceMotion
+        ? SolidColorEffect(color: cs.surfaceContainerHighest)
+        : ShimmerEffect(
+            baseColor: cs.surfaceContainerHighest,
+            highlightColor: cs.surfaceContainer,
+            duration: AppMotion.shimmerLoop,
+          ),
+    textBorderRadius: TextBoneBorderRadius(BorderRadius.circular(radiusChip)),
+    containersColor: cs.surfaceContainerHighest,
+  );
 
   static ThemeData get light => _build(lightScheme);
 
@@ -406,7 +415,6 @@ class AppTheme {
     useMaterial3: true,
     fontFamily: 'IBMPlexSans',
     colorScheme: cs,
-    extensions: [_skeleton(cs)],
     textTheme: _text(cs),
     cardTheme: _card(cs),
     pageTransitionsTheme: const PageTransitionsTheme(

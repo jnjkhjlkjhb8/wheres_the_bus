@@ -120,7 +120,9 @@ void main() {
           localizationsDelegates: AppI18n.localizationsDelegates,
           supportedLocales: AppI18n.supportedLocales,
           home: Scaffold(
-            body: Center(child: TrainTypeChip(type: '自強號', compact: compact)),
+            body: Center(
+              child: TrainTypeChip(type: '自強號', compact: compact),
+            ),
           ),
         ),
       );

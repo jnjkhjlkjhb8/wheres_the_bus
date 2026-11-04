@@ -39,6 +39,11 @@ void main() {
         ((container.decoration! as BoxDecoration).border! as Border).top;
     expect(top.color, cs.outlineVariant.withValues(alpha: 0.3));
     expect(top.width, 0.5);
+    // Same 16pt gutter as the home sheet's search bar and nearby rows.
+    expect(
+      container.padding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    );
     expect(tester.widget<Text>(find.text('板橋站')).style!.height, 1.3);
   });
 }

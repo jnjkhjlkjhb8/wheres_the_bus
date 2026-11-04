@@ -232,4 +232,29 @@ void main() {
       expect(find.text('停用'), findsNothing);
     },
   );
+
+  testWidgets('a labeled switch reads as one toggle with its label', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    await mount(
+      tester,
+      AppSwitch(value: true, label: '提醒', onChanged: (_) {}),
+    );
+
+    expect(
+      tester.getSemantics(find.byType(Switch)),
+      matchesSemantics(
+        label: '提醒',
+        hasToggledState: true,
+        isToggled: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        isFocusable: true,
+        hasTapAction: true,
+        hasFocusAction: true,
+      ),
+    );
+    handle.dispose();
+  });
 }

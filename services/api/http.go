@@ -80,13 +80,8 @@ type httpServerConfig struct {
 	TokenRateLimit    int
 	JWKSRateLimit     int
 	SearchRateLimit   int
-	// Where MOTIS is reached, and whether it is the configured planner. Both
-	// come from main so the geocode proxy cannot disagree with the planner
-	// about which backend is live.
-	MotisBaseURL string
-	MotisEnabled bool
-	// The same monitor maas.MaasServer consults, so /api/planner reports the backend
-	// that is actually answering rather than a second opinion about it.
+	// Where MOTIS is reached; the planner and the geocode proxy share it.
+	MotisBaseURL     string
 	plannerHealth    *maas.PlannerHealthMonitor
 	MetricsRateLimit int
 	booking          *rail.BookingProxy
@@ -122,9 +117,6 @@ func httpServerConfigFromEnv() (httpServerConfig, error) {
 		GTFSRealtimeCredential: gtfsRTCredential,
 		AssetsDir:              strings.TrimSpace(os.Getenv(_assetsDirEnv)),
 		MotisBaseURL:           maas.MotisBaseURLFromEnv(),
-		// Read from the same env var the planner reads, so the geocode proxy
-		// and the planner can never disagree about which backend is live.
-		MotisEnabled: !maas.MaasBackendFromEnv(),
 	}, nil
 }
 
@@ -291,7 +283,7 @@ func registerHTTPRoutes(r *gin.Engine, db *pgxpool.Pool, live *livestream.LiveHu
 		static.HandleStaticVersion(db))
 	static.RegisterAssetRoutes(r, config.AssetsDir,
 		httpRateLimit(limiter, "GET "+static.AssetsPath, _httpAssetsRateLimit, time.Minute))
-	search.RegisterGeocodeRoutes(r, config.MotisBaseURL, config.MotisEnabled,
+	search.RegisterGeocodeRoutes(r, config.MotisBaseURL,
 		httpRateLimit(limiter, "GET "+search.GeocodePath, _httpGeocodeRateLimit, time.Minute))
 	// Always mounted, unlike the geocode proxy: an app that cannot tell which
 	// planner is live has to guess which options it may offer, and guessing is

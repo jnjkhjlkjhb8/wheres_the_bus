@@ -79,18 +79,26 @@ class _RouteSheet extends StatelessWidget {
     // stays put across frames.
     // Pick mode has a single full-height snap, so this map-view timeline is
     // hidden while the vertical list selects an alight stop.
-    final timeline =
-        BlocSelector<BusRouteBloc, BusRouteState, List<TimelineStop>>(
-          selector: (s) => _stopsFor(AppI18n.of(context), s),
-          builder: (context, stops) => HorizontalRouteTimeline(
-            stops: stops,
-            direction: direction,
-            controller: timelineController,
-            flashStopUid: flashStopUid,
-            onStopTap: onTapStop,
-            onVehicleTap: onTapVehicle,
-          ),
-        );
+    final timeline = isLoading
+        ? Skeletonizer(
+            child: HorizontalRouteTimeline(
+              stops: _skeletonStops,
+              direction: direction,
+              controller: timelineController,
+              flashStopUid: null,
+            ),
+          )
+        : BlocSelector<BusRouteBloc, BusRouteState, List<TimelineStop>>(
+            selector: (s) => _stopsFor(AppI18n.of(context), s),
+            builder: (context, stops) => HorizontalRouteTimeline(
+              stops: stops,
+              direction: direction,
+              controller: timelineController,
+              flashStopUid: flashStopUid,
+              onStopTap: onTapStop,
+              onVehicleTap: onTapVehicle,
+            ),
+          );
 
     final tabsContent = Column(
       children: [

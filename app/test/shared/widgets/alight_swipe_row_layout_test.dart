@@ -42,7 +42,9 @@ void main() {
     final haptics = captureHaptics();
     await mount(tester);
     final width = tester.getSize(find.byType(AlightSwipeRow)).width;
-    final gesture = await tester.startGesture(tester.getCenter(find.text('row')));
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('row')),
+    );
     // The first move only wins the gesture arena; it is not counted as travel.
     await gesture.moveBy(const Offset(30, 0));
     await tester.pump();
@@ -60,17 +62,23 @@ void main() {
     tester,
   ) async {
     await mount(tester);
-    final gesture = await tester.startGesture(tester.getCenter(find.text('row')));
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('row')),
+    );
     await gesture.moveBy(const Offset(30, 0));
     await tester.pump();
     await gesture.moveBy(const Offset(100, 0));
     await tester.pump();
-    final scheme = Theme.of(tester.element(find.byType(AlightSwipeRow))).colorScheme;
+    final scheme = Theme.of(
+      tester.element(find.byType(AlightSwipeRow)),
+    ).colorScheme;
     final background = tester.widget<Container>(
-      find.ancestor(
-        of: find.byIcon(Icons.download_rounded),
-        matching: find.byType(Container),
-      ).first,
+      find
+          .ancestor(
+            of: find.byIcon(Icons.download_rounded),
+            matching: find.byType(Container),
+          )
+          .first,
     );
     expect(background.color, scheme.onSurface);
     expect(background.alignment, AlignmentDirectional.centerStart);

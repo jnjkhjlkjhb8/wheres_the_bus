@@ -4,11 +4,13 @@ library;
 import 'package:wheres_the_bus/core/firebase/remote_config.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/models/eta_format.dart';
+import 'package:wheres_the_bus/data/models/eta_status.dart';
 import 'package:wheres_the_bus/data/models/timeline_stop.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 TimelineStopState timelineStopState(BusStopEtaViewModel? eta) {
-  if (eta == null) return TimelineStopState.none;
+  // Arriving and approaching say a vehicle is there; only a live time can.
+  if (eta == null || !eta.source.isLive) return TimelineStopState.none;
   final status = busStopDisplayStatus(
     estimateSeconds: eta.estimateSeconds,
     stopStatus: eta.stopStatus,
@@ -16,10 +18,11 @@ TimelineStopState timelineStopState(BusStopEtaViewModel? eta) {
   if (status == BusStopDisplayStatus.arriving) {
     return TimelineStopState.arriving;
   }
-  return _approaching(eta)
-      ? TimelineStopState.approaching
-      : TimelineStopState.none;
+  return _approachingState(eta);
 }
+
+TimelineStopState _approachingState(BusStopEtaViewModel eta) =>
+    _approaching(eta) ? TimelineStopState.approaching : TimelineStopState.none;
 
 bool _approaching(BusStopEtaViewModel? eta) {
   if (eta == null) return false;
@@ -76,12 +79,14 @@ List<TimelineStop> deriveTimelineStops({
           etaMinutes: _etaMinutes(eta),
           serviceEnded: _serviceEnded(eta),
           plate: eta?.plate ?? '',
+          source: eta?.source ?? EtaSource.live,
         ),
   ];
 }
 
 bool _isLiveEta(BusStopEtaViewModel? eta) =>
     eta != null &&
+    eta.source.isLive &&
     busStopLabelIsLive(
       estimateSeconds: eta.estimateSeconds,
       stopStatus: eta.stopStatus,

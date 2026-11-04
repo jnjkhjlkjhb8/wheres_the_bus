@@ -145,6 +145,7 @@ message Bus_RouteEstimate{
   // plate_numb so the client never has to join Buses itself.
   BusCrowdLevel crowd_level = 11;
   bool is_last_bus = 12;
+  BusEstimateSource estimate_source = 13;
 }
 message Bus_StopEstimate{
   string stop_uid = 1;
@@ -160,6 +161,15 @@ message Bus_StopEstimate{
   string destination = 11;
   BusCrowdLevel crowd_level = 12;
   bool is_last_bus = 13;
+  BusEstimateSource estimate_source = 14;
+}
+// Where an estimate's time came from. UNSPECIFIED is what a server that
+// predates the field sends, and clients must read it as LIVE.
+enum BusEstimateSource {
+  BUS_ESTIMATE_SOURCE_UNSPECIFIED = 0;
+  BUS_ESTIMATE_SOURCE_LIVE = 1;
+  BUS_ESTIMATE_SOURCE_SCHEDULED = 2;
+  BUS_ESTIMATE_SOURCE_PREDICTED = 3;
 }
 enum BusCrowdLevel {
   BUS_CROWD_UNKNOWN = 0;

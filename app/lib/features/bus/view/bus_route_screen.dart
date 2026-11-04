@@ -9,6 +9,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
@@ -34,7 +35,9 @@ import 'package:wheres_the_bus/features/bus/widgets/pinned_bus.dart';
 import 'package:wheres_the_bus/features/bus/widgets/track_trigger_stop.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/map/map_color_scheme.dart';
+import 'package:wheres_the_bus/shared/map/motion_aware_camera.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
+import 'package:wheres_the_bus/shared/motion/motion_aware_scroll.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_confirm_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_pick_capsule.dart';
@@ -294,7 +297,9 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     final update = stop == null
         ? _fitUpdate()
         : CameraUpdate.newLatLngZoom(LatLng(stop.lat, stop.lon), 16);
-    unawaited(controller.animateCamera(update));
+    unawaited(
+      controller.moveOrAnimate(update, reduced: AppMotion.reduced(context)),
+    );
   }
 
   Future<BusStopModel?> _nearestStopOnEntry(BusRouteState s) async {
@@ -326,10 +331,11 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     final controller = _mapController;
     if (controller != null) {
       unawaited(
-        controller.animateCamera(
+        controller.moveOrAnimate(
           _overlay.stopPoints.isEmpty
               ? CameraUpdate.newCameraPosition(_kDefaultCamera)
               : _fitUpdate(),
+          reduced: AppMotion.reduced(context),
         ),
       );
     }
@@ -381,8 +387,9 @@ class _BusRouteScreenState extends State<BusRouteScreen>
       _scrollController.position.maxScrollExtent,
     );
     unawaited(
-      _scrollController.animateTo(
+      _scrollController.jumpOrAnimateTo(
         target,
+        reduced: AppMotion.reduced(context),
         duration: const Duration(milliseconds: 320),
         curve: AppMotion.easeInOut,
       ),
@@ -400,8 +407,9 @@ class _BusRouteScreenState extends State<BusRouteScreen>
       pos.maxScrollExtent,
     );
     unawaited(
-      _timelineController.animateTo(
+      _timelineController.jumpOrAnimateTo(
         target,
+        reduced: AppMotion.reduced(context),
         duration: const Duration(milliseconds: 320),
         curve: AppMotion.easeInOut,
       ),
@@ -413,7 +421,10 @@ class _BusRouteScreenState extends State<BusRouteScreen>
   /// outside land the rider at the same scale.
   void _focusCameraOn(LatLng target) {
     unawaited(
-      _mapController?.animateCamera(CameraUpdate.newLatLngZoom(target, 16)) ??
+      _mapController?.moveOrAnimate(
+            CameraUpdate.newLatLngZoom(target, 16),
+            reduced: AppMotion.reduced(context),
+          ) ??
           Future<void>.value(),
     );
   }
@@ -694,6 +705,12 @@ class _BusRouteScreenState extends State<BusRouteScreen>
 
     final sheetPeekPx =
         MediaQuery.sizeOf(context).height * AppSheetSnap.peekFrac;
+    // The floating app bar covers the top of the map; without this the route
+    // fit draws its first stops underneath the back button and title.
+    final appBarPx =
+        MediaQuery.paddingOf(context).top +
+        AppBarMetrics.floatingInsets.vertical +
+        AppBarMetrics.tapTarget;
 
     return BlocProvider<BusRouteBloc>.value(
       value: _bloc,
@@ -735,7 +752,10 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                         compassEnabled: false,
                         markers: layer.markers,
                         polylines: layer.polylines,
-                        padding: EdgeInsets.only(bottom: sheetPeekPx),
+                        padding: EdgeInsets.only(
+                          top: appBarPx,
+                          bottom: sheetPeekPx,
+                        ),
                         // Map shares a Stack with the draggable sheet; without
                         // an eager recognizer the map loses the gesture arena,
                         // so pan/pinch leak to the sheet instead of the map.
@@ -839,7 +859,9 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                             color: cs.brightness == Brightness.light
                                 ? Colors.white
                                 : cs.surfaceContainerHigh,
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.radiusCard,
+                            ),
                             boxShadow: AppShadows.floating,
                           ),
                           child: Center(

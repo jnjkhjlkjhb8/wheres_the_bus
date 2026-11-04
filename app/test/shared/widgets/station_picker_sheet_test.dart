@@ -41,10 +41,11 @@ void main() {
     expect(find.text('高雄'), findsNothing);
     await tester.enterText(find.byType(TextField), 'missing');
     await tester.pump();
-    expect(find.byType(ListTile), findsNothing);
+    expect(find.text('台南'), findsNothing);
     await tester.enterText(find.byType(TextField), '台南');
     await tester.pump();
-    await tester.tap(find.widgetWithText(ListTile, '台南'));
+    // The query field also shows '台南'; the list row is the later match.
+    await tester.tap(find.text('台南').last);
     await tester.pumpAndSettle();
     expect(selected, '台南');
     expect(find.byType(StationPickerSheet), findsNothing);

@@ -27,7 +27,10 @@ class InMemoryRemindersStore implements RemindersStore {
   }
 
   @override
-  Future<void> remove({required String routeUid, required String stopUid}) async {
+  Future<void> remove({
+    required String routeUid,
+    required String stopUid,
+  }) async {
     final entries = _byRoute[routeUid];
     if (entries == null) return;
     entries.remove(stopUid);

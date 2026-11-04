@@ -19,7 +19,7 @@ func localRouterEnvironment(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" || os.Getenv("REDIS_ADDR") == "" {
 		t.Skip("DATABASE_URL or REDIS_ADDR not set")
 	}
-	for key, value := range map[string]string{"FIREBASE_ENABLED": "false", "MAAS_BACKEND": "tdx", "RIDER_API_ADDR": "127.0.0.1:1", "RIDER_HTTP_URL": "http://127.0.0.1:1", "RIDER_TLS_DIR": "", "GRPC_TLS": "false", "ROUTER_METRICS_TOKEN": strings.Repeat("q", 32), "ROUTER_TRUSTED_PROXIES": "", "GTFS_RT_CREDENTIAL": "", "SENTRY_DSN": ""} {
+	for key, value := range map[string]string{"FIREBASE_ENABLED": "false", "MOTIS_BASE_URL": "http://127.0.0.1:1", "RIDER_API_ADDR": "127.0.0.1:1", "RIDER_HTTP_URL": "http://127.0.0.1:1", "RIDER_TLS_DIR": "", "GRPC_TLS": "false", "ROUTER_METRICS_TOKEN": strings.Repeat("q", 32), "ROUTER_TRUSTED_PROXIES": "", "GTFS_RT_CREDENTIAL": "", "SENTRY_DSN": ""} {
 		t.Setenv(key, value)
 	}
 	keyPath := filepath.Join(t.TempDir(), "powersync.pem")

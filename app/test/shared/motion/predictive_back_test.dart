@@ -135,6 +135,53 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('the first route has no page to preview back to', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          platform: TargetPlatform.android,
+          pageTransitionsTheme: const PageTransitionsTheme(
+            builders: {
+              TargetPlatform.android: BigPredictiveBackPageTransitionsBuilder(),
+            },
+          ),
+        ),
+        home: const Scaffold(body: Text('home')),
+      ),
+    );
+
+    expect(
+      await nativeBack('startBackGesture', backEvent(0, 0)),
+      isNot(isTrue),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('only the top route answers the gesture', (tester) async {
+    await openDetail(tester);
+    unawaited(
+      tester
+          .state<NavigatorState>(find.byType(Navigator))
+          .push(
+            MaterialPageRoute<void>(
+              builder: (_) => const Scaffold(body: Text('top')),
+            ),
+          ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(await nativeBack('startBackGesture', backEvent(0, 0)), isTrue);
+    await tester.pump();
+    await nativeBack('updateBackGestureProgress', backEvent(0.75, 0));
+    await tester.pump();
+    await nativeBack('commitBackGesture');
+    await tester.pumpAndSettle();
+
+    expect(find.text('top'), findsNothing);
+    expect(find.text('detail'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('committed edge previews pop exactly one route', (tester) async {
     await openDetail(tester);
     expect(await nativeBack('startBackGesture', backEvent(0, 0)), isTrue);

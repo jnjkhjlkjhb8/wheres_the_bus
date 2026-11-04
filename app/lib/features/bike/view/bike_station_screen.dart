@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/data/repositories/bike_repository.dart';
@@ -17,6 +18,7 @@ import 'package:wheres_the_bus/features/bike/view/bike_station_detail_view.dart'
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/map/map_color_scheme.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
+import 'package:wheres_the_bus/shared/map/motion_aware_camera.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
@@ -115,8 +117,9 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
       // Station coordinates can arrive while the initial GPS fix is pending.
       if (!mounted || _hasStation(_bloc.state)) return;
       unawaited(
-        _controller?.animateCamera(
+        _controller?.moveOrAnimate(
           CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
+          reduced: AppMotion.reduced(context),
         ),
       );
     } on Object catch (error, stack) {
@@ -133,8 +136,9 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
       // A GPS request may finish after the map has been disposed.
       if (!mounted) return;
       unawaited(
-        _controller?.animateCamera(
+        _controller?.moveOrAnimate(
           CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
+          reduced: AppMotion.reduced(context),
         ),
       );
     } on Object catch (e, s) {
@@ -162,8 +166,9 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
 
   void _moveToStation(BikeStationState state) {
     unawaited(
-      _controller?.animateCamera(
+      _controller?.moveOrAnimate(
         CameraUpdate.newLatLng(LatLng(state.lat, state.lon)),
+        reduced: AppMotion.reduced(context),
       ),
     );
   }
@@ -205,72 +210,75 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: BlocConsumer<BikeStationBloc, BikeStationState>(
-              bloc: _bloc,
-              listenWhen: _stationArrived,
-              listener: (_, state) => _moveToStation(state),
-              buildWhen: _stationMoved,
-              builder: _stationMap,
+    return SheetBackScope(
+      controller: _sheetController,
+      child: Scaffold(
+        resizeToAvoidBottomInset: false,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: BlocConsumer<BikeStationBloc, BikeStationState>(
+                bloc: _bloc,
+                listenWhen: _stationArrived,
+                listener: (_, state) => _moveToStation(state),
+                buildWhen: _stationMoved,
+                builder: _stationMap,
+              ),
             ),
-          ),
-          const FloatingAppBar(),
+            const FloatingAppBar(),
 
-          ValueListenableBuilder<double?>(
-            valueListenable: _sheetController,
-            builder: (context, offset, child) {
-              final currentOffset = offset ?? 0.0;
-              return Positioned(
-                right: 16,
-                bottom: currentOffset + 16,
-                child: child!,
-              );
-            },
-            child: Pressable(
-              onTap: _recenterMap,
-              semanticLabel: AppI18n.of(context).commonLocateMe,
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: cs.brightness == Brightness.light
-                      ? Colors.white
-                      : cs.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: AppShadows.floating,
-                ),
-                child: Center(
-                  child: AnimatedSwitcher(
-                    duration: AppMotion.short,
-                    child: _locating
-                        ? const AppSpinner(
-                            key: ValueKey('locating'),
-                            size: 20,
-                          )
-                        : Icon(
-                            Icons.gps_fixed_rounded,
-                            key: const ValueKey('idle'),
-                            size: 20,
-                            color: cs.onSurface,
-                          ),
+            ValueListenableBuilder<double?>(
+              valueListenable: _sheetController,
+              builder: (context, offset, child) {
+                final currentOffset = offset ?? 0.0;
+                return Positioned(
+                  right: 16,
+                  bottom: currentOffset + 16,
+                  child: child!,
+                );
+              },
+              child: Pressable(
+                onTap: _recenterMap,
+                semanticLabel: AppI18n.of(context).commonLocateMe,
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: cs.brightness == Brightness.light
+                        ? Colors.white
+                        : cs.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+                    boxShadow: AppShadows.floating,
+                  ),
+                  child: Center(
+                    child: AnimatedSwitcher(
+                      duration: AppMotion.short,
+                      child: _locating
+                          ? const AppSpinner(
+                              key: ValueKey('locating'),
+                              size: 20,
+                            )
+                          : Icon(
+                              Icons.gps_fixed_rounded,
+                              key: const ValueKey('idle'),
+                              size: 20,
+                              color: cs.onSurface,
+                            ),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
 
-          AppSheet(
-            controller: _sheetController,
-            child: BikeStationDetailView(
-              stationUid: widget.stationUid,
-              bloc: _bloc,
+            AppSheet(
+              controller: _sheetController,
+              child: BikeStationDetailView(
+                stationUid: widget.stationUid,
+                bloc: _bloc,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

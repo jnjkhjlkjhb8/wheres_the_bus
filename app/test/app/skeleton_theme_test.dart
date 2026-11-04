@@ -8,9 +8,11 @@ void main() {
   group('skeleton theme', () {
     test('both themes carry the app-wide skeleton config', () {
       for (final theme in [AppTheme.light, AppTheme.dark]) {
-        final config = theme.extension<SkeletonizerConfigData>();
-        expect(config, isNotNull);
-        final effect = config!.effect;
+        final config = AppTheme.skeleton(
+          theme.colorScheme,
+          reduceMotion: false,
+        );
+        final effect = config.resolveEffect(theme.brightness);
         expect(effect, isA<ShimmerEffect>());
         // Bones are the surface the loaded content sits on, swept once per
         // shimmerLoop — a skeleton that outruns the rest of the app's motion

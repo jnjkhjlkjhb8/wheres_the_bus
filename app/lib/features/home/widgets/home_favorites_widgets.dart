@@ -58,12 +58,14 @@ class _FavoritesTab extends StatelessWidget {
         if (pinned.isEmpty) {
           return const _FavoritesEmpty();
         }
-        return ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            ...pinned.map((fav) => FavoriteTile(fav: fav)),
-            _SeeMoreButton(),
-          ],
+        return EdgeFade(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              ...pinned.map((fav) => FavoriteTile(fav: fav)),
+              _SeeMoreButton(),
+            ],
+          ),
         );
       },
     );
@@ -82,7 +84,7 @@ class _SeeMoreButton extends StatelessWidget {
       child: Container(
         constraints: const BoxConstraints(minHeight: 48),
         padding: const EdgeInsets.symmetric(
-          horizontal: AppTheme.space20,
+          horizontal: AppTheme.space16,
           vertical: AppTheme.space14,
         ),
         decoration: BoxDecoration(

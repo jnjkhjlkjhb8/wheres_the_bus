@@ -17,7 +17,7 @@ enum PlanFailureKind {
   timeout,
 
   /// Upstream routing is unreachable or refusing work (includes the per-caller
-  /// TDX quota).
+  /// planner quota).
   unavailable,
 
   /// Routing answered, with no itinerary for this pair.

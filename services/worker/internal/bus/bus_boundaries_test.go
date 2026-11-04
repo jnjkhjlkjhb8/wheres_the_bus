@@ -120,14 +120,14 @@ func TestBusStopSnapshotPreservesPlateSpeedCrowdAndLastBus(t *testing.T) {
 	if got := r.liveStopHistory(b, eta, 0, eta.SrcUpdateTime, key); got == nil || *got != "at" || *r.historyRows[1][17].(*int16) != 17 {
 		t.Fatalf("near-stop fallback=%v", r.historyRows)
 	}
-	r.appendStationStop(b, eta, 0, 0, "", key, now.Unix(), plate)
-	r.appendRouteStop(b, eta, 0, 0, "", key, now.Unix(), plate)
+	r.appendStationStop(b, eta, 0, 0, "", key, now.Unix(), plate, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)
+	r.appendRouteStop(b, eta, 0, 0, "", key, now.Unix(), plate, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)
 	if !r.stations["group"].Routes[0].IsLastBus || !r.routes["route"].Stops[0].IsLastBus {
 		t.Fatal("last-bus flag lost")
 	}
 	eta.IsLastBus = 0
-	r.appendStationStop(b, eta, 0, 0, "", key, 0, nil)
-	r.appendRouteStop(b, eta, 0, 0, "", key, 0, nil)
+	r.appendStationStop(b, eta, 0, 0, "", key, 0, nil, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)
+	r.appendRouteStop(b, eta, 0, 0, "", key, 0, nil, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)
 	if r.stations["group"].Routes[1].IsLastBus || r.routes["route"].Stops[1].IsLastBus {
 		t.Fatal("ordinary bus marked last")
 	}

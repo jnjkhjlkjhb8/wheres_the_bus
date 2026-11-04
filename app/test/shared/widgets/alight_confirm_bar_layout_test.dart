@@ -14,7 +14,11 @@ ColorScheme _scheme(WidgetTester tester) =>
     Theme.of(tester.element(find.byType(Scaffold))).colorScheme;
 
 Future<void> _mount(WidgetTester tester, Widget bar) => tester.pumpWidget(
-  i18nApp(Scaffold(body: Align(alignment: Alignment.bottomCenter, child: bar))),
+  i18nApp(
+    Scaffold(
+      body: Align(alignment: Alignment.bottomCenter, child: bar),
+    ),
+  ),
 );
 
 Widget _confirm({
@@ -82,17 +86,21 @@ void main() {
       await _mount(tester, _confirm());
       final scheme = _scheme(tester);
       final material = tester.widget<Material>(
-        find.descendant(
-          of: find.byType(AlightConfirmBar),
-          matching: find.byType(Material),
-        ).first,
+        find
+            .descendant(
+              of: find.byType(AlightConfirmBar),
+              matching: find.byType(Material),
+            )
+            .first,
       );
       expect(material.color, scheme.surface);
       final dock = tester.widget<Container>(
-        find.descendant(
-          of: find.byType(SafeArea),
-          matching: find.byType(Container),
-        ).first,
+        find
+            .descendant(
+              of: find.byType(SafeArea),
+              matching: find.byType(Container),
+            )
+            .first,
       );
       expect(dock.constraints?.maxWidth, double.infinity);
       expect(
@@ -113,7 +121,12 @@ void main() {
       final safe = tester.widget<SafeArea>(find.byType(SafeArea));
       expect(safe.top, isFalse);
       final column = tester.widget<Column>(
-        find.descendant(of: find.byType(SafeArea), matching: find.byType(Column)).first,
+        find
+            .descendant(
+              of: find.byType(SafeArea),
+              matching: find.byType(Column),
+            )
+            .first,
       );
       expect(column.mainAxisSize, MainAxisSize.min);
       expect(column.crossAxisAlignment, CrossAxisAlignment.start);
@@ -187,10 +200,12 @@ void main() {
       await _mount(tester, _confirm(target: '很長的站名' * 20));
       final scheme = _scheme(tester);
       final pill = tester.widget<Container>(
-        find.ancestor(
-          of: find.byIcon(Icons.close_rounded),
-          matching: find.byType(Container),
-        ).first,
+        find
+            .ancestor(
+              of: find.byIcon(Icons.close_rounded),
+              matching: find.byType(Container),
+            )
+            .first,
       );
       expect(
         pill.padding,
@@ -239,12 +254,14 @@ void main() {
     ) async {
       await _mount(tester, _confirm(onRepick: () {}));
       final scheme = _scheme(tester);
-      final pressables = tester.widgetList<Pressable>(
-        find.descendant(
-          of: find.byType(AlightConfirmBar),
-          matching: find.byType(Pressable),
-        ),
-      ).toList();
+      final pressables = tester
+          .widgetList<Pressable>(
+            find.descendant(
+              of: find.byType(AlightConfirmBar),
+              matching: find.byType(Pressable),
+            ),
+          )
+          .toList();
       expect(pressables[0].semanticLabel, zhStrings.alightRepick);
       expect(pressables[0].minTapSize, 44);
       expect(pressables[1].semanticLabel, zhStrings.commonClose);
@@ -253,7 +270,12 @@ void main() {
       expect(repick.style?.fontWeight, FontWeight.w600);
       expect(repick.style?.color, scheme.onSurface);
       final repickPadding = tester.widget<Padding>(
-        find.ancestor(of: find.text(zhStrings.alightRepick), matching: find.byType(Padding)).first,
+        find
+            .ancestor(
+              of: find.text(zhStrings.alightRepick),
+              matching: find.byType(Padding),
+            )
+            .first,
       );
       expect(
         repickPadding.padding,
@@ -266,7 +288,12 @@ void main() {
       expect(close.size, 18);
       expect(close.color, scheme.onSurfaceVariant);
       final closePadding = tester.widget<Padding>(
-        find.ancestor(of: find.byIcon(Icons.close_rounded), matching: find.byType(Padding)).first,
+        find
+            .ancestor(
+              of: find.byIcon(Icons.close_rounded),
+              matching: find.byType(Padding),
+            )
+            .first,
       );
       expect(closePadding.padding, const EdgeInsets.all(AppTheme.space4));
     });
@@ -292,30 +319,62 @@ void main() {
       await tester.tap(find.byIcon(Icons.remove_rounded));
       await tester.tap(find.byIcon(Icons.add_rounded));
       expect(seen, isEmpty);
-      expect(tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled, isFalse);
-      expect(tester.widget<Pressable>(_step(Icons.add_rounded)).enabled, isFalse);
+      expect(
+        tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled,
+        isFalse,
+      );
+      expect(
+        tester.widget<Pressable>(_step(Icons.add_rounded)).enabled,
+        isFalse,
+      );
     });
 
     testWidgets('one inside either end keeps both live', (tester) async {
       await _mount(tester, _confirm(lead: 2, leadMin: 1, leadMax: 3));
-      expect(tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled, isTrue);
-      expect(tester.widget<Pressable>(_step(Icons.add_rounded)).enabled, isTrue);
+      expect(
+        tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled,
+        isTrue,
+      );
+      expect(
+        tester.widget<Pressable>(_step(Icons.add_rounded)).enabled,
+        isTrue,
+      );
       await _mount(tester, _confirm(lead: 1, leadMin: 1, leadMax: 3));
-      expect(tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled, isFalse);
-      expect(tester.widget<Pressable>(_step(Icons.add_rounded)).enabled, isTrue);
+      expect(
+        tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled,
+        isFalse,
+      );
+      expect(
+        tester.widget<Pressable>(_step(Icons.add_rounded)).enabled,
+        isTrue,
+      );
       await _mount(tester, _confirm(lead: 3, leadMin: 1, leadMax: 3));
-      expect(tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled, isTrue);
-      expect(tester.widget<Pressable>(_step(Icons.add_rounded)).enabled, isFalse);
+      expect(
+        tester.widget<Pressable>(_step(Icons.remove_rounded)).enabled,
+        isTrue,
+      );
+      expect(
+        tester.widget<Pressable>(_step(Icons.add_rounded)).enabled,
+        isFalse,
+      );
     });
 
     testWidgets('step buttons are 44 point outlined squares', (tester) async {
       await _mount(tester, _confirm(lead: 0, leadMin: 0, leadMax: 3));
       final scheme = _scheme(tester);
       final minus = tester.widget<Container>(
-        find.descendant(of: _step(Icons.remove_rounded), matching: find.byType(Container)),
+        find.descendant(
+          of: _step(Icons.remove_rounded),
+          matching: find.byType(Container),
+        ),
       );
       expect(
-        tester.getSize(find.descendant(of: _step(Icons.remove_rounded), matching: find.byType(Container))),
+        tester.getSize(
+          find.descendant(
+            of: _step(Icons.remove_rounded),
+            matching: find.byType(Container),
+          ),
+        ),
         const Size(44, 44),
       );
       final decoration = minus.decoration! as BoxDecoration;
@@ -390,12 +449,15 @@ void main() {
     ) async {
       await _mount(tester, _confirm());
       final scheme = _scheme(tester);
-      final bar = find.ancestor(
-        of: find.text(zhStrings.mrtAlightStart),
-        matching: find.byType(Container),
-      ).first;
+      final bar = find
+          .ancestor(
+            of: find.text(zhStrings.mrtAlightStart),
+            matching: find.byType(Container),
+          )
+          .first;
       expect(tester.getSize(bar).height, 48);
-      final decoration = tester.widget<Container>(bar).decoration! as BoxDecoration;
+      final decoration =
+          tester.widget<Container>(bar).decoration! as BoxDecoration;
       expect(decoration.color, scheme.onSurface);
       expect(
         decoration.borderRadius,
@@ -406,9 +468,14 @@ void main() {
       expect(label.style?.color, scheme.surface);
       expect(label.style?.fontSize, AppTextStyles.bodyLarge.fontSize);
       expect(
-        tester.widget<Pressable>(
-          find.ancestor(of: find.text(zhStrings.mrtAlightStart), matching: find.byType(Pressable)),
-        ).semanticLabel,
+        tester
+            .widget<Pressable>(
+              find.ancestor(
+                of: find.text(zhStrings.mrtAlightStart),
+                matching: find.byType(Pressable),
+              ),
+            )
+            .semanticLabel,
         zhStrings.mrtAlightStart,
       );
     });
@@ -420,10 +487,12 @@ void main() {
       var starts = 0;
       await _mount(tester, _confirm(canStart: false, onStart: () => starts++));
       final scheme = _scheme(tester);
-      final bar = find.ancestor(
-        of: find.text(zhStrings.mrtAlightStart),
-        matching: find.byType(Container),
-      ).first;
+      final bar = find
+          .ancestor(
+            of: find.text(zhStrings.mrtAlightStart),
+            matching: find.byType(Container),
+          )
+          .first;
       expect(
         (tester.widget<Container>(bar).decoration! as BoxDecoration).color,
         scheme.surfaceContainerHighest,
@@ -451,22 +520,29 @@ void main() {
       expect(spinner.color, scheme.surface);
       expect(
         tester.getSize(
-          find.ancestor(
-            of: find.byType(CircularProgressIndicator),
-            matching: find.byType(SizedBox),
-          ).first,
+          find
+              .ancestor(
+                of: find.byType(CircularProgressIndicator),
+                matching: find.byType(SizedBox),
+              )
+              .first,
         ),
         const Size(20, 20),
       );
-      final bar = find.ancestor(
-        of: find.byType(CircularProgressIndicator),
-        matching: find.byType(Container),
-      ).first;
+      final bar = find
+          .ancestor(
+            of: find.byType(CircularProgressIndicator),
+            matching: find.byType(Container),
+          )
+          .first;
       expect(
         (tester.widget<Container>(bar).decoration! as BoxDecoration).color,
         scheme.surfaceContainerHighest,
       );
-      await tester.tap(find.byType(CircularProgressIndicator), warnIfMissed: false);
+      await tester.tap(
+        find.byType(CircularProgressIndicator),
+        warnIfMissed: false,
+      );
       expect(starts, 0);
     });
   });
@@ -492,10 +568,12 @@ void main() {
       final scheme = _scheme(tester);
       expect(find.text(zhStrings.alightArmedSummary('板橋', 2)), findsOneWidget);
       final card = tester.widget<Container>(
-        find.ancestor(
-          of: find.text(zhStrings.alightArmedSummary('板橋', 2)),
-          matching: find.byType(Container),
-        ).first,
+        find
+            .ancestor(
+              of: find.text(zhStrings.alightArmedSummary('板橋', 2)),
+              matching: find.byType(Container),
+            )
+            .first,
       );
       expect(
         card.padding,
@@ -537,9 +615,17 @@ void main() {
       );
       final scheme = _scheme(tester);
       BoxDecoration buttonDecoration(String label) =>
-          tester.widget<Container>(
-            find.ancestor(of: find.text(label), matching: find.byType(Container)).first,
-          ).decoration! as BoxDecoration;
+          tester
+                  .widget<Container>(
+                    find
+                        .ancestor(
+                          of: find.text(label),
+                          matching: find.byType(Container),
+                        )
+                        .first,
+                  )
+                  .decoration!
+              as BoxDecoration;
       expect(
         buttonDecoration(zhStrings.commonClose).border,
         Border.all(color: Colors.transparent),
@@ -553,11 +639,23 @@ void main() {
         scheme.onSurfaceVariant,
       );
       expect(
-        tester.widget<Text>(find.text(zhStrings.alightCancelReminder)).style?.color,
+        tester
+            .widget<Text>(find.text(zhStrings.alightCancelReminder))
+            .style
+            ?.color,
         scheme.onSurface,
       );
       expect(
-        tester.getSize(find.ancestor(of: find.text(zhStrings.commonClose), matching: find.byType(Container)).first).height,
+        tester
+            .getSize(
+              find
+                  .ancestor(
+                    of: find.text(zhStrings.commonClose),
+                    matching: find.byType(Container),
+                  )
+                  .first,
+            )
+            .height,
         44,
       );
 
@@ -572,10 +670,20 @@ void main() {
     testWidgets('the two buttons share the row, 10 apart', (tester) async {
       await _mount(tester, manage());
       final close = tester.getRect(
-        find.ancestor(of: find.text(zhStrings.commonClose), matching: find.byType(Container)).first,
+        find
+            .ancestor(
+              of: find.text(zhStrings.commonClose),
+              matching: find.byType(Container),
+            )
+            .first,
       );
       final cancel = tester.getRect(
-        find.ancestor(of: find.text(zhStrings.alightCancelReminder), matching: find.byType(Container)).first,
+        find
+            .ancestor(
+              of: find.text(zhStrings.alightCancelReminder),
+              matching: find.byType(Container),
+            )
+            .first,
       );
       expect(cancel.left - close.right, AppTheme.space10);
       expect(close.width, cancel.width);
@@ -587,7 +695,12 @@ void main() {
       await _mount(tester, manage());
       final children = tester
           .widget<Column>(
-            find.descendant(of: find.byType(SafeArea), matching: find.byType(Column)).first,
+            find
+                .descendant(
+                  of: find.byType(SafeArea),
+                  matching: find.byType(Column),
+                )
+                .first,
           )
           .children;
       expect(children, hasLength(3));

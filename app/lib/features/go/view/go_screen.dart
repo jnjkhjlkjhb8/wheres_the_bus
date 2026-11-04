@@ -6,10 +6,10 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
@@ -33,6 +33,7 @@ import 'package:wheres_the_bus/features/go/widgets/route_option_card.dart';
 import 'package:wheres_the_bus/features/go/widgets/transit_visuals.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/map/map_color_scheme.dart';
+import 'package:wheres_the_bus/shared/map/motion_aware_camera.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_badge.dart';
@@ -44,6 +45,7 @@ import 'package:wheres_the_bus/shared/widgets/app_range_slider.dart';
 import 'package:wheres_the_bus/shared/widgets/app_slider.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
+import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/app_switch.dart';
 import 'package:wheres_the_bus/shared/widgets/app_time_picker.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
@@ -94,7 +96,7 @@ class _GoScreenState extends State<GoScreen> {
   OriginStatus _originStatus = OriginStatus.resolving;
   PlannedPlace? _dest;
   PlanOptions _options = const PlanOptions();
-  // What the live planner honours. Starts at the five both backends share, so
+  // What the live planner honours. Starts at the five core options, so
   // the options sheet is never empty and never offers a control that silently
   // does nothing; the real answer replaces it as soon as /api/planner responds.
   PlannerCapabilities _capabilities = const PlannerCapabilities.shared();
@@ -315,9 +317,19 @@ class _GoScreenState extends State<GoScreen> {
   // map with nothing on it; the origin and the typed options survive.
   void _cancelPlan() {
     unawaited(HapticService.instance.lightTap());
+    _clearDestination();
+  }
+
+  void _clearDestination() {
     context.read<PlanBloc>().add(const PlanSearchCancelled());
     setState(() => _dest = null);
   }
+
+  // A destination the rider picked here is worth stepping back out of; one the
+  // caller handed in (a station's "go here") is the screen's reason to exist,
+  // so back from its results returns to that station instead.
+  bool get _destinationIsOurs =>
+      _dest != null && !identical(_dest, widget.initialDestination);
 
   PlanRoute? _lastRouteForTrip(List<PlanRoute> saved) {
     final from = _origin?.latLng;
@@ -685,9 +697,9 @@ class _GoScreenState extends State<GoScreen> {
     final selectedIndex = _selectedIndex(state);
     _layer = _plannerLayer(context, state, result, selectedIndex, route);
     // Back walks the phases outward: navigating → end nav, previewing →
-    // results list, results → leave the screen.
+    // results list, results → destination form, form → leave the screen.
     return PopScope(
-      canPop: !navigating && !previewing,
+      canPop: !navigating && !previewing && !_destinationIsOurs,
       onPopInvokedWithResult: (didPop, _) =>
           _plannerBack(didPop, navigating, previewing),
       child: Scaffold(
@@ -757,6 +769,8 @@ class _GoScreenState extends State<GoScreen> {
       _endNav();
     } else if (previewing) {
       _closePreview();
+    } else {
+      _clearDestination();
     }
   }
 
@@ -781,7 +795,7 @@ class _GoScreenState extends State<GoScreen> {
           onPickDestination: _pickDestination,
           onOpenSaved: _openSaved,
           onToggleSave: _toggleSave,
-          onBack: () => context.pop(),
+          onBack: context.popOrHome,
           onEnableLocation: () => unawaited(_initOrigin()),
           onRetrySavedRoutes: () => context.read<PlanBloc>().add(
             const SavedRoutesLoaded(),

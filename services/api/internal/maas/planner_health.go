@@ -23,23 +23,12 @@ const (
 	_plannerHealthThreshold = 2
 )
 
-// PlannerBackend names who answers a plan request.
-type PlannerBackend string
-
-const (
-	_plannerMotis PlannerBackend = "motis"
-	_plannerTDX   PlannerBackend = "tdx"
-)
-
 // PlannerStatus is one observation of the planner, as /api/planner reports it.
 type PlannerStatus struct {
-	// Backend is who answers right now.
-	Backend PlannerBackend `json:"backend"`
-	// Pinned is true when the operator selected the backend explicitly, in
-	// which case health is not consulted at all.
-	Pinned bool `json:"pinned"`
+	// Backend is always motis; the app, including older builds, reads it.
+	Backend string `json:"backend"`
 	// Healthy is MOTIS's own verdict: has it completed an update cycle over
-	// every configured feed. Meaningless when Backend is pinned to tdx.
+	// every configured feed. Informational: plan requests go to MOTIS either way.
 	Healthy bool `json:"healthy"`
 	// Realtime and Bikeshare are the two feeds that verdict is composed of, so
 	// a degraded state says which half is degraded.
@@ -61,9 +50,9 @@ type PlannerHealthMonitor struct {
 	now       func() time.Time
 
 	mu sync.RWMutex
-	// healthy starts true: MAAS_BACKEND=motis is the operator stating intent,
-	// and this exists to detect degradation, not to gate startup. Start runs
-	// one check immediately, so the optimistic window is a single request wide.
+	// healthy starts true: this exists to detect degradation, not to gate
+	// startup. Start runs one check immediately, so the optimistic window is a
+	// single request wide.
 	healthy   bool
 	realtime  bool
 	bikeshare bool
@@ -75,8 +64,7 @@ type PlannerHealthMonitor struct {
 	agreeing int
 }
 
-// newPlannerHealthMonitor builds the monitor. A nil client pins the planner to
-// TDX; that is the MAAS_BACKEND=tdx case, where no MOTIS client exists.
+// NewPlannerHealthMonitor builds the monitor over a MOTIS health client.
 func NewPlannerHealthMonitor(client *resty.Client) *PlannerHealthMonitor {
 	return &PlannerHealthMonitor{
 		client:    client,
@@ -99,9 +87,6 @@ func NewMotisHealthClient(baseURL string) *resty.Client {
 // returns after the first check so the router's first request already has a
 // real answer rather than the optimistic default.
 func (m *PlannerHealthMonitor) Start(ctx context.Context) {
-	if m == nil || m.client == nil {
-		return
-	}
 	m.check(ctx)
 	go m.poll(ctx)
 }
@@ -183,40 +168,21 @@ func (m *PlannerHealthMonitor) observe(healthy bool, body motisHealthResponse, r
 	m.reason = reason
 	m.mu.Unlock()
 
-	// Logged outside the lock, and at Error level on the way down: a rider-
-	// visible backend change is exactly the kind of thing that must not be
-	// discoverable only by reading /api/planner at the right moment.
+	// Logged outside the lock, and at Error level on the way down, so a MOTIS
+	// with stale feeds is not discoverable only by reading /api/planner.
 	if healthy {
-		zap.S().Warnw("planner backend restored",
-			"component", "planner", "action", "health", "event", "backend_restored",
-			"backend", _plannerMotis, "reason", reason)
+		zap.S().Warnw("planner health restored",
+			"component", "planner", "action", "health", "event", "health_restored",
+			"reason", reason)
 		return
 	}
-	zap.S().Errorw("planner fell back to TDX",
-		"component", "planner", "action", "health", "event", "backend_fallback",
-		"backend", _plannerTDX, "reason", reason)
-}
-
-// UseMotis reports whether a plan request should go to MOTIS. A nil monitor or
-// a nil client means the operator pinned TDX.
-func (m *PlannerHealthMonitor) UseMotis() bool {
-	if m == nil || m.client == nil {
-		return false
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.healthy
+	zap.S().Errorw("planner unhealthy",
+		"component", "planner", "action", "health", "event", "health_degraded",
+		"reason", reason)
 }
 
 // Status renders the current observation.
 func (m *PlannerHealthMonitor) Status() PlannerStatus {
-	if m == nil || m.client == nil {
-		return PlannerStatus{
-			Backend: _plannerTDX,
-			Pinned:  true,
-			Reason:  "MAAS_BACKEND=tdx; MOTIS is not consulted",
-		}
-	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.statusLocked()
@@ -224,14 +190,11 @@ func (m *PlannerHealthMonitor) Status() PlannerStatus {
 
 func (m *PlannerHealthMonitor) statusLocked() PlannerStatus {
 	status := PlannerStatus{
-		Backend:   _plannerTDX,
+		Backend:   "motis",
 		Healthy:   m.healthy,
 		Realtime:  m.realtime,
 		Bikeshare: m.bikeshare,
 		Reason:    m.reason,
-	}
-	if m.healthy {
-		status.Backend = _plannerMotis
 	}
 	status.CheckedAt = observedTime(m.checkedAt)
 	status.ChangedAt = observedTime(m.changedAt)

@@ -115,7 +115,7 @@ func TestGeocodeAcceptsQueryAndCoordinateBoundaries(t *testing.T) {
 		_, _ = w.Write([]byte(`[]`))
 	}))
 	defer upstream.Close()
-	router := geocodeTestRouter(t, upstream.URL, true)
+	router := geocodeTestRouter(t, upstream.URL)
 	for _, tc := range []struct{ lat, lon, place string }{
 		{"90", "121.5", "90.000000,121.500000"},
 		{"-90", "121.5", "-90.000000,121.500000"},
@@ -144,7 +144,7 @@ func TestGeocodeUpstreamDiagnosticKeepsHTTPStatus(t *testing.T) {
 	}))
 	defer upstream.Close()
 	recorder := httptest.NewRecorder()
-	geocodeTestRouter(t, upstream.URL, true).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, GeocodePath+"?text=station", nil))
+	geocodeTestRouter(t, upstream.URL).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, GeocodePath+"?text=station", nil))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("failed geocode response = %d, want 503", recorder.Code)
 	}

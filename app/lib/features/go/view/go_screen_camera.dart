@@ -8,7 +8,7 @@ extension _GoScreenCamera on _GoScreenState {
     if (map == null) return;
     _programmaticMoves++;
     try {
-      await map.animateCamera(update);
+      await map.moveOrAnimate(update, reduced: AppMotion.reduced(context));
     } finally {
       _programmaticMoves--;
       _lastProgrammaticMove = DateTime.now();

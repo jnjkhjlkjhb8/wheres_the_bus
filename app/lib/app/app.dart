@@ -294,7 +294,6 @@ class _AppShellViewState extends State<_AppShellView> {
     return ValueListenableBuilder<Box<dynamic>>(
       valueListenable: HiveStore.settings.listenable(
         keys: const [
-          'large_text',
           'appearance_mode',
           SettingsRepository.languageKey,
         ],
@@ -321,20 +320,11 @@ class _AppShellViewState extends State<_AppShellView> {
             devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
             textScaler: MediaQuery.textScalerOf(context),
           );
-          // Reduce-motion swaps the shimmer sweep for a flat fill: the
-          // skeleton still says "this is content, not chrome" without a
-          // moving highlight. One override for every skeleton in the app.
-          final theme = Theme.of(context);
-          final skeleton = theme.extension<SkeletonizerConfigData>();
           final gated = UpdateGate(child: NotificationToastHost(child: base));
-          if (skeleton == null || !MediaQuery.disableAnimationsOf(context)) {
-            return gated;
-          }
           return SkeletonizerConfig(
-            data: skeleton.copyWith(
-              effect: SolidColorEffect(
-                color: theme.colorScheme.surfaceContainerHighest,
-              ),
+            data: AppTheme.skeleton(
+              Theme.of(context).colorScheme,
+              reduceMotion: MediaQuery.disableAnimationsOf(context),
             ),
             child: gated,
           );

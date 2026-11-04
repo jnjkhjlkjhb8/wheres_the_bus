@@ -24,6 +24,7 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/filter_chip_group.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
@@ -281,13 +282,15 @@ class _SearchViewState extends State<_SearchView> {
                     child: Container(
                       // minHeight, not a fixed height: at large text scales the
                       // field has to grow with its content instead of clipping
-                      // it (Settings offers a large-text mode).
+                      // it.
                       constraints: const BoxConstraints(
                         minHeight: _minTouchTarget,
                       ),
                       decoration: BoxDecoration(
                         color: cs.surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusCard,
+                        ),
                         boxShadow: AppShadows.cardFor(cs.brightness),
                       ),
                       padding: const EdgeInsets.symmetric(
@@ -500,27 +503,29 @@ class _SearchViewState extends State<_SearchView> {
     SearchState state,
     ColorScheme cs,
     double bottomPad,
-  ) => ListView.separated(
-    // Results sit behind the keyboard on a phone; dragging the
-    // list is the reflex for getting it out of the way.
-    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-    padding: EdgeInsets.only(
-      bottom: bottomPad + AppTheme.space16,
+  ) => EdgeFade(
+    child: ListView.separated(
+      // Results sit behind the keyboard on a phone; dragging the
+      // list is the reflex for getting it out of the way.
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: EdgeInsets.only(
+        bottom: bottomPad + AppTheme.space16,
+      ),
+      itemCount: state.results.length,
+      separatorBuilder: (_, _) => Divider(
+        height: 1,
+        thickness: 0.5,
+        color: cs.outlineVariant,
+      ),
+      itemBuilder: (context, index) {
+        final result = state.results[index];
+        return _SearchResultRow(
+          result: result,
+          transportType: _transportType(result.type),
+          onTap: () => _navigateToResult(context, result),
+        );
+      },
     ),
-    itemCount: state.results.length,
-    separatorBuilder: (_, _) => Divider(
-      height: 1,
-      thickness: 0.5,
-      color: cs.outlineVariant,
-    ),
-    itemBuilder: (context, index) {
-      final result = state.results[index];
-      return _SearchResultRow(
-        result: result,
-        transportType: _transportType(result.type),
-        onTap: () => _navigateToResult(context, result),
-      );
-    },
   );
 }
 

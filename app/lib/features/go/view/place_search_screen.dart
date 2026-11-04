@@ -19,8 +19,10 @@ import 'package:wheres_the_bus/features/go/widgets/save_place_dialog.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 
 Future<PlannedPlace> resolveCurrentPlace(AppI18n i18n) async {
   Position pos;
@@ -376,20 +378,7 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
       ),
       child: Row(
         children: [
-          if (widget.onBack != null)
-            Pressable(
-              onTap: widget.onBack,
-              semanticLabel: AppI18n.of(context).commonBack,
-              child: SizedBox(
-                width: 40,
-                height: 44,
-                child: Icon(
-                  Icons.arrow_back_rounded,
-                  size: 22,
-                  color: cs.onSurface,
-                ),
-              ),
-            ),
+          if (widget.onBack != null) AppBarBackButton(onTap: widget.onBack),
           Expanded(
             child: Container(
               height: 44,
@@ -447,14 +436,16 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
   Widget _buildResults(BuildContext context, PlaceSearchState state) {
     if (_resultsLoading(state)) return const _PlaceSkeleton();
     if (state.results.isEmpty) return const _PlaceEmpty();
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: AppTheme.space24),
-      itemCount: state.results.length,
-      itemBuilder: (context, i) => _ResultRow(
-        result: state.results[i],
-        loading: state.pickingId == state.results[i].placeId,
-        onTap: () => _resolve(state.results[i], ResolveIntent.pick),
-        onSave: () => _resolve(state.results[i], ResolveIntent.save),
+    return EdgeFade(
+      child: ListView.builder(
+        padding: const EdgeInsets.only(bottom: AppTheme.space24),
+        itemCount: state.results.length,
+        itemBuilder: (context, i) => _ResultRow(
+          result: state.results[i],
+          loading: state.pickingId == state.results[i].placeId,
+          onTap: () => _resolve(state.results[i], ResolveIntent.pick),
+          onSave: () => _resolve(state.results[i], ResolveIntent.save),
+        ),
       ),
     );
   }
@@ -463,43 +454,45 @@ class _PlaceSearchViewState extends State<PlaceSearchView> {
       state.loading && state.results.isEmpty;
 
   Widget _buildShortcuts(BuildContext context, PlaceSearchState state) {
-    return ListView(
-      key: const ValueKey('shortcuts'),
-      padding: const EdgeInsets.only(bottom: AppTheme.space24),
-      children: [
-        if (widget.header != null) widget.header!,
-        if (widget.allowCurrentLocation)
-          _CurrentLocationRow(
-            loading: state.resolvingLocation,
-            onTap: _useCurrentLocation,
-          ),
-        if (state.saved.isEmpty &&
-            state.recents.isEmpty &&
-            widget.emptyHint != null)
-          _EmptyHint(widget.emptyHint!),
-        if (state.saved.isNotEmpty) ...[
-          _SectionLabel(AppI18n.of(context).goSavedPlaces),
-          for (final place in state.saved)
-            _SavedPlaceRow(
-              key: ValueKey('saved-${_placeKey(place)}'),
-              place: place,
-              onTap: () => _pickPlace(place),
-              onEdit: () => unawaited(_promptEdit(place)),
-              onRemove: () => _removeSaved(place),
+    return EdgeFade(
+      child: ListView(
+        key: const ValueKey('shortcuts'),
+        padding: const EdgeInsets.only(bottom: AppTheme.space24),
+        children: [
+          if (widget.header != null) widget.header!,
+          if (widget.allowCurrentLocation)
+            _CurrentLocationRow(
+              loading: state.resolvingLocation,
+              onTap: _useCurrentLocation,
             ),
+          if (state.saved.isEmpty &&
+              state.recents.isEmpty &&
+              widget.emptyHint != null)
+            _EmptyHint(widget.emptyHint!),
+          if (state.saved.isNotEmpty) ...[
+            _SectionLabel(AppI18n.of(context).goSavedPlaces),
+            for (final place in state.saved)
+              _SavedPlaceRow(
+                key: ValueKey('saved-${_placeKey(place)}'),
+                place: place,
+                onTap: () => _pickPlace(place),
+                onEdit: () => unawaited(_promptEdit(place)),
+                onRemove: () => _removeSaved(place),
+              ),
+          ],
+          if (state.recents.isNotEmpty) ...[
+            _SectionLabel(AppI18n.of(context).searchRecent),
+            for (final place in state.recents)
+              _RecentPlaceRow(
+                key: ValueKey('recent-${_placeKey(place)}'),
+                place: place,
+                onTap: () => _pickPlace(place),
+                onSave: () => unawaited(_promptSave(place)),
+                onRemove: () => _removeRecent(place),
+              ),
+          ],
         ],
-        if (state.recents.isNotEmpty) ...[
-          _SectionLabel(AppI18n.of(context).searchRecent),
-          for (final place in state.recents)
-            _RecentPlaceRow(
-              key: ValueKey('recent-${_placeKey(place)}'),
-              place: place,
-              onTap: () => _pickPlace(place),
-              onSave: () => unawaited(_promptSave(place)),
-              onRemove: () => _removeRecent(place),
-            ),
-        ],
-      ],
+      ),
     );
   }
 

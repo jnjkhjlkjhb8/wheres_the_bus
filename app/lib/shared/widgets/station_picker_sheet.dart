@@ -6,6 +6,7 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_search_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 
 class StationPickerSheet extends StatefulWidget {
   const StationPickerSheet({required this.stations, super.key});
@@ -46,13 +47,20 @@ class _StationPickerSheetState extends State<StationPickerSheet> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            itemCount: filtered.length,
-            itemBuilder: (_, i) => Pressable(
-              onTap: () => Navigator.of(context).pop(filtered[i]),
-              semanticLabel: filtered[i],
-              child: ListTile(
-                title: Text(filtered[i], style: AppTextStyles.bodyLarge),
+          child: EdgeFade(
+            child: ListView.builder(
+              itemCount: filtered.length,
+              itemBuilder: (_, i) => Pressable(
+                onTap: () => Navigator.of(context).pop(filtered[i]),
+                semanticLabel: filtered[i],
+                child: Container(
+                  alignment: Alignment.centerLeft,
+                  constraints: const BoxConstraints(minHeight: 56),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.space16,
+                  ),
+                  child: Text(filtered[i], style: AppTextStyles.bodyLarge),
+                ),
               ),
             ),
           ),

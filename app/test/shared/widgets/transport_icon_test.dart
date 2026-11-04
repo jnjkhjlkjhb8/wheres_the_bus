@@ -1,20 +1,27 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
+import '../../support/helpers/remote_assets.dart';
+
 void main() {
+  setUp(seedRemoteAssets);
+
   const assets = <TransportType, String>{
-    TransportType.thsr: 'assets/rails/THSR.svg',
-    TransportType.tra: 'assets/rails/TRA.svg',
-    TransportType.mrtBL: 'assets/mrt/TRTC/BL.svg',
-    TransportType.mrtR: 'assets/mrt/TRTC/R.svg',
-    TransportType.mrtG: 'assets/mrt/TRTC/G.svg',
-    TransportType.mrtO: 'assets/mrt/TRTC/O.svg',
-    TransportType.mrtBR: 'assets/mrt/TRTC/BR.svg',
-    TransportType.mrtY: 'assets/mrt/TRTC/Y.svg',
+    TransportType.thsr: 'rails/THSR.svg',
+    TransportType.tra: 'rails/TRA.svg',
+    TransportType.mrtBL: 'mrt/TRTC/BL.svg',
+    TransportType.mrtR: 'mrt/TRTC/R.svg',
+    TransportType.mrtG: 'mrt/TRTC/G.svg',
+    TransportType.mrtO: 'mrt/TRTC/O.svg',
+    TransportType.mrtBR: 'mrt/TRTC/BR.svg',
+    TransportType.mrtY: 'mrt/TRTC/Y.svg',
   };
   const lineColors = <TransportType, Color>{
     TransportType.mrtAM: AppTheme.mrtAM,
@@ -46,7 +53,10 @@ void main() {
       final asset = assets[type];
       if (asset != null) {
         final picture = tester.widget<SvgPicture>(find.byType(SvgPicture));
-        expect((picture.bytesLoader as SvgAssetLoader).assetName, asset);
+        expect(
+          (picture.bytesLoader as SvgFileLoader).file.path,
+          endsWith(asset),
+        );
         expect(picture.width, 40);
         expect(picture.height, type == TransportType.thsr ? 20 : 40);
         final placeholder =
@@ -54,7 +64,7 @@ void main() {
                   tester.element(find.byType(SvgPicture)),
                 )
                 as Icon;
-        expect(placeholder.icon, Icons.directions_walk_rounded);
+        expect(placeholder.icon, Icons.train_rounded);
         expect(placeholder.size, 40);
         expect(placeholder.color, foreground);
       } else {
@@ -71,6 +81,32 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('a line icon not yet mirrored shows the material fallback', (
+    tester,
+  ) async {
+    RemoteAssets.instance.debugSeed(Directory.systemTemp, const {});
+    await tester.pumpWidget(
+      const MaterialApp(home: TransportIcon(type: TransportType.tra)),
+    );
+    expect(find.byType(SvgPicture), findsNothing);
+    expect(
+      tester.widget<Icon>(find.byType(Icon)).icon,
+      Icons.train_rounded,
+    );
+  });
+
+  testWidgets('walking keeps the walking figure as its own icon', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: TransportIcon(type: TransportType.walking)),
+    );
+    expect(
+      tester.widget<Icon>(find.byType(Icon)).icon,
+      Icons.directions_walk_rounded,
+    );
+  });
 
   testWidgets('the default icon size is 24', (tester) async {
     await tester.pumpWidget(

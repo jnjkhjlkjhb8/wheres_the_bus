@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/go-resty/resty/v2"
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,8 +28,7 @@ func TestMaasWorkConfigurationPreservesPositiveLimitsAndDefaultsNonpositive(t *t
 		{"custom", maasSharedWorkConfig{MaxConcurrent: 2, Timeout: 3 * time.Second}, 2, 3 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-			server := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, tc.config)
+			server := NewMaasServerWithCache(newControlledMaasCache(), nil, tc.config)
 			defer server.Close()
 			if server.workTimeout != tc.timeout {
 				t.Fatalf("work timeout = %v, want %v", server.workTimeout, tc.timeout)
@@ -48,31 +44,6 @@ func TestMaasWorkConfigurationPreservesPositiveLimitsAndDefaultsNonpositive(t *t
 				t.Fatalf("exhausted work limit error = %v", err)
 			}
 		})
-	}
-}
-
-func TestMaasRetryPolicyOnlyRetriesTransientUpstreamFailures(t *testing.T) {
-	for _, code := range []int{200, 400, 404, 429, 500, 503} {
-		response := &resty.Response{RawResponse: &http.Response{StatusCode: code}}
-		if got, want := shouldRetryMaas(response, nil), code == 429 || code == 503; got != want {
-			t.Errorf("retry HTTP %d = %v, want %v", code, got, want)
-		}
-	}
-	for _, tc := range []struct {
-		err  error
-		want bool
-	}{
-		{errors.New("connection reset"), true},
-		{fmt.Errorf("wrapped: %w", context.Canceled), false},
-		{fmt.Errorf("wrapped: %w", context.DeadlineExceeded), false},
-		{&shared.TDXAuthError{Err: errors.New("token unavailable")}, false},
-	} {
-		if got := shouldRetryMaas(nil, tc.err); got != tc.want {
-			t.Errorf("retry %v = %v", tc.err, got)
-		}
-	}
-	if shouldRetryMaas(nil, nil) {
-		t.Fatal("nil response requested retry")
 	}
 }
 

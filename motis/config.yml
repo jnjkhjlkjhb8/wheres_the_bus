@@ -6,8 +6,8 @@
 # inside the directory `motis import` produced -- not from here. Changing
 # anything below therefore takes effect on the next import, not on restart.
 #
-# The credential ends up on disk inside the motis_data volume. That is the same
-# exposure the rendered env files already have on this host, and there is no
+# The credential ends up on disk inside the MOTIS data directory (a PVC). That is no
+# more exposure than the motis-import container's own Secret, and there is no
 # other way to give MOTIS a bearer token: `headers:` is read from config.
 #
 # Paths are absolute so they do not depend on the import job's working
@@ -19,7 +19,7 @@ timetable:
   # TODAY is resolved when `motis import` runs, not when the server starts. Each
   # nightly pipeline run exports a new gtfs.zip, which changes the import's content
   # hash and so forces a rebuild -- that is what keeps the window moving. A run
-  # of nights where the loader fails leaves the window where it was and it
+  # of nights where the pipeline fails leaves the window where it was and it
   # eventually expires, which is the intended failure: stale is visible, wrong
   # is not.
   first_day: TODAY
@@ -40,8 +40,7 @@ timetable:
   http_timeout: 30
   datasets:
     taiwan:
-      # Filled in at import time: a pipeline run's own feed in k3s, the active
-      # (published) feed under compose.
+      # Filled in at import time: a pipeline run's own feed.
       path: __GTFS_PATH__
       # Bikes and cars on transit are not modelled in the feed; leaving these
       # true would let the planner invent a bike-on-bus leg.

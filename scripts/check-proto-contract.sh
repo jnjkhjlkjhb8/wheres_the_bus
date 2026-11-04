@@ -7,6 +7,8 @@ cd "$repo_root"
 BUF_VERSION="v1.71.0"
 tools_bin="$repo_root/.tools/bin"
 baseline_ref="${PROTO_BASELINE_REF:-HEAD}"
+# A push that creates a branch reports an all-zero `before` sha.
+[ "$baseline_ref" = 0000000000000000000000000000000000000000 ] && baseline_ref=HEAD
 
 echo "== proto contract (buf $BUF_VERSION, baseline: $baseline_ref) =="
 

@@ -54,8 +54,8 @@ type geocodeSuggestion struct {
 	Type      string  `json:"type"`
 }
 
-func RegisterGeocodeRoutes(r gin.IRoutes, baseURL string, mounted bool, limit gin.HandlerFunc) {
-	if !mounted || baseURL == "" {
+func RegisterGeocodeRoutes(r gin.IRoutes, baseURL string, limit gin.HandlerFunc) {
+	if baseURL == "" {
 		return
 	}
 	client := resty.New().SetBaseURL(baseURL).SetTimeout(_geocodeTimeout)

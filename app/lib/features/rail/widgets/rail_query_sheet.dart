@@ -269,6 +269,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
     final cs = Theme.of(context).colorScheme;
     final picked = await showModalBottomSheet<DateTime>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: cs.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
@@ -468,6 +469,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
                   ),
                   Pressable(
                     onTap: _swap,
+                    semanticLabel: AppI18n.of(context).goSwapEndpoints,
                     // 18px icon + 8px padding = 34px painted size; widen the
                     // hit target only, per the 44px touch-target floor.
                     minTapSize: 44,

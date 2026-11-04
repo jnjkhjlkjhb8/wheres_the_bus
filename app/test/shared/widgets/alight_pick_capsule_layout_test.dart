@@ -27,7 +27,9 @@ void main() {
       tester,
     ) async {
       await mount(tester);
-      final scheme = Theme.of(tester.element(find.byType(AlightPickCapsule))).colorScheme;
+      final scheme = Theme.of(
+        tester.element(find.byType(AlightPickCapsule)),
+      ).colorScheme;
       final container = tester.widget<Container>(
         find.descendant(
           of: find.byType(AlightPickCapsule),
@@ -52,13 +54,18 @@ void main() {
       tester,
     ) async {
       await mount(tester);
-      final scheme = Theme.of(tester.element(find.byType(AlightPickCapsule))).colorScheme;
+      final scheme = Theme.of(
+        tester.element(find.byType(AlightPickCapsule)),
+      ).colorScheme;
       final title = tester.widget<Text>(find.text(zhStrings.alightPickTitle));
       expect(title.style?.fontWeight, FontWeight.w600);
       expect(title.style?.color, scheme.surface);
       expect(title.style?.fontSize, AppTextStyles.bodyRegular.fontSize);
       final row = tester.widget<Row>(
-        find.descendant(of: find.byType(AlightPickCapsule), matching: find.byType(Row)),
+        find.descendant(
+          of: find.byType(AlightPickCapsule),
+          matching: find.byType(Row),
+        ),
       );
       expect(row.mainAxisSize, MainAxisSize.min);
     });
@@ -70,10 +77,16 @@ void main() {
       final icon = tester.widget<Icon>(find.byIcon(Icons.close_rounded));
       expect(icon.size, 18);
       final target = tester.getSize(
-        find.ancestor(of: find.byIcon(Icons.close_rounded), matching: find.byType(SizedBox)).first,
+        find
+            .ancestor(
+              of: find.byIcon(Icons.close_rounded),
+              matching: find.byType(SizedBox),
+            )
+            .first,
       );
       expect(target, const Size(40, 40));
-      final gap = tester.getRect(find.byType(Pressable)).left -
+      final gap =
+          tester.getRect(find.byType(Pressable)).left -
           tester.getRect(find.text(zhStrings.alightPickTitle)).right;
       expect(gap, AppTheme.space4);
       expect(
@@ -140,7 +153,12 @@ void main() {
         1,
       );
       final ignore = tester.widget<IgnorePointer>(
-        find.ancestor(of: find.byType(AnimatedOpacity), matching: find.byType(IgnorePointer)).first,
+        find
+            .ancestor(
+              of: find.byType(AnimatedOpacity),
+              matching: find.byType(IgnorePointer),
+            )
+            .first,
       );
       expect(ignore.ignoring, isFalse);
       await tester.tap(find.byIcon(Icons.close_rounded));
@@ -157,7 +175,12 @@ void main() {
         0,
       );
       final ignore = tester.widget<IgnorePointer>(
-        find.ancestor(of: find.byType(AnimatedOpacity), matching: find.byType(IgnorePointer)).first,
+        find
+            .ancestor(
+              of: find.byType(AnimatedOpacity),
+              matching: find.byType(IgnorePointer),
+            )
+            .first,
       );
       expect(ignore.ignoring, isTrue);
       await tester.tap(find.byIcon(Icons.close_rounded), warnIfMissed: false);

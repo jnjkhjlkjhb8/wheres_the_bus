@@ -100,7 +100,11 @@ func reportFullRawIngest(ctx context.Context, only map[string]bool) {
 	}
 }
 
-type rawIngestJob struct{ url, name string }
+// unserved jobs are landed as an empty partition without a request.
+type rawIngestJob struct {
+	url, name string
+	unserved  bool
+}
 
 func rawIngestJobs(only map[string]bool) []rawIngestJob {
 	var jobs []rawIngestJob
@@ -109,11 +113,45 @@ func rawIngestJobs(only map[string]bool) []rawIngestJob {
 			continue
 		}
 		for _, part := range d.Partitions() {
-			jobs = append(jobs, rawIngestJob{d.URL(part), d.Name(part)})
+			jobs = append(jobs, rawIngestJob{url: d.URL(part), name: d.Name(part)})
 		}
+		jobs = append(jobs, unservedRawIngestJobs(d)...)
 	}
 
 	return jobs
+}
+
+func unservedRawIngestJobs(d dataset.Spec) []rawIngestJob {
+	if d.Family != dataset.FamilyBusCity {
+		return nil
+	}
+	var jobs []rawIngestJob
+	for _, city := range dataset.AllCities() {
+		if dataset.BusUnserved(d.RawTable, city) {
+			jobs = append(jobs, rawIngestJob{url: d.URL(city), name: d.Name(city), unserved: true})
+		}
+	}
+	return jobs
+}
+
+// _unservedRawMarker stands in for Last-Modified on a partition landed without
+// a request; raw landing requires a non-empty marker.
+const _unservedRawMarker = "tdx-unserved"
+
+// landUnservedRaw is a variable so tests without a raw database can stub it.
+var landUnservedRaw = func(ctx context.Context, url, landingCycle string) error {
+	target, _ := raw.DumpTarget(url)
+	if err := raw.DumpReader(ctx, target, _unservedRawMarker, landingCycle, strings.NewReader("[]")); err != nil {
+		return _oops.With("url", url).Wrapf(err, "land unserved raw")
+	}
+	return nil
+}
+
+func runRawIngestJob(ctx context.Context, tdx rawFetcher, j rawIngestJob, landingCycle string, fullReland bool) error {
+	if j.unserved {
+		return landUnservedRaw(ctx, j.url, landingCycle)
+	}
+	return fetchRaw(ctx, tdx, j.url, j.name, landingCycle, fullReland)
 }
 func selectedRawDataset(d dataset.Spec, only map[string]bool) bool {
 	if !d.Fetched() {
@@ -132,7 +170,7 @@ func runRawIngestJobs(ctx context.Context, tdx rawFetcher, jobs []rawIngestJob, 
 		go func(j rawIngestJob) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := fetchRaw(ctx, tdx, j.url, j.name, landingCycle, fullReland); err != nil {
+			if err := runRawIngestJob(ctx, tdx, j, landingCycle, fullReland); err != nil {
 				failures <- err
 			}
 		}(j)

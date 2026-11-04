@@ -60,7 +60,12 @@ extension _HomeScreenLocationX on _HomeScreenState {
     // picks up the new _center on its own.
     final controller = _mapController;
     if (controller != null) {
-      unawaited(controller.animateCamera(CameraUpdate.newLatLng(target)));
+      unawaited(
+        controller.moveOrAnimate(
+          CameraUpdate.newLatLng(target),
+          reduced: AppMotion.reduced(context),
+        ),
+      );
     }
   }
 
@@ -95,7 +100,12 @@ extension _HomeScreenLocationX on _HomeScreenState {
       // decides; this only marks that search as the deliberate kind, which
       // earns the full sweep — see [_playScanSweep].
       _scanFromLocate = true;
-      unawaited(controller.animateCamera(CameraUpdate.newLatLng(target)));
+      unawaited(
+        controller.moveOrAnimate(
+          CameraUpdate.newLatLng(target),
+          reduced: AppMotion.reduced(context),
+        ),
+      );
     } on Object catch (e, s) {
       _setLocating(false);
       _handleLocationFailure(e, s);

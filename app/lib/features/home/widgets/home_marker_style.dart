@@ -2,6 +2,7 @@ import 'package:flutter/painting.dart' show Color;
 import 'package:google_maps_flutter/google_maps_flutter.dart'
     show BitmapDescriptor;
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/data/models/near_models.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
@@ -74,21 +75,32 @@ Future<BitmapDescriptor> _iconMarker(
   double size,
 ) {
   final asset = iconAsset(station);
-  // A missing asset aborts the whole marker frame, so unbundled line artwork
-  // keeps the existing colored-dot representation instead.
-  if (asset == null) {
+  if (asset != null) return MapMarkers.svgAsset(asset, size: size);
+  // A missing file aborts the whole marker frame, so artwork that is not
+  // bundled or not yet mirrored keeps the colored-dot representation.
+  final remote = remoteIconPath(station);
+  final mirrored = remote == null ? null : RemoteAssets.instance.lookup(remote);
+  if (mirrored == null) {
     return MapMarkers.dot(mrtColor(station.stationId), size: size);
   }
-  return MapMarkers.svgAsset(asset, size: size);
+  return MapMarkers.svgRemote(mirrored, size: size);
 }
 
 String? iconAsset(NearStationViewModel s) {
   return switch (s.type) {
     NearStationType.bus => 'assets/marker/Bus.svg',
     NearStationType.bike => 'assets/marker/bike.svg',
+    _ => null,
+  };
+}
+
+/// Icons the router serves; see [RemoteAssets].
+String? remoteIconPath(NearStationViewModel s) {
+  return switch (s.type) {
     NearStationType.mrt => _mrtIconAsset(s.stationId),
-    NearStationType.tra => 'assets/rails/TRA.svg',
-    NearStationType.thsr => 'assets/rails/THSR.svg',
+    NearStationType.tra => 'rails/TRA.svg',
+    NearStationType.thsr => 'rails/THSR.svg',
+    _ => null,
   };
 }
 
@@ -96,7 +108,7 @@ String? _mrtIconAsset(String stationId) {
   final code = _mrtLineCode(stationId);
   const taipeiCodes = {'BL', 'BR', 'G', 'O', 'R', 'Y', 'K'};
   // Unprefixed Taipei codes resolve to their TRTC line icon.
-  if (taipeiCodes.contains(code)) return 'assets/mrt/TRTC/$code.svg';
+  if (taipeiCodes.contains(code)) return 'mrt/TRTC/$code.svg';
   return null;
 }
 

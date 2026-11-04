@@ -28,17 +28,21 @@ class AppSwitch extends StatelessWidget {
       ),
     );
     if (label == null) return sw;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onChanged != null ? () => onChanged!(!value) : null,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 44),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label!, style: AppTextStyles.bodyLarge),
-            sw,
-          ],
+    // Merged so a screen reader reads one control ("label, on") instead of a
+    // bare text and a separate unlabeled switch.
+    return MergeSemantics(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onChanged != null ? () => onChanged!(!value) : null,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label!, style: AppTextStyles.bodyLarge),
+              sw,
+            ],
+          ),
         ),
       ),
     );

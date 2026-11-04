@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/assets/remote_image.dart';
 
 /// Supported transport icon types.
 enum TransportType {
@@ -65,14 +65,14 @@ class TransportIcon extends StatelessWidget {
   final double size;
 
   static const _svgAssets = <TransportType, String>{
-    TransportType.thsr: 'assets/rails/THSR.svg',
-    TransportType.tra: 'assets/rails/TRA.svg',
-    TransportType.mrtBL: 'assets/mrt/TRTC/BL.svg',
-    TransportType.mrtR: 'assets/mrt/TRTC/R.svg',
-    TransportType.mrtG: 'assets/mrt/TRTC/G.svg',
-    TransportType.mrtO: 'assets/mrt/TRTC/O.svg',
-    TransportType.mrtBR: 'assets/mrt/TRTC/BR.svg',
-    TransportType.mrtY: 'assets/mrt/TRTC/Y.svg',
+    TransportType.thsr: 'rails/THSR.svg',
+    TransportType.tra: 'rails/TRA.svg',
+    TransportType.mrtBL: 'mrt/TRTC/BL.svg',
+    TransportType.mrtR: 'mrt/TRTC/R.svg',
+    TransportType.mrtG: 'mrt/TRTC/G.svg',
+    TransportType.mrtO: 'mrt/TRTC/O.svg',
+    TransportType.mrtBR: 'mrt/TRTC/BR.svg',
+    TransportType.mrtY: 'mrt/TRTC/Y.svg',
   };
 
   // Missing logos must not turn an arrival row into an asset-load error.
@@ -89,6 +89,8 @@ class TransportIcon extends StatelessWidget {
       TransportType.bike => Icons.pedal_bike_rounded,
       TransportType.busStop => Symbols.bus_map_pin_rounded,
       TransportType.location => Icons.location_on_rounded,
+      // A rail logo that has not loaded must still read as a train; a walking
+      // figure there says the wrong thing about the mode.
       TransportType.thsr ||
       TransportType.tra ||
       TransportType.mrtBL ||
@@ -100,7 +102,7 @@ class TransportIcon extends StatelessWidget {
       TransportType.mrtAM ||
       TransportType.mrtKG ||
       TransportType.mrtKR ||
-      TransportType.mrtKO ||
+      TransportType.mrtKO => Icons.train_rounded,
       TransportType.walking => Icons.directions_walk_rounded,
     };
     return Icon(icon, size: size, color: color);
@@ -113,11 +115,11 @@ class TransportIcon extends StatelessWidget {
     final svg = _svgAssets[type];
     if (svg != null) {
       final hheight = type == TransportType.thsr ? size * 0.5 : size;
-      return SvgPicture.asset(
+      return RemoteSvg(
         svg,
         width: size,
         height: hheight,
-        placeholderBuilder: (_) => _materialIcon(cs.onSurface),
+        fallback: (_) => _materialIcon(cs.onSurface),
       );
     }
     final lineColor = _lineColors[type];

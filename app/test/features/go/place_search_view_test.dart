@@ -12,6 +12,7 @@ import 'package:wheres_the_bus/features/go/model/planned_place.dart';
 import 'package:wheres_the_bus/features/go/view/place_search_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 
 class _Search extends PlaceSearchBloc {
@@ -133,6 +134,8 @@ void main() {
     location.cached = location.current;
     final bloc = await show(tester, const PlaceSearchState());
     expect(find.text('請選擇地點'), findsOneWidget);
+    expect(find.byType(AppBarBackButton), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
     press(tester, '返回');
     expect(backs, 1);
     await tester.enterText(find.byType(TextField), '車站');

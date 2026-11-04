@@ -22,7 +22,7 @@ class MetroScheduleSection extends StatelessWidget {
     );
 
     // Both times sit in fixed columns so a value never shifts against the one
-    // above it. The width follows the user's text scale, so large-text mode
+    // above it. The width follows the system text scale, so a large text size
     // widens the column instead of clipping the value.
     final columnWidth = MediaQuery.textScalerOf(context).scale(56);
     final hairline = cs.outlineVariant.withValues(alpha: 0.5);
@@ -308,7 +308,7 @@ class _MetroRoundel extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusButton),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

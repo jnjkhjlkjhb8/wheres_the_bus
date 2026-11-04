@@ -26,6 +26,7 @@ import 'package:wheres_the_bus/shared/rail_system_labels.dart';
 import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';

@@ -6,15 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-resty/resty/v2"
 	"github.com/jackc/pgx/v5"
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -29,10 +26,7 @@ type MaasServer struct {
 	cache       MaasCache
 	db          maasDB
 	railShapes  *railShapeCache
-	maasClient  *resty.Client
 	motisClient *motisClient
-	health      *PlannerHealthMonitor
-	osrmClient  *resty.Client
 	sfGroup     singleflight.Group
 	workSlots   chan struct{}
 	workTimeout time.Duration
@@ -56,10 +50,10 @@ type MaasServer struct {
 // fails promptly instead of racing shutdown.
 var errMaasServerClosing = status.Error(codes.Unavailable, "MaaS server is shutting down")
 
-// errMaasNoRoute marks a TDX MaaS 404: the upstream has no itinerary for this
+// errMaasNoRoute marks an empty planner answer: no itinerary for this
 // origin/destination pair. That is an empty result rather than a router
 // failure, so Plan logs it at Warn instead of raising an error issue.
-var errMaasNoRoute = errors.New("TDX MaaS has no route for this origin/destination")
+var errMaasNoRoute = errors.New("planner has no route for this origin/destination")
 
 type maasDB interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -118,9 +112,7 @@ func (c *RedisMaasCache) Close() error {
 type maasSharedWorkConfig struct {
 	MaxConcurrent int
 	Timeout       time.Duration
-	// Motis is the planner when set, and nil selects the TDX proxy.
-	Motis  *motisClient
-	Health *PlannerHealthMonitor
+	Motis         *motisClient
 }
 
 var DefaultMaasSharedWorkConfig = maasSharedWorkConfig{
@@ -128,31 +120,11 @@ var DefaultMaasSharedWorkConfig = maasSharedWorkConfig{
 	Timeout:       20 * time.Second,
 }
 
-const _maasOSRMConcurrency = 4
-
 // How long a finished plan stays in Redis. Short: an itinerary quotes live
 // departure times, so a stale hit would hand a rider a bus that has left.
 const _maasCacheTTL = 90 * time.Second
 
-func shouldRetryMaas(resp *resty.Response, err error) bool {
-	if err != nil {
-		return retryableMaasError(err)
-	}
-	return resp != nil && (resp.StatusCode() == http.StatusTooManyRequests || resp.StatusCode() == http.StatusServiceUnavailable)
-}
-
-func retryableMaasError(err error) bool {
-	return !errors.Is(err, context.Canceled) &&
-		!errors.Is(err, context.DeadlineExceeded) &&
-		!shared.IsTDXAuthError(err)
-}
-
-func NewMaasServerWithCache(cache MaasCache, db maasDB, tdx *shared.TDXClient, workConfig maasSharedWorkConfig) *MaasServer {
-	c := tdx.NewAuthedClient("https://tdx.transportdata.tw/api/maas").
-		SetHeader("Content-Type", "application/json").
-		SetRetryCount(3).
-		SetRetryWaitTime(500 * time.Millisecond).
-		AddRetryCondition(shouldRetryMaas)
+func NewMaasServerWithCache(cache MaasCache, db maasDB, workConfig maasSharedWorkConfig) *MaasServer {
 	if workConfig.MaxConcurrent <= 0 {
 		workConfig.MaxConcurrent = DefaultMaasSharedWorkConfig.MaxConcurrent
 	}
@@ -161,10 +133,9 @@ func NewMaasServerWithCache(cache MaasCache, db maasDB, tdx *shared.TDXClient, w
 	}
 	lifecycleCtx, cancel := context.WithCancel(context.Background())
 	return &MaasServer{
-		cache: cache, db: db, maasClient: c, railShapes: newRailShapeCache(),
-		motisClient: workConfig.Motis, health: workConfig.Health,
-		osrmClient: resty.New().SetTimeout(5 * time.Second),
-		workSlots:  make(chan struct{}, workConfig.MaxConcurrent), workTimeout: workConfig.Timeout,
+		cache: cache, db: db, railShapes: newRailShapeCache(),
+		motisClient: workConfig.Motis,
+		workSlots:   make(chan struct{}, workConfig.MaxConcurrent), workTimeout: workConfig.Timeout,
 		lifecycleCtx: lifecycleCtx, lifecycleCancel: cancel,
 	}
 }
@@ -291,7 +262,7 @@ func completedPlan(completed singleflight.Result) (*pb.MaasPlanResponse, error) 
 }
 
 // maasPlanError maps a planning failure onto the gRPC status both plan entry
-// points return. A TDX 404 is an empty result rather than a router fault, so it
+// points return. An empty planner answer is an empty result rather than a router fault, so it
 // logs at Warn and answers NotFound.
 func maasPlanError(err error) error {
 	if errors.Is(err, errMaasNoRoute) {
@@ -347,19 +318,18 @@ func (s *MaasServer) streamPlan(workCtx context.Context, req *pb.MaasPlanRequest
 }
 
 func (s *MaasServer) streamFreshPlan(workCtx context.Context, req *pb.MaasPlanRequest, cacheKey string, stream pb.MaasService_PlanStreamServer) error {
-	useMotis := s.useMotis()
-	plan, err := s.planUpstream(workCtx, req, useMotis)
+	plan, err := s.motisClient.Plan(workCtx, req)
 	if err != nil {
 		return maasPlanError(err)
 	}
 	response, refs := convertRoutes(workCtx, s.db, plan.api)
 	response.PreviousPageCursor = plan.previous
 	response.NextPageCursor = plan.next
-	s.rank(response, req, useMotis)
+	rankMotisRoutes(response, req.Gc, req.Top)
 	if err := stream.Send(&pb.MaasPlanUpdate{Plan: response}); err != nil {
 		return err
 	}
-	s.enrich(workCtx, refs, plan.geometry, useMotis)
+	s.enrich(workCtx, refs, plan.geometry)
 	// Cached before the last Send: the work is already paid for, and a client
 	// that disconnects during that send should not throw it away.
 	s.cachePlan(workCtx, cacheKey, response)
@@ -452,143 +422,30 @@ func (s *MaasServer) cachedPlan(ctx context.Context, key string) (*pb.MaasPlanRe
 	return &response, true
 }
 
-func maasTimeParam(date, timeStr string, arriveBy bool, now time.Time) (depart, arrival string) {
-	if len(timeStr) == len("HH:mm") {
-		timeStr += ":00"
-	}
-	value := fmt.Sprintf("%sT%s", date, timeStr)
-	if !arriveBy {
-		value = futureDeparture(value, now)
-	}
-	return value, value
-}
-
-func futureDeparture(value string, now time.Time) string {
-	const layout = "2006-01-02T15:04:05"
-	if t, err := time.ParseInLocation(layout, value, time.Local); err == nil && !t.After(now) {
-		return now.Add(time.Minute).Format(layout)
-	}
-	return value
-}
-
 func (s *MaasServer) get(ctx context.Context, req *pb.MaasPlanRequest) (*pb.MaasPlanResponse, error) {
-	useMotis := s.useMotis()
-	plan, err := s.planUpstream(ctx, req, useMotis)
+	plan, err := s.motisClient.Plan(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	out, refs := convertRoutes(ctx, s.db, plan.api)
 	out.PreviousPageCursor = plan.previous
 	out.NextPageCursor = plan.next
-	s.enrich(ctx, refs, plan.geometry, useMotis)
-	s.rank(out, req, useMotis)
+	s.enrich(ctx, refs, plan.geometry)
+	rankMotisRoutes(out, req.Gc, req.Top)
 	return out, nil
 }
 
-func (s *MaasServer) useMotis() bool {
-	if s.motisClient == nil {
-		return false
+func (s *MaasServer) enrich(ctx context.Context, refs []maasSectionRef, walks []*motisWalkGeometry) {
+	if !applyMotisWalkGeometry(refs, walks) {
+		zap.S().Errorw("walk geometry mismatch",
+			"component", "maas",
+			"action", "enrich",
+			"event", "geometry_mismatch",
+			"sections", len(refs),
+			"geometry", len(walks),
+		)
 	}
-	if s.health == nil {
-		return true
-	}
-	return s.health.UseMotis()
-}
-
-// planUpstream calls whichever planner is configured. The MOTIS path also
-// returns the walk geometry it already computed; the TDX path returns nil there
-// and pays OSRM for it in [MaasServer.enrich].
-func (s *MaasServer) planUpstream(ctx context.Context, req *pb.MaasPlanRequest, useMotis bool) (*motisPlanResult, error) {
-	if useMotis {
-		return s.motisClient.Plan(ctx, req)
-	}
-	api, err := s.fetch(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	// TDX returns no walk geometry and does not page, so the result carries the
-	// plan and nothing else; the empty cursors are what tell the app not to
-	// offer an earlier/later action it cannot honour.
-	return &motisPlanResult{api: api}, nil
-}
-
-func (s *MaasServer) enrich(ctx context.Context, refs []maasSectionRef, walks []*motisWalkGeometry, useMotis bool) {
-	if useMotis {
-		if !applyMotisWalkGeometry(refs, walks) {
-			zap.S().Errorw("walk geometry mismatch",
-				"component", "maas",
-				"action", "enrich",
-				"event", "geometry_mismatch",
-				"sections", len(refs),
-				"geometry", len(walks),
-			)
-		}
-		enrichTransitPaths(ctx, s.db, s.railShapes, refs)
-		return
-	}
-	enrichGeometry(ctx, s.db, s.railShapes, s.osrmClient, refs)
-}
-
-// rank applies the rider's price/time preference. Only MOTIS needs it: TDX
-// takes gc as a search input and has already ordered its answer.
-func (s *MaasServer) rank(out *pb.MaasPlanResponse, req *pb.MaasPlanRequest, useMotis bool) {
-	if !useMotis {
-		return
-	}
-	rankMotisRoutes(out, req.Gc, req.Top)
-}
-
-// fetch is the upstream TDX MaaS call on its own, so PlanStream can run the two
-// conversion stages around it instead of taking the whole thing as one step.
-func (s *MaasServer) fetch(ctx context.Context, req *pb.MaasPlanRequest) (*tdxAPIResponse, error) {
-	var apiResp tdxAPIResponse
-	r := s.tdxRoutingRequest(ctx, req, &apiResp)
-	resp, err := r.Get("/routing")
-	if err != nil {
-		return nil, err
-	}
-	if !resp.IsSuccess() {
-		err := _oops.With("status_code", resp.StatusCode()).With("url", resp.Request.URL).With("string", strings.TrimSpace(resp.String())).Errorf("TDX MaaS HTTP")
-		if resp.StatusCode() == http.StatusNotFound {
-			return nil, _oops.Join(errMaasNoRoute, err)
-		}
-		return nil, err
-	}
-	return &apiResp, nil
-}
-
-func (s *MaasServer) tdxRoutingRequest(ctx context.Context, req *pb.MaasPlanRequest, apiResp *tdxAPIResponse) *resty.Request {
-	gc := validGeneralisedCost(req.Gc)
-	transitStr := tdxTransitModes(req.TransitModes)
-
-	top := clampInt(req.Top, 1, 10, 5)
-	tMin := clampInt(req.TransferTimeMin, 0, 60, 15)
-	tMax := clampInt(req.TransferTimeMax, 0, 60, 60)
-	if tMin > tMax {
-		tMin, tMax = tMax, tMin
-	}
-	firstMode := clampInt(req.FirstMileMode, 0, 3, 0)
-	firstTime := clampInt(req.FirstMileTime, 1, 60, 10)
-	lastMode := clampInt(req.LastMileMode, 0, 3, 0)
-	lastTime := clampInt(req.LastMileTime, 1, 60, 10)
-
-	r := s.maasClient.R().
-		SetContext(ctx).
-		SetQueryParam("origin", fmt.Sprintf("%.6f,%.6f", req.FromLat, req.FromLon)).
-		SetQueryParam("destination", fmt.Sprintf("%.6f,%.6f", req.ToLat, req.ToLon)).
-		SetQueryParam("gc", fmt.Sprintf("%.1f", gc)).
-		SetQueryParam("top", fmt.Sprintf("%d", top)).
-		SetQueryParam("transit", transitStr).
-		SetQueryParam("transfer_time", fmt.Sprintf("%d,%d", tMin, tMax)).
-		SetQueryParam("first_mile_mode", fmt.Sprintf("%d", firstMode)).
-		SetQueryParam("first_mile_time", fmt.Sprintf("%d", firstTime)).
-		SetQueryParam("last_mile_mode", fmt.Sprintf("%d", lastMode)).
-		SetQueryParam("last_mile_time", fmt.Sprintf("%d", lastTime)).
-		SetResult(apiResp)
-	depart, arrival := maasTimeParam(req.Date, req.Time, req.ArriveBy, time.Now())
-	r.SetQueryParam("depart", depart)
-	r.SetQueryParam("arrival", arrival)
-	return r
+	enrichTransitPaths(ctx, s.db, s.railShapes, refs)
 }
 
 type maasSectionRef struct {
@@ -596,23 +453,6 @@ type maasSectionRef struct {
 	source tdxSection
 	target *pb.Section
 	route  *pb.Route
-}
-
-func convert(ctx context.Context, db maasDB, osrmClient *resty.Client, api *tdxAPIResponse) *pb.MaasPlanResponse {
-	out, refs := convertRoutes(ctx, db, api)
-	enrichGeometry(ctx, db, nil, osrmClient, refs)
-	return out
-}
-
-func tdxTransitModes(modes []int32) string {
-	if len(modes) == 0 {
-		modes = []int32{3, 4, 5, 6, 7, 8, 9}
-	}
-	parts := make([]string, len(modes))
-	for i, mode := range modes {
-		parts[i] = fmt.Sprintf("%d", mode)
-	}
-	return strings.Join(parts, ",")
 }
 
 func convertRoutes(ctx context.Context, db maasDB, api *tdxAPIResponse) (*pb.MaasPlanResponse, []maasSectionRef) {
@@ -682,11 +522,6 @@ func convertAlternative(sec tdxSection) *pb.Section {
 		},
 		NotificationIdentity: &pb.NotificationIdentity{},
 	}
-}
-
-func enrichGeometry(ctx context.Context, db maasDB, shapes *railShapeCache, osrmClient *resty.Client, refs []maasSectionRef) {
-	enrichWalkSections(ctx, osrmClient, refs)
-	enrichTransitPaths(ctx, db, shapes, refs)
 }
 
 func convertSection(sec tdxSection) *pb.Section {
@@ -1020,8 +855,7 @@ func maasKey(req *pb.MaasPlanRequest) string {
 		req.Top, req.TransferTimeMin, req.TransferTimeMax,
 		req.FirstMileMode, req.FirstMileTime, req.LastMileMode, req.LastMileTime)
 	sum := sha256.Sum256([]byte(key))
-	// v4: Section now carries transitPath (rail-shape-clipped geometry, see
-	// enrichTransitPaths); bumped so a v3-cached response missing the new
-	// field is never served after this deploy.
-	return fmt.Sprintf("maas:plan:v4:%x", sum[:8])
+	// v5: transitPath now prefers MOTIS's GTFS shape (bus included) over the
+	// rail_shapes clip; bumped so v4 responses without bus shapes are not served.
+	return fmt.Sprintf("maas:plan:v5:%x", sum[:8])
 }

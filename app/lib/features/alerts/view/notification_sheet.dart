@@ -14,6 +14,7 @@ import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/divider_line.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 
 /// One inbox entry: either a group heading or a notice row. Built as a flat
 /// list so the two groups scroll as one surface — a rider scanning for 「is
@@ -41,6 +42,7 @@ Future<void> showNotificationSheet(BuildContext context) async {
   bloc.add(const AlertAllRead());
   await showModalBottomSheet<void>(
     context: context,
+    useRootNavigator: true,
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
@@ -160,24 +162,27 @@ class _NotificationSheet extends StatelessWidget {
               Expanded(
                 child: entries.isEmpty
                     ? const _NotificationEmpty()
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(
-                          bottom: AppTheme.space24,
-                        ),
-                        itemCount: entries.length,
-                        itemBuilder: (context, i) => switch (entries[i]) {
-                          final _GroupHeading heading => _GroupHeader(
-                            label: heading.label,
-                            count: heading.count,
+                    : EdgeFade(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.only(
+                            bottom: AppTheme.space24,
                           ),
-                          final _NoticeEntry entry => _DismissibleRow(
-                            notice: entry.notice,
-                            unread: unreadAtOpen.contains(
-                              entry.notice.message,
+                          itemCount: entries.length,
+                          itemBuilder: (context, i) => switch (entries[i]) {
+                            final _GroupHeading heading => _GroupHeader(
+                              label: heading.label,
+                              count: heading.count,
                             ),
-                            onDismissed: () => _dismiss(context, entry.notice),
-                          ),
-                        },
+                            final _NoticeEntry entry => _DismissibleRow(
+                              notice: entry.notice,
+                              unread: unreadAtOpen.contains(
+                                entry.notice.message,
+                              ),
+                              onDismissed: () =>
+                                  _dismiss(context, entry.notice),
+                            ),
+                          },
+                        ),
                       ),
               ),
             ],

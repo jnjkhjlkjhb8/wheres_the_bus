@@ -13,6 +13,7 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/pipeline/internal/raw"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/dataset"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -796,6 +797,7 @@ func (b *busSnapshotBuilder) validateStopStation(uid string, stop *models.BusSto
 }
 
 type manualGroupAggregate struct {
+	id, source string
 	name       string
 	lonSum     float64
 	latSum     float64
@@ -875,10 +877,10 @@ func (b *busSnapshotBuilder) addStationGroupMembers(groupsByID map[string]rawBus
 	for _, uid := range pipeline.SortedKeys(manualGroups) {
 		aggregate := manualGroups[uid]
 		snapshot.groupRows = append(snapshot.groupRows, []any{
-			uid, uid, aggregate.name,
+			uid, aggregate.id, aggregate.name,
 			aggregate.lonSum / float64(aggregate.stationCnt),
 			aggregate.latSum / float64(aggregate.stationCnt),
-			"manual_name",
+			aggregate.source,
 		})
 	}
 
@@ -1098,21 +1100,30 @@ func hasBusGroupIdentity(ownUID bool, group rawBusStationGroup) bool {
 }
 
 func (b *busSnapshotBuilder) stationGroupUID(station rawBusStation, stationName string, groupsByID map[string]rawBusStationGroup, manualGroups map[string]*manualGroupAggregate) string {
-	groupUID := ""
 	if group, ok := groupsByID[station.StationGroupID]; ok {
-		groupUID = group.StationGroupUID
-	} else {
-		groupUID = manualGroupUID(b.snapshot.city, stationName)
-		aggregate := manualGroups[groupUID]
-		if aggregate == nil {
-			aggregate = &manualGroupAggregate{name: stationName}
-			manualGroups[groupUID] = aggregate
-		}
-		aggregate.lonSum += station.StationPosition.PositionLon
-		aggregate.latSum += station.StationPosition.PositionLat
-		aggregate.stationCnt++
+		return group.StationGroupUID
 	}
+	groupUID, groupID, source := b.derivedStationGroup(station, stationName)
+	aggregate := manualGroups[groupUID]
+	if aggregate == nil {
+		aggregate = &manualGroupAggregate{id: groupID, source: source, name: stationName}
+		manualGroups[groupUID] = aggregate
+	}
+	aggregate.lonSum += station.StationPosition.PositionLon
+	aggregate.latSum += station.StationPosition.PositionLat
+	aggregate.stationCnt++
 	return groupUID
+}
+
+// derivedStationGroup names a group TDX did not send. For a city TDX serves no
+// StationGroup for, it rebuilds TDX's own UID (city prefix + StationGroupID),
+// because a saved bus-stop favorite holds that UID.
+func (b *busSnapshotBuilder) derivedStationGroup(station rawBusStation, stationName string) (uid, id, source string) {
+	if station.StationGroupID != "" && dataset.BusUnserved("bus_stationgroup", b.snapshot.city) {
+		return b.snapshot.prefix + station.StationGroupID, station.StationGroupID, "station_group_id"
+	}
+	uid = manualGroupUID(b.snapshot.city, stationName)
+	return uid, uid, "manual_name"
 }
 
 func (b *busSnapshotBuilder) reportUnsurveyedPositions() {

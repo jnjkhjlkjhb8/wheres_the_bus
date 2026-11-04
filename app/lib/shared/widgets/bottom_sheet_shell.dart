@@ -74,6 +74,48 @@ extension SheetControllerMotion on SheetController {
       );
 }
 
+/// Back steps a raised sheet outward before the screen leaves: above half it
+/// settles to half, at or below half back leaves. Not down to peek, which would
+/// cost every screen that opens at half an extra back.
+class SheetBackScope extends StatelessWidget {
+  const SheetBackScope({
+    required this.controller,
+    required this.child,
+    super.key,
+  });
+
+  final SheetController controller;
+  final Widget child;
+
+  bool _atRest(double? offset) {
+    final metrics = controller.metrics;
+    if (metrics == null || offset == null) return true;
+    final half = metrics.viewportSize.height * AppSheetSnap.halfFrac;
+    return offset <= half + 1;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<double?>(
+      valueListenable: controller,
+      builder: (context, offset, child) => PopScope(
+        canPop: _atRest(offset),
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          unawaited(
+            controller.animateToDetent(
+              AppSheetSnap.half,
+              reduced: AppMotion.reduced(context),
+            ),
+          );
+        },
+        child: child!,
+      ),
+      child: child,
+    );
+  }
+}
+
 final _sheetSpring = ClampingSheetPhysics(spring: AppMotion.spring);
 
 double carriedFraction({
@@ -225,6 +267,28 @@ class AppSheet extends StatefulWidget {
   State<AppSheet> createState() => _AppSheetState();
 }
 
+// The platform default (FadeForwards) lays a ColoredBox over the sheet for the
+// length of the transition, which flashed a light surface in dark mode. The
+// sheet's own Material already paints the background, so only the pages fade.
+Widget _crossFade(
+  BuildContext context,
+  Animation<double> animation,
+  Animation<double> secondaryAnimation,
+  Widget child,
+) => FadeTransition(
+  opacity: animation,
+  child: FadeTransition(
+    opacity: ReverseAnimation(secondaryAnimation),
+    child: child,
+  ),
+);
+
+// The sheet's Material otherwise hands its children Flutter's default light
+// onSurface (#1D1B20) instead of the app theme's, so text that sets no colour
+// of its own (station titles, destinations) went dark-on-dark in dark mode.
+TextStyle? _sheetTextStyle(BuildContext context) =>
+    Theme.of(context).textTheme.bodyMedium;
+
 class _AppSheetState extends State<AppSheet> {
   /// Only created when the page didn't bring its own.
   SheetController? _ownController;
@@ -244,6 +308,7 @@ class _AppSheetState extends State<AppSheet> {
     final decoration = MaterialSheetDecoration(
       size: SheetSize.stretch,
       color: widget.color ?? cs.surfaceContainerLow,
+      textStyle: _sheetTextStyle(context),
       borderRadius: const BorderRadius.vertical(
         top: Radius.circular(AppTheme.radiusBottomSheet),
       ),
@@ -266,11 +331,16 @@ class _AppSheetState extends State<AppSheet> {
                 decoration: decoration,
                 child: widget.child,
               )
-            : PagedSheet(
-                controller: _controller,
-                physics: _sheetSpring,
-                decoration: decoration,
-                navigator: navigator,
+            : PagedSheetRouteTheme(
+                data: const PagedSheetRouteThemeData(
+                  transitionsBuilder: _crossFade,
+                ),
+                child: PagedSheet(
+                  controller: _controller,
+                  physics: _sheetSpring,
+                  decoration: decoration,
+                  navigator: navigator,
+                ),
               ),
       ),
     );
@@ -346,6 +416,7 @@ class _BottomSheetShellState extends State<BottomSheetShell> {
       decoration: MaterialSheetDecoration(
         size: SheetSize.stretch,
         color: cs.surfaceContainerLow,
+        textStyle: _sheetTextStyle(context),
         borderRadius: const BorderRadius.vertical(
           top: Radius.circular(AppTheme.radiusBottomSheet),
         ),
@@ -384,9 +455,10 @@ class SheetDragHandle extends StatelessWidget {
               height: 4,
               decoration: BoxDecoration(
                 // cs.outline is too low-contrast against the dark sheet
-                // surface (~1.45:1); onSurfaceVariant at partial opacity keeps
-                // the handle restrained while staying visible in both themes.
-                color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+                // surface (~1.45:1), and onSurfaceVariant at 0.4 only reaches
+                // ~1.9:1 there; 0.6 stays restrained but visible in both
+                // themes.
+                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                 borderRadius: BorderRadius.circular(100),
               ),
             ),

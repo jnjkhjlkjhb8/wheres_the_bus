@@ -6,6 +6,7 @@ import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
+import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/bookmark_button.dart';
 
@@ -303,7 +304,10 @@ void main() {
     inFirst.value = false;
     await tester.pump();
 
-    await tester.drag(find.byKey(const ValueKey('first')), const Offset(0, -200));
+    await tester.drag(
+      find.byKey(const ValueKey('first')),
+      const Offset(0, -200),
+    );
     await tester.pumpAndSettle();
     expect(barDecoration(tester).boxShadow, isEmpty);
 
@@ -313,6 +317,55 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(barDecoration(tester).boxShadow, hasLength(1));
+  });
+
+  group('AppBarTitlePill', () {
+    testWidgets('is a plain label without a tap handler', (tester) async {
+      await tester.pumpWidget(
+        i18nApp(const Scaffold(body: AppBarTitlePill(title: '261'))),
+      );
+
+      expect(find.text('261'), findsOneWidget);
+      expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
+      expect(find.byType(Pressable), findsNothing);
+    });
+
+    testWidgets('becomes a labelled button with a chevron', (tester) async {
+      var taps = 0;
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(
+        i18nApp(
+          Scaffold(
+            body: AppBarTitlePill(
+              title: '261',
+              onTap: () => taps++,
+              semanticLabel: 'Switch route',
+            ),
+          ),
+        ),
+      );
+
+      final chevron = tester.widget<Icon>(
+        find.byIcon(Icons.expand_more_rounded),
+      );
+      expect(chevron.size, AppBarMetrics.icon);
+      expect(
+        tester.getSemantics(find.byType(Pressable)).label,
+        contains('Switch route'),
+      );
+      // The title gives way to the chevron instead of pushing it off the pill.
+      expect(
+        find.descendant(
+          of: find.byType(AppBarTitlePill),
+          matching: find.byType(Expanded),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('261'));
+      expect(taps, 1);
+      handle.dispose();
+    });
   });
 }
 

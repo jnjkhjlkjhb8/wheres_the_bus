@@ -706,3 +706,46 @@ func TestReadBusCitySnapshotBlanksUnparseableClockKeepsSubroute(t *testing.T) {
 		t.Fatalf("LastBusTime = %q, want an unparseable time blanked", dir.LastBusTime)
 	}
 }
+
+// TDX serves no StationGroup for Taipei; a saved bus-stop favorite holds
+// TDX's group UID, so the group is rebuilt as prefix + Station.StationGroupID.
+func TestReadBusCitySnapshotRebuildsTDXGroupUIDWhenStationGroupUnserved(t *testing.T) {
+	src := validBusSnapshotSource("Taipei")
+	src.bodies["bus_station|Taipei"] = []byte(`[
+		{"stationuid":"TPEST1","stationid":"ST1","stationname":{"Zh_tw":"甲站"},"stationposition":{"PositionLon":121.4,"PositionLat":25.0},"stationgroupid":"G7"},
+		{"stationuid":"TPEST2","stationid":"ST2","stationname":{"Zh_tw":"甲站(對面)"},"stationposition":{"PositionLon":121.6,"PositionLat":25.2},"stationgroupid":"G7"}
+	]`)
+	snapshot, err := readBusCitySnapshot(context.Background(), src, "Taipei")
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	if len(snapshot.groupRows) != 1 {
+		t.Fatalf("group rows = %v, want one TPEG7 group", snapshot.groupRows)
+	}
+	row := snapshot.groupRows[0]
+	if row[0] != "TPEG7" || row[1] != "G7" || row[2] != "甲站" || row[5] != "station_group_id" {
+		t.Fatalf("group row = %v, want TPEG7/G7/甲站/station_group_id", row)
+	}
+	if lon, lat := row[3].(float64), row[4].(float64); lon != 121.5 || lat != 25.1 {
+		t.Fatalf("centroid = (%v,%v), want (121.5,25.1)", lon, lat)
+	}
+	for i, member := range snapshot.memberRows {
+		if member[1] != "TPEG7" {
+			t.Fatalf("member[%d] group = %v, want TPEG7", i, member[1])
+		}
+	}
+}
+
+func TestDerivedStationGroupKeepsManualGroupForServedCityOrMissingID(t *testing.T) {
+	station := rawBusStation{StationGroupID: "G9"}
+	served := &busSnapshotBuilder{snapshot: &busCitySnapshot{city: "Keelung", prefix: "KEE"}}
+	want := manualGroupUID("Keelung", "乙站")
+	if uid, id, source := served.derivedStationGroup(station, "乙站"); uid != want || id != want || source != "manual_name" {
+		t.Fatalf("served city group = %s/%s/%s, want manual %s", uid, id, source, want)
+	}
+	unserved := &busSnapshotBuilder{snapshot: &busCitySnapshot{city: "Taipei", prefix: "TPE"}}
+	want = manualGroupUID("Taipei", "乙站")
+	if uid, _, source := unserved.derivedStationGroup(rawBusStation{}, "乙站"); uid != want || source != "manual_name" {
+		t.Fatalf("station without group ID = %s/%s, want manual %s", uid, source, want)
+	}
+}

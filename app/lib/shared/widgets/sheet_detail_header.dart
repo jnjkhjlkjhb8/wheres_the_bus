@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
@@ -39,7 +40,7 @@ class SheetDetailHeader extends StatelessWidget {
   final Widget? trailing;
 
   void _back(BuildContext context) {
-    unawaited(Navigator.of(context).maybePop());
+    unawaited(context.maybePopOrHome());
   }
 
   @override
@@ -50,27 +51,16 @@ class SheetDetailHeader extends StatelessWidget {
       children: [
         const SheetDragHandle(),
         Padding(
+          // Equal 4pt insets put both 44pt targets' glyphs on the 16pt gutter.
           padding: const EdgeInsets.fromLTRB(
             AppTheme.space4,
             0,
-            AppTheme.space12,
+            AppTheme.space4,
             AppTheme.space4,
           ),
           child: Row(
             children: [
-              Pressable(
-                onTap: () => _back(context),
-                semanticLabel: AppI18n.of(context).commonBack,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                    size: 18,
-                    color: cs.onSurface,
-                  ),
-                ),
-              ),
+              AppBarBackButton(onTap: () => _back(context)),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,7 +70,9 @@ class SheetDetailHeader extends StatelessWidget {
                       header: true,
                       child: Text(
                         title,
-                        style: AppTextStyles.heading2,
+                        style: AppTextStyles.heading2.copyWith(
+                          color: cs.onSurface,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),

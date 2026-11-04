@@ -85,11 +85,11 @@ void main() {
       activeLeg: 1,
     );
     final byId = {for (final line in lines) line.polylineId.value: line};
+    expect(byId.containsKey('leg_0_casing'), isFalse);
     expect(
-      byId['leg_0_casing']!.color,
-      dark.surfaceContainerHigh.withValues(alpha: 0.3),
+      byId['leg_0']!.color,
+      dark.onSurface.withValues(alpha: 0.3),
     );
-    expect(byId['leg_0']!.color, dark.onSurface.withValues(alpha: 0.3));
     expect(byId['leg_1']!.points.length, 3);
     expect(byId['leg_1']!.patterns, isEmpty);
     expect(byId['leg_1']!.width, 6);

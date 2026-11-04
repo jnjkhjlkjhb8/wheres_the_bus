@@ -102,21 +102,24 @@ void main() {
     expect(AppNetwork.online.value, isTrue);
   });
 
-  test('reset goes back online, stops listening and allows a new start', () async {
-    final source = _FakeConnectivity(initial: [ConnectivityResult.none]);
-    AppNetwork.start(connectivity: source);
-    await _settle();
-    expect(AppNetwork.online.value, isFalse);
+  test(
+    'reset goes back online, stops listening and allows a new start',
+    () async {
+      final source = _FakeConnectivity(initial: [ConnectivityResult.none]);
+      AppNetwork.start(connectivity: source);
+      await _settle();
+      expect(AppNetwork.online.value, isFalse);
 
-    AppNetwork.reset();
-    await _settle();
-    expect(AppNetwork.online.value, isTrue);
-    expect(source.changes.hasListener, isFalse);
+      AppNetwork.reset();
+      await _settle();
+      expect(AppNetwork.online.value, isTrue);
+      expect(source.changes.hasListener, isFalse);
 
-    final next = _FakeConnectivity();
-    AppNetwork.start(connectivity: next);
-    await _settle();
-    expect(next.changes.hasListener, isTrue);
-    expect(next.checks, 1);
-  });
+      final next = _FakeConnectivity();
+      AppNetwork.start(connectivity: next);
+      await _settle();
+      expect(next.changes.hasListener, isTrue);
+      expect(next.checks, 1);
+    },
+  );
 }

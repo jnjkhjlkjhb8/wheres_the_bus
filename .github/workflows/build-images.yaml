@@ -114,9 +114,6 @@ jobs:
           name: release-manifest
           path: release-manifest.json
           retention-days: 90
-      # Deployment lives in the private bus-infra repository; workflow_run does
-      # not fire across repositories, so hand it the manifest directly. A manual
-      # run is not a main merge and does not deploy.
       - name: hand the release to bus-infra
         if: github.event_name == 'workflow_run'
         env:

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/assets/remote_image.dart';
 
 const _mrtLineColors = <String, Color>{
   'BR': AppTheme.mrtBR,
@@ -38,12 +38,12 @@ class LineBadge extends StatelessWidget {
   final double size;
 
   static String? trtcAsset(String code) => switch (code) {
-    'BL' => 'assets/mrt/TRTC/BL.svg',
-    'R' => 'assets/mrt/TRTC/R.svg',
-    'G' => 'assets/mrt/TRTC/G.svg',
-    'O' => 'assets/mrt/TRTC/O.svg',
-    'BR' => 'assets/mrt/TRTC/BR.svg',
-    'Y' => 'assets/mrt/TRTC/Y.svg',
+    'BL' => 'mrt/TRTC/BL.svg',
+    'R' => 'mrt/TRTC/R.svg',
+    'G' => 'mrt/TRTC/G.svg',
+    'O' => 'mrt/TRTC/O.svg',
+    'BR' => 'mrt/TRTC/BR.svg',
+    'Y' => 'mrt/TRTC/Y.svg',
     _ => null,
   };
 
@@ -52,11 +52,11 @@ class LineBadge extends StatelessWidget {
     final asset = svgAsset;
     if (asset == null) return _fallback();
 
-    return SvgPicture.asset(
+    return RemoteSvg(
       asset,
       width: size,
       height: size,
-      placeholderBuilder: (_) => _fallback(),
+      fallback: (_) => _fallback(),
     );
   }
 

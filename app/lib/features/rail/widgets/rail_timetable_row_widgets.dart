@@ -5,13 +5,17 @@ class _Cols {
 
   static const depart = 74.0;
 
-  static const arrive = 52.0;
+  static const arrive = 58.0;
 
   static const number = 36.0;
 
   static const markLine = 17.0;
 
-  /// Scaled so the slots still fit their text in the app's large-text mode,
+  /// The train-type chip's minimum width (`TrainTypeChip` compact), reserved
+  /// under the heading so the number column lines up with the numbers.
+  static const chip = 46.0;
+
+  /// Scaled so the slots still fit their text at a large system text size,
   /// where a fixed pixel width would clip the digits it was sized around.
   static double scaled(BuildContext context, double base) =>
       MediaQuery.textScalerOf(context).scale(base);
@@ -26,6 +30,7 @@ class _TrainRow extends StatelessWidget {
     required this.destination,
     required this.isNext,
     required this.minutesUntil,
+    required this.isPast,
   });
 
   final _RailRow row;
@@ -42,14 +47,18 @@ class _TrainRow extends StatelessWidget {
   /// countdown would be meaningless.
   final int? minutesUntil;
 
+  /// Already left today, delay included. Quieter than a train still to come,
+  /// but readable: a late train that is still catchable never lands here.
+  final bool isPast;
+
   Color _surface(ColorScheme cs) =>
       isNext ? cs.surfaceContainerHighest : cs.surfaceContainerLow;
 
   double get _verticalPadding => isNext ? 13 : 11;
 
-  Color _arriveColor(ColorScheme cs) => row.isSuspended
+  Color _arriveColor(ColorScheme cs) => row.isSuspended || isPast
       ? AppTheme.inkTertiary(cs.brightness)
-      : cs.onSurfaceVariant;
+      : cs.onSurface;
 
   TextDecoration? get _arriveDecoration =>
       row.isSuspended ? TextDecoration.lineThrough : null;
@@ -63,7 +72,7 @@ class _TrainRow extends StatelessWidget {
     // would leave an unexplained gap where the user expects a train — but it
     // must never read as a candidate, so the whole row goes quiet.
     final suspended = row.isSuspended;
-    final timeColor = suspended
+    final timeColor = suspended || isPast
         ? AppTheme.inkTertiary(cs.brightness)
         : cs.onSurface;
 
@@ -130,19 +139,14 @@ class _TrainRow extends StatelessWidget {
             const SizedBox(width: AppTheme.space8),
             SizedBox(
               width: _Cols.scaled(context, _Cols.arrive),
-              child: Text(
-                row.arrive,
-                textAlign: TextAlign.right,
-                style: AppTextStyles.timeValue(
-                  size: 15,
-                  weight: FontWeight.w500,
-                  color: _arriveColor(cs),
-                  decoration: _arriveDecoration,
-                ),
+              child: _ArrivalColumn(
+                row: row,
+                color: _arriveColor(cs),
+                decoration: _arriveDecoration,
               ),
             ),
             const SizedBox(width: AppTheme.space10),
-            _TrainIdentity(row: row, dimmed: suspended),
+            _TrainIdentity(row: row, dimmed: suspended, past: isPast),
           ],
         ),
       ),
@@ -153,7 +157,12 @@ class _TrainRow extends StatelessWidget {
     final parts = <String>[
       '${TrainTypeChip.canonicalLabel(i18n, row.type)} ${row.number}',
       i18n.railDepartsFrom(origin, row.depart),
-      i18n.railArrivesAt(destination, row.arrive),
+      i18n.railArrivesAt(
+        destination,
+        row.nextDay ? '${i18n.railNextDaySemantics} ${row.arrive}' : row.arrive,
+      ),
+      if (row.estimatedArrive != null)
+        i18n.railEstimatedArrive(row.estimatedArrive!),
       if (row.duration.isNotEmpty) i18n.railRunsFor(row.duration),
       if (row.isSuspended) i18n.railSuspended,
       if (row.isAddedService) i18n.railExtraService,
@@ -203,7 +212,7 @@ class _DepartureColumn extends StatelessWidget {
           const SizedBox(height: 1),
           Text(
             footnote!.text,
-            style: AppTextStyles.bodyVerySmall.copyWith(
+            style: AppTextStyles.bodySmall.copyWith(
               color: footnote!.color(Theme.of(context).colorScheme),
               fontWeight: FontWeight.w600,
               height: 1.2,
@@ -328,7 +337,7 @@ class _TimetableHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final style = AppTextStyles.bodyVerySmall.copyWith(
+    final style = AppTextStyles.bodySmall.copyWith(
       color: cs.onSurfaceVariant,
       fontWeight: FontWeight.w600,
       letterSpacing: 0.4,
@@ -371,10 +380,7 @@ class _TimetableHeader extends StatelessWidget {
           const SizedBox(width: AppTheme.space6),
           // Reserves the train-type chip's slot so the heading above the
           // number column lines up with the numbers rather than with the chip.
-          const Opacity(
-            opacity: 0,
-            child: TrainTypeChip(type: '區間車', compact: true),
-          ),
+          SizedBox(width: _Cols.scaled(context, _Cols.chip)),
         ],
       ),
     );
@@ -382,10 +388,19 @@ class _TimetableHeader extends StatelessWidget {
 }
 
 class _TrainIdentity extends StatelessWidget {
-  const _TrainIdentity({required this.row, required this.dimmed});
+  const _TrainIdentity({
+    required this.row,
+    required this.dimmed,
+    required this.past,
+  });
 
   final _RailRow row;
   final bool dimmed;
+  final bool past;
+
+  Color _numberColor(ColorScheme cs) => dimmed || past
+      ? AppTheme.inkTertiary(cs.brightness)
+      : cs.onSurfaceVariant;
 
   @override
   Widget build(BuildContext context) {
@@ -403,10 +418,8 @@ class _TrainIdentity extends StatelessWidget {
                 row.number,
                 textAlign: TextAlign.right,
                 style: AppTextStyles.timeValue(
-                  size: 12,
-                  color: dimmed
-                      ? AppTheme.inkTertiary(cs.brightness)
-                      : cs.onSurfaceVariant,
+                  size: 13,
+                  color: _numberColor(cs),
                 ),
               ),
             ),
@@ -428,6 +441,67 @@ class _TrainIdentity extends StatelessWidget {
                   child: RailServiceMarkRow(marks: row.marks),
                 ),
         ),
+      ],
+    );
+  }
+}
+
+/// The arrival time, with what qualifies it under it: a next-day mark, and for
+/// a late train the delay-adjusted time. The scheduled time stays the headline
+/// so the two never swap places between rows.
+class _ArrivalColumn extends StatelessWidget {
+  const _ArrivalColumn({
+    required this.row,
+    required this.color,
+    required this.decoration,
+  });
+
+  final _RailRow row;
+  final Color color;
+  final TextDecoration? decoration;
+
+  String? _note(AppI18n i18n) {
+    final estimate = row.estimatedArrive;
+    final parts = [
+      if (row.nextDay) i18n.railNextDayMark,
+      if (estimate != null) i18n.railEstimatedArrive(estimate),
+    ];
+    return parts.isEmpty ? null : parts.join(' ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    final note = _note(i18n);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          row.arrive,
+          textAlign: TextAlign.right,
+          style: AppTextStyles.timeValue(
+            size: 17,
+            weight: FontWeight.w500,
+            color: color,
+            decoration: decoration,
+          ),
+        ),
+        if (note != null && !row.isSuspended) ...[
+          const SizedBox(height: 1),
+          Text(
+            note,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.timeValue(
+              size: 11,
+              weight: FontWeight.w600,
+              color: row.estimatedArrive != null
+                  ? cs.error
+                  : cs.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     );
   }

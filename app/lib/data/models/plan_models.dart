@@ -17,7 +17,7 @@ class PlanResult extends Equatable {
   final List<PlanRoute> routes;
 
   /// Cursors for the 更早 / 更晚 departures action. Empty when the planner does
-  /// not page (TDX) or there is nothing further in that direction — which is
+  /// not page or there is nothing further in that direction — which is
   /// also what tells the results list not to offer the action.
   final String previousPageCursor;
   final String nextPageCursor;
@@ -64,7 +64,7 @@ class PlanRoute extends Equatable {
   final int totalFare;
   final List<PlanSection> sections;
 
-  /// The verbatim TDX proto bytes this route decoded from; null for routes not
+  /// The verbatim proto bytes this route decoded from; null for routes not
   /// built via the proto factory. Persisted as-is when a snapshot is saved.
   final List<int>? raw;
 
@@ -169,8 +169,8 @@ class PlanSection extends Equatable {
   /// Adult full fare for this section (NT$); 0 when unresolved.
   final int fare;
 
-  /// OSRM foot-route geometry for a walk section; empty when not a walk or
-  /// OSRM did not resolve a route (the map then draws a straight line).
+  /// Foot-route geometry for a walk section; empty when not a walk or the
+  /// planner returned no geometry (the map then draws a straight line).
   final List<PlanPoint> walkPath;
 
   /// Turn-by-turn walk steps for a walk section; empty under the same

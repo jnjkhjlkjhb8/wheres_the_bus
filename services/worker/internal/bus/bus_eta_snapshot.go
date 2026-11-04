@@ -118,9 +118,10 @@ func (r *busCitySnapshot) resolveStop(b busmodel.StationMap) {
 	if status == 0 {
 		plateNumb = r.liveStopHistory(b, eta, est, stime, positionKey)
 	}
-	eta = r.fillScheduleOnlyStop(b, eta, status)
+	eta, fillSource := r.fillScheduleOnlyStop(b, eta, status)
+	source := estimateSourceFor(status, fillSource)
 	arrivalUnix := computeArrivalUnix(status, est, eta.NextBusTime, r.now)
-	r.appendStationStop(b, eta, status, est, stime, positionKey, arrivalUnix, plateNumb)
+	r.appendStationStop(b, eta, status, est, stime, positionKey, arrivalUnix, plateNumb, source)
 	if shouldDispatchBusArrival(ok, status, est) {
 		r.arrivalEvents = append(r.arrivalEvents, riderevent.ArrivalEvent{
 			RouteType: "bus", RouteKey: uid, StopKey: b.StopUID,
@@ -128,14 +129,38 @@ func (r *busCitySnapshot) resolveStop(b busmodel.StationMap) {
 			ArrivingPlate: normalizeArrivalPlate(eta.PlateNumb),
 		})
 	}
-	r.appendRouteStop(b, eta, status, est, stime, positionKey, arrivalUnix, plateNumb)
+	r.appendRouteStop(b, eta, status, est, stime, positionKey, arrivalUnix, plateNumb, source)
 }
 
-func (r *busCitySnapshot) fillScheduleOnlyStop(b busmodel.StationMap, eta busmodel.RawEstimated, status uint8) busmodel.RawEstimated {
+// fillScheduleOnlyStop returns the history.Source* label of the prediction it
+// wrote into eta.NextBusTime, or "" when the stop kept TDX's own value.
+func (r *busCitySnapshot) fillScheduleOnlyStop(b busmodel.StationMap, eta busmodel.RawEstimated, status uint8) (busmodel.RawEstimated, string) {
 	if status == 1 && eta.NextBusTime == "" {
 		return r.fillStopTime(b, eta)
 	}
-	return eta
+	return eta, ""
+}
+
+// estimateSourceFor tells the client how far to trust a stop's time. Only a
+// StopStatus 0 reading comes from a vehicle; a status 1 clock is TDX's
+// timetable unless this job replaced it with a propagated or model prediction.
+// Service-state statuses carry no time, so no source is claimed for them.
+func estimateSourceFor(status uint8, fillSource string) models.BusEstimateSource {
+	switch status {
+	case 0:
+		return models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE
+	case 1:
+		return clockEstimateSource(fillSource)
+	default:
+		return models.BusEstimateSource_BUS_ESTIMATE_SOURCE_UNSPECIFIED
+	}
+}
+
+func clockEstimateSource(fillSource string) models.BusEstimateSource {
+	if fillSource == history.SourcePropagation || fillSource == history.SourceModel {
+		return models.BusEstimateSource_BUS_ESTIMATE_SOURCE_PREDICTED
+	}
+	return models.BusEstimateSource_BUS_ESTIMATE_SOURCE_SCHEDULED
 }
 
 func liveStopEstimate(eta busmodel.RawEstimated, ok bool, now time.Time) (uint8, int32, string) {
@@ -206,7 +231,7 @@ func historyWeatherFields(wx *weather.Data) (temp, precip, wind, humidity any) {
 	return nil, nil, nil, nil
 }
 
-func (r *busCitySnapshot) fillStopTime(b busmodel.StationMap, eta busmodel.RawEstimated) busmodel.RawEstimated {
+func (r *busCitySnapshot) fillStopTime(b busmodel.StationMap, eta busmodel.RawEstimated) (busmodel.RawEstimated, string) {
 	uid, dir := b.SubRouteUID, b.Direction
 	rk := predict.RouteDirKey{SubRouteUID: uid, Direction: int32(dir)}
 	if r.depMap[rk].IsZero() {
@@ -224,7 +249,7 @@ func (r *busCitySnapshot) fillStopTime(b busmodel.StationMap, eta busmodel.RawEs
 		eta.NextBusTime, predictedArrival, predSource = r.modelStopTime(b, rk)
 	}
 	r.recordStopPrediction(b, predSource, predictedArrival)
-	return eta
+	return eta, predSource
 }
 
 func (r *busCitySnapshot) recordStopPrediction(b busmodel.StationMap, predSource string, predictedArrival time.Time) {
@@ -280,23 +305,24 @@ func decodeModelStopTime(nextBusTime string, hasOffset bool) (predictedArrival t
 	return predictedArrival, predSource
 }
 
-func (r *busCitySnapshot) appendStationStop(b busmodel.StationMap, eta busmodel.RawEstimated, status uint8, est int32, stime, positionKey string, arrivalUnix int64, plateNumb *string) {
+func (r *busCitySnapshot) appendStationStop(b busmodel.StationMap, eta busmodel.RawEstimated, status uint8, est int32, stime, positionKey string, arrivalUnix int64, plateNumb *string, source models.BusEstimateSource) {
 	uid, dir := b.SubRouteUID, b.Direction
 	station := r.stationSnapshot(b)
 	station.Routes = append(station.Routes, &models.Bus_StopEstimate{
-		StopUid:       b.StationUID,
-		SubRouteUid:   uid,
-		RouteName:     b.SubRouteName,
-		Destination:   b.Destination,
-		Direction:     int32(dir),
-		Estimate:      est,
-		NextBusTime:   eta.NextBusTime,
-		StopStatus:    int32(status),
-		SrcUpdateTime: stime,
-		Buses:         r.busmap[positionKey],
-		ArrivalUnix:   arrivalUnix,
-		CrowdLevel:    crowdForPlate(r.busmap[positionKey], plateNumb),
-		IsLastBus:     eta.IsLastBus == 1,
+		StopUid:        b.StationUID,
+		SubRouteUid:    uid,
+		RouteName:      b.SubRouteName,
+		Destination:    b.Destination,
+		Direction:      int32(dir),
+		Estimate:       est,
+		NextBusTime:    eta.NextBusTime,
+		StopStatus:     int32(status),
+		SrcUpdateTime:  stime,
+		Buses:          r.busmap[positionKey],
+		ArrivalUnix:    arrivalUnix,
+		CrowdLevel:     crowdForPlate(r.busmap[positionKey], plateNumb),
+		IsLastBus:      eta.IsLastBus == 1,
+		EstimateSource: source,
 	})
 }
 
@@ -326,7 +352,7 @@ func busStationGroup(b busmodel.StationMap) (string, string) {
 	return groupUID, groupName
 }
 
-func (r *busCitySnapshot) appendRouteStop(b busmodel.StationMap, eta busmodel.RawEstimated, status uint8, est int32, stime, positionKey string, arrivalUnix int64, plateNumb *string) {
+func (r *busCitySnapshot) appendRouteStop(b busmodel.StationMap, eta busmodel.RawEstimated, status uint8, est int32, stime, positionKey string, arrivalUnix int64, plateNumb *string, source models.BusEstimateSource) {
 	uid, dir := b.SubRouteUID, b.Direction
 	if _, ok := r.routes[uid]; !ok {
 		r.routes[uid] = &models.Bus_RouteArrival{
@@ -334,18 +360,19 @@ func (r *busCitySnapshot) appendRouteStop(b busmodel.StationMap, eta busmodel.Ra
 		}
 	}
 	r.routes[uid].Stops = append(r.routes[uid].Stops, &models.Bus_RouteEstimate{
-		StopUid:       b.StopUID,
-		Direction:     int32(dir),
-		Estimate:      est,
-		StopStatus:    int32(status),
-		NextBusTime:   eta.NextBusTime,
-		SrcUpdateTime: stime,
-		Buses:         r.busmap[positionKey],
-		StopSequence:  int32(b.StopSequence),
-		ArrivalUnix:   arrivalUnix,
-		PlateNumb:     normalizeArrivalPlate(eta.PlateNumb),
-		CrowdLevel:    crowdForPlate(r.busmap[positionKey], plateNumb),
-		IsLastBus:     eta.IsLastBus == 1,
+		StopUid:        b.StopUID,
+		Direction:      int32(dir),
+		Estimate:       est,
+		StopStatus:     int32(status),
+		NextBusTime:    eta.NextBusTime,
+		SrcUpdateTime:  stime,
+		Buses:          r.busmap[positionKey],
+		StopSequence:   int32(b.StopSequence),
+		ArrivalUnix:    arrivalUnix,
+		PlateNumb:      normalizeArrivalPlate(eta.PlateNumb),
+		CrowdLevel:     crowdForPlate(r.busmap[positionKey], plateNumb),
+		IsLastBus:      eta.IsLastBus == 1,
+		EstimateSource: source,
 	})
 }
 

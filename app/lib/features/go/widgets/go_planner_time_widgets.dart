@@ -128,7 +128,7 @@ class _PlannerEntry extends StatelessWidget {
         height: 24,
         child: Align(
           alignment: Alignment.centerLeft,
-          child: CircularProgressIndicator(strokeWidth: 2),
+          child: AppSpinner(size: 20, strokeWidth: 2),
         ),
       ),
     );
@@ -229,19 +229,7 @@ class _PlannerEntry extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Pressable(
-                      onTap: onBack,
-                      semanticLabel: AppI18n.of(context).commonBack,
-                      child: SizedBox(
-                        width: 44,
-                        height: 44,
-                        child: Icon(
-                          Icons.arrow_back_rounded,
-                          size: 22,
-                          color: cs.onSurface,
-                        ),
-                      ),
-                    ),
+                    AppBarBackButton(onTap: onBack),
                     Text(
                       AppI18n.of(context).goPlanRoute,
                       style: AppTextStyles.bodyLarge.copyWith(
@@ -363,6 +351,7 @@ Future<({_TimeMode mode, DateTime at})?> _showTimeModeSheet(
 }) {
   return showModalBottomSheet<({_TimeMode mode, DateTime at})>(
     context: context,
+    useRootNavigator: true,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (_) => _TimeModeSheet(mode: mode, at: at),
@@ -387,6 +376,7 @@ class _TimeModeSheetState extends State<_TimeModeSheet> {
     final cs = Theme.of(context).colorScheme;
     final picked = await showModalBottomSheet<DateTime>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: cs.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(

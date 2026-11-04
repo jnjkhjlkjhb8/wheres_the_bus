@@ -17,6 +17,7 @@ import 'package:wheres_the_bus/features/rail/bloc/rail_station_board_event.dart'
 import 'package:wheres_the_bus/features/rail/view/rail_station_detail_view.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
 
 // The board is only reachable on a map screen, and the test flavor ships no
@@ -131,6 +132,78 @@ void main() {
     expect(find.text('271'), findsOneWidget);
     // Seconds are precision the timetable does not have.
     expect(find.text('14:32:00'), findsNothing);
+
+    await disposeBoard(tester);
+  });
+
+  testWidgets('the departure list dissolves into the bottom edge', (
+    tester,
+  ) async {
+    await pumpBoard(
+      tester,
+      repo: _FakeTraRepository(board: [_departure(time: '14:32:00')]),
+    );
+
+    final fade = find.ancestor(
+      of: find.byType(ListView),
+      matching: find.byType(EdgeFade),
+    );
+    expect(fade, findsOneWidget);
+    expect(tester.widget<EdgeFade>(fade).child, isA<ListView>());
+
+    await disposeBoard(tester);
+  });
+
+  testWidgets('rows are separated by hairlines except around the day break', (
+    tester,
+  ) async {
+    await pumpBoard(
+      tester,
+      repo: _FakeTraRepository(
+        board: [
+          _departure(time: '14:32:00', trainNo: '1'),
+          _departure(time: '14:40:00', trainNo: '2'),
+          _departure(time: '14:50:00', trainNo: '3'),
+          _departure(time: '23:50:00', trainNo: '4'),
+          _departure(
+            time: '05:10:00',
+            trainNo: '5',
+            serviceDate: '2026-07-30',
+          ),
+          _departure(
+            time: '05:20:00',
+            trainNo: '6',
+            serviceDate: '2026-07-30',
+          ),
+        ],
+      ),
+      size: const Size(390, 1400),
+    );
+
+    final dividers = tester
+        .widgetList<Divider>(
+          find.descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Divider),
+          ),
+        )
+        .toList();
+    // Rows 2, 3 and 5; row 0 leads, row 1 follows the highlight, and row 4
+    // sits under the day break.
+    expect(dividers, hasLength(3));
+    final d = dividers.first;
+    expect(d.height, 1);
+    expect(d.thickness, 1);
+    expect(d.indent, 16);
+    expect(d.endIndent, 16);
+    expect(
+      d.color!.a,
+      closeTo(0.4 * AppTheme.light.colorScheme.outlineVariant.a, 0.01),
+    );
+
+    final list = tester.widget<ListView>(find.byType(ListView));
+    expect(list.padding, const EdgeInsets.all(AppTheme.space8));
+    expect(list.physics, isA<AlwaysScrollableScrollPhysics>());
 
     await disposeBoard(tester);
   });
@@ -263,8 +336,8 @@ void main() {
     await pumpBoard(
       tester,
       textScale: 2,
-      // Older riders run the app at large text (Settings' 大字模式), on the
-      // narrowest phone the app supports.
+      // Older riders run the system at large text, on the narrowest phone the
+      // app supports.
       size: const Size(320, 844),
       repo: _FakeTraRepository(
         board: [

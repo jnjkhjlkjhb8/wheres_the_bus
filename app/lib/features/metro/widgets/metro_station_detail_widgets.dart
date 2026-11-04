@@ -43,7 +43,7 @@ class _StationDetailSheet extends StatelessWidget {
             children: [
               if (onClose == null)
                 Pressable(
-                  onTap: () => Navigator.of(context).maybePop(),
+                  onTap: () => unawaited(context.maybePopOrHome()),
                   semanticLabel: AppI18n.of(context).commonBack,
                   child: SizedBox(
                     width: 40,

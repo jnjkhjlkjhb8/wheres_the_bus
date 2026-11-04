@@ -101,7 +101,12 @@ class _MiniBar extends StatelessWidget {
                   height: 36,
                   decoration: BoxDecoration(
                     color: color,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusChip),
+                    borderRadius: BorderRadius.circular(
+                      AppTheme.concentric(
+                        AppTheme.radiusCard,
+                        AppTheme.space10,
+                      ),
+                    ),
                   ),
                   child: Icon(
                     transitIcon(section.transport.mode),

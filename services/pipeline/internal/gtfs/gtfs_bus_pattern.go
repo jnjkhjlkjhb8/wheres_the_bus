@@ -2,19 +2,22 @@ package gtfs
 
 import "github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 
+// TDX StopBoarding: 1 board only, 0 both, -1 alight only. Alight-only was once
+// read as 2, which never occurs, so planners boarded InterCity coaches at
+// drop-off-only stops.
 const _busStopBoardingSQL = `
   SELECT
     r.subrouteuid AS sub_route_uid,
     COALESCE(r.direction, 0) AS direction,
     c->>'StopUID' AS stop_uid,
-    max(CASE WHEN (c->>'StopBoarding')::int = 2 THEN 1 ELSE 0 END) AS pickup,
+    max(CASE WHEN (c->>'StopBoarding')::int = -1 THEN 1 ELSE 0 END) AS pickup,
     max(CASE WHEN (c->>'StopBoarding')::int = 1 THEN 1 ELSE 0 END) AS drop_off
   FROM raw_tdx.bus_stopofroute r
   CROSS JOIN LATERAL jsonb_array_elements(r.stops) c
   WHERE jsonb_typeof(r.stops) = 'array'
     AND COALESCE(r.subrouteuid, '') <> ''
     AND COALESCE(c->>'StopUID', '') <> ''
-    AND (c->>'StopBoarding') ~ '^[12]$'
+    AND (c->>'StopBoarding') ~ '^(-1|1)$'
   GROUP BY 1, 2, 3`
 
 var _busOriginTripSource = buildBusOriginTripSource()

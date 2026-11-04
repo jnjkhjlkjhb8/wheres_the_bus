@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
+import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -76,7 +77,7 @@ class AppBarBackButton extends StatelessWidget {
       color: cs.onSurface,
     );
     final label = AppI18n.of(context).commonBack;
-    final tap = onTap ?? () => context.pop();
+    final tap = onTap ?? context.popOrHome;
 
     if (floating) {
       return AppBarCircleButton(
@@ -156,14 +157,29 @@ class FloatingAppBar extends StatelessWidget {
 /// the floating plate, so a screen reads the same whether its header sits on
 /// an opaque bar or over a map.
 class AppBarTitlePill extends StatelessWidget {
-  const AppBarTitlePill({required this.title, this.subtitle, super.key});
+  const AppBarTitlePill({
+    required this.title,
+    this.subtitle,
+    this.onTap,
+    this.semanticLabel,
+    super.key,
+  });
   final String title;
   final String? subtitle;
+
+  /// Makes the pill a button (a chevron marks it as one). Null keeps it a
+  /// plain label.
+  final VoidCallback? onTap;
+  final String? semanticLabel;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
+    final label = Align(
+      alignment: Alignment.centerLeft,
+      child: _Title(title, subtitle),
+    );
+    final pill = Container(
       constraints: const BoxConstraints(minHeight: AppBarMetrics.tapTarget),
       padding: const EdgeInsets.symmetric(
         horizontal: AppTheme.space14,
@@ -173,11 +189,22 @@ class AppBarTitlePill extends StatelessWidget {
         cs,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
       ),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: _Title(title, subtitle),
-      ),
+      child: onTap == null
+          ? label
+          : Row(
+              children: [
+                Expanded(child: label),
+                const SizedBox(width: AppTheme.space8),
+                Icon(
+                  Icons.expand_more_rounded,
+                  size: AppBarMetrics.icon,
+                  color: cs.onSurfaceVariant,
+                ),
+              ],
+            ),
     );
+    if (onTap == null) return pill;
+    return Pressable(onTap: onTap, semanticLabel: semanticLabel, child: pill);
   }
 }
 
@@ -258,14 +285,9 @@ class _DetailAppBarState extends State<DetailAppBar> {
         color: cs.surface,
         // A surface-coloured spread below the bar, not a line: content
         // scrolling up dissolves into the bar instead of hitting a rule.
-        boxShadow: [
-          if (_scrolledUnder)
-            BoxShadow(
-              color: cs.surface,
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-            ),
-        ],
+        boxShadow: _scrolledUnder
+            ? AppShadows.scrolledUnder(cs.surface)
+            : const [],
       ),
       child: SafeArea(
         bottom: false,

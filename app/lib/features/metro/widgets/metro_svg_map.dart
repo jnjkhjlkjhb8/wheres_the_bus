@@ -4,9 +4,11 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/assets/remote_assets.dart';
 import 'package:wheres_the_bus/data/models/metro_map_models.dart';
+import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 
@@ -106,13 +108,21 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
   @override
   void initState() {
     super.initState();
+    RemoteAssets.instance.revision.addListener(_onAssetsChanged);
     _deferTimer = Timer(const Duration(milliseconds: 350), () {
       if (mounted) setState(() => _semanticsReady = true);
     });
   }
 
+  // The overlay layers depend on whether the base map has arrived, which the
+  // raster's own listener does not tell them.
+  void _onAssetsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    RemoteAssets.instance.revision.removeListener(_onAssetsChanged);
     _deferTimer?.cancel();
     _transform.dispose();
     super.dispose();
@@ -151,6 +161,13 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
         .toList();
   }
 
+  bool _pickWashShown(bool hasMap) => hasMap && widget.pickAheadIds != null;
+
+  List<MetroMapStation> _hitStationsFor(bool hasMap) =>
+      hasMap ? _hitStations : const [];
+
+  Color _labelColor(bool isDark) => isDark ? Colors.white : Colors.black;
+
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
@@ -169,6 +186,9 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
       final isDark = Theme.of(context).brightness == Brightness.dark;
       final cs = Theme.of(context).colorScheme;
       final selectedStationId = widget.selectedStationId;
+      // Without the base map every overlay would float on a blank canvas, so
+      // they are withheld and the gap is named instead.
+      final hasMap = _mapAsset(isDark) != null;
 
       final selectedStation = _selectedStation;
 
@@ -199,7 +219,19 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
                     ),
                   ),
                 ),
-                if (widget.pickAheadIds != null)
+                if (!hasMap)
+                  Positioned.fill(
+                    child: Center(
+                      child: Text(
+                        AppI18n.of(context).metroMapUnavailable,
+                        textAlign: TextAlign.center,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_pickWashShown(hasMap))
                   Positioned.fill(
                     child: IgnorePointer(
                       child: ColoredBox(
@@ -221,7 +253,7 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
                         haloColor: cs.surface,
                       ),
                 for (final station in metroMapStations)
-                  if (station.id == selectedStationId)
+                  if (hasMap && station.id == selectedStationId)
                     _SelectedMarker(
                       key: ValueKey(selectedStationId),
                       x: station.x * s,
@@ -234,28 +266,29 @@ class _MetroSvgMapState extends State<MetroSvgMap> {
                   // In pick-mode only the stations this train still calls at
                   // answer a tap; everything else is scenery until the pick
                   // ends.
-                  stations: _hitStations,
+                  stations: _hitStationsFor(hasMap),
                   scale: s,
                   onStationTap: widget.onStationTap,
                   semanticsReady: _semanticsReady,
                 ),
-                for (final station in metroMapStations)
-                  if (widget.stationLabels[station.id] case final label?)
-                    Positioned(
-                      left: station.x * s - 24,
-                      top: station.y * s - 2,
-                      width: 48,
-                      child: IgnorePointer(
-                        child: _AnimatedLabel(
-                          key: ValueKey(station.id),
-                          label: label,
-                          delayMs: _stationDelay(station, selectedStation),
-                          animate: widget.animate,
-                          isSelected: station.id == selectedStationId,
-                          color: isDark ? Colors.white : Colors.black,
+                if (hasMap)
+                  for (final station in metroMapStations)
+                    if (widget.stationLabels[station.id] case final label?)
+                      Positioned(
+                        left: station.x * s - 24,
+                        top: station.y * s - 2,
+                        width: 48,
+                        child: IgnorePointer(
+                          child: _AnimatedLabel(
+                            key: ValueKey(station.id),
+                            label: label,
+                            delayMs: _stationDelay(station, selectedStation),
+                            animate: widget.animate,
+                            isSelected: station.id == selectedStationId,
+                            color: _labelColor(isDark),
+                          ),
                         ),
                       ),
-                    ),
               ],
             ),
           ),

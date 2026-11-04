@@ -18,11 +18,6 @@ import (
 )
 
 const (
-	// _maasBackendEnv selects the planner. Anything other than "tdx" means
-	// MOTIS: the switch exists to fall back, so an unset or misspelled value
-	// must not silently resurrect the backend being replaced.
-	_maasBackendEnv      = "MAAS_BACKEND"
-	_maasBackendTDX      = "tdx"
 	_motisBaseURLEnv     = "MOTIS_BASE_URL"
 	_motisDefaultBaseURL = "http://motis:8080"
 	_motisPlanPath       = "/api/v6/plan"
@@ -32,18 +27,17 @@ const (
 	_motisTimeout          = 12 * time.Second
 	_motisExtraItineraries = 5
 	_motisMaxItineraries   = 10
+	// _motisMaxTransferWait drops itineraries that sit at a boarding place
+	// longer than this. MOTIS searches forward until it finds a service, so at
+	// night it offers "wait five hours for the first bus", which is a timetable
+	// fact but not a route a rider can use.
+	_motisMaxTransferWait = 2 * time.Hour
 )
 
 // errMotisNoItinerary marks an empty MOTIS result. It is an empty answer rather
 // than a router fault, so it joins errMaasNoRoute and reaches the rider as
 // NotFound instead of Unavailable.
 var errMotisNoItinerary = errors.New("MOTIS has no itinerary for this origin/destination")
-
-// MaasBackendFromEnv reports whether the TDX planner is selected. Every other
-// value, including unset, selects MOTIS.
-func MaasBackendFromEnv() (useTDX bool) {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv(_maasBackendEnv)), _maasBackendTDX)
-}
 
 // MotisBaseURLFromEnv reads where MOTIS is reached, defaulting to the service
 // name on the routing network.
@@ -129,8 +123,9 @@ type motisStep struct {
 }
 
 type motisWalkGeometry struct {
-	path  []*pb.Location
-	steps []*pb.WalkStep
+	path    []*pb.Location
+	steps   []*pb.WalkStep
+	transit []*pb.Location
 }
 
 type motisPlanResult struct {
@@ -156,16 +151,47 @@ func (c *motisClient) Plan(
 	if !resp.IsSuccess() {
 		return nil, motisHTTPError(resp)
 	}
-	if len(out.Itineraries) == 0 {
+	itineraries := dropLongWaits(out.Itineraries)
+	if len(itineraries) == 0 {
 		return nil, _oops.Join(errMaasNoRoute, errMotisNoItinerary)
 	}
-	api, geometry := convertMotisItineraries(out.Itineraries)
+	api, geometry := convertMotisItineraries(itineraries)
 	return &motisPlanResult{
 		api:      api,
 		geometry: geometry,
 		previous: out.PreviousPageCursor,
 		next:     out.NextPageCursor,
 	}, nil
+}
+
+func dropLongWaits(itineraries []motisItinerary) []motisItinerary {
+	kept := make([]motisItinerary, 0, len(itineraries))
+	for _, itinerary := range itineraries {
+		if !hasLongWait(itinerary.Legs) {
+			kept = append(kept, itinerary)
+		}
+	}
+	return kept
+}
+
+func hasLongWait(legs []motisLeg) bool {
+	for i := 1; i < len(legs); i++ {
+		if transferWait(legs[i-1], legs[i]) > _motisMaxTransferWait {
+			return true
+		}
+	}
+	return false
+}
+
+// transferWait is zero when either timestamp is unparseable, so a malformed
+// leg is never dropped as a long wait.
+func transferWait(arrivedFrom, departingOn motisLeg) time.Duration {
+	arrived, errA := time.Parse(time.RFC3339, arrivedFrom.EndTime)
+	departed, errD := time.Parse(time.RFC3339, departingOn.StartTime)
+	if errA != nil || errD != nil {
+		return 0
+	}
+	return departed.Sub(arrived)
 }
 
 func motisHTTPError(resp *resty.Response) error {
@@ -319,12 +345,12 @@ func motisTransitMode(mode string) string {
 	return modes[strings.ToUpper(mode)]
 }
 
-// motisLegGeometry lifts the street geometry MOTIS already computed for a walk
-// leg. Transit legs return nil: their shape comes from the rail line lookup in
-// enrichTransitPaths, which is a different source and a different question.
+// motisLegGeometry lifts the geometry MOTIS already computed for a leg: street
+// geometry for a walk, the GTFS shape (bus shape, stitched TRA/THSR shape) for
+// a transit leg.
 func motisLegGeometry(leg motisLeg) *motisWalkGeometry {
 	if motisTransitMode(leg.Mode) != "" {
-		return nil
+		return motisTransitGeometry(leg)
 	}
 	path := decodeMotisPolyline(leg.LegGeometry)
 	if !motisGeometryPresent(path, leg.Steps) {
@@ -335,6 +361,17 @@ func motisLegGeometry(leg motisLeg) *motisWalkGeometry {
 		geometry.steps = append(geometry.steps, motisWalkStep(step))
 	}
 	return geometry
+}
+
+// motisTransitGeometry returns the leg polyline only when it is a real shape.
+// Without shapes.txt coverage MOTIS draws straight stop-to-stop lines, which
+// have at most one point per stop; those are left to enrichTransitPaths.
+func motisTransitGeometry(leg motisLeg) *motisWalkGeometry {
+	path := decodeMotisPolyline(leg.LegGeometry)
+	if len(path) <= len(leg.IntermediateStops)+2 {
+		return nil
+	}
+	return &motisWalkGeometry{transit: path}
 }
 
 func motisGeometryPresent(path []*pb.Location, steps []motisStep) bool {
@@ -398,6 +435,7 @@ func applyMotisSectionGeometry(target *pb.Section, geometry *motisWalkGeometry) 
 	}
 	target.WalkPath = geometry.path
 	target.WalkSteps = geometry.steps
+	target.TransitPath = geometry.transit
 }
 
 type motisPolylineDecoder struct {
@@ -673,14 +711,4 @@ func motisRouteCosts(routes []*pb.Route, gc float64) map[*pb.Route]float64 {
 		cost[route] = gc*timeCost + (1-gc)*fareCost
 	}
 	return cost
-}
-
-// BackendName labels the selected planner for the startup log, so the
-// answer to "which planner is this container running" is one grep away rather
-// than an inference from an env dump.
-func BackendName(usingMotis bool) string {
-	if usingMotis {
-		return "motis"
-	}
-	return _maasBackendTDX
 }

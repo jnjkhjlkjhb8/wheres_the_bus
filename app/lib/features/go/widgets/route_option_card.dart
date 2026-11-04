@@ -78,6 +78,11 @@ class RouteOptionCard extends StatelessWidget {
   String get _destination =>
       route.sections.isEmpty ? '' : route.sections.last.arrival.name;
 
+  /// The router names an endpoint that is only coordinates `START` / `END`;
+  /// shown raw they read as untranslated debug text.
+  static String endpointLabel(String name, String sentinel, String fallback) =>
+      name.toUpperCase() == sentinel ? fallback : name;
+
   bool _showEndpoints(String origin, String destination) =>
       highlighted && (origin.isNotEmpty || destination.isNotEmpty);
 
@@ -98,8 +103,9 @@ class RouteOptionCard extends StatelessWidget {
     final departure = formatClock(route.startTime);
     final arrival = formatClock(route.endTime);
     final sections = route.sections;
-    final origin = _origin;
-    final dest = _destination;
+    final i18n = AppI18n.of(context);
+    final origin = endpointLabel(_origin, 'START', i18n.goOriginFallback);
+    final dest = endpointLabel(_destination, 'END', i18n.goDestinationFallback);
 
     final header = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,6 +246,8 @@ class _SaveButton extends StatelessWidget {
     return Pressable(
       onTap: onTap,
       semanticLabel: _label(AppI18n.of(context)),
+      // The painted icon stays 20pt; only the hit area meets the 44pt floor.
+      minTapSize: 44,
       child: Padding(
         padding: const EdgeInsets.all(AppTheme.space2),
         child: AnimatedSwitcher(

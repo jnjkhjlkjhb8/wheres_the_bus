@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:go_router/go_router.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
@@ -251,7 +251,7 @@ class _Composer extends StatelessWidget {
 }
 
 /// Four chips rather than a segmented control: the labels are long enough that
-/// four fixed-width segments would clip under the large-text setting, and a
+/// four fixed-width segments would clip at a large system text size, and a
 /// Wrap simply takes a second line instead.
 class _CategoryPicker extends StatelessWidget {
   const _CategoryPicker({required this.value, required this.onChanged});
@@ -578,7 +578,7 @@ class _DoneButton extends StatelessWidget {
         const SizedBox(width: AppTheme.space12),
         Expanded(
           child: Pressable(
-            onTap: () => context.pop(),
+            onTap: context.popOrHome,
             semanticLabel: AppI18n.of(context).commonDone,
             child: Container(
               height: 48,

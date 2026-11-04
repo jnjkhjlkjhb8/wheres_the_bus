@@ -337,6 +337,22 @@ void main() {
     await harness.dispose(tester);
   });
 
+  testWidgets('back from results of a picked destination returns to the form', (
+    tester,
+  ) async {
+    final (plan, _) = await harness.pump(tester, const PlanState());
+    await settle(tester);
+    await tapLabel(tester, i18n.goSwapEndpoints);
+    await settle(tester);
+    expect(find.byType(GoogleMap), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await settle(tester);
+    expect(find.byType(GoogleMap), findsNothing);
+    expect(plan.events.whereType<PlanSearchCancelled>(), hasLength(1));
+    await harness.dispose(tester);
+  });
+
   testWidgets('swapping with nothing to swap changes nothing', (tester) async {
     harness.location.enabled = false;
     final (plan, _) = await harness.pump(tester, const PlanState());
@@ -535,6 +551,19 @@ void main() {
       harness.location.positions.add(goFix(25.08, 121.08));
       await settle(tester);
       expect(lastPosition(tester)['target'], [25.08, 121.08]);
+      await harness.dispose(tester);
+    });
+
+    testWidgets('the end-navigation button meets the 44pt touch target', (
+      tester,
+    ) async {
+      await startNav(tester, trip);
+      final end = find.byWidgetPredicate(
+        (w) => w is Pressable && w.semanticLabel == i18n.goEndNavigation,
+      );
+      final size = tester.getSize(end);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
       await harness.dispose(tester);
     });
 

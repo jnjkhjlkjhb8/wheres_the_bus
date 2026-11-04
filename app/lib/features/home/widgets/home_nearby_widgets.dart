@@ -38,7 +38,7 @@ class _FilterButtonGroup extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(
-        horizontal: AppTheme.space20,
+        horizontal: AppTheme.space16,
         vertical: AppTheme.space12,
       ),
       child: Row(
@@ -61,7 +61,7 @@ class _FilterButtonGroup extends StatelessWidget {
                   color: filter == selectedFilter
                       ? cs.primary
                       : cs.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusButton),
                 ),
                 alignment: Alignment.center,
                 child: Text(
@@ -121,8 +121,9 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
     final scroll = PrimaryScrollController.maybeOf(context);
     if (scroll != null && scroll.hasClients) {
       unawaited(
-        scroll.animateTo(
+        scroll.jumpOrAnimateTo(
           0,
+          reduced: AppMotion.reduced(context),
           duration: const Duration(milliseconds: 400),
           curve: AppMotion.easeOut,
         ),
@@ -260,18 +261,20 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
         children: [
           NotificationListener<ScrollNotification>(
             onNotification: _onScrollNotification,
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.zero,
-              itemCount: items.length,
-              itemBuilder: (context, i) => _NearbyStationRow(
-                // Composite key: stationId alone is not guaranteed
-                // unique across transit types in this mixed list.
-                key: ValueKey(
-                  '${items[i].type.name}:${items[i].stationId}',
+            child: EdgeFade(
+              child: ListView.builder(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.zero,
+                itemCount: items.length,
+                itemBuilder: (context, i) => _NearbyStationRow(
+                  // Composite key: stationId alone is not guaranteed
+                  // unique across transit types in this mixed list.
+                  key: ValueKey(
+                    '${items[i].type.name}:${items[i].stationId}',
+                  ),
+                  station: items[i],
+                  onStationTap: widget.onStationTap,
                 ),
-                station: items[i],
-                onStationTap: widget.onStationTap,
               ),
             ),
           ),
@@ -555,6 +558,9 @@ class _NearbyStationRow extends StatelessWidget {
     super.key,
   });
 
+  /// [TransportIcon]'s default size; the skeleton bone must match it.
+  static const double _iconSize = 24;
+
   final NearStationViewModel station;
   final ValueChanged<NearStationViewModel> onStationTap;
 
@@ -579,7 +585,7 @@ class _NearbyStationRow extends StatelessWidget {
       child: Container(
         constraints: const BoxConstraints(minHeight: 62),
         padding: const EdgeInsets.symmetric(
-          horizontal: AppTheme.space20,
+          horizontal: AppTheme.space16,
           vertical: AppTheme.space12,
         ),
         decoration: BoxDecoration(
@@ -593,8 +599,12 @@ class _NearbyStationRow extends StatelessWidget {
         ),
         child: Row(
           children: [
-            TransportIcon(
-              type: nearbyIconType(station),
+            // A line logo is a remote SVG Skeletonizer can't bone by itself;
+            // left alone it pops in at full colour mid-placeholder.
+            Skeleton.replace(
+              width: _iconSize,
+              height: _iconSize,
+              child: TransportIcon(type: nearbyIconType(station)),
             ),
             const SizedBox(width: AppTheme.space12),
             Expanded(

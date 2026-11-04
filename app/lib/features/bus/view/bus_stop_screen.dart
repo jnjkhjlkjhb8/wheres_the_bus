@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
+import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/core/location/nearest_within.dart';
@@ -21,6 +22,7 @@ import 'package:wheres_the_bus/features/bus/view/bus_stop_detail_view.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/map/map_color_scheme.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
+import 'package:wheres_the_bus/shared/map/motion_aware_camera.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
@@ -117,7 +119,12 @@ class _BusStopScreenState extends State<BusStopScreen> {
   void _focusStation(LatLng pos) {
     final controller = _controller;
     if (controller == null) return;
-    unawaited(controller.animateCamera(CameraUpdate.newLatLng(pos)));
+    unawaited(
+      controller.moveOrAnimate(
+        CameraUpdate.newLatLng(pos),
+        reduced: AppMotion.reduced(context),
+      ),
+    );
   }
 
   @override
@@ -275,98 +282,102 @@ class _BusStopScreenState extends State<BusStopScreen> {
     // the BusStopDetailView sheet — see class doc on BusStopDetailView.bloc.
     return BlocProvider<BusStopBloc>.value(
       value: _bloc,
-      child: Scaffold(
-        resizeToAvoidBottomInset: false,
-        body: Stack(
-          children: [
-            Positioned.fill(
-              child: BlocConsumer<BusStopBloc, BusStopState>(
-                listenWhen: (prev, next) =>
-                    prev.members.isEmpty && next.members.isNotEmpty,
-                listener: (context, state) {
-                  final first = state.members.first;
-                  unawaited(
-                    _controller?.animateCamera(
-                      CameraUpdate.newLatLng(LatLng(first.lat, first.lon)),
-                    ),
+      child: SheetBackScope(
+        controller: _sheetController,
+        child: Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: BlocConsumer<BusStopBloc, BusStopState>(
+                  listenWhen: (prev, next) =>
+                      prev.members.isEmpty && next.members.isNotEmpty,
+                  listener: (context, state) {
+                    final first = state.members.first;
+                    unawaited(
+                      _controller?.moveOrAnimate(
+                        CameraUpdate.newLatLng(LatLng(first.lat, first.lon)),
+                        reduced: AppMotion.reduced(context),
+                      ),
+                    );
+                    unawaited(_autoSelectMemberAtRider(state.members));
+                  },
+                  buildWhen: (prev, next) => prev.members != next.members,
+                  builder: _map,
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const FloatingAppBar(),
+                  // Scoped to the routes this stop actually serves: a
+                  // disruption on a line that doesn't stop here is not this
+                  // screen's business.
+                  BlocSelector<BusStopBloc, BusStopState, Set<String>>(
+                    selector: (state) =>
+                        state.displays.map((d) => d.subRouteUid).toSet(),
+                    builder: (context, routeKeys) =>
+                        InlineNotice(routeType: 'bus', routeKeys: routeKeys),
+                  ),
+                ],
+              ),
+
+              ValueListenableBuilder<double?>(
+                valueListenable: _sheetController,
+                builder: (context, offset, child) {
+                  final currentOffset = offset ?? 0.0;
+                  return Positioned(
+                    right: 16,
+                    bottom: currentOffset + 16,
+                    child: child!,
                   );
-                  unawaited(_autoSelectMemberAtRider(state.members));
                 },
-                buildWhen: (prev, next) => prev.members != next.members,
-                builder: _map,
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const FloatingAppBar(),
-                // Scoped to the routes this stop actually serves: a
-                // disruption on a line that doesn't stop here is not this
-                // screen's business.
-                BlocSelector<BusStopBloc, BusStopState, Set<String>>(
-                  selector: (state) =>
-                      state.displays.map((d) => d.subRouteUid).toSet(),
-                  builder: (context, routeKeys) =>
-                      InlineNotice(routeType: 'bus', routeKeys: routeKeys),
-                ),
-              ],
-            ),
-
-            ValueListenableBuilder<double?>(
-              valueListenable: _sheetController,
-              builder: (context, offset, child) {
-                final currentOffset = offset ?? 0.0;
-                return Positioned(
-                  right: 16,
-                  bottom: currentOffset + 16,
-                  child: child!,
-                );
-              },
-              child: Pressable(
-                onTap: _recenterMap,
-                semanticLabel: AppI18n.of(context).commonLocateMe,
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: cs.brightness == Brightness.light
-                        ? Colors.white
-                        : cs.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: AppShadows.floating,
-                  ),
-                  child: Center(
-                    child: AnimatedSwitcher(
-                      duration: AppMotion.short,
-                      child: _locating
-                          ? const AppSpinner(
-                              key: ValueKey('locating'),
-                              size: 20,
-                            )
-                          : Icon(
-                              Icons.gps_fixed_rounded,
-                              key: const ValueKey('idle'),
-                              size: 20,
-                              color: cs.onSurface,
-                            ),
+                child: Pressable(
+                  onTap: _recenterMap,
+                  semanticLabel: AppI18n.of(context).commonLocateMe,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: cs.brightness == Brightness.light
+                          ? Colors.white
+                          : cs.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+                      boxShadow: AppShadows.floating,
+                    ),
+                    child: Center(
+                      child: AnimatedSwitcher(
+                        duration: AppMotion.short,
+                        child: _locating
+                            ? const AppSpinner(
+                                key: ValueKey('locating'),
+                                size: 20,
+                              )
+                            : Icon(
+                                Icons.gps_fixed_rounded,
+                                key: const ValueKey('idle'),
+                                size: 20,
+                                color: cs.onSurface,
+                              ),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
 
-            AppSheet(
-              controller: _sheetController,
-              child: BusStopDetailView(
-                stopName: widget.stopName,
-                stopId: widget.stopId,
-                city: widget.city,
-                bloc: _bloc,
-                onFocusStation: _focusStation,
+              AppSheet(
+                controller: _sheetController,
+                child: BusStopDetailView(
+                  stopName: widget.stopName,
+                  stopId: widget.stopId,
+                  city: widget.city,
+                  bloc: _bloc,
+                  onFocusStation: _focusStation,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

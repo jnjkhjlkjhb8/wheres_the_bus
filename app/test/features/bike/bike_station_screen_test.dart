@@ -125,6 +125,7 @@ void main() {
     _Bike bike, {
     bool hint = false,
     bool dark = false,
+    bool reduced = false,
     double? seedLat,
     double? seedLon,
     void Function(Object, StackTrace)? onError,
@@ -166,6 +167,10 @@ void main() {
         localizationsDelegates: AppI18n.localizationsDelegates,
         supportedLocales: AppI18n.supportedLocales,
         routerConfig: router,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: reduced),
+          child: child!,
+        ),
       ),
     );
     await flush(tester);
@@ -510,6 +515,57 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await flush(tester);
   });
+
+  for (final reduced in [true, false]) {
+    final label = reduced ? 'reduced motion snaps' : 'normal motion animates';
+
+    void expectCameraMode(int count) {
+      expect(map.cameraUpdates, hasLength(count));
+      expect(map.movedUpdates, hasLength(reduced ? count : 0));
+      expect(map.animatedUpdates, hasLength(reduced ? 0 : count));
+    }
+
+    testWidgets('$label for the late initial GPS pan', (tester) async {
+      location.deferred = Completer<Position>();
+      final bike = _Bike();
+      await mount(tester, bike, reduced: reduced);
+
+      location.deferred!.complete(location.fix);
+      await flush(tester);
+
+      expectCameraMode(2);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    });
+
+    testWidgets('$label for the recenter button', (tester) async {
+      final bike = _Bike();
+      await mount(tester, bike, hint: true, reduced: reduced);
+      expect(map.cameraUpdates, isEmpty);
+
+      await tester.tap(find.byIcon(Icons.gps_fixed_rounded));
+      await flush(tester);
+
+      expectCameraMode(1);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    });
+
+    testWidgets('$label when the station arrives', (tester) async {
+      location.deferred = Completer<Position>();
+      final bike = _Bike();
+      await mount(tester, bike, reduced: reduced);
+
+      bike.info.complete(_station);
+      await flush(tester);
+
+      expect(map.cameraUpdates, isNotEmpty);
+      expect(map.movedUpdates.isNotEmpty, reduced);
+      expect(map.animatedUpdates.isNotEmpty, !reduced);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    });
+  }
 
   for (final seed in [(0.0, 119.0), (23.0, 0.0)]) {
     testWidgets('a seed with one zero coordinate still skips GPS $seed', (

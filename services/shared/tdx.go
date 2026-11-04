@@ -308,9 +308,9 @@ func drainAndCloseResponse(resp *resty.Response) error {
 	return errors.Join(readErr, resp.RawResponse.Body.Close())
 }
 
-func (c *TDXClient) retryDecision(resp *resty.Response, requestErr error) (bool, error) {
+func (c *TDXClient) retryDecision(ctx context.Context, resp *resty.Response, requestErr error, retryOwnTimeout bool) (bool, error) {
 	if requestErr != nil {
-		return retryableTransportError(requestErr), nil
+		return retryableTransportError(ctx, requestErr, retryOwnTimeout), nil
 	}
 	if resp == nil {
 		return false, nil
@@ -336,8 +336,18 @@ func (c *TDXClient) invalidateRejectedToken(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func retryableTransportError(err error) bool {
-	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !IsTDXAuthError(err)
+// A DeadlineExceeded while ctx is still live is the client's own 30s Timeout:
+// TDX sometimes stalls response headers past it and answers the next attempt
+// promptly. Only the static landing opts in; a realtime poll would rather miss
+// one tick than overlap the next.
+func retryableTransportError(ctx context.Context, err error, retryOwnTimeout bool) bool {
+	if IsTDXAuthError(err) || ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return retryOwnTimeout
+	}
+	return !errors.Is(err, context.Canceled)
 }
 
 func (c *TDXClient) retryDelay(attempt int) time.Duration {
@@ -365,18 +375,18 @@ func (c *TDXClient) cappedRetryDelay(delay time.Duration) time.Duration {
 // get performs bounded retries while retaining ownership of every streaming
 // response body. Intermediate bodies are drained and closed before another
 // attempt; final bodies remain owned by Get/GetInto.
-func (c *TDXClient) get(ctx context.Context, url, marker string) (*resty.Response, error) {
+func (c *TDXClient) get(ctx context.Context, url, marker string, retryOwnTimeout bool) (*resty.Response, error) {
 	for attempt := 0; ; attempt++ {
-		resp, done, err := c.requestTDXAttempt(ctx, url, marker, attempt)
+		resp, done, err := c.requestTDXAttempt(ctx, url, marker, attempt, retryOwnTimeout)
 		if done {
 			return resp, err
 		}
 	}
 }
 
-func (c *TDXClient) requestTDXAttempt(ctx context.Context, url, marker string, attempt int) (*resty.Response, bool, error) {
+func (c *TDXClient) requestTDXAttempt(ctx context.Context, url, marker string, attempt int, retryOwnTimeout bool) (*resty.Response, bool, error) {
 	resp, requestErr := c.http.R().SetContext(ctx).SetHeader("If-Modified-Since", marker).Get(url)
-	retry, decisionErr := c.retryDecision(resp, requestErr)
+	retry, decisionErr := c.retryDecision(ctx, resp, requestErr, retryOwnTimeout)
 	if decisionErr != nil {
 		return nil, true, errors.Join(decisionErr, drainAndCloseResponse(resp))
 	}
@@ -521,7 +531,7 @@ func (c *TDXClient) Get(ctx context.Context, url, name string) (*TDXFetch, error
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.get(ctx, url, marker)
+	resp, err := c.get(ctx, url, marker, false)
 	if err != nil {
 		return nil, err
 	}
@@ -610,7 +620,7 @@ func (c *TDXClient) GetInto(ctx context.Context, url, name string, commit func(T
 	invalidate := func() error {
 		return c.invalidateMarker(ctx, name)
 	}
-	resp, err := c.get(ctx, url, marker)
+	resp, err := c.get(ctx, url, marker, true)
 	if err != nil {
 		return result, err
 	}
@@ -629,6 +639,13 @@ func (c *TDXClient) commitTDXResponse(ctx context.Context, resp *resty.Response,
 }
 
 func (c *TDXClient) commitModifiedResponse(ctx context.Context, resp *resty.Response, name string, invalidate func() error, commit func(TDXIntoCommit) error) (result TDXIntoResult, err error) {
+	if successWithoutMarker(resp) {
+		return commitEmptyPayload(resp, name, invalidate, commit)
+	}
+	return c.commitMarkedResponse(ctx, resp, name, invalidate, commit)
+}
+
+func (c *TDXClient) commitMarkedResponse(ctx context.Context, resp *resty.Response, name string, invalidate func() error, commit func(TDXIntoCommit) error) (result TDXIntoResult, err error) {
 	responseMarker, err := successfulMarker(resp, name)
 	if err != nil {
 		return result, err
@@ -639,6 +656,40 @@ func (c *TDXClient) commitModifiedResponse(ctx context.Context, resp *resty.Resp
 		return result, err
 	}
 	return result, c.commitResponseBody(ctx, name, responseMarker, responseBody, commit)
+}
+
+// TDXEmptyPayloadMarker stands in for Last-Modified on an empty payload. It is
+// never cached as an IMS marker, so the next run asks for the full body again.
+const TDXEmptyPayloadMarker = "tdx-empty-payload"
+
+func successWithoutMarker(resp *resty.Response) bool {
+	return resp.StatusCode() < http.StatusBadRequest && strings.TrimSpace(resp.Header().Get("Last-Modified")) == ""
+}
+
+// commitEmptyPayload lands a 200 "[]" that has no Last-Modified: TDX answers
+// that way for a partition it holds no data for (Bus Schedule/Kaohsiung, the
+// day past the TRA timetable horizon). Any other body without the header is
+// still an error.
+func commitEmptyPayload(resp *resty.Response, name string, invalidate func() error, commit func(TDXIntoCommit) error) (TDXIntoResult, error) {
+	head, err := readTDXBodyHead(resp)
+	if err != nil {
+		return TDXIntoResult{}, err
+	}
+	if strings.TrimSpace(string(head)) != "[]" {
+		return TDXIntoResult{}, _oops.With("name", name).Errorf("tdx: successful response missing Last-Modified")
+	}
+	result := TDXIntoResult{Modified: true, Marker: TDXEmptyPayloadMarker, Invalidate: invalidate}
+	return result, invokeTDXCommit(commit, strings.NewReader("[]"), TDXEmptyPayloadMarker)
+}
+
+// readTDXBodyHead reads at most the first 64 bytes; Close drains the rest.
+func readTDXBodyHead(resp *resty.Response) ([]byte, error) {
+	body, err := decodedTDXBody(resp)
+	if err != nil {
+		return nil, err
+	}
+	head, readErr := io.ReadAll(io.LimitReader(body, 64))
+	return head, errors.Join(readErr, body.Close())
 }
 
 func (c *TDXClient) commitResponseBody(ctx context.Context, name, marker string, responseBody io.ReadCloser, commit func(TDXIntoCommit) error) (err error) {

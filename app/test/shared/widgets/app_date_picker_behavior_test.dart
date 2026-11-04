@@ -63,17 +63,24 @@ void main() {
         : now.isAfter(last)
         ? last
         : now;
-    expect(calendar.focusedDay.difference(expected).abs().inMinutes, lessThan(5));
+    // table_calendar normalizes focusedDay to a UTC date, so compare days.
+    expect(isSameDay(calendar.focusedDay, expected), isTrue);
   });
 
   testWidgets('tapping a day reports that day once', (tester) async {
     final picked = <DateTime>[];
-    await mount(tester, selected: DateTime(2026, 8, 10), onSelected: picked.add);
+    await mount(
+      tester,
+      selected: DateTime(2026, 8, 10),
+      onSelected: picked.add,
+    );
     await tester.tap(find.text('20').first);
     await tester.pump();
     expect(picked, hasLength(1));
-    expect((picked.single.year, picked.single.month, picked.single.day),
-        (2026, 8, 20));
+    expect(
+      (picked.single.year, picked.single.month, picked.single.day),
+      (2026, 8, 20),
+    );
   });
 
   testWidgets('shows a month view without a format switch', (tester) async {
@@ -90,24 +97,42 @@ void main() {
 
   testWidgets('colours follow the scheme', (tester) async {
     final calendar = await mount(tester, selected: DateTime(2026, 8, 10));
-    final scheme = Theme.of(tester.element(find.byType(AppDatePicker))).colorScheme;
+    final scheme = Theme.of(
+      tester.element(find.byType(AppDatePicker)),
+    ).colorScheme;
     final style = calendar.calendarStyle;
     expect((style.selectedDecoration as BoxDecoration).color, scheme.primary);
     expect((style.selectedDecoration as BoxDecoration).shape, BoxShape.circle);
     expect(style.selectedTextStyle.color, scheme.onPrimary);
-    expect((style.todayDecoration as BoxDecoration).color, scheme.primaryContainer);
+    expect(
+      (style.todayDecoration as BoxDecoration).color,
+      scheme.primaryContainer,
+    );
     expect((style.todayDecoration as BoxDecoration).shape, BoxShape.circle);
     expect(style.todayTextStyle.color, scheme.onPrimaryContainer);
     expect(style.weekendTextStyle.color, scheme.error);
     expect(style.outsideTextStyle.color, scheme.onSurfaceVariant);
     expect(style.defaultTextStyle.fontSize, AppTextStyles.bodySmall.fontSize);
-    expect(calendar.daysOfWeekStyle.weekdayStyle.color, scheme.onSurfaceVariant);
+    expect(
+      calendar.daysOfWeekStyle.weekdayStyle.color,
+      scheme.onSurfaceVariant,
+    );
     expect(calendar.daysOfWeekStyle.weekendStyle.color, scheme.error);
-    expect((calendar.headerStyle.leftChevronIcon as Icon).icon,
-        Icons.chevron_left_rounded);
-    expect((calendar.headerStyle.leftChevronIcon as Icon).color, scheme.onSurface);
-    expect((calendar.headerStyle.rightChevronIcon as Icon).icon,
-        Icons.chevron_right_rounded);
-    expect((calendar.headerStyle.rightChevronIcon as Icon).color, scheme.onSurface);
+    expect(
+      (calendar.headerStyle.leftChevronIcon as Icon).icon,
+      Icons.chevron_left_rounded,
+    );
+    expect(
+      (calendar.headerStyle.leftChevronIcon as Icon).color,
+      scheme.onSurface,
+    );
+    expect(
+      (calendar.headerStyle.rightChevronIcon as Icon).icon,
+      Icons.chevron_right_rounded,
+    );
+    expect(
+      (calendar.headerStyle.rightChevronIcon as Icon).color,
+      scheme.onSurface,
+    );
   });
 }

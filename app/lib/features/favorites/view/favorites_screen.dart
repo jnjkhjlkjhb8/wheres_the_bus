@@ -16,6 +16,7 @@ import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
+import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 class FavoritesScreen extends StatelessWidget {
@@ -68,27 +69,29 @@ class _FavoritesList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ReorderableListView.builder(
-      padding: const EdgeInsets.only(bottom: AppTheme.space32),
-      itemCount: items.length,
-      onReorderStart: (_) => unawaited(HapticService.instance.lightTap()),
-      onReorderItem: (oldIndex, newIndex) {
-        final next = [...items];
-        next.insert(newIndex, next.removeAt(oldIndex));
-        context.read<FavoritesBloc>().add(FavoritesReordered(next));
-      },
-      proxyDecorator: (child, index, animation) => Material(
-        color: Colors.transparent,
-        child: child,
+    return EdgeFade(
+      child: ReorderableListView.builder(
+        padding: const EdgeInsets.only(bottom: AppTheme.space32),
+        itemCount: items.length,
+        onReorderStart: (_) => unawaited(HapticService.instance.lightTap()),
+        onReorderItem: (oldIndex, newIndex) {
+          final next = [...items];
+          next.insert(newIndex, next.removeAt(oldIndex));
+          context.read<FavoritesBloc>().add(FavoritesReordered(next));
+        },
+        proxyDecorator: (child, index, animation) => Material(
+          color: Colors.transparent,
+          child: child,
+        ),
+        itemBuilder: (context, index) {
+          final fav = items[index];
+          return _FavoriteListRow(
+            key: ValueKey(fav.id),
+            fav: fav,
+            index: index,
+          );
+        },
       ),
-      itemBuilder: (context, index) {
-        final fav = items[index];
-        return _FavoriteListRow(
-          key: ValueKey(fav.id),
-          fav: fav,
-          index: index,
-        );
-      },
     );
   }
 }

@@ -2,186 +2,16 @@ package maas
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
-	"github.com/go-resty/resty/v2"
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
-// maas_geometry.go — walk-routing (OSRM) and transit-path/rail-shape
-// geometry enrichment for MaaS plan responses. Split out of maas.go to
-// keep that file within its size budget; no behavior change.
-
-func enrichWalkSections(ctx context.Context, osrmClient *resty.Client, refs []maasSectionRef) {
-	if osrmClient == nil {
-		return
-	}
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(_maasOSRMConcurrency)
-	for _, ref := range refs {
-		if !isWalkSection(ref.source) {
-			continue
-		}
-
-		group.Go(func() error { return enrichWalkSection(groupCtx, osrmClient, ref) })
-	}
-	_ = group.Wait()
-}
-
-func enrichWalkSection(ctx context.Context, client *resty.Client, ref maasSectionRef) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	secs, path, steps, ok := walkRoute(ctx, client, ref.target.Departure.Location, ref.target.Arrival.Location)
-	if ok {
-		ref.target.TravelSummary.Duration = secs
-		ref.target.WalkPath = path
-		ref.target.WalkSteps = steps
-	}
-	return nil
-}
-
-func isWalkSection(sec tdxSection) bool {
-	return strings.EqualFold(sec.Type, "pedestrian") ||
-		sec.Transport.Mode == "" || strings.EqualFold(sec.Transport.Mode, "walk")
-}
-
-// osrmRouteResponse is the subset of the OSRM /route/v1/foot response the
-// planner consumes: total duration, the geojson geometry, and the per-leg
-// turn-by-turn steps.
-type osrmManeuver struct {
-	Type     string    `json:"type"`
-	Modifier string    `json:"modifier"`
-	Location []float64 `json:"location"`
-}
-
-type osrmStep struct {
-	Distance float64      `json:"distance"`
-	Duration float64      `json:"duration"`
-	Name     string       `json:"name"`
-	Maneuver osrmManeuver `json:"maneuver"`
-}
-
-type osrmLeg struct {
-	Steps []osrmStep `json:"steps"`
-}
-
-type osrmRoute struct {
-	Duration float64 `json:"duration"`
-	Geometry struct {
-		Coordinates [][]float64 `json:"coordinates"`
-	} `json:"geometry"`
-	Legs []osrmLeg `json:"legs"`
-}
-
-type osrmRouteResponse struct {
-	Code   string      `json:"code"`
-	Routes []osrmRoute `json:"routes"`
-}
-
-func walkRoute(ctx context.Context, osrmClient *resty.Client, from, to *pb.Location) (int64, []*pb.Location, []*pb.WalkStep, bool) {
-	if !walkRequestUsable(osrmClient, from, to) {
-		return 0, nil, nil, false
-	}
-	coords := fmt.Sprintf("%f,%f;%f,%f", from.Lng, from.Lat, to.Lng, to.Lat)
-	var out osrmRouteResponse
-	resp, err := osrmClient.R().
-		SetContext(ctx).
-		SetQueryParam("steps", "true").
-		SetQueryParam("geometries", "geojson").
-		SetQueryParam("overview", "full").
-		SetResult(&out).
-		Get(fmt.Sprintf("http://osrm:5000/route/v1/foot/%s", coords))
-	if err != nil || !osrmRouteAvailable(resp, out) {
-		return 0, nil, nil, false
-	}
-	route := out.Routes[0]
-	return int64(route.Duration), osrmWalkPath(route), osrmWalkSteps(route), true
-}
-
-func walkRequestUsable(client *resty.Client, from, to *pb.Location) bool {
-	return client != nil && walkLocationUsable(from) && walkLocationUsable(to)
-}
-
-func osrmWalkPath(route osrmRoute) []*pb.Location {
-	path := make([]*pb.Location, 0, len(route.Geometry.Coordinates))
-	for _, c := range route.Geometry.Coordinates {
-		if len(c) < 2 {
-			continue
-		}
-		// geojson coordinates are [lng, lat].
-		path = append(path, &pb.Location{Lng: c[0], Lat: c[1]})
-	}
-	return path
-}
-
-func osrmWalkSteps(route osrmRoute) []*pb.WalkStep {
-	var steps []*pb.WalkStep
-	for _, leg := range route.Legs {
-		for _, st := range leg.Steps {
-			step := &pb.WalkStep{
-				Instruction:     walkInstruction(st.Maneuver.Type, st.Maneuver.Modifier, st.Name),
-				ManeuverType:    st.Maneuver.Type,
-				Modifier:        st.Maneuver.Modifier,
-				DistanceMeters:  st.Distance,
-				DurationSeconds: int64(st.Duration),
-			}
-			if len(st.Maneuver.Location) >= 2 {
-				step.Location = &pb.Location{Lng: st.Maneuver.Location[0], Lat: st.Maneuver.Location[1]}
-			}
-			steps = append(steps, step)
-		}
-	}
-	return steps
-}
-
-func walkLocationUsable(location *pb.Location) bool {
-	return location != nil && (location.Lat != 0 || location.Lng != 0)
-}
-
-func osrmRouteAvailable(response *resty.Response, payload osrmRouteResponse) bool {
-	return response.IsSuccess() && payload.Code == "Ok" && len(payload.Routes) > 0
-}
-
-func walkInstruction(maneuverType, modifier, name string) string {
-	switch maneuverType {
-	case "arrive":
-		return "抵達目的地"
-	case "depart":
-		if name != "" {
-			return fmt.Sprintf("沿%s出發", name)
-		}
-		return "開始步行"
-	}
-	return walkTurnInstruction(modifier, name)
-}
-
-func walkTurnInstruction(modifier, name string) string {
-	turn := map[string]string{
-		"left": "左轉", "right": "右轉",
-		"slight left": "稍向左", "slight right": "稍向右",
-		"sharp left": "向左急轉", "sharp right": "向右急轉",
-		"uturn": "迴轉",
-	}[modifier]
-	if turn != "" {
-		return namedWalkTurn(turn, name)
-	}
-	if name != "" {
-		return fmt.Sprintf("沿%s直走", name)
-	}
-	return "繼續直走"
-}
-
-func namedWalkTurn(turn, name string) string {
-	if name != "" {
-		return fmt.Sprintf("%s進入%s", turn, name)
-	}
-	return turn
-}
+// maas_geometry.go — transit-path/rail-shape geometry enrichment for MaaS
+// plan responses.
 
 // Rail-mode classifiers. TDX MaaS mode strings vary by dataset; these cover the
 // documented values (SUBWAY/METRO for metro, RAIL/TRA for conventional rail,
@@ -441,6 +271,12 @@ func enrichTransitPath(ctx context.Context, db maasDB, shapes *railShapeCache, m
 	return nil
 }
 
+// needsRailClip is false for non-rail sections and for those MOTIS already
+// shaped.
+func needsRailClip(mode string, ref maasSectionRef) bool {
+	return mode != "" && len(ref.target.TransitPath) == 0
+}
+
 func enrichTransitPaths(ctx context.Context, db maasDB, shapes *railShapeCache, refs []maasSectionRef) {
 	if db == nil {
 		return
@@ -449,7 +285,7 @@ func enrichTransitPaths(ctx context.Context, db maasDB, shapes *railShapeCache, 
 	group.SetLimit(_maasTransitPathConcurrency)
 	for _, ref := range refs {
 		mode := railShapeMode(ref.source.Transport.Mode)
-		if mode == "" {
+		if !needsRailClip(mode, ref) {
 			continue
 		}
 

@@ -277,7 +277,7 @@ func (runtime *routerRuntime) startConfigured(httpConfig httpServerConfig, shutd
 	if err != nil {
 		return err
 	}
-	lis, httpRuntime, rider, plannerMonitor := serving.grpcListener, serving.http, serving.rider, serving.plannerHealth
+	lis, httpRuntime, rider := serving.grpcListener, serving.http, serving.rider
 	rl := ratelimit.NewWithTrustedProxies(httpConfig.TrustedProxies)
 	serverOptions, err := grpcOptionsFromEnv(httpConfig, rl)
 	if err != nil {
@@ -296,19 +296,8 @@ func (runtime *routerRuntime) startConfigured(httpConfig httpServerConfig, shutd
 	pb.RegisterNear_Station_ServiceServer(grpcServer, transit.NewNearServer(nearby.NewNearbyDiscovery(nearby.NewPostgresNearbyStore(db), nearbyRouter)))
 	pb.RegisterAlert_ServiceServer(grpcServer, alert.NewAlertServer(live))
 	maasWorkConfig := maas.DefaultMaasSharedWorkConfig
-	if httpConfig.MotisEnabled {
-		maasWorkConfig.Motis = maas.NewMotisClient(motisBaseURL)
-		// The same monitor /api/planner reports, so the backend the app is
-		// told about is the backend that answers its next plan request.
-		maasWorkConfig.Health = plannerMonitor
-	}
-	zap.S().Infow("planner selected",
-		"component", "maas",
-		"action", "startup",
-		"backend", maas.BackendName(maasWorkConfig.Motis != nil),
-		"motis_base_url", motisBaseURL,
-	)
-	maasServer := maas.NewMaasServerWithCache(maasCache, db, tdx, maasWorkConfig)
+	maasWorkConfig.Motis = maas.NewMotisClient(motisBaseURL)
+	maasServer := maas.NewMaasServerWithCache(maasCache, db, maasWorkConfig)
 	// Registered after rc/db/maasCache's cleanups above, so in cleanup's
 	// LIFO order maas.MaasServer.Close runs first: every shared singleflight
 	// flight is canceled and joined before those backends close under it.
@@ -334,10 +323,9 @@ func (runtime *routerRuntime) startConfigured(httpConfig httpServerConfig, shutd
 }
 
 type routerServing struct {
-	grpcListener  net.Listener
-	http          preparedHTTPServer
-	rider         riderLink
-	plannerHealth *maas.PlannerHealthMonitor
+	grpcListener net.Listener
+	http         preparedHTTPServer
+	rider        riderLink
 }
 
 func (runtime *routerRuntime) prepareServing(config httpServerConfig, db *pgxpool.Pool, live *livestream.LiveHub, motisBaseURL string, listen func(string, string) (net.Listener, error)) (routerServing, error) {
@@ -346,7 +334,7 @@ func (runtime *routerRuntime) prepareServing(config httpServerConfig, db *pgxpoo
 		return routerServing{}, _oops.Wrapf(err, "listen for gRPC")
 	}
 	runtime.addCleanup(func() { _ = lis.Close() })
-	plannerMonitor := runtime.plannerMonitor(config.MotisEnabled, motisBaseURL)
+	plannerMonitor := runtime.plannerMonitor(motisBaseURL)
 	config.plannerHealth = plannerMonitor
 	rider, err := dialRider()
 	if err != nil {
@@ -359,17 +347,14 @@ func (runtime *routerRuntime) prepareServing(config httpServerConfig, db *pgxpoo
 		return routerServing{}, err
 	}
 	runtime.addCleanup(func() { _ = httpRuntime.listener.Close() })
-	return routerServing{grpcListener: lis, http: httpRuntime, rider: rider, plannerHealth: plannerMonitor}, nil
+	return routerServing{grpcListener: lis, http: httpRuntime, rider: rider}, nil
 }
 
-func (runtime *routerRuntime) plannerMonitor(enabled bool, motisBaseURL string) *maas.PlannerHealthMonitor {
-	var plannerMonitor *maas.PlannerHealthMonitor
-	if enabled {
-		plannerMonitor = maas.NewPlannerHealthMonitor(maas.NewMotisHealthClient(motisBaseURL))
-		healthCtx, stopHealth := context.WithCancel(context.Background())
-		runtime.addCleanup(stopHealth)
-		plannerMonitor.Start(healthCtx)
-	}
+func (runtime *routerRuntime) plannerMonitor(motisBaseURL string) *maas.PlannerHealthMonitor {
+	plannerMonitor := maas.NewPlannerHealthMonitor(maas.NewMotisHealthClient(motisBaseURL))
+	healthCtx, stopHealth := context.WithCancel(context.Background())
+	runtime.addCleanup(stopHealth)
+	plannerMonitor.Start(healthCtx)
 	return plannerMonitor
 }
 
@@ -382,7 +367,7 @@ func grpcOptionsFromEnv(httpConfig httpServerConfig, rl *ratelimit.Limiter) ([]g
 	if err != nil {
 		return nil, _oops.Wrapf(err, "initialize Firebase Admin")
 	}
-	// One limiter across both chains so the TDX quota is spent per caller,
+	// One limiter across both chains so the planner quota is spent per caller,
 	// not per method (see _maasQuotaScope).
 	maasRL := ratelimit.NewWithTrustedProxies(httpConfig.TrustedProxies)
 	serverOptions := []grpc.ServerOption{

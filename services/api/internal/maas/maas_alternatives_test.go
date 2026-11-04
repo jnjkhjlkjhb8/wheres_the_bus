@@ -47,7 +47,7 @@ func TestConvertResolvesIdentitiesForAlternativesInTheSameBatch(t *testing.T) {
 	api := &tdxAPIResponse{}
 	api.Data.Routes = []tdxRoute{{Sections: []tdxSection{main}}}
 
-	out := convert(context.Background(), db, nil, api)
+	out := convert(context.Background(), db, api)
 	if err := db.ExpectationsWereMet(); err != nil {
 		t.Fatalf("alternatives were not folded into the existing batch: %v", err)
 	}

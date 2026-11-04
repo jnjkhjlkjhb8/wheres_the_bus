@@ -379,3 +379,31 @@ func mustParseRFC3339(t *testing.T, ts string) time.Time {
 	}
 	return parsed
 }
+
+func TestDropLongWaitsRemovesOvernightLayovers(t *testing.T) {
+	leg := func(start, end string) motisLeg { return motisLeg{StartTime: start, EndTime: end} }
+	usable := motisItinerary{Legs: []motisLeg{
+		leg("2026-10-20T10:00:00+08:00", "2026-10-20T10:20:00+08:00"),
+		leg("2026-10-20T10:30:00+08:00", "2026-10-20T11:00:00+08:00"),
+	}}
+	overnight := motisItinerary{Legs: []motisLeg{
+		leg("2026-10-20T22:35:00+08:00", "2026-10-20T22:50:00+08:00"),
+		leg("2026-10-21T05:26:00+08:00", "2026-10-21T05:50:00+08:00"),
+	}}
+	got := dropLongWaits([]motisItinerary{overnight, usable})
+	if len(got) != 1 || got[0].Legs[0].StartTime != usable.Legs[0].StartTime {
+		t.Fatalf("kept %+v, want only the usable itinerary", got)
+	}
+}
+
+func TestMotisTransitGeometryKeepsOnlyRealShapes(t *testing.T) {
+	line := motisPolyline{Points: "_p~iF~ps|U_ulLnnqC_mqNvxq`@", Precision: 5}
+	shaped := motisLegGeometry(motisLeg{Mode: "BUS", LegGeometry: line})
+	if shaped == nil || len(shaped.transit) != 3 {
+		t.Fatalf("shape with no intermediate stops should be kept, got %+v", shaped)
+	}
+	straight := motisLeg{Mode: "BUS", LegGeometry: line, IntermediateStops: []motisPlace{{}}}
+	if got := motisLegGeometry(straight); got != nil {
+		t.Fatalf("one point per stop is a straight line, got %+v", got)
+	}
+}

@@ -68,7 +68,7 @@ class _BoardList extends StatelessWidget {
     // caveat that they lag the platform displays.
     final notice = system == RailSystem.tra;
 
-    return ListView.builder(
+    final list = ListView.builder(
       padding: const EdgeInsets.fromLTRB(
         AppTheme.space8,
         AppTheme.space8,
@@ -104,6 +104,7 @@ class _BoardList extends StatelessWidget {
         );
       },
     );
+    return EdgeFade(child: list);
   }
 }
 

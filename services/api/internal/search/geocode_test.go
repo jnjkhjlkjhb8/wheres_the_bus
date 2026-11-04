@@ -10,11 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func geocodeTestRouter(t *testing.T, upstreamURL string, mounted bool) *gin.Engine {
+func geocodeTestRouter(t *testing.T, upstreamURL string) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	RegisterGeocodeRoutes(engine, upstreamURL, mounted, func(c *gin.Context) { c.Next() })
+	RegisterGeocodeRoutes(engine, upstreamURL, func(c *gin.Context) { c.Next() })
 	return engine
 }
 
@@ -29,7 +29,7 @@ func TestHandleGeocodeReportsUpstreamFailureRatherThanEmptyResults(t *testing.T)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, GeocodePath+"?text=台北車站", nil)
-	geocodeTestRouter(t, upstream.URL, true).ServeHTTP(recorder, request)
+	geocodeTestRouter(t, upstream.URL).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", recorder.Code)
@@ -51,7 +51,7 @@ func TestHandleGeocodeMapsMatchesAndDropsUnnavigableOnes(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, GeocodePath+"?text=台北&lat=25.03&lon=121.56", nil)
-	geocodeTestRouter(t, upstream.URL, true).ServeHTTP(recorder, request)
+	geocodeTestRouter(t, upstream.URL).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", recorder.Code)
@@ -95,13 +95,13 @@ func TestGeocodeBiasRejectsUnusableCoordinates(t *testing.T) {
 	}
 }
 
-// With MAAS_BACKEND=tdx there is no MOTIS to proxy, so the route must not
+// With no MOTIS URL there is nothing to proxy, so the route must not
 // exist: a 404 sends the app to Google Places, while a mounted route pointing
 // at nothing would spend three seconds timing out on every keystroke.
-func TestRegisterGeocodeRoutesStaysUnmountedWithoutMotis(t *testing.T) {
+func TestRegisterGeocodeRoutesStaysUnmountedWithoutBaseURL(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, GeocodePath+"?text=台北", nil)
-	geocodeTestRouter(t, "http://motis:8080", false).ServeHTTP(recorder, request)
+	geocodeTestRouter(t, "").ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", recorder.Code)

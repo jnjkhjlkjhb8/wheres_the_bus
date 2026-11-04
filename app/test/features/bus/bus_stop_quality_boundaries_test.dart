@@ -266,6 +266,7 @@ void main() {
     WidgetTester tester,
     _Bus bus, {
     bool dark = false,
+    bool reduced = false,
     bool hint = false,
     double? lat,
     double? lon,
@@ -278,6 +279,10 @@ void main() {
         locale: const Locale('zh'),
         localizationsDelegates: AppI18n.localizationsDelegates,
         supportedLocales: AppI18n.supportedLocales,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: reduced),
+          child: child!,
+        ),
         home: MultiBlocProvider(
           providers: providers(),
           child: BusStopScreen(
@@ -418,7 +423,7 @@ void main() {
     await flush(tester);
   });
 
-  testWidgets('loading shows four placeholder rows counting up in minutes', (
+  testWidgets('loading shows four one-digit placeholder rows counting up', (
     tester,
   ) async {
     final bus = _Bus();
@@ -430,7 +435,7 @@ void main() {
     expect(tiles, hasLength(4));
     expect(
       [for (final tile in tiles) (tile.status as EtaMinutes).value],
-      [3, 7, 11, 15],
+      [3, 4, 5, 6],
     );
     await tester.pumpWidget(const SizedBox.shrink());
     await flush(tester);
@@ -491,6 +496,43 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await flush(tester);
   });
+
+  for (final reduced in [true, false]) {
+    final label = reduced ? 'reduced motion snaps' : 'normal motion animates';
+
+    void expectMode() {
+      expect(map.cameraUpdates, isNotEmpty);
+      expect(map.movedUpdates.isNotEmpty, reduced);
+      expect(map.animatedUpdates.isNotEmpty, !reduced);
+    }
+
+    testWidgets('$label when the first member loads', (tester) async {
+      final bus = _Bus();
+      await mountScreen(tester, bus, reduced: reduced);
+      bus.members.complete(const [_east]);
+      await flush(tester);
+
+      expectMode();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await flush(tester);
+    });
+
+    testWidgets('$label for the manual recenter', (tester) async {
+      final bus = _Bus();
+      await mountScreen(tester, bus, hint: true, reduced: reduced);
+      bus.members.complete(const []);
+      await flush(tester);
+      expect(map.cameraUpdates, isEmpty);
+      await tester.tap(find.byIcon(Icons.gps_fixed_rounded));
+      await flush(tester);
+      location.requests.single.complete(location.fix);
+      await flush(tester);
+
+      expectMode();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await flush(tester);
+    });
+  }
 
   testWidgets('disposed stop screen ignores a pending manual recenter', (
     tester,

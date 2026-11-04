@@ -10,7 +10,6 @@ import (
 	"time"
 
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/pashagolub/pgxmock/v4"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -33,8 +32,7 @@ func TestPlanFailureRetainsContextAndKnownStatus(t *testing.T) {
 }
 
 func TestCancelledPlanDoesNotReachUpstreamAfterCacheMiss(t *testing.T) {
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, DefaultMaasSharedWorkConfig)
+	server := NewMaasServerWithCache(newControlledMaasCache(), nil, DefaultMaasSharedWorkConfig)
 	defer server.Close()
 	req := &pb.MaasPlanRequest{}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -64,36 +62,15 @@ func TestMaasCacheWriteFailureDoesNotDiscardCompletedStream(t *testing.T) {
 	}
 }
 
-func TestMaasEnrichmentUsesConfiguredPlanner(t *testing.T) {
+func TestMaasEnrichmentAppliesMotisWalkGeometry(t *testing.T) {
 	server := &MaasServer{}
-	if server.useMotis() {
-		t.Fatal("TDX server selected MOTIS")
-	}
-	server.motisClient = NewMotisClient("http://127.0.0.1:1")
-	if !server.useMotis() {
-		t.Fatal("configured MOTIS was not selected")
-	}
-	server.health = NewPlannerHealthMonitor(nil)
-	if server.useMotis() {
-		t.Fatal("pinned TDX health monitor selected MOTIS")
-	}
-	server.health = NewPlannerHealthMonitor(NewMotisHealthClient("http://127.0.0.1:1"))
-	server.health.healthy = false
-	if server.useMotis() {
-		t.Fatal("unhealthy monitor selected MOTIS")
-	}
-	server.health.healthy = true
-	if !server.useMotis() {
-		t.Fatal("healthy monitor was not honored")
-	}
 	section := &pb.Section{}
 	geometry := &motisWalkGeometry{path: []*pb.Location{{Lat: 25, Lng: 121}}}
-	server.enrich(t.Context(), []maasSectionRef{{target: section}}, []*motisWalkGeometry{geometry}, true)
+	server.enrich(t.Context(), []maasSectionRef{{target: section}}, []*motisWalkGeometry{geometry})
 	if len(section.WalkPath) != 1 || section.WalkPath[0].Lat != 25 {
 		t.Fatal("MOTIS walk geometry was not applied")
 	}
-	server.enrich(t.Context(), nil, []*motisWalkGeometry{geometry}, true)
-	server.enrich(t.Context(), nil, nil, false)
+	server.enrich(t.Context(), nil, []*motisWalkGeometry{geometry})
 }
 
 func TestRailShapeQueryFailureAndMissingRowAreRecoverable(t *testing.T) {
@@ -133,7 +110,7 @@ func TestMotisModesDeduplicateAndRejectIncompletePolyline(t *testing.T) {
 	}
 }
 
-func TestMaasBackendEnvironmentAndLabels(t *testing.T) {
+func TestMotisBaseURLFromEnv(t *testing.T) {
 	t.Setenv(_motisBaseURLEnv, "")
 	if got := MotisBaseURLFromEnv(); got != _motisDefaultBaseURL {
 		t.Fatalf("default URL=%s", got)
@@ -141,21 +118,6 @@ func TestMaasBackendEnvironmentAndLabels(t *testing.T) {
 	t.Setenv(_motisBaseURLEnv, " http://localhost:8080/// ")
 	if got := MotisBaseURLFromEnv(); got != "http://localhost:8080" {
 		t.Fatalf("trimmed URL=%s", got)
-	}
-	if BackendName(true) != "motis" || BackendName(false) != "tdx" {
-		t.Fatal("backend labels differ from configured planner")
-	}
-}
-
-func TestTDXPlanNotFoundRetainsNoRouteClassification(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
-	defer upstream.Close()
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, maasSharedWorkConfig{Timeout: time.Second})
-	defer server.Close()
-	server.maasClient.SetBaseURL(upstream.URL)
-	if got, err := server.fetch(t.Context(), &pb.MaasPlanRequest{}); got != nil || !errors.Is(err, errMaasNoRoute) {
-		t.Fatalf("not-found response=%v, error=%v", got, err)
 	}
 }
 
@@ -185,8 +147,7 @@ func TestSharedPlanCacheHitSkipsUpstreamAndStreamQuotaIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache.data["hit"] = encoded
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(cache, nil, tdx, maasSharedWorkConfig{MaxConcurrent: 1})
+	server := NewMaasServerWithCache(cache, nil, maasSharedWorkConfig{MaxConcurrent: 1})
 	defer server.Close()
 	got, err := server.runSharedPlan("hit", &pb.MaasPlanRequest{})
 	if err != nil || !proto.Equal(got, response) || cache.setCalls.Load() != 0 {
@@ -203,28 +164,37 @@ func TestSharedPlanCacheHitSkipsUpstreamAndStreamQuotaIsBounded(t *testing.T) {
 	}
 }
 
-func TestTDXTransportAndHTTPFailureDoNotReturnPlan(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
-	defer upstream.Close()
-	tdx := shared.NewTDXClient(shared.TDXConfig{Store: &maasTDXStore{token: "tok"}, IMSKey: shared.TDXLegacyIMSKey})
-	server := NewMaasServerWithCache(newControlledMaasCache(), nil, tdx, DefaultMaasSharedWorkConfig)
-	defer server.Close()
-	server.maasClient.SetBaseURL(upstream.URL)
-	if response, err := server.fetch(t.Context(), &pb.MaasPlanRequest{}); response != nil || err == nil || errors.Is(err, errMaasNoRoute) {
-		t.Fatalf("HTTP failure response=%v, error=%v", response, err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if response, err := server.fetch(ctx, &pb.MaasPlanRequest{}); response != nil || !errors.Is(err, context.Canceled) {
-		t.Fatalf("transport failure response=%v, error=%v", response, err)
-	}
-}
-
 func TestMotisEmptyAndTruncatedWalkGeometryIsNotPublished(t *testing.T) {
 	if geometry := motisLegGeometry(motisLeg{Mode: "WALK"}); geometry != nil {
 		t.Fatalf("empty geometry=%v", geometry)
 	}
 	if got := decodeMotisPolyline(motisPolyline{Points: "~", Precision: 5}); len(got) != 0 {
 		t.Fatalf("truncated geometry=%v", got)
+	}
+}
+
+func TestMotisPlanNotFoundAndFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		noRoute bool
+	}{{"not found", http.StatusNotFound, true}, {"server error", http.StatusInternalServerError, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tc.status) }))
+			defer upstream.Close()
+			server := newMotisTestServer(newControlledMaasCache(), DefaultMaasSharedWorkConfig, upstream.URL)
+			defer server.Close()
+			got, err := server.get(t.Context(), &pb.MaasPlanRequest{})
+			if got != nil || err == nil || errors.Is(err, errMaasNoRoute) != tc.noRoute {
+				t.Fatalf("response=%v, error=%v", got, err)
+			}
+		})
+	}
+	server := newMotisTestServer(newControlledMaasCache(), DefaultMaasSharedWorkConfig, "http://127.0.0.1:1")
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got, err := server.get(ctx, &pb.MaasPlanRequest{}); got != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("transport failure response=%v, error=%v", got, err)
 	}
 }
