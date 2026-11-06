@@ -17,6 +17,7 @@ import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/core/powersync/powersync_service.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
+import 'package:wheres_the_bus/data/repositories/offline_bus_cities.dart';
 import 'package:wheres_the_bus/data/repositories/offline_prefetch.dart';
 
 Future<void> main() => startApp();
@@ -70,6 +71,13 @@ const _offlineWarmDelay = Duration(seconds: 5);
 
 Future<void> _warmOfflineCache(AppBootstrapController bootstrap) async {
   if (bootstrap.state == AppBootstrapState.failed) return;
+  // After the first sync, search_vector is local and the cities can be
+  // inferred; on a fresh install that is the moment they first sync.
+  unawaited(
+    PowerSyncService.instance.firstSync
+        .then((_) => refreshOfflineBusCities())
+        .catchError(CrashReporter.record),
+  );
   await HiveStore.staticCacheSettled();
   await Future<void>.delayed(_offlineWarmDelay);
   await prefetchOfflineStatics().catchError(CrashReporter.record);

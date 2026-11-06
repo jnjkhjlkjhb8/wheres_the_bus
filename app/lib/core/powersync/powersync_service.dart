@@ -12,6 +12,7 @@ import 'package:wheres_the_bus/core/http/http_client.dart';
 import 'package:wheres_the_bus/core/lifecycle/app_foreground.dart';
 import 'package:wheres_the_bus/core/powersync/local_db.dart';
 import 'package:wheres_the_bus/core/powersync/powersync_health.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
 
 const String _envPowersyncUrl = String.fromEnvironment(
   'POWERSYNC_URL',
@@ -47,6 +48,19 @@ const _schema = Schema([
     Column.real('lat'),
     Column.real('lon'),
   ]),
+  // Per-city offline bus routes (ADR-0029); read by BusRepository's offline
+  // fallback. stops_* are JSON arrays of [uid, name, sequence, lat, lon].
+  Table('bus_route_offline', [
+    Column.text('city'),
+    Column.text('route_name'),
+    Column.text('sub_route_name'),
+    Column.text('depart'),
+    Column.text('destin'),
+    Column.text('headsign_go'),
+    Column.text('headsign_return'),
+    Column.text('stops_go'),
+    Column.text('stops_return'),
+  ]),
 ]);
 
 /// Builds the on-disk [PowerSyncDatabase]. Overridable in tests via
@@ -57,9 +71,18 @@ typedef PowerSyncDatabaseFactory = Future<PowerSyncDatabase> Function();
 abstract interface class PowerSyncConnection {
   PowerSyncDatabase get database;
   bool get connected;
+
+  /// When a full sync last completed, or null if none ever has.
+  DateTime? get lastSyncedAt;
+
+  /// [lastSyncedAt] for every status change.
+  Stream<DateTime?> get lastSyncedStream;
   Stream<SyncStatus> get statusStream;
   Future<void> initialize();
-  Future<void> connect(PowerSyncBackendConnector connector);
+  Future<void> connect(
+    PowerSyncBackendConnector connector, {
+    required Map<String, dynamic> params,
+  });
   Future<void> close();
   Future<List<Map<String, dynamic>>> getAll(
     String sql,
@@ -76,12 +99,22 @@ class _NativePowerSyncConnection implements PowerSyncConnection {
   @override
   bool get connected => database.connected;
   @override
+  DateTime? get lastSyncedAt => database.currentStatus.lastSyncedAt;
+  @override
+  Stream<DateTime?> get lastSyncedStream =>
+      database.statusStream.map((s) => s.lastSyncedAt);
+  @override
   Stream<SyncStatus> get statusStream => database.statusStream;
   @override
   Future<void> initialize() => database.initialize();
   @override
-  Future<void> connect(PowerSyncBackendConnector connector) =>
-      database.connect(connector: connector);
+  Future<void> connect(
+    PowerSyncBackendConnector connector, {
+    required Map<String, dynamic> params,
+  }) => database.connect(
+    connector: connector,
+    options: SyncOptions(params: params),
+  );
   @override
   Future<void> close() => database.close();
   @override
@@ -99,8 +132,10 @@ class PowerSyncService implements LocalDb {
     PowerSyncDatabaseFactory? dbFactory,
     PowerSyncConnectionFactory? connectionFactory,
     PowerSyncBackendConnector Function()? connectorFactory,
+    Map<String, dynamic> Function()? syncParams,
     String endpoint = _envPowersyncUrl,
-  }) : _connectionFactory =
+  }) : _syncParams = syncParams ?? _storedSyncParams,
+       _connectionFactory =
            connectionFactory ??
            (() async => _NativePowerSyncConnection(
              await (dbFactory ?? _defaultDbFactory)(),
@@ -127,6 +162,14 @@ class PowerSyncService implements LocalDb {
     );
   }
 
+  /// Client parameters for the sync rules' parameterised buckets: the
+  /// `bus_city` bucket reads `bus_cities` (ADR-0029).
+  static Map<String, dynamic> _storedSyncParams() => {
+    'bus_cities': HiveStore.offlineBusCities,
+  };
+
+  final Map<String, dynamic> Function() _syncParams;
+  Map<String, dynamic>? _connectedParams;
   final PowerSyncConnectionFactory _connectionFactory;
   final PowerSyncBackendConnector Function() _connectorFactory;
   final String _endpoint;
@@ -182,9 +225,24 @@ class PowerSyncService implements LocalDb {
   Future<void> _connectWithCredentials(PowerSyncConnection db) async {
     final connector = _connectorFactory();
     if (await connector.fetchCredentials() != null) {
-      await db.connect(connector);
+      final params = _syncParams();
+      await db.connect(connector, params: params);
+      _connectedParams = params;
     }
   }
+
+  /// Reconnects when the client parameters changed since the open connection
+  /// was made, so a new city set takes effect without waiting for the next
+  /// launch. A closed connection picks the new set up when it next connects.
+  /// A failed reconnect throws; callers report it.
+  Future<void> refreshSyncParams() async {
+    final db = _connection;
+    if (db == null || !db.connected || !_paramsChanged()) return;
+    await _connectWithCredentials(db);
+  }
+
+  bool _paramsChanged() =>
+      jsonEncode(_syncParams()) != jsonEncode(_connectedParams);
 
   void _logOffline() {
     if (kDebugMode) {
@@ -206,6 +264,16 @@ class PowerSyncService implements LocalDb {
   Future<PowerSyncDatabase> get readyDb async {
     await init();
     return db;
+  }
+
+  /// Completes once a full sync has finished at least once on this device,
+  /// immediately if one already has. Never completes on a device that has
+  /// never reached the sync service.
+  Future<void> get firstSync async {
+    await init();
+    final connection = _readyConnection;
+    if (connection.lastSyncedAt != null) return;
+    await connection.lastSyncedStream.firstWhere((at) => at != null);
   }
 
   /// The initialized database. Guarded by an explicit [StateError] rather

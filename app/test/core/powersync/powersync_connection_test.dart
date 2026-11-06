@@ -12,6 +12,14 @@ class _Database implements PowerSyncConnection {
   int closures = 0;
   @override
   bool connected = false;
+
+  @override
+  DateTime? lastSyncedAt;
+
+  final synced = StreamController<DateTime?>.broadcast();
+
+  @override
+  Stream<DateTime?> get lastSyncedStream => synced.stream;
   @override
   Future<void> initialize() async {
     initializations++;
@@ -20,7 +28,10 @@ class _Database implements PowerSyncConnection {
   @override
   Stream<SyncStatus> get statusStream => statuses.stream;
   @override
-  Future<void> connect(PowerSyncBackendConnector connector) async {
+  Future<void> connect(
+    PowerSyncBackendConnector connector, {
+    required Map<String, dynamic> params,
+  }) async {
     connections++;
     connected = true;
   }

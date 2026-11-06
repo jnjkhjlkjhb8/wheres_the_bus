@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hive_ce_flutter/adapters.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 import 'package:wheres_the_bus/features/settings/settings_option_screen.dart';
 import 'package:wheres_the_bus/features/settings/settings_screen.dart';
@@ -36,6 +40,10 @@ void main() {
             ),
             lastSyncedAtOf: DateTime.now,
           ),
+        ),
+        GoRoute(
+          path: AppRoutes.settingsOfflineBus,
+          builder: (_, _) => const Text('offline-bus-page'),
         ),
         for (final route in routes)
           GoRoute(
@@ -94,6 +102,38 @@ void main() {
       expect(find.text(choice), findsWidgets);
     }
     expect(repository.languageCode, isNot(''));
+  });
+
+  testWidgets('the offline bus row shows the synced count and opens its page', (
+    tester,
+  ) async {
+    final dir = await tester.runAsync(
+      () => Directory.systemTemp.createTemp('settings-offline-bus-'),
+    );
+    Hive.init(dir!.path);
+    await tester.runAsync(() async {
+      await Hive.openBox<dynamic>('settings');
+      await HiveStore.setOfflineBusCities(['Taipei', 'NewTaipei']);
+    });
+    addTearDown(
+      () => tester.runAsync(() async {
+        await Hive.box<dynamic>('settings').close();
+        await dir.delete(recursive: true);
+      }),
+    );
+    await mount(tester, SettingsRepository(store: InMemorySettingsStore()));
+    final i18n = AppI18n.of(tester.element(find.byType(SettingsScreen)));
+    await tester.scrollUntilVisible(find.text(i18n.settingsOfflineBus), 150);
+    expect(find.text(i18n.settingsOfflineBusCount(2)), findsOneWidget);
+    await tester.runAsync(() => HiveStore.setOfflineBusCities([]));
+    await tester.pump();
+    expect(find.text(i18n.settingsOfflineBusNone), findsOneWidget);
+    await tester.ensureVisible(find.text(i18n.settingsOfflineBus));
+    await tester.tap(find.text(i18n.settingsOfflineBus));
+    await tester.pumpAndSettle();
+    expect(find.text('offline-bus-page'), findsOneWidget);
+    // The path is a deep link, so it is pinned rather than only round-tripped.
+    expect(AppRoutes.settingsOfflineBus, '/settings/offline-bus');
   });
 
   testWidgets('canceling a picker keeps its previous setting', (tester) async {

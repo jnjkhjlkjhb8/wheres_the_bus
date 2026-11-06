@@ -20,6 +20,7 @@ import 'package:wheres_the_bus/features/rail/view/rail_screen.dart';
 import 'package:wheres_the_bus/features/rail/view/rail_train_screen.dart';
 import 'package:wheres_the_bus/features/search/view/search_screen.dart';
 import 'package:wheres_the_bus/features/settings/bloc/settings_state.dart';
+import 'package:wheres_the_bus/features/settings/offline_bus_cities_screen.dart';
 import 'package:wheres_the_bus/features/settings/settings_option_screen.dart';
 import 'package:wheres_the_bus/features/settings/settings_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -195,6 +196,10 @@ List<RouteBase> buildAppRoutes({
                     ).labelOf(i18n),
                   );
                 },
+              ),
+              GoRoute(
+                path: 'offline-bus',
+                pageBuilder: (_, _) => _page(const OfflineBusCitiesScreen()),
               ),
               GoRoute(
                 path: 'language',

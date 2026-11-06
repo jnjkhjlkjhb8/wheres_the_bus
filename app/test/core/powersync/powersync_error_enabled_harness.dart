@@ -38,6 +38,14 @@ class _Connection implements PowerSyncConnection {
   bool connected = false;
 
   @override
+  DateTime? lastSyncedAt;
+
+  final synced = StreamController<DateTime?>.broadcast();
+
+  @override
+  Stream<DateTime?> get lastSyncedStream => synced.stream;
+
+  @override
   PowerSyncDatabase get database => throw UnimplementedError();
 
   @override
@@ -47,7 +55,10 @@ class _Connection implements PowerSyncConnection {
   Future<void> initialize() async {}
 
   @override
-  Future<void> connect(PowerSyncBackendConnector connector) async {
+  Future<void> connect(
+    PowerSyncBackendConnector connector, {
+    required Map<String, dynamic> params,
+  }) async {
     attempts++;
     final failure = error;
     if (failure != null) Error.throwWithStackTrace(failure, stack!);

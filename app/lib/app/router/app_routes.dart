@@ -15,6 +15,7 @@ class AppRoutes {
   static const settingsFareType = '/settings/fare-type';
   static const settingsLanguage = '/settings/language';
   static const settingsWalkPace = '/settings/walk-pace';
+  static const settingsOfflineBus = '/settings/offline-bus';
   static const search = '/search';
   static const favorites = '/favorites';
   static const busStop = '/bus/stop';

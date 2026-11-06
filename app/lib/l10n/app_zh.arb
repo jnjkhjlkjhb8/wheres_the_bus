@@ -112,6 +112,31 @@
   "@settingsFareFooter": {
     "description": "Footnote under the fare group explaining that the ticket type is set once and read everywhere."
   },
+  "settingsSectionOffline": "離線資料",
+  "@settingsSectionOffline": {
+    "description": "Settings group for data kept on the device for offline use."
+  },
+  "settingsOfflineBus": "離線公車路線",
+  "@settingsOfflineBus": {
+    "description": "Settings row and screen title for choosing which cities' bus routes are kept for offline use."
+  },
+  "settingsOfflineBusCount": "{count} 個縣市",
+  "@settingsOfflineBusCount": {
+    "description": "Trailing value on the offline bus row: how many cities are kept offline.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "settingsOfflineBusNone": "未下載",
+  "@settingsOfflineBusNone": {
+    "description": "Trailing value on the offline bus row when no city is kept offline."
+  },
+  "settingsOfflineBusAutomatic": "自動加入",
+  "@settingsOfflineBusAutomatic": {
+    "description": "Note on a city the app keeps offline on its own, from the rider's location or favourite routes."
+  },
+  "settingsOfflineBusFooter": "選取的縣市會下載公車路線與站序，沒有網路時也能查看。所在地與收藏路線的縣市會自動加入。離線時不會顯示到站時間。",
+  "@settingsOfflineBusFooter": {
+    "description": "Footnote explaining what offline bus routes include and that live arrival times need a connection."
+  },
   "settingsFareType": "我的票種",
   "@settingsFareType": {
     "description": "Row that opens the ticket type picker (adult, student, senior…)."

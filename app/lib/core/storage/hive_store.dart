@@ -333,6 +333,29 @@ class HiveStore {
     await settings.put('last_device_position', [lat, lon]);
   }
 
+  /// TDX city codes whose bus routes sync for offline use (ADR-0029): the
+  /// rider's choice plus the inferred cities. Empty until first computed.
+  static List<String> get offlineBusCities =>
+      _stringList(settingsReady ? settings.get('offline_bus_cities') : null);
+
+  static Future<void> setOfflineBusCities(List<String> cities) async {
+    if (!settingsReady) return;
+    await settings.put('offline_bus_cities', cities);
+  }
+
+  /// The cities the rider picked in settings, before inference.
+  static List<String> get chosenOfflineBusCities => _stringList(
+    settingsReady ? settings.get('chosen_offline_bus_cities') : null,
+  );
+
+  static Future<void> setChosenOfflineBusCities(List<String> cities) async {
+    if (!settingsReady) return;
+    await settings.put('chosen_offline_bus_cities', cities);
+  }
+
+  static List<String> _stringList(Object? raw) =>
+      raw is List ? raw.whereType<String>().toList() : const [];
+
   /// Mirrors `SettingsRepository.liveActivityEnabled`.
   static bool get liveActivityEnabled =>
       settings.get('live_activity_enabled', defaultValue: true) as bool;

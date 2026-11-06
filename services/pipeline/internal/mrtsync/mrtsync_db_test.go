@@ -8,7 +8,27 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 )
+
+func subroutePB(t *testing.T, uid, lastStop string) []byte {
+	t.Helper()
+	pb, err := proto.Marshal(&models.BusSubroute{
+		SubRouteUID: uid, City: "Taipei", RouteName: "307", SubRouteName: "307",
+		DepartureStopName: "撫遠街", DestinationStopName: "板橋",
+		Directions: map[int32]*models.Direction{
+			0: {DestinationStopName: lastStop, Stops: []*models.BusStop{
+				{StopUID: "S1", StopName: "撫遠街", StopSequence: 1, PositionLat: 25.05, PositionLon: 121.58},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pb
+}
 
 // scratchDB creates a throwaway database on the DATABASE_URL server and
 // returns its URL and a connection to it. It needs CREATEDB, which CI's
@@ -68,6 +88,12 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 	exec(t, src, `INSERT INTO search_vector VALUES
 		('bus_route','TPE307','307','Taipei','撫遠街','板橋',NULL,now(),'307'),
 		('bus_station','S1','台北車站','Taipei',NULL,NULL,ST_SetSRID(ST_MakePoint(121.517,25.047),4326),now(),'tbcz')`)
+	exec(t, src, `CREATE TABLE bus_static (sub_route_uid text, pb bytea)`)
+	for _, uid := range []string{"TPE307", "TPE30"} {
+		if _, err := src.Exec(ctx, `INSERT INTO bus_static VALUES ($1, $2)`, uid, subroutePB(t, uid, "板橋")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	dstDSN, dst := scratchDB(t, admin, dsn, "mrtsync_dst_"+suffix)
 
 	if err := Run(ctx, src, dstDSN); err != nil {
@@ -77,7 +103,7 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 		t.Fatal("run against an unreachable powersync-db succeeded")
 	}
 	var published int
-	if err := dst.QueryRow(ctx, `SELECT count(*) FROM pg_publication_tables WHERE pubname = 'powersync'`).Scan(&published); err != nil || published != 3 {
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM pg_publication_tables WHERE pubname = 'powersync'`).Scan(&published); err != nil || published != 4 {
 		t.Fatalf("powersync publication tables = %d, %v", published, err)
 	}
 	if _, err := Sync(ctx, src, dst); err != nil {
@@ -89,6 +115,9 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 	exec(t, src, `DELETE FROM mrt_journey_matrix WHERE id = 'b'`)
 	// A rebuild that only bumps updated_at must not stream anything.
 	exec(t, src, `UPDATE search_vector SET updated_at = now() + interval '1 day'`)
+	if _, err := src.Exec(ctx, `UPDATE bus_static SET pb = $1 WHERE sub_route_uid = 'TPE30'`, subroutePB(t, "TPE30", "府中")); err != nil {
+		t.Fatal(err)
+	}
 	stats, err := Sync(ctx, src, dst)
 	if err != nil {
 		t.Fatalf("second sync: %v", err)
@@ -97,6 +126,7 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 		{Table: "mrt_schedule", Source: 2, Upserted: 1, Deleted: 0},
 		{Table: "mrt_journey_matrix", Source: 1, Upserted: 0, Deleted: 1},
 		{Table: "search_vector", Source: 2, Upserted: 0, Deleted: 0},
+		{Table: "bus_route_offline", Source: 2, Upserted: 1, Deleted: 0},
 	}
 	if fmt.Sprint(stats) != fmt.Sprint(want) {
 		t.Fatalf("stats = %v, want %v", stats, want)
@@ -109,6 +139,12 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 	var lat, lon float64
 	if err := dst.QueryRow(ctx, `SELECT lat, lon FROM search_vector WHERE uid = 'S1'`).Scan(&lat, &lon); err != nil || lat != 25.047 || lon != 121.517 {
 		t.Fatalf("derived point = %v,%v, %v", lat, lon, err)
+	}
+
+	var headsign, stops string
+	if err := dst.QueryRow(ctx, `SELECT headsign_go, stops_go FROM bus_route_offline WHERE sub_route_uid = 'TPE30'`).Scan(&headsign, &stops); err != nil ||
+		headsign != "府中" || stops != `[["S1","撫遠街",1,25.05,121.58]]` {
+		t.Fatalf("bus route row = %q %q, %v", headsign, stops, err)
 	}
 
 	// A live table that drifted from schema.sql stops the sync before any write.

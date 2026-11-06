@@ -19,9 +19,18 @@ class _Connection implements PowerSyncConnection {
   int connections = 0;
   int closures = 0;
   PowerSyncBackendConnector? lastConnector;
+  Map<String, dynamic>? lastParams;
 
   @override
   bool connected = false;
+
+  @override
+  DateTime? lastSyncedAt;
+
+  final synced = StreamController<DateTime?>.broadcast();
+
+  @override
+  Stream<DateTime?> get lastSyncedStream => synced.stream;
 
   @override
   PowerSyncDatabase get database => throw UnimplementedError();
@@ -38,9 +47,13 @@ class _Connection implements PowerSyncConnection {
   }
 
   @override
-  Future<void> connect(PowerSyncBackendConnector connector) async {
+  Future<void> connect(
+    PowerSyncBackendConnector connector, {
+    required Map<String, dynamic> params,
+  }) async {
     connections++;
     lastConnector = connector;
+    lastParams = params;
     final error = connectionError;
     if (error != null) Error.throwWithStackTrace(error, StackTrace.current);
     connected = true;
@@ -455,6 +468,68 @@ void main() {
       } finally {
         if (!release.isCompleted) release.completeError(failure);
         await observed;
+      }
+    },
+  );
+
+  test(
+    'refreshSyncParams reconnects only when the client parameters change',
+    () async {
+      final connection = _Connection();
+      final connector = _Connector()..credentials = _credentials('p');
+      var cities = ['Taipei'];
+      final service = PowerSyncService(
+        connectionFactory: () async => connection,
+        connectorFactory: () => connector,
+        syncParams: () => {'bus_cities': cities},
+        endpoint: 'https://sync.test',
+      );
+      try {
+        await service.refreshSyncParams(); // before init: nothing to refresh
+        await service.init();
+        expect(connection.lastParams, {
+          'bus_cities': ['Taipei'],
+        });
+        await service.refreshSyncParams();
+        expect(connection.connections, 1);
+        cities = ['Taipei', 'NewTaipei'];
+        await service.refreshSyncParams();
+        expect(connection.connections, 2);
+        expect(connection.lastParams, {
+          'bus_cities': ['Taipei', 'NewTaipei'],
+        });
+        connection.connectionError = StateError('sync unavailable');
+        cities = ['Keelung'];
+        await expectLater(service.refreshSyncParams(), throwsStateError);
+        connection.connected = false;
+        await service.refreshSyncParams(); // offline: the next connect applies
+        expect(connection.connections, 3);
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
+  test(
+    'firstSync waits for a completed sync, or returns if one happened',
+    () async {
+      final connection = _Connection();
+      final service = PowerSyncService(
+        connectionFactory: () async => connection,
+      );
+      try {
+        var done = false;
+        final waiting = service.firstSync.then((_) => done = true);
+        await Future<void>.delayed(Duration.zero);
+        connection.synced.add(null);
+        await Future<void>.delayed(Duration.zero);
+        expect(done, isFalse);
+        connection.synced.add(DateTime(2026, 11, 7));
+        await waiting;
+        connection.lastSyncedAt = DateTime(2026, 11, 7);
+        await service.firstSync; // already synced: no event needed
+      } finally {
+        await service.close();
       }
     },
   );

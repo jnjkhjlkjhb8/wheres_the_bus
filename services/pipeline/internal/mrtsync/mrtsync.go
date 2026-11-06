@@ -29,9 +29,20 @@ type table struct {
 	// derived maps a copy column to the bus expression that produces it, for
 	// columns the bus table does not hold under that name.
 	derived map[string]string
+	// read replaces the SQL copy for a table built in Go from bus data, with
+	// rows in columns() order. Such a table has no bus counterpart.
+	read func(ctx context.Context, src Source) ([][]any, error)
 }
 
 func (t table) columns() []string { return append(append([]string{}, t.key...), t.data...) }
+
+// readRows reads the copy's rows from bus, in columns() order.
+func (t table) readRows(ctx context.Context, src Source) ([][]any, error) {
+	if t.read != nil {
+		return t.read(ctx, src)
+	}
+	return readSource(ctx, src, t)
+}
 
 // selectList reads every copy column from bus, deriving the ones in derived.
 func (t table) selectList() string {
@@ -64,6 +75,7 @@ var _tables = []table{
 		data:    []string{"name", "alias", "depart", "destin", "lat", "lon"},
 		derived: map[string]string{"lat": "ST_Y(geom)", "lon": "ST_X(geom)"},
 	},
+	_busRouteOffline,
 }
 
 // Stats counts what one table's sync changed.
@@ -124,7 +136,7 @@ func readSources(ctx context.Context, src Source) ([][][]any, error) {
 // readNonEmpty refuses an empty source: it means the load failed, not that
 // every train vanished, and syncing it would wipe the table from every client.
 func readNonEmpty(ctx context.Context, src Source, t table) ([][]any, error) {
-	rows, err := readSource(ctx, src, t)
+	rows, err := t.readRows(ctx, src)
 	if err != nil {
 		return nil, err
 	}

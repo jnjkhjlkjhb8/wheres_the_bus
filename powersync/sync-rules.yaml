@@ -32,3 +32,22 @@ bucket_definitions:
             lat,
             lon
           FROM search_vector
+  # Per-city offline bus routes (ADR-0029). The data is public, so a client
+  # asking for any city is harmless; that is what the accept flag records.
+  bus_city:
+    accept_potentially_dangerous_queries: true
+    parameters: SELECT value AS city FROM json_each(request.parameters() -> 'bus_cities')
+    data:
+      - SELECT
+            sub_route_uid AS id,
+            city,
+            route_name,
+            sub_route_name,
+            depart,
+            destin,
+            headsign_go,
+            headsign_return,
+            stops_go,
+            stops_return
+          FROM bus_route_offline
+          WHERE city = bucket.city

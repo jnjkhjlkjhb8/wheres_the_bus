@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-var _syncRulesFrom = regexp.MustCompile(`(?i)\bFROM\s+([a-z_]+)`)
+// A table name not followed by "(": parameter queries read json_each(...).
+var _syncRulesFrom = regexp.MustCompile(`(?i)\bFROM\s+([a-z_]+)\b(?:[^(]|$)`)
 
 var _alias = regexp.MustCompile(`(?i)\bAS\s+[a-z_]+`)
 
@@ -47,7 +48,6 @@ func TestSchemaMatchesBusAndSyncRules(t *testing.T) {
 	rules := readFile(t, "../../../../powersync/sync-rules.yaml")
 	for _, tbl := range _tables {
 		copyCols := tableColumns(t, schemaSQL, "CREATE TABLE IF NOT EXISTS ", tbl.name)
-		busCols := tableColumns(t, baseline, "CREATE TABLE public.", tbl.name)
 
 		got := make([]string, 0, len(copyCols))
 		for c := range copyCols {
@@ -59,6 +59,10 @@ func TestSchemaMatchesBusAndSyncRules(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Errorf("%s: schema.sql columns %v, sync writes %v", tbl.name, got, want)
 		}
+		if tbl.read != nil {
+			continue // built in Go; no bus table to compare against
+		}
+		busCols := tableColumns(t, baseline, "CREATE TABLE public.", tbl.name)
 		for c, typ := range copyCols {
 			if _, ok := tbl.derived[c]; !ok && busCols[c] != typ {
 				t.Errorf("%s.%s: copy type %q, bus type %q", tbl.name, c, typ, busCols[c])

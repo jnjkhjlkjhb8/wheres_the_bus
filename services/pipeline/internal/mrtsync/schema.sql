@@ -1,8 +1,8 @@
 -- The copies PowerSync replicates from on powersync-db (ADR-0028). Applied by
 -- the pipeline's mrt_sync step as mrt_sync, the owner of the mrt database, so
 -- every statement is idempotent. Column types match the bus tables, except the
--- columns mrtsync.go derives; a test in this package checks them against
--- migrations/baseline.
+-- columns and tables mrtsync builds in Go; a test in this package checks them
+-- against migrations/baseline.
 
 CREATE TABLE IF NOT EXISTS mrt_schedule (
     system text NOT NULL,
@@ -40,17 +40,32 @@ CREATE TABLE IF NOT EXISTS search_vector (
     PRIMARY KEY (type, uid, city)
 );
 
+-- Built in Go from bus_static.pb (ADR-0029); stops_* are JSON arrays of
+-- [stop_uid, stop_name, sequence, lat, lon].
+CREATE TABLE IF NOT EXISTS bus_route_offline (
+    sub_route_uid text PRIMARY KEY,
+    city text NOT NULL,
+    route_name text NOT NULL,
+    sub_route_name text NOT NULL,
+    depart text NOT NULL,
+    destin text NOT NULL,
+    headsign_go text NOT NULL,
+    headsign_return text NOT NULL,
+    stops_go text NOT NULL,
+    stops_return text NOT NULL
+);
+
 -- CREATE TABLE IF NOT EXISTS never changes a table that already exists: a
 -- column added above also needs its own line here, e.g.
 --   ALTER TABLE mrt_schedule ADD COLUMN IF NOT EXISTS <col> <type>;
 -- Sync refuses to run while the live columns differ from what it writes.
 
-GRANT SELECT ON mrt_schedule, mrt_journey_matrix, search_vector TO powersync_svc;
+GRANT SELECT ON mrt_schedule, mrt_journey_matrix, search_vector, bus_route_offline TO powersync_svc;
 
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'powersync') THEN
-        CREATE PUBLICATION powersync FOR TABLE mrt_schedule, mrt_journey_matrix, search_vector;
+        CREATE PUBLICATION powersync FOR TABLE mrt_schedule, mrt_journey_matrix, search_vector, bus_route_offline;
     END IF;
     -- CREATE PUBLICATION above only runs once; a table added later joins here.
     IF NOT EXISTS (
@@ -58,6 +73,12 @@ BEGIN
         WHERE pubname = 'powersync' AND schemaname = current_schema() AND tablename = 'search_vector'
     ) THEN
         ALTER PUBLICATION powersync ADD TABLE search_vector;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'powersync' AND schemaname = current_schema() AND tablename = 'bus_route_offline'
+    ) THEN
+        ALTER PUBLICATION powersync ADD TABLE bus_route_offline;
     END IF;
 END
 $$;

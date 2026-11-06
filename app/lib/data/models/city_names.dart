@@ -48,3 +48,14 @@ final Map<String, int> _cityRank = {
 /// Rank used to order cities north to south. Unmapped codes sort last, in
 /// their own alphabetical order, rather than jumping to the front.
 int cityOrder(String code) => _cityRank[code] ?? kCityNames.length;
+
+/// Canonical name → code, first spelling wins: the `County` forms come first
+/// in [kCityNames], and they are the ones `bus_static.city` uses.
+final Map<String, String> _cityCodes = {
+  for (final MapEntry(:key, :value) in kCityNames.entries.toList().reversed)
+    value: key,
+};
+
+/// TDX city code for a Chinese city [name] as `search_vector.city` stores it,
+/// or null when it maps to nothing.
+String? cityCodeOf(String name) => _cityCodes[name];

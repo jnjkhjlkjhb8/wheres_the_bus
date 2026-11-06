@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -13,6 +14,7 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
 import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
+import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/core/update/update_status.dart';
 import 'package:wheres_the_bus/data/models/fare_type.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
@@ -286,6 +288,11 @@ class _SettingsView extends StatelessWidget {
                       onTap: () => _pickFareType(context, i18n, state.fareType),
                     ),
                   ],
+                ),
+                const SizedBox(height: AppTheme.space24),
+                _SettingsSection(
+                  title: i18n.settingsSectionOffline,
+                  children: const [_OfflineBusRow()],
                 ),
                 const SizedBox(height: AppTheme.space24),
                 _SettingsSection(
@@ -733,6 +740,39 @@ class _UpdateCheckRow extends StatelessWidget {
       bloc.add(const UpdateCheckRequested());
     },
   };
+}
+
+/// Reads the synced city set straight from Hive, so the count updates when
+/// the picker or a background refresh changes it.
+class _OfflineBusRow extends StatelessWidget {
+  const _OfflineBusRow();
+
+  @override
+  Widget build(BuildContext context) {
+    // Settings opens with the essential boxes, so this only falls back to a
+    // static row before Hive has opened.
+    if (!HiveStore.settingsReady) return _row(context);
+    return ValueListenableBuilder(
+      valueListenable: HiveStore.settings.listenable(
+        keys: const ['offline_bus_cities'],
+      ),
+      builder: (context, _, _) => _row(context),
+    );
+  }
+
+  Widget _row(BuildContext context) {
+    final i18n = AppI18n.of(context);
+    final count = HiveStore.offlineBusCities.length;
+    return _SettingsRow(
+      icon: Icons.download_for_offline_outlined,
+      label: i18n.settingsOfflineBus,
+      value: count == 0
+          ? i18n.settingsOfflineBusNone
+          : i18n.settingsOfflineBusCount(count),
+      chevron: true,
+      onTap: () => unawaited(context.push(AppRoutes.settingsOfflineBus)),
+    );
+  }
 }
 
 class _SettingsRow extends StatelessWidget {

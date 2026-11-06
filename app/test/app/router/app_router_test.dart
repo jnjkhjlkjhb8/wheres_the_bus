@@ -16,6 +16,7 @@ import 'package:wheres_the_bus/features/metro/view/metro_screen.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
 import 'package:wheres_the_bus/features/rail/view/rail_screen.dart';
 import 'package:wheres_the_bus/features/search/view/search_screen.dart';
+import 'package:wheres_the_bus/features/settings/offline_bus_cities_screen.dart';
 import 'package:wheres_the_bus/features/settings/settings_option_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/widgets/main_scaffold.dart';
@@ -149,6 +150,12 @@ void main() {
       expect(picker.title, '我的票種');
       expect(picker.options, ['全票', '學生票', '孩童票', '敬老及愛心票']);
       expect(find.text('全票'), findsOneWidget);
+      expect(find.byType(RouteErrorScreen), findsNothing);
+    });
+
+    testWidgets('offline bus link renders the city picker', (tester) async {
+      await pumpAt(tester, AppRoutes.settingsOfflineBus);
+      expect(find.byType(OfflineBusCitiesScreen), findsOneWidget);
       expect(find.byType(RouteErrorScreen), findsNothing);
     });
 
