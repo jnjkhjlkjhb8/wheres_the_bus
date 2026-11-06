@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 if [ "$#" -eq 0 ]; then
-  echo "usage: scripts/ci.sh <contracts|go|flutter|migrations|security|all> [...]" >&2
+  echo "usage: scripts/ci.sh <contracts|go|go-test|flutter|flutter-analyze|flutter-test|migrations|security|all> [...]" >&2
   exit 2
 fi
 
@@ -17,7 +17,11 @@ run_contracts() {
 run_go() {
   echo "== go: lint (golangci-lint) =="
   make lint
+  run_go_test
+}
 
+# CI lints in its own job with the prebuilt golangci-lint binary.
+run_go_test() {
   echo "== go: test =="
   # shellcheck disable=SC2086 # GO_TEST_ARGS is a caller-controlled word list
   if [ -n "${GO_JUNIT_FILE:-}" ]; then
@@ -31,14 +35,26 @@ run_go() {
   fi
 }
 
-run_flutter() {
+flutter_prepare() {
   echo "== flutter: proto-dart stubs =="
   mkdir -p app/lib/data/generated
   PATH="$PATH:$HOME/.pub-cache/bin" protoc --dart_out=grpc:app/lib/data/generated -I models models/*.proto
   echo "== flutter: pub get =="
   (cd app && flutter pub get)
+}
+
+flutter_analyze() {
   echo "== flutter: analyze =="
   (cd app && PATH="$PATH:$HOME/.pub-cache/bin" flutter analyze --no-fatal-infos)
+}
+
+run_flutter() {
+  flutter_prepare
+  flutter_analyze
+  flutter_test
+}
+
+flutter_test() {
   echo "== flutter: test =="
   # shellcheck disable=SC2086 # FLUTTER_TEST_ARGS is a caller-controlled word list
   (cd app && flutter test ${FLUTTER_TEST_ARGS:-})
@@ -63,7 +79,10 @@ for profile in "$@"; do
   case "$profile" in
     contracts) run_contracts ;;
     go) run_go ;;
+    go-test) run_go_test ;;
     flutter) run_flutter ;;
+    flutter-analyze) flutter_prepare; flutter_analyze ;;
+    flutter-test) flutter_prepare; flutter_test ;;
     migrations) run_migrations ;;
     security) run_security ;;
     all)

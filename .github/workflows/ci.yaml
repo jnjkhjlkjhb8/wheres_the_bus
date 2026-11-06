@@ -97,13 +97,13 @@ jobs:
       - name: generate pinned protobuf stubs
         run: make proto-go
       - run: go install gotest.tools/gotestsum@v1.12.3
-      - name: golangci-lint + go test
+      - name: go test
         env:
           GO_JUNIT_FILE: junit.xml
           GO_TEST_ARGS: -coverprofile=coverage.out
           REQUIRE_DB_TESTS: "1"
           BUS_WRITER_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: ./scripts/ci.sh go
+        run: ./scripts/ci.sh go-test
       - name: quality gates (CRAP + duplication + mutation on changed Go code)
         env:
           QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -122,6 +122,28 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: junit.xml
           flags: go
+
+  # Its own job so lint runs beside the tests; the action downloads the release
+  # binary instead of compiling it, and caches the analysis between runs.
+  lint:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: generate pinned protobuf stubs
+        run: make proto-go
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # Same pin as GOLANGCI_LINT_VERSION in the Makefile.
+          version: v2.12.2
 
   contracts:
     runs-on: ubuntu-latest
@@ -266,14 +288,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.flutter == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in step with --total-shards below.
+        shard: [0, 1, 2, 3]
+    name: flutter (shard ${{ matrix.shard }})
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          # The quality gates diff against the push/PR base commit.
-          fetch-depth: 0
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           # Exact version (not `channel: stable`) so a channel promotion
@@ -289,17 +314,19 @@ jobs:
       # Bundled app/assets are tracked; the metro maps and rail service marks
       # are served by the router (FDPL-125), so a clean checkout lacks them and
       # the tests seed RemoteAssets instead.
-      - name: flutter analyze + test
+      - name: flutter test
         env:
-          FLUTTER_TEST_ARGS: --coverage --file-reporter=json:test-results.json
-        run: ./scripts/ci.sh flutter
-      - name: quality gates (CRAP + mutation on changed Dart code)
-        env:
-          QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: ./scripts/check-quality.sh flutter
+          FLUTTER_TEST_ARGS: --coverage --file-reporter=json:test-results.json --total-shards 4 --shard-index ${{ matrix.shard }}
+        run: ./scripts/ci.sh flutter-test
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flutter-lcov-${{ matrix.shard }}
+          path: app/coverage/lcov.info
+          retention-days: 1
       - run: tojunit --input test-results.json --output junit.xml
         if: ${{ !cancelled() && hashFiles('app/test-results.json') != '' }}
         working-directory: app
+      # Codecov merges the shards' uploads of one commit.
       - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         if: ${{ !cancelled() && hashFiles('app/coverage/lcov.info') != '' }}
         with:
@@ -312,3 +339,39 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: app/junit.xml
           flags: flutter
+
+  # The quality gates need the coverage of every shard, so they wait for all
+  # four and merge it. Analyze rides along to save a fifth toolchain setup.
+  flutter-quality:
+    needs: [changes, flutter]
+    if: needs.changes.outputs.flutter == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # The quality gates diff against the push/PR base commit.
+          fetch-depth: 0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          cache: true
+      - run: dart pub global activate protoc_plugin 25.0.0
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+      - name: flutter analyze
+        run: ./scripts/ci.sh flutter-analyze
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: flutter-lcov-*
+          path: ${{ runner.temp }}/lcov
+      - name: merge shard coverage
+        run: |
+          mkdir -p app/coverage
+          python3 scripts/quality-changed.py merge-lcov app/coverage/lcov.info "$RUNNER_TEMP"/lcov/*/lcov.info
+      - name: quality gates (CRAP + mutation on changed Dart code)
+        env:
+          QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/check-quality.sh flutter

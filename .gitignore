@@ -63,6 +63,8 @@ android/app/build.gradle.kts
 android/app/src/main/AndroidManifest.xml
 services/router/server.go
 /docs
+# Symlink into bus-infra/docs; agent docs stay private.
+/AGENTS.md
 .env
 /functions
 /router

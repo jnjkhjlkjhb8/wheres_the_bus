@@ -10,7 +10,7 @@ GOLANGCI_LINT_VERSION := v2.12.2
 TOOLS_BIN := $(CURDIR)/.tools/bin
 
 
-.PHONY: migrations-check run-test run-staging build-prod test test-go test-flutter quality quality-all lint lint-fix lint-tool proto-go proto-dart l10n-push l10n-pull l10n-pull-sources verify
+.PHONY: migrations-check run-test run-staging build-prod test test-go test-flutter quality lint lint-fix lint-tool proto-go proto-dart l10n-push l10n-pull l10n-pull-sources verify
 
 test: test-go test-flutter
 
@@ -26,17 +26,6 @@ test-flutter: proto-dart
 quality: proto-go proto-dart
 	go test -coverprofile=coverage.out ./...
 	cd app && flutter test --coverage
-	./scripts/check-quality.sh go flutter
-
-quality-all: export QUALITY_SCOPE = all
-quality-all: proto-go proto-dart
-	@if [ "$$QUALITY_SCOPE" != all ] || [ "$${QUALITY_PHASE:-all}" != all ] || \
-	    [ "$${QUALITY_DART_SHARD_COUNT:-1}" != 1 ] || [ "$${QUALITY_DART_SHARD_INDEX:-0}" != 0 ]; then \
-	  echo "quality-all requires the complete all phase and an unsharded Dart run; use check-quality.sh for diagnostics or workers" >&2; exit 2; \
-	fi
-	python3 scripts/quality-report.py go-preflight
-	go test -p=1 -coverpkg=./... -coverprofile=coverage.out ./...
-	./scripts/collect-quality-flutter.sh
 	./scripts/check-quality.sh go flutter
 
 # lint reads .golangci.yml. lint-fix additionally applies the fixes the enabled

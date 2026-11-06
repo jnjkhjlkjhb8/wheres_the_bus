@@ -7,10 +7,10 @@ go-tests <repo> <manifest> <out>     per changed Go file, the go test command fo
 go-test-command <commands> <file>
 go-mutation <manifest> <log>...      mutator site logs on changed lines against the mutation thresholds
 go-dry <manifest> <dry.edn>          dryer pairs that touch a changed line
-flavor-tests <selection.json>        tests that need the Firebase flavor (none today)
 dart-config <manifest> <selection> <file> <out.xml>
 dart-report <manifest> <raw.json> <out.json> <status>
 dart-mutation <log> <status>
+merge-lcov <out> <lcov>...           sum per-line hits of sharded flutter test runs into one report
 """
 import json
 import os
@@ -155,11 +155,6 @@ def go_dry(manifest, edn):
     print("go duplication ok")
 
 
-def flavor_tests(selection):
-    # No changed file needs the Firebase-enabled flavor yet; see check-quality.sh.
-    return
-
-
 def dart_config(manifest, selection, file, out):
     ranges = json.load(open(manifest))["flutter"][file]
     tests = json.load(open(selection))[file]
@@ -208,10 +203,30 @@ def dart_mutation(log, status):
         sys.exit(1)
 
 
+def merge_lcov(out, *inputs):
+    # flutter test --coverage writes only SF/DA/LF/LH, so LF/LH are recomputed from the summed DA lines.
+    hits = {}
+    for path in inputs:
+        lines = None
+        for row in open(path):
+            row = row.strip()
+            if row.startswith("SF:"):
+                lines = hits.setdefault(row[3:], {})
+            elif row.startswith("DA:"):
+                line, count = row[3:].split(",")[:2]
+                lines[int(line)] = lines.get(int(line), 0) + int(count)
+    with open(out, "w") as f:
+        for source, lines in hits.items():
+            f.write(f"SF:{source}\n")
+            f.writelines(f"DA:{n},{c}\n" for n, c in sorted(lines.items()))
+            f.write(f"LF:{len(lines)}\nLH:{sum(1 for c in lines.values() if c)}\nend_of_record\n")
+
+
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     {
         "inventory": inventory, "go-lines": go_lines, "go-tests": go_tests, "go-test-command": go_test_command,
-        "go-mutation": go_mutation, "go-dry": go_dry, "flavor-tests": flavor_tests,
+        "go-mutation": go_mutation, "go-dry": go_dry,
         "dart-config": dart_config, "dart-report": dart_report, "dart-mutation": dart_mutation,
+        "merge-lcov": merge_lcov,
     }[cmd](*args)

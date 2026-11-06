@@ -63,8 +63,7 @@ if ! git diff --quiet; then
   echo "pre-push: warning: unstaged changes present; the gate runs on the working tree, not the pushed commit" >&2
 fi
 
-# The helpers `make quality` (changed scope) runs; the QUALITY_SCOPE=all ones
-# are not needed here.
+# The helpers `make quality` runs.
 for helper in quality-changed.py quality-report.py quality-crap4dart.py; do
   if [ ! -f "scripts/$helper" ]; then
     echo "pre-push: scripts/$helper is missing, so the quality gate cannot run" >&2
