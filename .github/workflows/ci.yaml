@@ -294,7 +294,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep in step with --total-shards below.
+        # Keep in step with the 4 in the flutter test step.
         shard: [0, 1, 2, 3]
     name: flutter (shard ${{ matrix.shard }})
     steps:
@@ -314,10 +314,14 @@ jobs:
       # Bundled app/assets are tracked; the metro maps and rail service marks
       # are served by the router (FDPL-125), so a clean checkout lacks them and
       # the tests seed RemoteAssets instead.
+      # Sharded by file, not with --total-shards: that splits test cases, so
+      # every shard still compiles all test files, which is most of the time.
       - name: flutter test
         env:
-          FLUTTER_TEST_ARGS: --coverage --file-reporter=json:test-results.json --total-shards 4 --shard-index ${{ matrix.shard }}
-        run: ./scripts/ci.sh flutter-test
+          SHARD: ${{ matrix.shard }}
+        run: |
+          files=$(cd app && find test -name '*_test.dart' | sort | awk -v i="$SHARD" '(NR - 1) % 4 == i' | tr '\n' ' ')
+          FLUTTER_TEST_ARGS="--coverage --file-reporter=json:test-results.json $files" ./scripts/ci.sh flutter-test
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: flutter-lcov-${{ matrix.shard }}
