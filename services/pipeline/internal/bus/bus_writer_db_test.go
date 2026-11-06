@@ -75,6 +75,7 @@ func TestWriteBusCitySnapshotDB(t *testing.T) {
 		`CREATE TABLE bus_static (
 			sub_route_name text, route_name text, sub_route_uid text PRIMARY KEY,
 			route_uid text, city text, depart text, destin text, pb bytea,
+			turnaround_stop_sequence smallint,
 			updated_at timestamptz DEFAULT now())`,
 		`CREATE TABLE bus_station_stop_map (
 			station_id text, station_name text, sub_route_uid text, route_name text,
