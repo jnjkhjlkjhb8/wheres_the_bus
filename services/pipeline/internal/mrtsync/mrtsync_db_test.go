@@ -62,6 +62,12 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 	exec(t, src, `INSERT INTO mrt_schedule VALUES
 		('TRTC','BL12','BL','BL01',1,'06:00','00:00'), ('TRTC','BL12','BL','BL23',1,'06:01','00:01')`)
 	exec(t, src, `INSERT INTO mrt_journey_matrix VALUES ('a','BL12','BL13','TRTC',20,10,2), ('b','BL12','R10','TRTC',25,12,8)`)
+	exec(t, src, `CREATE EXTENSION IF NOT EXISTS postgis`)
+	exec(t, src, `CREATE TABLE search_vector (type text, uid text, name text, city text, depart text, destin text,
+		geom geometry(Point,4326), updated_at timestamp, alias text)`)
+	exec(t, src, `INSERT INTO search_vector VALUES
+		('bus_route','TPE307','307','Taipei','撫遠街','板橋',NULL,now(),'307'),
+		('bus_station','S1','台北車站','Taipei',NULL,NULL,ST_SetSRID(ST_MakePoint(121.517,25.047),4326),now(),'tbcz')`)
 	dstDSN, dst := scratchDB(t, admin, dsn, "mrtsync_dst_"+suffix)
 
 	if err := Run(ctx, src, dstDSN); err != nil {
@@ -71,7 +77,7 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 		t.Fatal("run against an unreachable powersync-db succeeded")
 	}
 	var published int
-	if err := dst.QueryRow(ctx, `SELECT count(*) FROM pg_publication_tables WHERE pubname = 'powersync'`).Scan(&published); err != nil || published != 2 {
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM pg_publication_tables WHERE pubname = 'powersync'`).Scan(&published); err != nil || published != 3 {
 		t.Fatalf("powersync publication tables = %d, %v", published, err)
 	}
 	if _, err := Sync(ctx, src, dst); err != nil {
@@ -81,6 +87,8 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 	// One changed row, one deleted row, one untouched row per table.
 	exec(t, src, `UPDATE mrt_schedule SET lasttraintime = '00:30' WHERE destinationstaionid = 'BL23'`)
 	exec(t, src, `DELETE FROM mrt_journey_matrix WHERE id = 'b'`)
+	// A rebuild that only bumps updated_at must not stream anything.
+	exec(t, src, `UPDATE search_vector SET updated_at = now() + interval '1 day'`)
 	stats, err := Sync(ctx, src, dst)
 	if err != nil {
 		t.Fatalf("second sync: %v", err)
@@ -88,6 +96,7 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 	want := []Stats{
 		{Table: "mrt_schedule", Source: 2, Upserted: 1, Deleted: 0},
 		{Table: "mrt_journey_matrix", Source: 1, Upserted: 0, Deleted: 1},
+		{Table: "search_vector", Source: 2, Upserted: 0, Deleted: 0},
 	}
 	if fmt.Sprint(stats) != fmt.Sprint(want) {
 		t.Fatalf("stats = %v, want %v", stats, want)
@@ -95,6 +104,11 @@ func TestSyncCopiesOnlyChanges(t *testing.T) {
 	var last string
 	if err := dst.QueryRow(ctx, `SELECT lasttraintime FROM mrt_schedule WHERE destinationstaionid = 'BL23'`).Scan(&last); err != nil || last != "00:30" {
 		t.Fatalf("updated row = %q, %v", last, err)
+	}
+
+	var lat, lon float64
+	if err := dst.QueryRow(ctx, `SELECT lat, lon FROM search_vector WHERE uid = 'S1'`).Scan(&lat, &lon); err != nil || lat != 25.047 || lon != 121.517 {
+		t.Fatalf("derived point = %v,%v, %v", lat, lon, err)
 	}
 
 	// A live table that drifted from schema.sql stops the sync before any write.

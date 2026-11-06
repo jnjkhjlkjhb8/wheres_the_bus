@@ -35,6 +35,18 @@ const _schema = Schema([
     Column.text('first_train_time'),
     Column.text('last_train_time'),
   ]),
+  // Offline search fallback; read by SearchRepository._localRows.
+  Table('search_vector', [
+    Column.text('type'),
+    Column.text('uid'),
+    Column.text('city'),
+    Column.text('name'),
+    Column.text('alias'),
+    Column.text('depart'),
+    Column.text('destin'),
+    Column.real('lat'),
+    Column.real('lon'),
+  ]),
 ]);
 
 /// Builds the on-disk [PowerSyncDatabase]. Overridable in tests via

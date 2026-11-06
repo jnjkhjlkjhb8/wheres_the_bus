@@ -20,3 +20,15 @@ bucket_definitions:
             firsttraintime AS first_train_time,
             lasttraintime AS last_train_time
           FROM mrt_schedule
+      - SELECT
+            type || ':' || uid || ':' || city AS id,
+            type,
+            uid,
+            city,
+            name,
+            alias,
+            depart,
+            destin,
+            lat,
+            lon
+          FROM search_vector

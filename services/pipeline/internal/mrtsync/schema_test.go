@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+var _syncRulesFrom = regexp.MustCompile(`(?i)\bFROM\s+([a-z_]+)`)
+
 var _alias = regexp.MustCompile(`(?i)\bAS\s+[a-z_]+`)
 
 var _columnLine = regexp.MustCompile(`(?m)^\s+([a-z_]+) ([a-z ]+?)(?: CONSTRAINT \S+)?(?: DEFAULT \S+)?(?: NOT NULL)?(?: PRIMARY KEY)?,?$`)
@@ -58,7 +60,7 @@ func TestSchemaMatchesBusAndSyncRules(t *testing.T) {
 			t.Errorf("%s: schema.sql columns %v, sync writes %v", tbl.name, got, want)
 		}
 		for c, typ := range copyCols {
-			if busCols[c] != typ {
+			if _, ok := tbl.derived[c]; !ok && busCols[c] != typ {
 				t.Errorf("%s.%s: copy type %q, bus type %q", tbl.name, c, typ, busCols[c])
 			}
 		}
@@ -74,5 +76,26 @@ func TestSchemaMatchesBusAndSyncRules(t *testing.T) {
 				t.Errorf("sync rules read %s.%s, which the copy does not hold", tbl.name, c)
 			}
 		}
+	}
+}
+
+// Every table the sync rules read must be one this package copies to
+// powersync-db, and the reverse: since ADR-0028 the publication lives only
+// there, so a table missing here would sync as empty to every client.
+func TestSyncRulesReadExactlyTheCopies(t *testing.T) {
+	rules := readFile(t, "../../../../powersync/sync-rules.yaml")
+	var read []string
+	for _, m := range _syncRulesFrom.FindAllStringSubmatch(rules, -1) {
+		read = append(read, m[1])
+	}
+	slices.Sort(read)
+	read = slices.Compact(read)
+	copied := make([]string, 0, len(_tables))
+	for _, tbl := range _tables {
+		copied = append(copied, tbl.name)
+	}
+	slices.Sort(copied)
+	if !slices.Equal(read, copied) {
+		t.Errorf("sync rules read %v, mrtsync copies %v", read, copied)
 	}
 }

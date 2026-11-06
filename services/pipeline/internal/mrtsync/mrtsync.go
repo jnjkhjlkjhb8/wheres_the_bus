@@ -1,5 +1,5 @@
-// Package mrtsync copies the two tables PowerSync serves from the bus database
-// to powersync-db, so PowerSync's REPLICATION login never touches the main
+// Package mrtsync copies the tables PowerSync serves from the bus database to
+// powersync-db, so PowerSync's REPLICATION login never touches the main
 // cluster (ADR-0028).
 package mrtsync
 
@@ -26,9 +26,23 @@ type table struct {
 	name string
 	key  []string
 	data []string
+	// derived maps a copy column to the bus expression that produces it, for
+	// columns the bus table does not hold under that name.
+	derived map[string]string
 }
 
 func (t table) columns() []string { return append(append([]string{}, t.key...), t.data...) }
+
+// selectList reads every copy column from bus, deriving the ones in derived.
+func (t table) selectList() string {
+	cols := t.columns()
+	for i, c := range cols {
+		if expr, ok := t.derived[c]; ok {
+			cols[i] = expr + " AS " + c
+		}
+	}
+	return strings.Join(cols, ", ")
+}
 
 var _tables = []table{
 	{
@@ -40,6 +54,15 @@ var _tables = []table{
 		name: "mrt_journey_matrix",
 		key:  []string{"id"},
 		data: []string{"from_station_id", "to_station_id", "system", "fare_nt", "half_fare_nt", "travel_time_min"},
+	},
+	{
+		// Offline search (ADR-0003). PowerSync columns are text, integer or
+		// real, so the point travels as lat/lon; updated_at stays behind so a
+		// nightly rebuild that changes nothing streams nothing.
+		name:    "search_vector",
+		key:     []string{"type", "uid", "city"},
+		data:    []string{"name", "alias", "depart", "destin", "lat", "lon"},
+		derived: map[string]string{"lat": "ST_Y(geom)", "lon": "ST_X(geom)"},
 	},
 }
 
@@ -180,7 +203,7 @@ func readSource(ctx context.Context, src Source, t table) ([][]any, error) {
 	// DISTINCT ON keeps the copy's primary key satisfiable even if bus ever
 	// holds two rows for one key; the newest wins.
 	query := fmt.Sprintf(`SELECT DISTINCT ON (%s) %s FROM %s ORDER BY %s, updated_at DESC NULLS LAST`,
-		key, strings.Join(t.columns(), ", "), t.name, key)
+		key, t.selectList(), t.name, key)
 	rows, err := src.Query(ctx, query)
 	if err != nil {
 		return nil, _oops.With("table", t.name).Wrapf(err, "read source")
