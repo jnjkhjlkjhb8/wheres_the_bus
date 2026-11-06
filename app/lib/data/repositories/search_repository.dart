@@ -2,6 +2,8 @@ import 'dart:collection';
 
 import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/core/http/http_client.dart';
+import 'package:wheres_the_bus/core/powersync/local_db.dart';
+import 'package:wheres_the_bus/core/powersync/powersync_service.dart';
 import 'package:wheres_the_bus/data/models/city_names.dart';
 import 'package:wheres_the_bus/data/models/search_models.dart';
 
@@ -15,12 +17,17 @@ typedef SearchHttpFetch =
 const int _memoLimit = 24;
 
 class SearchRepository {
-  SearchRepository({SearchHttpFetch? httpFetch})
-    : _httpFetch = httpFetch ?? _fetchFromRouter;
+  SearchRepository({SearchHttpFetch? httpFetch, LocalDb? localDb})
+    : _httpFetch = httpFetch ?? _fetchFromRouter,
+      _localDb = localDb;
 
   static final SearchRepository instance = SearchRepository();
 
   final SearchHttpFetch _httpFetch;
+
+  // Resolved lazily so tests that never go offline need no PowerSync.
+  final LocalDb? _localDb;
+  LocalDb get _db => _localDb ?? PowerSyncService.instance;
 
   final LinkedHashMap<String, List<SearchResult>> _memo = LinkedHashMap();
 
@@ -32,16 +39,98 @@ class SearchRepository {
     final key = '${city ?? ''}|$limit|$query';
     final cached = _memo[key];
     if (cached != null) return cached;
-    final List<SearchResult> results;
-    try {
-      results = await _httpFetch(query, limit, city);
-    } on Object catch (e) {
-      throw AppError.from(e);
-    }
-    _memo[key] = results;
-    if (_memo.length > _memoLimit) _memo.remove(_memo.keys.first);
+    final (:results, :live) = await _fetchOrLocal(query, limit, city);
+    // Local answers are not memoized: the next keystroke retries the router.
+    if (live) _remember(key, results);
     return results;
   }
+
+  Future<({List<SearchResult> results, bool live})> _fetchOrLocal(
+    String query,
+    int limit,
+    String? city,
+  ) async {
+    try {
+      return (results: await _httpFetch(query, limit, city), live: true);
+    } on Object catch (e, stack) {
+      final error = AppError.from(e);
+      final local = await _offlineFallback(error, query, limit, city);
+      if (local == null) Error.throwWithStackTrace(error, stack);
+      return (results: local, live: false);
+    }
+  }
+
+  void _remember(String key, List<SearchResult> results) {
+    _memo[key] = results;
+    if (_memo.length > _memoLimit) _memo.remove(_memo.keys.first);
+  }
+
+  /// Answers from the PowerSync copy of `search_vector` when the router is
+  /// unreachable. Network-first, like the static cache (ADR-0017): a local
+  /// LIKE ranks worse than the router's trigram search, so it must never
+  /// shadow an online answer.
+  ///
+  /// Returns null — and the caller rethrows the original error — when the
+  /// router did reply, when the local table is missing or not yet synced, or
+  /// when nothing matches. An empty list would read as "no results", which is
+  /// a different claim than "we could not reach the server".
+  Future<List<SearchResult>?> _offlineFallback(
+    AppError error,
+    String query,
+    int limit,
+    String? city,
+  ) async {
+    if (error is! OfflineError && error is! TimeoutError) return null;
+    final results = [
+      for (final row in await _localRows(query, limit, city)) ?_fromRow(row),
+    ];
+    return results.isEmpty ? null : results;
+  }
+
+  /// A missing or not-yet-synced local table reads as no rows.
+  Future<List<Map<String, dynamic>>> _localRows(
+    String query,
+    int limit,
+    String? city,
+  ) async {
+    try {
+      return await _db.getAll(_localSearchSql, [
+        _likeEscape(query),
+        _likeEscape(stripZhuyinTones(query)),
+        city ?? '',
+        limit,
+      ]);
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// Mirrors the router's tiers (`_textSearchSQL`): exact uid, then name
+  /// prefix, then name or endpoint contains, then reading/abbreviation
+  /// (`alias`) — alias hits always rank below every `name` hit. Train rows
+  /// have no city, so a city-scoped search excludes them, as on the router.
+  static const _localSearchSql = r'''
+SELECT type, uid, name, city, depart, destin, lat, lon,
+  CASE
+    WHEN uid = ?1 THEN 0
+    WHEN name LIKE ?1 || '%' ESCAPE '\' THEN 1
+    WHEN name LIKE '%' || ?1 || '%' ESCAPE '\'
+      OR depart LIKE '%' || ?1 || '%' ESCAPE '\'
+      OR destin LIKE '%' || ?1 || '%' ESCAPE '\' THEN 2
+    ELSE 3
+  END AS tier
+FROM search_vector
+WHERE (uid = ?1
+    OR name LIKE '%' || ?1 || '%' ESCAPE '\'
+    OR depart LIKE '%' || ?1 || '%' ESCAPE '\'
+    OR destin LIKE '%' || ?1 || '%' ESCAPE '\'
+    OR alias LIKE '%' || ?2 || '%' ESCAPE '\')
+  AND (?3 = '' OR city = ?3)
+ORDER BY tier, length(name), name
+LIMIT ?4''';
+
+  static String _likeEscape(String s) =>
+      s.replaceAllMapped(RegExp(r'[\\%_]'), (m) => '\\${m[0]}');
 
   static SearchResult? _fromRow(Map<String, dynamic> row) {
     final rawType = row['type'] as String? ?? '';
@@ -101,3 +190,10 @@ class SearchRepository {
     return results;
   }
 }
+
+/// Zhuyin tone marks, as `services/shared/zhuyin.go` strips them: aliases are
+/// stored toneless, so toned input must lose its marks before matching.
+const _zhuyinToneMarks = 'ˊˇˋ˙';
+
+String stripZhuyinTones(String q) =>
+    q.split('').where((c) => !_zhuyinToneMarks.contains(c)).join();

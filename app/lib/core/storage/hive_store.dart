@@ -47,6 +47,12 @@ class HiveStore {
 
   static Future<void>? _lazyFuture;
 
+  /// Completes once the static cache box is open and [pruneStaticCache] has
+  /// run, so a write after it cannot be truncated by this launch's epoch
+  /// check. Completes immediately when [init] has not reached that point.
+  static Future<void> staticCacheSettled() =>
+      _lazyFuture ?? Future<void>.value();
+
   static Future<void> _openLazyBoxes() {
     return _lazyFuture ??=
         Future.wait([

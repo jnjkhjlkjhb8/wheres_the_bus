@@ -17,6 +17,7 @@ import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/core/powersync/powersync_service.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
+import 'package:wheres_the_bus/data/repositories/offline_prefetch.dart';
 
 Future<void> main() => startApp();
 
@@ -49,7 +50,7 @@ Future<void> startApp({
     initPowerSync: PowerSyncService.instance.init,
   );
   unawaited(ensureFirebaseCore().catchError(CrashReporter.record));
-  unawaited(bootstrap.start());
+  unawaited(bootstrap.start().then((_) => _warmOfflineCache(bootstrap)));
   unawaited(RemoteAssets.instance.refresh());
 
   runApp(App(bootstrap: bootstrap));
@@ -61,6 +62,17 @@ Future<void> startApp({
       ),
     );
   });
+}
+
+/// Delay before warming the offline cache, so its reads never compete with
+/// the launch path's first nearby-stations query.
+const _offlineWarmDelay = Duration(seconds: 5);
+
+Future<void> _warmOfflineCache(AppBootstrapController bootstrap) async {
+  if (bootstrap.state == AppBootstrapState.failed) return;
+  await HiveStore.staticCacheSettled();
+  await Future<void>.delayed(_offlineWarmDelay);
+  await prefetchOfflineStatics().catchError(CrashReporter.record);
 }
 
 void _prewarmMapRenderer() {
