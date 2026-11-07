@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Alight-tracking Live Update palette. Resolved through the resource
+         system rather than hardcoded in Kotlin so the night variant swaps
+         automatically: ProgressStyle segment colours are drawn literally, and
+         Ink on a dark notification background would otherwise vanish. -->
+
+    <!-- Default reading: nothing to do yet. Matches AppTheme.inkLight. -->
+    <color name="track_ink">#FF111111</color>
+    <!-- Past the rider's own 提前站數 — the same moment the reminder buzzes.
+         Matches AppTheme.statusApproach. -->
+    <color name="track_approach">#FFF79009</color>
+    <!-- One stop out — this is your stop. Matches AppTheme.statusArriving, the
+         same green 進站中 already uses in-app: arriving is the outcome the
+         rider asked for, not a fault, and a red bar on the last stop reads as
+         something having gone wrong. -->
+    <color name="track_arriving">#FF12B76A</color>
+    <!-- The stretch already travelled. Drawn explicitly rather than left to
+         setStyledByProgress, which fades everything *past* the tracker until
+         upcoming stations and the reminder marker disappear entirely — the
+         wrong half to hide, since only what is left still needs reading. -->
+    <color name="track_passed">#FF9A9A9A</color>
+    <!-- The station squares, cut into whichever half of the bar they sit on.
+         One colour for both halves: it has to read on the muted travelled
+         grey and on every colour the run ahead can take. -->
+    <color name="track_notch">#FFFFFFFF</color>
+</resources>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <include domain="file" path="saved_plans.hive" />
+        <include domain="file" path="fav_routes.hive" />
+        <include domain="file" path="favorites.hive" />
+        <include domain="file" path="board_layout.hive" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="saved_plans.hive" />
+        <include domain="file" path="fav_routes.hive" />
+        <include domain="file" path="favorites.hive" />
+        <include domain="file" path="board_layout.hive" />
+    </device-transfer>
+</data-extraction-rules>

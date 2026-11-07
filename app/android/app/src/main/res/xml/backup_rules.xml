@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="file" path="saved_plans.hive" />
+    <include domain="file" path="fav_routes.hive" />
+    <include domain="file" path="favorites.hive" />
+    <include domain="file" path="board_layout.hive" />
+</full-backup-content>

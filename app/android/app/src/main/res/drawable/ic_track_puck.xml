@@ -1,0 +1,20 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- The rider, moving: the same disc-and-navigation-arrow mark as the map's
+         user puck (MapMarkers.navArrow), pointing along the bar's direction of
+         travel.
+
+         Two paths, two literal colours. ProgressStyle draws the tracker icon
+         as authored rather than tinting it to a silhouette (verified on a
+         Pixel 8 / Android 17), so the disc can stay light and the arrow dark
+         no matter what colour the bar underneath it has taken. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,1.5a10.5,10.5 0 1,1 0,21a10.5,10.5 0 1,1 0,-21z" />
+    <path
+        android:fillColor="#FF111111"
+        android:pathData="M17.4,11.6L8.3,6.2a0.42,0.42 0 0,0 -0.6,0.52L9.9,12l-2.2,5.28a0.42,0.42 0 0,0 0.6,0.52l9.1,-5.4a0.42,0.42 0 0,0 0,-0.8z" />
+</vector>

@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?android:attr/colorControlNormal">
+    <!-- Alight stop: a filled flag, the one thing on the bar the rider is
+         travelling toward. Solid where the board ring is hollow. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6,2h1.5v20H6V2zM9,3.2l9,3.6 -9,3.6V3.2z" />
+</vector>

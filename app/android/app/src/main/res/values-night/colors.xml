@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Night variants. Only Ink flips (AppTheme.inkDark) and the travelled
+         grey lightens; amber and green keep their exact in-app values on both
+         grounds, the way AppTheme.statusApproach / statusArriving do. The
+         darker AppTheme.statusArrivingText is the text-contrast pair, not a
+         night variant, so it has no place on a bar fill. -->
+    <color name="track_ink">#FFF5F5F5</color>
+    <color name="track_approach">#FFF79009</color>
+    <color name="track_arriving">#FF12B76A</color>
+    <color name="track_passed">#FF6B6B6B</color>
+    <color name="track_notch">#FF1F1F23</color>
+</resources>
