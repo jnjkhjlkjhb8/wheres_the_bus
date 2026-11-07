@@ -1,9 +1,8 @@
 name: app-android-beta
 
-# Pushing a tag like app-v0.3.0 builds a signed release APK and sends it to
-# the Firebase App Distribution "beta" group. There is no Play Console
-# account yet, so the APK goes to testers directly; Play upload is a later,
-# separate workflow.
+# An app-v<x.y.z> tag asks the private bus-infra repo to build the signed beta
+# APK (its app-android-beta.yaml). The signing key and the staging env stay
+# there, out of this public repo.
 on:
   push:
     tags:
@@ -12,96 +11,21 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: app-android-beta
-  cancel-in-progress: false
-
 jobs:
-  build:
+  dispatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-    env:
-      # The me.rabbitsayhello.wheresthebus app in google-services.json.
-      FIREBASE_ANDROID_APP_ID: "1:286997226441:android:8c16846a61672c6b253e18"
+    timeout-minutes: 5
     steps:
-      - name: version from tag
-        id: version
+      - name: send to bus-infra
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
         run: |
-          name="${GITHUB_REF_NAME#app-v}"
-          # UpdateGate compares numeric x.y.z only; a suffix such as -beta.1
-          # would compare equal to x.y.z and never trigger the update prompt.
-          if ! [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::tag must be app-vX.Y.Z, got ${GITHUB_REF_NAME}"
+          # UpdateGate compares numeric x.y.z only, and min_supported_version
+          # is 0.1.0, so 0.0.x would open on the force-update screen.
+          if ! [[ "$GITHUB_REF_NAME" =~ ^app-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$GITHUB_REF_NAME" == app-v0.0.* ]]; then
+            echo "::error::tag must be app-vX.Y.Z >= 0.1.0, got $GITHUB_REF_NAME"
             exit 1
           fi
-          # Remote Config min_supported_version is 0.1.0, so a 0.0.x build
-          # would open straight onto the force-update screen.
-          if [[ "$name" == 0.0.* ]]; then
-            echo "::error::version must be >= 0.1.0 (min_supported_version), got $name"
-            exit 1
-          fi
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-          # versionCode must strictly increase across every APK testers
-          # install; this workflow's run number does, without a pubspec bump.
-          # It restarts at 1 if this workflow file is renamed.
-          echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          # Keep in step with ci.yaml.
-          flutter-version: 3.44.1
-          cache: true
-
-      - name: proto-dart stubs
-        run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          dart pub global activate protoc_plugin 25.0.0
-          mkdir -p app/lib/data/generated
-          PATH="$PATH:$HOME/.pub-cache/bin" protoc --dart_out=grpc:app/lib/data/generated -I models models/*.proto
-
-      - name: restore signing key and config
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-          # Must be the staging env (APP_ENV=staging + APP_CHECK_DEBUG_TOKEN).
-          # APP_ENV=production selects Play Integrity, which needs a Play
-          # Console link; without it the API rejects every call.
-          APP_BETA_ENV_JSON: ${{ secrets.APP_BETA_ENV_JSON }}
-        run: |
-          for v in ANDROID_KEYSTORE_BASE64 GOOGLE_SERVICES_JSON APP_BETA_ENV_JSON; do
-            if [ -z "${!v}" ]; then echo "::error::secret $v is not set"; exit 1; fi
-          done
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          printf '%s' "$GOOGLE_SERVICES_JSON" > app/android/app/google-services.json
-          printf '%s' "$APP_BETA_ENV_JSON" > "$RUNNER_TEMP/beta.json"
-
-      - name: build apk
-        working-directory: app
-        env:
-          ANDROID_RELEASE_STORE_FILE: ${{ runner.temp }}/release.jks
-          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          flutter pub get
-          flutter build apk --release \
-            --dart-define-from-file="$RUNNER_TEMP/beta.json" \
-            --build-name="${{ steps.version.outputs.name }}" \
-            --build-number="${{ steps.version.outputs.code }}"
-
-      - name: upload to Firebase App Distribution
-        env:
-          FIREBASE_DISTRIBUTION_SA: ${{ secrets.FIREBASE_DISTRIBUTION_SA }}
-        run: |
-          printf '%s' "$FIREBASE_DISTRIBUTION_SA" > "$RUNNER_TEMP/sa.json"
-          GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json" \
-            npx --yes firebase-tools@15.35.0 appdistribution:distribute \
-            app/build/app/outputs/flutter-apk/app-release.apk \
-            --app "$FIREBASE_ANDROID_APP_ID" \
-            --groups beta \
-            --release-notes "${GITHUB_REF_NAME} ($(git rev-parse --short HEAD))"
-
-      - name: clean up secrets
-        if: always()
-        run: rm -f "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/beta.json" "$RUNNER_TEMP/sa.json" app/android/app/google-services.json
+          jq -n --arg tag "$GITHUB_REF_NAME" --arg sha "$GITHUB_SHA" \
+            '{event_type: "app-android-beta", client_payload: {tag: $tag, sha: $sha}}' \
+            | gh api "repos/$GITHUB_REPOSITORY_OWNER/bus-infra/dispatches" --input -
