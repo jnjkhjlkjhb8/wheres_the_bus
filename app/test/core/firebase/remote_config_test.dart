@@ -11,7 +11,7 @@ void main() {
       expect(AppConfig.getInt('nearby_fallback_radius_m'), 900);
       expect(AppConfig.getBool('push_enabled'), isTrue);
       expect(AppConfig.getBool('maintenance_banner_enabled'), isFalse);
-      expect(AppConfig.getString('min_supported_version'), '1.0.0');
+      expect(AppConfig.getString('min_supported_version'), '0.1.0');
       expect(AppConfig.getString('maintenance_banner_text'), '');
     },
   );

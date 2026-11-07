@@ -21,11 +21,11 @@ class AppConfig {
     // one fewer switch for ops to leave in the wrong position.
     'announcement_text': '',
     'push_enabled': true,
-    'min_supported_version': '1.0.0',
+    'min_supported_version': '0.1.0',
     // The newest published build. Only ever nudges; `min_supported_version`
     // is the one that blocks. Defaults equal to the floor so a project with
     // no value set nudges nobody.
-    'latest_version': '1.0.0',
+    'latest_version': '0.1.0',
     'store_url_ios': '',
     'store_url_android': '',
     'arrival_lead_minutes': '1,3,5',
