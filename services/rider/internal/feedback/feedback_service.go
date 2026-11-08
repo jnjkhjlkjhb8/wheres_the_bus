@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/installid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -237,7 +238,7 @@ func (n *webhookNotifier) post(ctx context.Context, notice feedbackNotice) error
 func (n *webhookNotifier) postPayload(ctx context.Context, payload []byte) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, n.url, bytes.NewReader(payload))
 	if err != nil {
-		return _oops.Wrapf(err, "build request")
+		return _oops.Wrapf(obs.WithoutURL(err), "build request")
 	}
 	request.Header.Set("Content-Type", "application/json")
 	return n.sendWebhookRequest(request)
@@ -246,7 +247,7 @@ func (n *webhookNotifier) postPayload(ctx context.Context, payload []byte) error
 func (n *webhookNotifier) sendWebhookRequest(request *http.Request) error {
 	response, err := n.client.Do(request)
 	if err != nil {
-		return _oops.Wrapf(err, "send")
+		return _oops.Wrapf(obs.WithoutURL(err), "send")
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= http.StatusMultipleChoices {

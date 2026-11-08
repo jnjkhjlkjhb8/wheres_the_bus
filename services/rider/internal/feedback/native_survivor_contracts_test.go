@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -214,8 +213,20 @@ func TestMalformedWebhookURLFailsBeforeAnyTransport(t *testing.T) {
 		return nil, errors.New("unexpected transport")
 	})}}
 	err := n.post(context.Background(), feedbackNotice{ThreadID: "11111111-1111-4111-8111-111111111111", Category: "eta", Body: "report"})
-	var parseError *url.Error
-	if !errors.As(err, &parseError) || called {
+	if err == nil || called {
 		t.Fatalf("URL error=%v, transport called=%t", err, called)
+	}
+}
+
+func TestWebhookFailureHidesWebhookToken(t *testing.T) {
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	const secretPath = "/api/webhooks/1/SECRETTOKEN"
+	for _, webhook := range []string{"http://127.0.0.1:1" + secretPath + "\x7f", closed.URL + secretPath} {
+		n := &webhookNotifier{url: webhook, client: &http.Client{Timeout: time.Second}}
+		err := n.post(context.Background(), feedbackNotice{ThreadID: "t", Category: "eta", Body: "report"})
+		if err == nil || strings.Contains(err.Error(), "SECRETTOKEN") || strings.Contains(err.Error(), "api/webhooks") {
+			t.Fatalf("webhook %q err=%v", webhook, err)
+		}
 	}
 }

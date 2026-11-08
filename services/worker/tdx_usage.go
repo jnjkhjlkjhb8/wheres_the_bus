@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
@@ -230,12 +231,12 @@ func (a tdxUsageAlert) post(ctx context.Context, content string) error {
 	payload, _ := json.Marshal(tdxAlertPayload{Content: content})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.webhook, bytes.NewReader(payload))
 	if err != nil {
-		return _oops.Wrapf(err, "build TDX usage alert")
+		return _oops.Wrapf(obs.WithoutURL(err), "build TDX usage alert")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return _oops.Wrapf(err, "post TDX usage alert")
+		return _oops.Wrapf(obs.WithoutURL(err), "post TDX usage alert")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= http.StatusMultipleChoices {

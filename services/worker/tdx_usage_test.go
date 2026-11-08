@@ -263,6 +263,21 @@ func TestTDXUsageAlertReleasesFlagWhenPostFails(t *testing.T) {
 	}
 }
 
+func TestTDXUsageAlertFailureHidesWebhookToken(t *testing.T) {
+	const day = "2030-02-08"
+	rc := usageTestRedis(t, day)
+	seedUsage(t, rc, day, map[string][2]int64{"bus": {1500, 0}})
+	closedSrv := httptest.NewServer(http.NotFoundHandler())
+	closedSrv.Close()
+	const secretPath = "/api/webhooks/1/SECRETTOKEN"
+	for _, webhook := range []string{"http://127.0.0.1:1" + secretPath + "\x7f", closedSrv.URL + secretPath} {
+		err := testAlert(rc, webhook, 1).run(context.Background(), day)
+		if err == nil || strings.Contains(err.Error(), "SECRETTOKEN") || strings.Contains(err.Error(), "api/webhooks") {
+			t.Fatalf("webhook %q err=%v", webhook, err)
+		}
+	}
+}
+
 // usageRedisFault fails one command of an otherwise working client.
 type usageRedisFault struct {
 	redis.Cmdable
