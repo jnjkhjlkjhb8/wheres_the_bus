@@ -49,7 +49,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The changed-files gate compiles a cold baseline for every changed Go file
+    # and reruns each mutated package's dependents, so it grows with the push:
+    # one 2026-11-08 push took 36 minutes on a 16-core host, far more on this
+    # 4-vCPU runner.
+    timeout-minutes: 240
     permissions:
       contents: read
     # Postgres is started as a step, not a service: it is built from
@@ -60,10 +64,18 @@ jobs:
         image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
         ports:
           - 6379:6379
+      # The rider and worker boot tests run whole services against Redis. They
+      # get their own instance because other packages' tests FlushDB the shared
+      # one while packages run in parallel.
+      redis-boot:
+        image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports:
+          - 6380:6379
     env:
       DATABASE_URL: postgres://bus:bus@localhost:5432/bus_test?sslmode=disable
       REDIS_ADDR: localhost:6379
       REDIS_TEST_ADDR: localhost:6379
+      RIDER_REDIS_TEST_ADDR: localhost:6380
       PG_SCHEMA: public
       FIREBASE_ENABLED: "false"
     steps:
