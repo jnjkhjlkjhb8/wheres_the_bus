@@ -163,16 +163,11 @@ func TestBatchStopOffsets(t *testing.T) {
 	cleanup := func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM bus_station_stop_map WHERE sub_route_uid IN ($1, $2)`, whole, holed)
 		_, _ = pool.Exec(ctx, `DELETE FROM bus_segment_time WHERE sub_route_uid IN ($1, $2)`, whole, holed)
-		_, _ = pool.Exec(ctx, `DELETE FROM raw_tdx.bus_stopofroute WHERE subrouteuid=$1`, whole)
 	}
 	cleanup()
 	defer cleanup()
-	if _, err := pool.Exec(ctx, `INSERT INTO raw_tdx.bus_stopofroute
-		(city, routeuid, subrouteuid, direction, stops)
-		VALUES ('ZZ', $1, $1, 0, $2::jsonb)
-		ON CONFLICT DO NOTHING`, whole, `[{"StopUID":"S1"},{"StopUID":"S2"},{"StopUID":"S3"}]`); err != nil {
-		t.Fatalf("insert known stops: %v", err)
-	}
+	// No raw_tdx rows: realtime cannot read that schema, so the offsets must
+	// come from loaded tables alone.
 
 	// Three stops each; the holed route is missing the S2->S3 segment.
 	for _, uid := range []string{whole, holed} {

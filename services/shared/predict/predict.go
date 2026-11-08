@@ -157,7 +157,7 @@ func BatchStopOffsets(ctx context.Context, db *pgxpool.Pool, uids []string) map[
 func loadStopOffsets(ctx context.Context, db queryer, missing []string, out map[StopOffsetKey]int) {
 	rows, err := db.Query(ctx, `
 		SELECT p.sub_route_uid, p.Direction, p.stop_uid, p.offset_secs
-		FROM (`+busmodel.PatternSQL+`) p
+		FROM (`+busmodel.LoadedPatternSQL+`) p
 		WHERE p.complete AND p.sub_route_uid = ANY($1::text[])`,
 		missing)
 	if err != nil {
