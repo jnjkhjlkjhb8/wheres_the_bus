@@ -55,7 +55,7 @@ void main() {
       addTearDown(bloc.close);
 
       final state = await bloc.stream.firstWhere((s) => !s.loading);
-      expect(state.error, isNotNull);
+      expect(state.error, isA<OfflineError>());
     },
   );
 

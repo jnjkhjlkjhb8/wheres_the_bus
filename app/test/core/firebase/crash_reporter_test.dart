@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/test.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:grpc/grpc.dart';
 import 'package:wheres_the_bus/core/firebase/crash_reporter.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_gate.dart';
 
@@ -39,6 +43,21 @@ class _Apps implements TestFirebaseAppHostApi {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('records only errors the app does not already handle', () {
+    final recorded = <Object>[];
+    final original = CrashReporter.sink;
+    addTearDown(() => CrashReporter.sink = original);
+    CrashReporter.sink = (error, _) => recorded.add(error);
+
+    final defect = StateError('defect');
+    CrashReporter.record(const SocketException('offline'));
+    CrashReporter.record(TimeoutException('slow'));
+    CrashReporter.record(const GrpcError.notFound());
+    CrashReporter.record(defect, StackTrace.current);
+
+    expect(recorded, [same(defect)]);
+  });
 
   test('disabled reporting stays silent after Firebase initializes', () async {
     expect(FirebaseGate.enabled, isFalse);

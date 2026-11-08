@@ -22,6 +22,7 @@ import 'package:wheres_the_bus/features/bike/view/bike_station_detail_view.dart'
 import 'package:wheres_the_bus/features/bike/view/bike_station_screen.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/l10n/app_i18n_zh.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 
@@ -322,7 +323,8 @@ void main() {
       await mount(tester, bike);
       bike.info.completeError(StateError('station unavailable'));
       await flush(tester);
-      expect(find.textContaining('station unavailable'), findsOneWidget);
+      expect(find.text(AppI18nZh().errorUnknownTitle), findsOneWidget);
+      expect(find.textContaining('station unavailable'), findsNothing);
       await tester.tap(find.byIcon(Icons.gps_fixed_rounded));
       await flush(tester);
       expect(location.requests, 2);

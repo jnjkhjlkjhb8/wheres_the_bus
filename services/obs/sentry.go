@@ -31,6 +31,7 @@ func Init(service string) func() {
 		Dsn:                   dsn,
 		Environment:           os.Getenv("SENTRY_ENVIRONMENT"),
 		ServerName:            service,
+		AttachStacktrace:      true,
 		EnableTracing:         tracesRate > 0,
 		TracesSampleRate:      tracesRate,
 		BeforeSend:            scrubSentryEventQuery,

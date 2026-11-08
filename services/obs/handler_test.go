@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/samber/oops"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -113,5 +115,49 @@ func TestLogTagValuesKeepTheirReadableText(t *testing.T) {
 	logger.Errorw("failed batch", "rows", 42, "failed", true)
 	if len(transport.events) != 1 || transport.events[0].Tags["rows"] != "42" || transport.events[0].Tags["failed"] != "true" {
 		t.Fatal("numeric/boolean log tags lost their values")
+	}
+}
+
+// Sent as a bare message, a log line reached Sentry as one line: no exception,
+// no stack and none of the attributes the error carried.
+func TestCoreSendsTheErrorChainWithItsAttributes(t *testing.T) {
+	logger, tr := newTestLogger(t)
+	err := oops.With("status_code", 502).Wrapf(errors.New("bad gateway"), "plan motis")
+	logger.Errorw("plan error", "component", "maas", "action", "plan", "event", "failed", "err", err)
+
+	if len(tr.events) != 1 {
+		t.Fatalf("expected 1 sentry event, got %d", len(tr.events))
+	}
+	event := tr.events[0]
+	if event.Message != "plan error" || len(event.Exception) < 2 {
+		t.Fatalf("event = %q with %d exceptions, want the log message and the wrapped chain", event.Message, len(event.Exception))
+	}
+	if outer := event.Exception[len(event.Exception)-1]; outer.Stacktrace == nil || len(outer.Stacktrace.Frames) == 0 {
+		t.Fatal("outermost exception has no stack trace")
+	}
+	if event.Contexts["error attributes"]["status_code"] != 502 {
+		t.Fatalf("error attributes = %v", event.Contexts["error attributes"])
+	}
+	if _, ok := event.Tags["errVerbose"]; ok {
+		t.Fatalf("errVerbose sent as a tag: %v", event.Tags)
+	}
+	if want := []string{"plan error", "maas", "plan", "failed"}; !slices.Equal(event.Fingerprint, want) {
+		t.Fatalf("fingerprint = %v, want %v", event.Fingerprint, want)
+	}
+}
+
+func TestCoreFindsAnErrorAttachedWithWith(t *testing.T) {
+	logger, tr := newTestLogger(t)
+	logger.With("err", oops.With("city", "Taipei").Errorf("decode failed")).Errorw("ingest failed", "action", "busStatic")
+	logger.Errorw("ingest stalled", "action", "busStatic")
+
+	if len(tr.events) != 2 {
+		t.Fatalf("expected 2 sentry events, got %d", len(tr.events))
+	}
+	if len(tr.events[0].Exception) == 0 || tr.events[0].Contexts["error attributes"]["city"] != "Taipei" {
+		t.Fatalf("error attached with With was lost: %+v", tr.events[0])
+	}
+	if len(tr.events[1].Exception) != 0 || tr.events[1].Message != "ingest stalled" {
+		t.Fatalf("message-only line = %+v, want the message and no exception", tr.events[1])
 	}
 }

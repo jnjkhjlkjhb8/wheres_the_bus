@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:grpc/grpc.dart';
+import 'package:http/http.dart' show ClientException;
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 /// Implements [Exception] so repositories can throw it directly rather than
@@ -10,20 +12,44 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 sealed class AppError implements Exception {
   const AppError();
 
-  factory AppError.from(Object e) {
-    if (e is AppError) return e;
-    if (e is SocketException) return const OfflineError();
-    if (e is TimeoutException) return const TimeoutError();
-    if (e is GrpcError) {
-      return switch (e.code) {
-        StatusCode.unavailable => const OfflineError(),
-        StatusCode.deadlineExceeded => const TimeoutError(),
-        StatusCode.notFound => const NotFoundError(),
-        _ => ServerError(e.code),
-      };
-    }
-    return const UnknownError();
-  }
+  factory AppError.from(Object e) => switch (e) {
+    final AppError error => error,
+    SocketException() || ClientException() => const OfflineError(),
+    TimeoutException() => const TimeoutError(),
+    final GrpcError error => _fromGrpc(error),
+    final DioException error => _fromDio(error),
+    _ => const UnknownError(),
+  };
+
+  static AppError _fromGrpc(GrpcError e) => switch (e.code) {
+    StatusCode.unavailable => const OfflineError(),
+    StatusCode.deadlineExceeded => const TimeoutError(),
+    StatusCode.notFound => const NotFoundError(),
+    // A dropped HTTP/2 connection arrives as UNKNOWN carrying the transport
+    // error's text; the stream reconnects, so it is not a server fault.
+    StatusCode.unknown when _isConnectionDrop(e) => const OfflineError(),
+    _ => ServerError(e.code),
+  };
+
+  static bool _isConnectionDrop(GrpcError e) =>
+      e.message?.startsWith('HTTP/2 error: Connection error') ?? false;
+
+  static AppError _fromDio(DioException e) => switch (e.type) {
+    DioExceptionType.connectionTimeout ||
+    DioExceptionType.sendTimeout ||
+    DioExceptionType.receiveTimeout => const TimeoutError(),
+    DioExceptionType.connectionError => const OfflineError(),
+    DioExceptionType.badResponse when e.response?.statusCode == 404 =>
+      const NotFoundError(),
+    _ => const UnknownError(),
+  };
+
+  /// Offline, timeout and not-found are outcomes the app already handles, not
+  /// defects, so crash reports leave them out.
+  bool get reportable => switch (this) {
+    OfflineError() || TimeoutError() || NotFoundError() => false,
+    ServerError() || UnknownError() => true,
+  };
 
   String titleOf(AppI18n i18n);
   String hintOf(AppI18n i18n);

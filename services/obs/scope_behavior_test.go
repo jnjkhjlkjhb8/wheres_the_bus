@@ -68,7 +68,7 @@ func TestObsInitConfiguresServiceAndTraceRate(t *testing.T) {
 			t.Fatal("client missing")
 		}
 		opts := current.Options()
-		if opts.ServerName != "rider" || opts.Environment != "quality" || opts.TracesSampleRate != tc.want || opts.EnableTracing != (tc.want > 0) {
+		if opts.ServerName != "rider" || opts.Environment != "quality" || opts.TracesSampleRate != tc.want || opts.EnableTracing != (tc.want > 0) || !opts.AttachStacktrace {
 			t.Fatalf("options=%+v", opts)
 		}
 		e := sentry.NewEvent()

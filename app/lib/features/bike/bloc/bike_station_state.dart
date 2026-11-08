@@ -39,7 +39,7 @@ class BikeStationState extends Equatable {
   final DateTime? updatedAt;
 
   /// Static station-info fetch failure (name/capacity never loaded).
-  final String? error;
+  final AppError? error;
 
   final AppError? liveError;
 
@@ -55,7 +55,7 @@ class BikeStationState extends Equatable {
     bool? loading,
     bool? hasLiveData,
     DateTime? updatedAt,
-    String? error,
+    AppError? error,
     bool clearError = false,
     AppError? liveError,
     bool clearLiveError = false,

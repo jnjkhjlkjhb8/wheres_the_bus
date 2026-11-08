@@ -93,7 +93,7 @@ void main() {
 
       final completed = Completer<int>();
       final original = FakeResponseFuture<int>(completed.future);
-      const failure = GrpcError.unavailable('contract unavailable');
+      const failure = GrpcError.internal('contract internal');
       final response = interceptor.interceptUnary<int, int>(
         method,
         41,

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/data/live/arrival_feed.dart';
 import 'package:wheres_the_bus/data/models/bike_models.dart';
 import 'package:wheres_the_bus/data/repositories/bike_repository.dart';
@@ -74,7 +75,7 @@ class BikeStationBloc extends Bloc<BikeStationEvent, BikeStationState> {
         ),
       );
     } on Object catch (e) {
-      emit(state.copyWith(loading: false, error: e.toString()));
+      emit(state.copyWith(loading: false, error: AppError.from(e)));
     }
   }
 

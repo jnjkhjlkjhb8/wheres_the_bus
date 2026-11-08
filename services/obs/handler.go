@@ -9,6 +9,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// _errorTextKeys are the keys zap encodes an error field under: its text, and
+// its %+v form or causes for rich errors. The event's exception already holds
+// them, and Sentry rejects a multi-line tag value.
+var _errorTextKeys = map[string]bool{"err": true, "errVerbose": true, "errCauses": true}
+
 type sentryCore struct {
 	zapcore.Core
 
@@ -58,12 +63,47 @@ func (c *sentryCore) capture(ent zapcore.Entry, fields []zapcore.Field) {
 		return
 	}
 
+	err := fieldError(slices.Concat(fields, c.fields))
 	hub := sentry.CurrentHub().Clone()
-	hub.Scope().SetLevel(sentry.LevelError)
-	hub.Scope().SetTag("source", "zap")
-	setLogTags(hub.Scope(), encoded)
-	setCapturedError(hub.Scope(), errVal, errText, hasErr)
-	hub.CaptureMessage(ent.Message)
+	scope := hub.Scope()
+	scope.SetLevel(sentry.LevelError)
+	scope.SetTag("source", "zap")
+	scope.SetFingerprint(logFingerprint(ent.Message, encoded))
+	setLogTags(scope, encoded)
+	setCapturedError(scope, errText, hasErr, err)
+	hub.CaptureEvent(logEvent(hub.Client(), ent.Message, err))
+}
+
+// logEvent builds the Sentry event for a log line. A bare message reached
+// Sentry as one line with no stack, so an error goes in as its unwrapped chain
+// instead: oops errors bring the stack of where they were created, and any
+// other error gets the stack of this call.
+func logEvent(client *sentry.Client, message string, err error) *sentry.Event {
+	if err == nil {
+		return client.EventFromMessage(message, sentry.LevelError)
+	}
+	event := client.EventFromException(err, sentry.LevelError)
+	event.Message = message
+	return event
+}
+
+// fieldError returns the first error value among fields. The encoded field map
+// holds only the error's text; its chain, stack and oops attributes live on the
+// value.
+func fieldError(fields []zapcore.Field) error {
+	for _, field := range fields {
+		if err := oopsFieldError(field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// logFingerprint groups events by the site that logged them. Sites share
+// messages such as "query failed", and grouping on the message alone merged
+// unrelated failures into one issue.
+func logFingerprint(message string, fields map[string]any) []string {
+	return []string{message, valueText(fields["component"]), valueText(fields["action"]), valueText(fields["event"])}
 }
 
 func sentryFields(inherited, fields []zapcore.Field) map[string]any {
@@ -79,7 +119,7 @@ func sentryFields(inherited, fields []zapcore.Field) map[string]any {
 
 func setLogTags(scope *sentry.Scope, fields map[string]any) {
 	for k, v := range fields {
-		if k == "err" || strings.HasPrefix(k, _oopsFieldPrefix) {
+		if _errorTextKeys[k] || strings.HasPrefix(k, _oopsFieldPrefix) {
 			continue
 		}
 		scope.SetTag(k, valueText(v))
@@ -113,11 +153,9 @@ func captureErrorText(value any, present bool) string {
 	return valueText(value)
 }
 
-func setCapturedError(scope *sentry.Scope, errVal any, errText string, hasErr bool) {
+func setCapturedError(scope *sentry.Scope, errText string, hasErr bool, err error) {
+	applyOopsScope(scope, err)
 	if hasErr {
 		scope.SetContext("error", sentry.Context{"detail": errText})
-		if err, ok := errVal.(error); ok {
-			applyOopsScope(scope, err)
-		}
 	}
 }

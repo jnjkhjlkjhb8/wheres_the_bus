@@ -149,7 +149,9 @@ class _StationSheet extends StatelessWidget {
               ] else if (state.error != null) ...[
                 // Static station-info fetch failed outright: no name/capacity,
                 // nothing meaningful to show under it.
-                ErrorStateCard(message: state.error!),
+                ErrorStateCard(
+                  message: state.error!.titleOf(AppI18n.of(context)),
+                ),
               ] else
                 ..._loadedContent(context, state),
             ],
