@@ -11,7 +11,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/weather"
 )
@@ -34,27 +33,6 @@ func TestBusWeatherSnapshotAcceptsValidAndIgnoresMissingOrInvalidData(t *testing
 		if got != nil && (got.Temperature != 22 || got.Humidity != 70 || got.Precipitation != 2 || got.WindSpeed != 3) {
 			t.Fatalf("weather=%+v", got)
 		}
-	}
-}
-
-func TestUnwatchedBusCityRefreshesTTLAndPropagatesFailure(t *testing.T) {
-	ctx := context.Background()
-	sink := &captureLiveSink{}
-	if !pipeline.LiveDemandGate(ctx, sink, "bus_eta", "YilanCounty") {
-		t.Fatal("first cold-city visit skipped")
-	}
-	sentinel := errors.New("refresh failed")
-	sink.refreshErr = sentinel
-	job := busLiveJob{sink: sink, demandDataset: "bus_eta"}
-	if err := job.runDemandCity(ctx, "YilanCounty"); !errors.Is(err, sentinel) {
-		t.Fatalf("refresh cause=%v", err)
-	}
-	sink.refreshErr = nil
-	if err := job.runDemandCity(ctx, "YilanCounty"); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.refresh) != 2 {
-		t.Fatalf("refresh calls=%d", len(sink.refresh))
 	}
 }
 

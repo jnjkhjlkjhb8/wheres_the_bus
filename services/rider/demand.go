@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/firebase"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"go.uber.org/zap"
 )
 
@@ -19,14 +19,16 @@ const _reminderDemandCitiesSQL = `
 	WHERE route_type = 'bus' AND status = 'pending' AND expires_at > NOW()
 	GROUP BY city_prefix`
 
-func restoreReminderDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.LiveSink) int {
-	if db == nil || sink == nil {
+// restoreReminderDemand re-claims each pending reminder's city through live,
+// which never shortens a longer claim already in Redis.
+func restoreReminderDemand(ctx context.Context, db *pgxpool.Pool, live firebase.DemandToucher) int {
+	if db == nil || live == nil {
 		return 0
 	}
-	return restoreDatabaseDemand(ctx, db, sink)
+	return restoreDatabaseDemand(ctx, db, live)
 }
 
-func restoreDatabaseDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.LiveSink) int {
+func restoreDatabaseDemand(ctx context.Context, db *pgxpool.Pool, live firebase.DemandToucher) int {
 	rows, err := db.Query(ctx, _reminderDemandCitiesSQL)
 	if err != nil {
 		zap.S().Errorw("query failed",
@@ -39,28 +41,11 @@ func restoreDatabaseDemand(ctx context.Context, db *pgxpool.Pool, sink pipeline.
 	}
 	defer rows.Close()
 
-	return publishRestoredDemand(ctx, rows, sink.Pipe())
+	return reportRestoredDemand(touchReminderDemand(ctx, rows, live))
 }
 
-func publishRestoredDemand(ctx context.Context, rows pgx.Rows, pipe pipeline.LivePipe) int {
-	restored, err := queueReminderDemand(rows, pipe)
+func reportRestoredDemand(restored int, err error) int {
 	if err != nil {
-		return 0
-	}
-	if restored == 0 {
-		return 0
-	}
-	return publishDemandPipeline(ctx, pipe, restored)
-}
-
-func publishDemandPipeline(ctx context.Context, pipe pipeline.LivePipe, restored int) int {
-	if err := pipe.Exec(ctx); err != nil {
-		zap.S().Errorw("write failed",
-			"component", "live",
-			"action", "restore_reminder_demand",
-			"event", "failed",
-			"err", err,
-		)
 		return 0
 	}
 	zap.S().Infow("success",
@@ -72,15 +57,15 @@ func publishDemandPipeline(ctx context.Context, pipe pipeline.LivePipe, restored
 	return restored
 }
 
-func queueReminderDemand(rows pgx.Rows, pipe pipeline.LivePipe) (int, error) {
+func touchReminderDemand(ctx context.Context, rows pgx.Rows, live firebase.DemandToucher) (int, error) {
 	restored := 0
 	now := time.Now()
 	for rows.Next() {
-		queued, err := queueDemandRow(rows, pipe, now)
+		touched, err := touchDemandRow(ctx, rows, live, now)
 		if err != nil {
 			return 0, err
 		}
-		restored += queued
+		restored += touched
 	}
 	return completedDemandRows(rows, restored)
 }
@@ -93,21 +78,21 @@ func completedDemandRows(rows pgx.Rows, restored int) (int, error) {
 	return restored, nil
 }
 
-func queueDemandRow(rows pgx.Rows, pipe pipeline.LivePipe, now time.Time) (int, error) {
+func touchDemandRow(ctx context.Context, rows pgx.Rows, live firebase.DemandToucher, now time.Time) (int, error) {
 	var prefix string
 	var expiresAt time.Time
 	if err := rows.Scan(&prefix, &expiresAt); err != nil {
 		zap.S().Errorw("scan failed", "component", "live", "action", "restore_reminder_demand", "event", "failed", "err", err)
 		return 0, err
 	}
-	return queueCityDemand(pipe, prefix, expiresAt.Sub(now)), nil
+	return touchCityDemand(ctx, live, prefix, expiresAt.Sub(now)), nil
 }
 
-func queueCityDemand(pipe pipeline.LivePipe, prefix string, ttl time.Duration) int {
+func touchCityDemand(ctx context.Context, live firebase.DemandToucher, prefix string, ttl time.Duration) int {
 	city := shared.CityFromUID(prefix)
 	if city == "" || ttl <= 0 {
 		return 0
 	}
-	pipe.Set(shared.LiveDemandKey("bus_eta", city), "1", ttl)
+	live.Touch(ctx, shared.LiveDemandKey("bus_eta", city), ttl)
 	return 1
 }

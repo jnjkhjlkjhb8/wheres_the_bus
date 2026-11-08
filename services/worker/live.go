@@ -18,7 +18,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func liveRegistry(db *pgxpool.Pool, notifier bus.ArrivalNotifier) []pipeline.LiveSpec {
+func liveRegistry(db *pgxpool.Pool, notifier bus.ArrivalNotifier, guard *pipeline.LiveFetchGuard) []pipeline.LiveSpec {
 	bikeOwnedKey := func(fetchName string) string {
 		return shared.LiveOwnedKeysKey("bike", strings.TrimPrefix(fetchName, "bike_availability"))
 	}
@@ -38,11 +38,11 @@ func liveRegistry(db *pgxpool.Pool, notifier bus.ArrivalNotifier) []pipeline.Liv
 	return []pipeline.LiveSpec{
 		{Key: "bike", Cadence: "@every 30s", OwnedKey: bikeOwnedKey, OwnedTTL: pipeline.BikeLiveTTL,
 			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
-				return bike.Eta(ctx, fetch, sink, db)
+				return bike.Eta(ctx, fetch, sink, db, guard)
 			}},
 		{Key: "bus", Cadence: "@every 30s", TTLPatterns: nil,
 			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
-				return bus.Eta(ctx, fetch, sink, db, notifier)
+				return bus.Eta(ctx, fetch, sink, db, notifier, guard)
 			}},
 		{Key: "bus_fast", Cadence: "@every 20s", TTLPatterns: nil,
 			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
@@ -52,8 +52,14 @@ func liveRegistry(db *pgxpool.Pool, notifier bus.ArrivalNotifier) []pipeline.Liv
 			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
 				return mrt.TrtcEta(ctx, sink, db)
 			}},
-		{Key: "tra", Cadence: "@every 2m", TTLPatterns: traPatterns, Run: rail.TraEta},
-		{Key: "thsr_seats", Cadence: "@every 10m", TTLPatterns: thsrSeatsPatterns, Run: rail.ThsrAvailableSeats},
+		{Key: "tra", Cadence: "@every 2m", TTLPatterns: traPatterns,
+			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
+				return rail.TraEta(ctx, fetch, sink, guard)
+			}},
+		{Key: "thsr_seats", Cadence: "@every 10m", TTLPatterns: thsrSeatsPatterns,
+			Run: func(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
+				return rail.ThsrAvailableSeats(ctx, fetch, sink, guard)
+			}},
 	}
 }
 
@@ -126,10 +132,13 @@ func liveTickDeadline(cadence string) time.Duration {
 	return d - d/6
 }
 
-func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool, notifier bus.ArrivalNotifier) {
+// registerLiveCrons schedules the live jobs and returns the waker for the same
+// jobs, sharing one fetch guard so a wake and a tick fetch a partition once.
+func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool, notifier bus.ArrivalNotifier) *liveWaker {
 	src := pipeline.NewRESTLiveSource(tdx)
 	sink := pipeline.NewRedisLiveSink(rc)
-	specs := runnableLiveSpecs(liveRegistry(db, notifier), tdxCredentialsSet())
+	guard := pipeline.NewLiveFetchGuard()
+	specs := runnableLiveSpecs(liveRegistry(db, notifier, guard), tdxCredentialsSet())
 
 	order, byCadence := groupLiveCadences(specs)
 
@@ -138,7 +147,7 @@ func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db
 		deadline := liveTickDeadline(cadence)
 		_, _ = addStaticCron(r, cadence, func() { runLiveCadence(src, sink, cadence, group, deadline) })
 	}
-
+	return newLiveWaker(src, sink, specs, liveWakeTargets(db, notifier, guard))
 }
 
 func groupLiveCadences(specs []pipeline.LiveSpec) ([]string, map[string][]pipeline.LiveSpec) {

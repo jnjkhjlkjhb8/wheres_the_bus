@@ -41,7 +41,7 @@ func liveSpecKeys(specs []pipeline.LiveSpec) []string {
 }
 
 func TestRunnableLiveSpecsDropsTDXJobsWithoutCredentials(t *testing.T) {
-	registry := liveRegistry(nil, nil)
+	registry := liveRegistry(nil, nil, nil)
 	tests := []struct {
 		name   string
 		hasTDX bool

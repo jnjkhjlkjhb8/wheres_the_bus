@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -139,8 +140,15 @@ type busLiveJob struct {
 	now      func() time.Time
 	// snapshot is fixed for the whole run so every city lands on the same side
 	// of the history sampling clock (see snapshotTick).
-	snapshot      bool
-	demandDataset string
+	snapshot bool
+	demand   busDemand
+}
+
+// busDemand gates a job's cities on live demand. An empty dataset leaves the
+// job ungated, as Data.taipei costs no TDX quota.
+type busDemand struct {
+	dataset string
+	guard   *pipeline.LiveFetchGuard
 }
 
 const _busFeedCacheTTL = 10 * time.Minute
@@ -265,9 +273,32 @@ func Eta(
 	sink pipeline.LiveSink,
 	db *pgxpool.Pool,
 	notifier ArrivalNotifier,
+	guard *pipeline.LiveFetchGuard,
 ) error {
-	return runBusEtaTick(ctx, "bus_eta", _busEtaSlowCities, history.BusEtaTickInterval,
-		nil, nil, fetch, sink, db, notifier, "bus_eta")
+	return runBusEtaTick(ctx, "bus_eta", _busEtaSlowCities, history.SnapshotTick(time.Now(), history.BusEtaTickInterval),
+		nil, nil, fetch, sink, db, notifier, busDemand{dataset: "bus_eta", guard: guard})
+}
+
+// EtaCity runs Eta for one city at once, for a demand wake. A city outside
+// busEtaSlowCities runs nothing: Taipei and New Taipei have demand keys too,
+// but their data comes from Data.taipei and must never cost a TDX fetch. A
+// wake run never samples history snapshots, because the tick that follows in
+// the same window would sample the city again.
+func EtaCity(
+	ctx context.Context,
+	city string,
+	fetch pipeline.BoundFetch,
+	sink pipeline.LiveSink,
+	db *pgxpool.Pool,
+	notifier ArrivalNotifier,
+	guard *pipeline.LiveFetchGuard,
+) error {
+	if !slices.Contains(_busEtaSlowCities, city) {
+		zap.S().Infow("skip", "component", "bus_eta", "action", "wake", "event", "skip", "city", city, "reason", "not_tdx_city")
+		return nil
+	}
+	return runBusEtaTick(ctx, "bus_eta", []string{city}, false,
+		nil, nil, fetch, sink, db, notifier, busDemand{dataset: "bus_eta", guard: guard})
 }
 
 func EtaFast(
@@ -286,27 +317,27 @@ func EtaFast(
 		vehicles[city] = feed
 		etaFeeds[city] = feed
 	}
-	return runBusEtaTick(ctx, "bus_eta_fast", _busEtaFastCities, history.BusEtaFastTickInterval,
-		vehicles, etaFeeds, fetch, sink, db, notifier, "")
+	return runBusEtaTick(ctx, "bus_eta_fast", _busEtaFastCities, history.SnapshotTick(time.Now(), history.BusEtaFastTickInterval),
+		vehicles, etaFeeds, fetch, sink, db, notifier, busDemand{})
 }
 
-// runBusEtaTick is the shared body of Eta and EtaFast: build the job,
+// runBusEtaTick is the shared body of Eta, EtaCity and EtaFast: build the job,
 // run cityList, log start/complete under component so the two crons are
 // distinguishable in the logs.
 func runBusEtaTick(
 	ctx context.Context,
 	component string,
 	cityList []string,
-	tickInterval time.Duration,
+	snapshot bool,
 	vehicles map[string]vehicleSource,
 	eta map[string]etaSource,
 	fetch pipeline.BoundFetch,
 	sink pipeline.LiveSink,
 	db *pgxpool.Pool,
 	notifier ArrivalNotifier,
-	demandDataset string,
+	demand busDemand,
 ) error {
-	zap.S().Infow("start", "component", component, "action", "Bus_eta", "event", "start")
+	zap.S().Infow("start", "component", component, "action", "Bus_eta", "event", "start", "snapshot", snapshot)
 	job := busLiveJob{
 		fetch:    fetch,
 		sink:     sink,
@@ -314,9 +345,8 @@ func runBusEtaTick(
 		vehicles: vehicles,
 		eta:      eta,
 		now:      time.Now,
-		snapshot: history.SnapshotTick(time.Now(), tickInterval),
-
-		demandDataset: demandDataset,
+		snapshot: snapshot,
+		demand:   demand,
 	}
 	jobErr := runBusEtaCities(ctx, cityList, &job, notifier)
 	zap.S().Infow("complete", "component", component, "action", "Bus_eta", "event", "complete")
@@ -340,11 +370,11 @@ func (j busLiveJob) runCityGuarded(ctx context.Context, city string) (err error)
 	return j.runCity(ctx, city)
 }
 
-func (j busLiveJob) shouldRunCity(ctx context.Context, city string) bool {
-	if j.demandDataset == "" {
-		return true
+func (j busLiveJob) claimCity(ctx context.Context, city string) (release func(), ok bool) {
+	if j.demand.dataset == "" {
+		return func() {}, true
 	}
-	return pipeline.LiveDemandGate(ctx, j.sink, j.demandDataset, city)
+	return pipeline.ClaimLiveDemand(ctx, j.sink, j.demand.guard, j.demand.dataset, city)
 }
 
 func runBusEtaCities(ctx context.Context, cityNames []string, job *busLiveJob, target ArrivalNotifier) error {
@@ -390,20 +420,16 @@ func runLimitedBusCity(ctx context.Context, city string, job *busLiveJob, sem ch
 	}
 }
 
+// runDemandCity fetches a city only while someone needs it. A city without
+// demand is left alone, so its live keys expire.
 func (j busLiveJob) runDemandCity(ctx context.Context, city string) error {
-	if !j.shouldRunCity(ctx, city) {
-		return j.refreshUnwatchedCity(ctx, city)
+	release, ok := j.claimCity(ctx, city)
+	if !ok {
+		return nil
 	}
-
+	defer release()
 	if err := j.runCityGuarded(ctx, city); err != nil {
 		return _oops.With("city", city).Wrapf(err, "bus ETA city run")
-	}
-	return nil
-}
-
-func (j busLiveJob) refreshUnwatchedCity(ctx context.Context, city string) error {
-	if err := j.sink.RefreshTTL(ctx, busEtaTTLPatterns(city)); err != nil {
-		return _oops.With("city", city).Wrapf(err, "refresh unwatched bus ETA TTLs")
 	}
 	return nil
 }

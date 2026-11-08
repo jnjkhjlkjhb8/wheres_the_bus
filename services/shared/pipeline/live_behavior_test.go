@@ -161,15 +161,17 @@ func TestCommitFetchOrdersCloseBeforeAcknowledgement(t *testing.T) {
 	}
 }
 
+// demandSink serves demand keys from a map. It has no Pipe, so a gate that
+// tried to write would panic.
 type demandSink struct {
 	LiveSink
 	strings map[string]string
 	errors  map[string]error
-	writes  []TTLPattern
-	execErr error
+	reads   int
 }
 
 func (s *demandSink) GetString(_ context.Context, key string) (string, error) {
+	s.reads++
 	if err := s.errors[key]; err != nil {
 		return "", err
 	}
@@ -178,50 +180,28 @@ func (s *demandSink) GetString(_ context.Context, key string) (string, error) {
 	}
 	return "", redis.Nil
 }
-func (s *demandSink) Pipe() LivePipe { return &demandPipe{sink: s} }
-
-type demandPipe struct {
-	LivePipe
-	sink *demandSink
-}
-
-func (p *demandPipe) Set(key string, value any, ttl time.Duration) {
-	p.sink.strings[key] = value.(string)
-	p.sink.writes = append(p.sink.writes, TTLPattern{key, ttl})
-}
-func (p *demandPipe) Exec(context.Context) error { return p.sink.execErr }
 
 func TestLiveDemandGate(t *testing.T) {
 	t.Setenv("LIVE_DEMAND_GATE", "")
 	ctx := context.Background()
 	demand := shared.LiveDemandKey("bus_eta", "city")
-	cold := shared.LiveColdKey("bus_eta", "city")
 	sink := &demandSink{strings: map[string]string{}, errors: map[string]error{}}
-	if !LiveDemandGate(ctx, sink, "bus_eta", "city") || LiveDemandGate(ctx, sink, "bus_eta", "city") {
-		t.Fatal("cold cadence did not limit polling")
-	}
-	if !reflect.DeepEqual(sink.writes, []TTLPattern{{cold, LiveColdCadence}}) {
-		t.Fatalf("cold marker writes=%v", sink.writes)
+	for range 3 {
+		if LiveDemandGate(ctx, sink, "bus_eta", "city") {
+			t.Fatal("a partition without demand was let through")
+		}
 	}
 	sink.strings[demand] = "1"
 	if !LiveDemandGate(ctx, sink, "bus_eta", "city") {
 		t.Fatal("active demand was skipped")
 	}
+	if LiveDemandGate(ctx, sink, "bike", "city") {
+		t.Fatal("bus_eta demand opened the bike gate")
+	}
 	delete(sink.strings, demand)
 	sink.errors[demand] = errors.New("demand read failed")
 	if !LiveDemandGate(ctx, sink, "bus_eta", "city") {
 		t.Fatal("read failure blocked polling")
-	}
-	delete(sink.errors, demand)
-	sink.errors[cold] = errors.New("cold read failed")
-	if !LiveDemandGate(ctx, sink, "bus_eta", "city") {
-		t.Fatal("cold read failure blocked polling")
-	}
-	delete(sink.errors, cold)
-	delete(sink.strings, cold)
-	sink.execErr = errors.New("marker failed")
-	if !LiveDemandGate(ctx, sink, "bus_eta", "city") {
-		t.Fatal("marker failure blocked polling")
 	}
 	t.Setenv("LIVE_DEMAND_GATE", "off")
 	if !LiveDemandGate(ctx, nil, "bus_eta", "city") {

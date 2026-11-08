@@ -56,8 +56,18 @@ type traDelay struct {
 
 // TraEta refreshes TRA realtime data into Redis on the 2-minute cron: per-train
 // delays as hash tra:delay plus a published tra:delay:all snapshot, all with a
-// 3-minute TTL so stale data expires.
-func TraEta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
+// 3-minute TTL so stale data expires. Nothing is fetched while nobody watches
+// TRA delays; GTFS-RT then falls back to the static timetable.
+func TraEta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, guard *pipeline.LiveFetchGuard) error {
+	release, ok := pipeline.ClaimLiveDemand(ctx, sink, guard, "tra", "TRA")
+	if !ok {
+		return nil
+	}
+	defer release()
+	return fetchTraDelays(ctx, fetch, sink)
+}
+
+func fetchTraDelays(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
 	zap.S().Infow("start", "component", "tra_eta", "action", "tra_eta", "event", "start")
 	result, err := fetch(ctx, "/v2/Rail/TRA/LiveTrainDelay", "tra_delay")
 	if err != nil {

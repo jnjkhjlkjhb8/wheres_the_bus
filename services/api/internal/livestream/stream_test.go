@@ -45,37 +45,6 @@ func newFakeLiveSource() *fakeLiveSource {
 	}
 }
 
-func TestDemandRefreshWindowBoundary(t *testing.T) {
-	src := newFakeLiveSource()
-	now := time.Unix(1_800_000_000, 0)
-	stream := liveStream{source: src, spec: LiveStreamSpec{DemandKey: "demand:city"}, touched: now}
-	stream.refreshDemand(t.Context(), now.Add(_demandRefresh-time.Nanosecond))
-	if len(src.touches) != 0 {
-		t.Fatal("demand refreshed before its renewal window")
-	}
-	stream.refreshDemand(t.Context(), now.Add(_demandRefresh))
-	if len(src.touches) != 1 || src.touches[0] != "demand:city" {
-		t.Fatalf("demand was not refreshed at the boundary: %v", src.touches)
-	}
-	stream.refreshDemand(t.Context(), now.Add(2*_demandRefresh-time.Nanosecond))
-	if len(src.touches) != 1 {
-		t.Fatal("refresh did not renew the window")
-	}
-	stream.refreshDemand(t.Context(), now.Add(2*_demandRefresh))
-	if len(src.touches) != 2 {
-		t.Fatal("second refresh window was not honored")
-	}
-}
-
-func TestDemandRefreshWithoutDemandKey(t *testing.T) {
-	src := newFakeLiveSource()
-	stream := liveStream{source: src}
-	stream.refreshDemand(t.Context(), time.Now())
-	if len(src.touches) != 0 {
-		t.Fatal("stream without a demand key refreshed demand")
-	}
-}
-
 func (f *fakeLiveSource) Get(_ context.Context, key string) ([]byte, bool) {
 	f.ops = append(f.ops, "get:"+key)
 	v, ok := f.values[key]

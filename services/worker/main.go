@@ -111,7 +111,7 @@ func runManualGTFS(db *pgxpool.Pool, rc *redis.Client) error {
 func runManualLive(name string, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) {
 	ctx, cancel := context.WithTimeout(context.Background(), _manualRunTimeout)
 	defer cancel()
-	pipeline.RunLive(ctx, pipeline.NewRESTLiveSource(tdx), pipeline.NewRedisLiveSink(rc), liveRegistry(manualLivePool(name, db), nil), []string{name})
+	pipeline.RunLive(ctx, pipeline.NewRESTLiveSource(tdx), pipeline.NewRedisLiveSink(rc), liveRegistry(manualLivePool(name, db), nil, nil), []string{name})
 }
 
 // manualLivePool hands the database only to the bus job; every other manual
@@ -135,16 +135,18 @@ func runRealtimeWithShutdown(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Clie
 	refreshBootHoliday()
 	predict.Install()
 	refreshBootWeather(rc)
-	registerWorkerCrons(r, tdx, rc, db)
+	waker := registerWorkerCrons(r, tdx, rc, db)
 	r.Start()
 	_health.touch()
+	stopWakes := waker.listen(rc)
 	mqttClient := mqtt.StartMQTT(rc, db, history.ArchiveMQTTMessage)
 	waitShutdown()
 	// Stop intake before draining jobs so shutdown cannot dispatch more work.
 	if mqttClient != nil {
 		mqttClient.Disconnect(500)
 	}
-	drainShutdown(r.Stop(), &sync.WaitGroup{}, _shutdownGrace)
+	stopWakes()
+	drainShutdown(r.Stop(), &waker.runs, _shutdownGrace)
 	return nil
 }
 
@@ -170,9 +172,9 @@ func refreshBootWeather(rc *redis.Client) {
 	weatherCancel()
 }
 
-func registerWorkerCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) {
+func registerWorkerCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) *liveWaker {
 	// Arrival events go to rider, which owns reminders and push delivery.
-	registerLiveCrons(r, tdx, rc, db, riderevent.Publisher{RC: rc})
+	waker := registerLiveCrons(r, tdx, rc, db, riderevent.Publisher{RC: rc})
 	registerGTFSRTCron(r, db, rc)
 	_, _ = addStaticCron(r, "@every 10m", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), weather.HTTPTimeout)
@@ -198,6 +200,7 @@ func registerWorkerCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, 
 		})
 		history.ReportGaps()
 	})
+	return waker
 }
 
 func waitForShutdown() {

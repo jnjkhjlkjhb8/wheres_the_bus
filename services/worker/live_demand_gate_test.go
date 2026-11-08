@@ -54,34 +54,21 @@ func TestRunLiveFiltersByKey(t *testing.T) {
 	}
 }
 
-func TestLiveDemandGateSkipsUnwatchedCityUntilColdCadence(t *testing.T) {
+// TestLiveDemandGateNeverFetchesAnUnwatchedCity: without demand a city is
+// skipped on every tick and nothing is written for it, so its live keys
+// expire instead of being polled on a slower cadence.
+func TestLiveDemandGateNeverFetchesAnUnwatchedCity(t *testing.T) {
+	t.Setenv("LIVE_DEMAND_GATE", "")
 	ctx := context.Background()
 
 	sink := &captureLiveSink{}
-	fetched := 0
 	for range 10 {
 		if pipeline.LiveDemandGate(ctx, sink, "bus_eta", "YilanCounty") {
-			fetched++
+			t.Fatal("unwatched city was let through")
 		}
 	}
-	if fetched != 1 {
-		t.Fatalf("unwatched city fetched %d times across 10 ticks, want 1", fetched)
-	}
-	coldKey := shared.LiveColdKey("bus_eta", "YilanCounty")
-	if got := sink.strings[coldKey]; got == "" {
-		t.Fatalf("cold marker %q not written", coldKey)
-	}
-	for _, write := range sink.sets {
-		if write.key == coldKey && write.ttl != pipeline.LiveColdCadence {
-			t.Fatalf("cold marker TTL = %v, want %v", write.ttl, pipeline.LiveColdCadence)
-		}
-	}
-
-	// The marker expiring is what lets the next fetch through; the fake has no
-	// clock, so dropping the key is how a tick past the cadence is expressed.
-	delete(sink.strings, coldKey)
-	if !pipeline.LiveDemandGate(ctx, sink, "bus_eta", "YilanCounty") {
-		t.Fatal("expired cold marker did not release the next fetch")
+	if len(sink.sets) != 0 || len(sink.expires) != 0 || len(sink.refresh) != 0 {
+		t.Fatalf("gate wrote for an unwatched city: sets=%v expires=%v refresh=%v", sink.sets, sink.expires, sink.refresh)
 	}
 
 	watched := &captureLiveSink{
@@ -92,14 +79,9 @@ func TestLiveDemandGateSkipsUnwatchedCityUntilColdCadence(t *testing.T) {
 			t.Fatal("watched city was skipped")
 		}
 	}
-	if len(watched.sets) != 0 {
-		t.Fatalf("watched city wrote %d cold markers, want 0", len(watched.sets))
-	}
-
-	// A city gated under one dataset must not silence the other: the two jobs
-	// poll independently and share nothing but the city name.
-	if !pipeline.LiveDemandGate(ctx, sink, "bike", "YilanCounty") {
-		t.Fatal("bike was gated by the bus_eta cold marker")
+	// Demand is per dataset: watching buses in a city does not fetch its bikes.
+	if pipeline.LiveDemandGate(ctx, watched, "bike", "YilanCounty") {
+		t.Fatal("bus_eta demand opened the bike gate")
 	}
 }
 

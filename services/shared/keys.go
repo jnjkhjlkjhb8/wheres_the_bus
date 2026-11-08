@@ -139,15 +139,24 @@ func LiveOwnedKeysKey(dataset, partition string) string {
 }
 
 func LiveDemandKey(dataset, city string) string {
-	return fmt.Sprintf("live:demand:%s:%s", dataset, city)
+	return _liveDemandPrefix + dataset + ":" + city
 }
 
-// LiveColdKey marks one unwatched city as already fetched recently. Its TTL is
-// the reduced cadence: while it exists the city's ticks are skipped, and its
-// expiry is what lets the next tick through.
-func LiveColdKey(dataset, city string) string {
-	return fmt.Sprintf("live:cold:%s:%s", dataset, city)
+const _liveDemandPrefix = "live:demand:"
+
+// ParseLiveDemandKey splits a LiveDemandKey back into its dataset and
+// partition.
+func ParseLiveDemandKey(key string) (dataset, partition string, ok bool) {
+	rest, ok := strings.CutPrefix(key, _liveDemandPrefix)
+	if !ok {
+		return "", "", false
+	}
+	return strings.Cut(rest, ":")
 }
+
+// LiveWakeChannel carries a demand key that a live stream has just created, so
+// realtime fetches that partition at once instead of on its next tick.
+const LiveWakeChannel = "live:wake"
 
 var _cityUIDPrefix = map[string]string{
 	"Taipei": "TPE", "NewTaipei": "NWT", "Taoyuan": "TAO", "Taichung": "TXG",

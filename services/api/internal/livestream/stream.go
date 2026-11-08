@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -21,9 +22,10 @@ type LiveSource interface {
 	// scan returns what was collected so far.
 	ScanKeys(ctx context.Context, pattern string) []string
 	Subscribe(ctx context.Context, channel string) (<-chan []byte, func(), error)
-	// Touch writes key with ttl, replacing any existing TTL. It carries the
-	// demand signal to functions and nothing reads it back here, so a failure
-	// costs freshness rather than correctness and is not returned.
+	// Touch keeps key alive for at least ttl, never shortening a longer TTL
+	// such as a reminder's. It carries the demand signal to realtime and
+	// nothing reads it back here, so a failure costs freshness rather than
+	// correctness and is not returned.
 	Touch(ctx context.Context, key string, ttl time.Duration)
 }
 
@@ -49,8 +51,8 @@ type liveSourceCloseCause interface {
 }
 
 func StreamLive(ctx context.Context, src LiveSource, spec LiveStreamSpec, send func([]byte) error) error {
-	// Claim demand before subscribing: a cold city has no frames to renew from,
-	// so this first touch is what gets it polled often enough to produce one.
+	// Claim demand before subscribing: a cold city has nothing to send until
+	// this first touch wakes realtime to fetch it.
 	stream := newLiveStream(ctx, src, spec, send)
 
 	ch, closeSub, err := src.Subscribe(ctx, spec.Channel)
@@ -74,19 +76,16 @@ func newLiveStream(ctx context.Context, source LiveSource, spec LiveStreamSpec, 
 	if usable == nil {
 		usable = func(b []byte) bool { return len(b) > 0 }
 	}
-	touched := time.Now()
-	if spec.DemandKey != "" {
-		source.Touch(ctx, spec.DemandKey, _demandTTL)
-	}
-	return liveStream{source: source, spec: spec, usable: usable, send: send, touched: touched}
+	stream := liveStream{source: source, spec: spec, usable: usable, send: send}
+	stream.touchDemand(ctx)
+	return stream
 }
 
 type liveStream struct {
-	source  LiveSource
-	spec    LiveStreamSpec
-	usable  func([]byte) bool
-	send    func([]byte) error
-	touched time.Time
+	source LiveSource
+	spec   LiveStreamSpec
+	usable func([]byte) bool
+	send   func([]byte) error
 }
 
 func (s *liveStream) seed(ctx context.Context) error {
@@ -115,41 +114,43 @@ func (s *liveStream) sendSeed(ctx context.Context, key string) error {
 }
 
 func (s *liveStream) forward(ctx context.Context, ch <-chan []byte) error {
+	renew := time.NewTicker(_demandRefresh)
+	defer renew.Stop()
 	for {
-		val, err := s.nextFrame(ctx, ch)
-		if err != nil {
-			return err
-		}
-		if err := s.sendFrame(ctx, val); err != nil {
+		if err := s.step(ctx, ch, renew.C); err != nil {
 			return err
 		}
 	}
 }
 
-func (s *liveStream) nextFrame(ctx context.Context, ch <-chan []byte) ([]byte, error) {
+// step handles the next frame or demand renewal. Demand is renewed on a timer,
+// not on frames: a partition whose data stops changing publishes nothing, and
+// demand that lapsed there would stop its fetches for good.
+func (s *liveStream) step(ctx context.Context, ch <-chan []byte, renew <-chan time.Time) error {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return ctx.Err()
+	case <-renew:
+		s.touchDemand(ctx)
+		return nil
 	case val, ok := <-ch:
-		if !ok {
-			return nil, s.closeCause(ch)
-		}
-		return val, nil
+		return s.deliver(ch, val, ok)
 	}
 }
 
-func (s *liveStream) sendFrame(ctx context.Context, val []byte) error {
-	s.refreshDemand(ctx, time.Now())
+func (s *liveStream) deliver(ch <-chan []byte, val []byte, ok bool) error {
+	if !ok {
+		return s.closeCause(ch)
+	}
 	if !s.usable(val) {
 		return nil
 	}
 	return s.send(val)
 }
 
-func (s *liveStream) refreshDemand(ctx context.Context, now time.Time) {
-	if s.spec.DemandKey != "" && now.Sub(s.touched) >= _demandRefresh {
+func (s *liveStream) touchDemand(ctx context.Context) {
+	if s.spec.DemandKey != "" {
 		s.source.Touch(ctx, s.spec.DemandKey, _demandTTL)
-		s.touched = now
 	}
 }
 
@@ -193,11 +194,25 @@ func (r RedisLiveSource) Get(ctx context.Context, key string) ([]byte, bool) {
 	return val, true
 }
 
-// Touch renews a demand key. A Redis failure here only means the city it names
-// may drop to its reduced cadence, so it is counted and dropped rather than
-// failing the stream that is otherwise working.
+// Touch claims a demand key. Creating it means nobody was watching that
+// partition, so realtime is woken to fetch it now rather than on its next
+// tick. A Redis failure here only delays or stales the city's data, so it is
+// counted and dropped rather than failing the stream that is otherwise working.
 func (r RedisLiveSource) Touch(ctx context.Context, key string, ttl time.Duration) {
-	if err := r.rc.Set(ctx, key, "1", ttl).Err(); err != nil {
+	created, err := shared.TouchLiveDemand(ctx, r.rc, key, ttl)
+	if err != nil {
+		obs.IncRedisError()
+		return
+	}
+	if created {
+		r.wake(ctx, key)
+	}
+}
+
+// wake publishes the demand key that was just created. A lost wake only makes
+// the first frame wait for the next tick.
+func (r RedisLiveSource) wake(ctx context.Context, key string) {
+	if err := r.rc.Publish(ctx, shared.LiveWakeChannel, key).Err(); err != nil {
 		obs.IncRedisError()
 	}
 }

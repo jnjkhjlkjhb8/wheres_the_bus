@@ -14,9 +14,9 @@ import (
 	"firebase.google.com/go/v4/messaging"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/firebase"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/notify"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
 	"github.com/pashagolub/pgxmock/v4"
 	"github.com/redis/go-redis/v9"
@@ -186,12 +186,8 @@ func TestZeroRemainingReminderDemandDoesNotCreatePermanentRedisKey(t *testing.T)
 	if err := rc.Del(ctx, key).Err(); err != nil {
 		t.Fatal(err)
 	}
-	pipe := pipeline.NewRedisLiveSink(rc).Pipe()
-	if got := queueCityDemand(pipe, "TPE", 0); got != 0 {
-		t.Fatalf("expired demand queued=%d", got)
-	}
-	if err := pipe.Exec(ctx); err != nil {
-		t.Fatal(err)
+	if got := touchCityDemand(ctx, firebase.RedisDemand{RC: rc}, "TPE", 0); got != 0 {
+		t.Fatalf("expired demand touched=%d", got)
 	}
 	if n := rc.Exists(ctx, key).Val(); n != 0 {
 		t.Fatalf("zero TTL produced unbounded demand key, exists=%d", n)

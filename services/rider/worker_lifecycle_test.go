@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
 	"github.com/redis/go-redis/v9"
 )
@@ -65,9 +64,14 @@ func riderWorkerTestRedis(t *testing.T) *redis.Client {
 	return rc
 }
 
+// recordingDemand records each demand claim's TTL by key. The max-TTL rule
+// itself is RedisDemand's and is tested with it.
+type recordingDemand map[string]time.Duration
+
+func (d recordingDemand) Touch(_ context.Context, key string, ttl time.Duration) { d[key] = ttl }
+
 func TestRestoreReminderDemandFiltersAndExtendsLatestExpiry(t *testing.T) {
 	db, _ := riderWorkerTestPool(t)
-	rc := riderWorkerTestRedis(t)
 	ctx := context.Background()
 	if _, err := db.Exec(ctx, `INSERT INTO firebase_arrival_reminder VALUES
  ('TPEroute1','bus','pending',NOW()+INTERVAL '1 hour'),
@@ -79,18 +83,15 @@ func TestRestoreReminderDemandFiltersAndExtendsLatestExpiry(t *testing.T) {
  ('TPEfired','bus','fired',NOW()+INTERVAL '1 hour')`); err != nil {
 		t.Fatal(err)
 	}
-	sink := pipeline.NewRedisLiveSink(rc)
-	if got := restoreReminderDemand(ctx, db, sink); got != 2 {
-		t.Fatalf("restored=%d", got)
+	sink := recordingDemand{}
+	if got := restoreReminderDemand(ctx, db, sink); got != 2 || len(sink) != 2 {
+		t.Fatalf("restored=%d claims=%v", got, sink)
 	}
-	for _, city := range []string{"Taipei", "Kaohsiung"} {
-		if got := rc.Get(ctx, shared.LiveDemandKey("bus_eta", city)).Val(); got != "1" {
-			t.Fatalf("%s demand=%q", city, got)
-		}
-	}
-	ttl := rc.TTL(ctx, shared.LiveDemandKey("bus_eta", "Taipei")).Val()
-	if ttl < 119*time.Minute || ttl > 2*time.Hour {
+	if ttl := sink[shared.LiveDemandKey("bus_eta", "Taipei")]; ttl < 119*time.Minute || ttl > 2*time.Hour {
 		t.Fatalf("latest expiry TTL=%v", ttl)
+	}
+	if ttl := sink[shared.LiveDemandKey("bus_eta", "Kaohsiung")]; ttl < 59*time.Minute || ttl > time.Hour {
+		t.Fatalf("Kaohsiung TTL=%v", ttl)
 	}
 	if restoreReminderDemand(ctx, nil, sink) != 0 || restoreReminderDemand(ctx, db, nil) != 0 {
 		t.Fatal("nil dependencies restored")
@@ -149,5 +150,21 @@ func TestRiderAPINativeBootUsesIsolatedListeners(t *testing.T) {
 	}
 	if err := runRiderAPI(func() {}, "invalid address", "127.0.0.1:0"); err == nil {
 		t.Fatal("invalid listen address accepted")
+	}
+}
+
+func TestTouchCityDemandSkipsUnknownCitiesAndSpentReminders(t *testing.T) {
+	sink := recordingDemand{}
+	for _, tc := range []struct {
+		prefix string
+		ttl    time.Duration
+		want   int
+	}{{"XXX", time.Hour, 0}, {"TPE", 0, 0}, {"TPE", -time.Second, 0}, {"KHH", time.Nanosecond, 1}} {
+		if got := touchCityDemand(t.Context(), sink, tc.prefix, tc.ttl); got != tc.want {
+			t.Fatalf("touchCityDemand(%s, %v)=%d", tc.prefix, tc.ttl, got)
+		}
+	}
+	if len(sink) != 1 || sink[shared.LiveDemandKey("bus_eta", "Kaohsiung")] != time.Nanosecond {
+		t.Fatalf("claims=%v", sink)
 	}
 }

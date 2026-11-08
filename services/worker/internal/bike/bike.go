@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,28 +57,48 @@ type bikeAvailability struct {
 // across Eta rounds, so history sampling survives between 30s ticks.
 var _bikeHistorySampleGate bikeHistorySampler
 
-func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool) error {
+// Eta refreshes bike availability for every city with live demand.
+func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
+	return runBikeCities(ctx, busmodel.Cities, fetch, sink, db, guard)
+}
+
+// EtaCity runs Eta for one city at once, for a demand wake. A city TDX serves
+// no availability for runs nothing.
+func EtaCity(ctx context.Context, city string, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
+	return runBikeCities(ctx, []string{city}, fetch, sink, db, guard)
+}
+
+func runBikeCities(ctx context.Context, cities []string, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
 	zap.S().Infow("start", "component", "bike_eta", "action", "bike_eta", "event", "start")
 	now := time.Now()
 	var (
 		historyRows [][]any
 		jobErr      error
 	)
-	for _, city := range busmodel.Cities {
-		if _, skip := _bikeAvailabilitySkip[city]; skip {
+	for _, city := range cities {
+		if !bikeAvailabilityCity(city) {
 			continue
 		}
-		jobErr = errors.Join(jobErr, runBikeCity(ctx, fetch, sink, db, city, now, &historyRows))
+		jobErr = errors.Join(jobErr, runBikeCity(ctx, fetch, sink, db, guard, city, now, &historyRows))
 	}
 	saveBikeAvailabilityHistory(ctx, history.Target(), historyRows)
 	zap.S().Infow("complete", "component", "bike_eta", "action", "bike_eta", "event", "complete")
 	return jobErr
 }
 
-func runBikeCity(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, city string, now time.Time, historyRows *[][]any) error {
-	if !pipeline.LiveDemandGate(ctx, sink, "bike", city) {
-		return refreshUnwatchedBike(ctx, sink, city)
+func bikeAvailabilityCity(city string) bool {
+	_, skip := _bikeAvailabilitySkip[city]
+	return !skip && slices.Contains(busmodel.Cities, city)
+}
+
+// runBikeCity fetches a city only while someone needs it. A city without
+// demand is left alone, so its live keys expire.
+func runBikeCity(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard, city string, now time.Time, historyRows *[][]any) error {
+	release, ok := pipeline.ClaimLiveDemand(ctx, sink, guard, "bike", city)
+	if !ok {
+		return nil
 	}
+	defer release()
 	zap.S().Infow("city start", "component", "bike_eta", "action", "bike_eta", "city", city, "event", "city_start")
 	result, err := fetch(ctx, fmt.Sprintf("/v2/Bike/Availability/City/%s", city), "bike_availability"+city)
 	if err != nil {
@@ -94,19 +115,6 @@ func commitBikeFetch(ctx context.Context, sink pipeline.LiveSink, db *pgxpool.Po
 	err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error { return publishBikeCity(ctx, sink, db, dec, city, now, historyRows) })
 	if err != nil {
 		return _oops.With("city", city).Wrapf(err, "bike process")
-	}
-	return nil
-}
-
-func refreshUnwatchedBike(ctx context.Context, sink pipeline.LiveSink, city string) error {
-	ownedKey := shared.LiveOwnedKeysKey("bike", city)
-	if err := sink.RefreshOwnedTTL(ctx, ownedKey, pipeline.BikeLiveTTL); err != nil {
-		pipe := sink.Pipe()
-		pipe.Expire(shared.LiveColdKey("bike", city), 0)
-		if execErr := pipe.Exec(ctx); execErr != nil {
-			err = errors.Join(err, _oops.Wrapf(execErr, "drop bike cadence claim"))
-		}
-		return _oops.With("city", city).Wrapf(err, "refresh unwatched bike TTLs")
 	}
 	return nil
 }

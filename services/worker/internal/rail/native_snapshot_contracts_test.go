@@ -11,6 +11,7 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -30,7 +31,23 @@ type railSnapshotHash struct {
 
 type railSnapshotSink struct {
 	pipeline.LiveSink
-	pipe railSnapshotPipe
+	pipe   railSnapshotPipe
+	demand map[string]bool
+}
+
+// watchedRailSink holds demand for both rail datasets.
+func watchedRailSink() *railSnapshotSink {
+	return &railSnapshotSink{demand: map[string]bool{
+		shared.LiveDemandKey("tra", "TRA"):         true,
+		shared.LiveDemandKey("thsr_seats", "THSR"): true,
+	}}
+}
+
+func (s *railSnapshotSink) GetString(_ context.Context, key string) (string, error) {
+	if s.demand[key] {
+		return "1", nil
+	}
+	return "", redis.Nil
 }
 
 func (s *railSnapshotSink) Pipe() pipeline.LivePipe { return &s.pipe }
@@ -115,8 +132,8 @@ func railSnapshotFetch(t *testing.T, payload string) (pipeline.BoundFetch, *bool
 func TestRailNativeTraSnapshotPreservesTrainStationAndCompletionCount(t *testing.T) {
 	logs := railSnapshotLogs(t)
 	fetch, closed, acknowledged := railSnapshotFetch(t, `[{"TrainNo":"101","StationID":"0900","DelayTime":7},{"TrainNo":"202","StationID":"","DelayTime":13}]`)
-	sink := &railSnapshotSink{}
-	if err := TraEta(t.Context(), fetch, sink); err != nil {
+	sink := watchedRailSink()
+	if err := TraEta(t.Context(), fetch, sink, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !*closed || !*acknowledged || sink.pipe.executions != 1 {
@@ -164,8 +181,8 @@ func TestRailNativeTraSnapshotPreservesTrainStationAndCompletionCount(t *testing
 func TestRailNativeThsrSnapshotCountsTrainsAndPreservesDistinctSegments(t *testing.T) {
 	logs := railSnapshotLogs(t)
 	fetch, closed, acknowledged := railSnapshotFetch(t, `[{"TrainDate":"2026-01-01","Items":[{"TrainNo":"801","OriginStationID":"0990","DestinationStationID":"1000","StandardSeatStatus":"O","BusinessSeatStatus":"X"},{"TrainNo":"801","OriginStationID":"1000","DestinationStationID":"1010","StandardSeatStatus":"L","BusinessSeatStatus":"O"},{"TrainNo":"802","OriginStationID":"0990","DestinationStationID":"1010","StandardSeatStatus":"X","BusinessSeatStatus":"L"}]}]`)
-	sink := &railSnapshotSink{}
-	if err := ThsrAvailableSeats(t.Context(), fetch, sink); err != nil {
+	sink := watchedRailSink()
+	if err := ThsrAvailableSeats(t.Context(), fetch, sink, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !*closed || !*acknowledged || sink.pipe.executions != 1 {
@@ -198,12 +215,12 @@ func TestRailNativeThsrSnapshotCountsTrainsAndPreservesDistinctSegments(t *testi
 	}
 }
 
-func railSnapshotMalformed(t *testing.T, run func(context.Context, pipeline.BoundFetch, pipeline.LiveSink) error, payload, component string) {
+func railSnapshotMalformed(t *testing.T, run func(context.Context, pipeline.BoundFetch, pipeline.LiveSink, *pipeline.LiveFetchGuard) error, payload, component string) {
 	t.Helper()
 	logs := railSnapshotLogs(t)
 	fetch, closed, acknowledged := railSnapshotFetch(t, payload)
-	sink := &railSnapshotSink{}
-	err := run(t.Context(), fetch, sink)
+	sink := watchedRailSink()
+	err := run(t.Context(), fetch, sink, nil)
 	var syntax *json.SyntaxError
 	if !errors.As(err, &syntax) {
 		t.Fatalf("malformed payload lost original syntax cause: %v", err)
@@ -224,4 +241,59 @@ func TestRailNativeTraMalformedSnapshotRetainsCauseAndNeverExecutes(t *testing.T
 }
 func TestRailNativeThsrMalformedSnapshotRetainsCauseAndNeverExecutes(t *testing.T) {
 	railSnapshotMalformed(t, ThsrAvailableSeats, `[{"Items":[{"TrainNo":"801","OriginStationID":"0990","DestinationStationID":"1000"}]},]`, "thsr_seats")
+}
+
+type railRun func(context.Context, pipeline.BoundFetch, pipeline.LiveSink, *pipeline.LiveFetchGuard) error
+
+func countingRailFetch(count *int) pipeline.BoundFetch {
+	return func(context.Context, string, string) (*shared.TDXFetch, error) {
+		*count++
+		return &shared.TDXFetch{Modified: false}, nil
+	}
+}
+
+// TestRailJobsWithoutDemandFetchNothing: nobody watching TRA delays or THSR
+// seats means no TDX call and no write, so their live keys expire.
+func TestRailJobsWithoutDemandFetchNothing(t *testing.T) {
+	t.Setenv("LIVE_DEMAND_GATE", "")
+	for name, run := range map[string]railRun{"tra": TraEta, "thsr_seats": ThsrAvailableSeats} {
+		fetched := 0
+		sink := &railSnapshotSink{}
+		if err := run(t.Context(), countingRailFetch(&fetched), sink, pipeline.NewLiveFetchGuard()); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if fetched != 0 || sink.pipe.executions != 0 || len(sink.pipe.sets) != 0 {
+			t.Fatalf("%s without demand fetched %d and executed %d", name, fetched, sink.pipe.executions)
+		}
+	}
+}
+
+// TestRailDemandIsPerDatasetAndFetchedOncePerWake: TRA demand does not wake
+// THSR seats, and a wake followed by a tick fetches once.
+func TestRailDemandIsPerDatasetAndFetchedOncePerWake(t *testing.T) {
+	t.Setenv("LIVE_DEMAND_GATE", "")
+	for _, tc := range []struct {
+		run         railRun
+		watched     string
+		unwatchedBy railRun
+	}{
+		{TraEta, shared.LiveDemandKey("tra", "TRA"), ThsrAvailableSeats},
+		{ThsrAvailableSeats, shared.LiveDemandKey("thsr_seats", "THSR"), TraEta},
+	} {
+		sink := &railSnapshotSink{demand: map[string]bool{tc.watched: true}}
+		guard := pipeline.NewLiveFetchGuard()
+		fetched := 0
+		for range 2 {
+			if err := tc.run(t.Context(), countingRailFetch(&fetched), sink, guard); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if fetched != 1 {
+			t.Fatalf("%s fetched %d times, want 1", tc.watched, fetched)
+		}
+		other := 0
+		if err := tc.unwatchedBy(t.Context(), countingRailFetch(&other), sink, guard); err != nil || other != 0 {
+			t.Fatalf("%s demand fetched the other rail dataset %d times (err %v)", tc.watched, other, err)
+		}
+	}
 }

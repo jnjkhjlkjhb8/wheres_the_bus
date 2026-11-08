@@ -44,8 +44,9 @@ func (s *TraTimetableServer) Timetable(ctx context.Context, in *pb.AskRoute) (*p
 func (s *TraTimetableServer) traDelay(stream pb.TRATimetableService_DelayServer) error {
 	zap.S().Infow("call", "component", "grpc", "action", "tra_delay", "event", "call")
 	return livestream.StreamLive(stream.Context(), s.live, livestream.LiveStreamSpec{
-		Channel:  shared.TraDelayAllKey,
-		SeedKeys: []string{shared.TraDelayAllKey},
+		Channel:   shared.TraDelayAllKey,
+		SeedKeys:  []string{shared.TraDelayAllKey},
+		DemandKey: shared.LiveDemandKey("tra", "TRA"),
 	}, func(data []byte) error {
 		delays, err := livestream.DecodePayload(data, &pb.TraDelays{})
 		if err != nil {
@@ -77,8 +78,9 @@ func (s *TraDetainServer) traDdelay(in *pb.AskDetain, stream pb.TRA_DetainServic
 	// the stream stays silent until one lands.
 	key := shared.TraDelayTrainChannel(in.Trainno)
 	return livestream.StreamLive(stream.Context(), s.live, livestream.LiveStreamSpec{
-		Channel:  key,
-		SeedKeys: []string{key},
+		Channel:   key,
+		SeedKeys:  []string{key},
+		DemandKey: shared.LiveDemandKey("tra", "TRA"),
 	}, func(data []byte) error {
 		delays, err := livestream.DecodePayload(data, &pb.TraDelays{})
 		if err != nil {
@@ -103,8 +105,9 @@ func (s *ThsrServer) AvailableSeats(in *pb.Ask_Thsr, stream grpc.ServerStreaming
 	zap.S().Infow("log", "component", "grpc", "action", "thsr_available_seats", "date", in.Date)
 	date := parseRailDate(in.Date).Format(time.DateOnly)
 	return livestream.StreamLive(stream.Context(), s.live, livestream.LiveStreamSpec{
-		Channel:  shared.ThsrSeatsPattern(date),
-		SeedScan: shared.ThsrSeatsPattern(date),
+		Channel:   shared.ThsrSeatsPattern(date),
+		SeedScan:  shared.ThsrSeatsPattern(date),
+		DemandKey: shared.LiveDemandKey("thsr_seats", "THSR"),
 	}, func(data []byte) error {
 		seats, err := livestream.DecodePayload(data, &pb.ThsrAvailableSeats{})
 		if err != nil {

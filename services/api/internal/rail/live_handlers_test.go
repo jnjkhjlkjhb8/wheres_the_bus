@@ -19,6 +19,7 @@ type railLiveSource struct {
 	channel, pattern string
 	keys             []string
 	closed           bool
+	demand           []string
 }
 
 func (s *railLiveSource) Get(_ context.Context, key string) ([]byte, bool) {
@@ -35,7 +36,9 @@ func (s *railLiveSource) Subscribe(_ context.Context, channel string) (<-chan []
 	close(ch)
 	return ch, func() { s.closed = true }, nil
 }
-func (*railLiveSource) Touch(context.Context, string, time.Duration) {}
+func (s *railLiveSource) Touch(_ context.Context, key string, _ time.Duration) {
+	s.demand = append(s.demand, key)
+}
 
 type railRecordingStream[T any] struct {
 	grpc.ServerStreamingServer[T]
@@ -78,6 +81,9 @@ func TestTRAStreamHandlersDecodeSeedAndPropagateSendFailure(t *testing.T) {
 			if source.channel != tc.channel || len(source.keys) != 1 || source.keys[0] != tc.channel || !source.closed {
 				t.Fatalf("stream routing=%+v", source)
 			}
+			if len(source.demand) != 1 || source.demand[0] != shared.LiveDemandKey("tra", "TRA") {
+				t.Fatalf("TRA stream demand=%v", source.demand)
+			}
 			source = &railLiveSource{payload: []byte{0xff}}
 			stream = &railRecordingStream[pb.RespTraDelay]{ctx: t.Context()}
 			if err := tc.invoke(source, stream); status.Code(err) != codes.Internal || len(stream.messages) != 0 || !source.closed {
@@ -105,6 +111,9 @@ func TestTHSRSeatsStreamUsesDatePatternAndRejectsMalformedSeed(t *testing.T) {
 	}
 	if source.channel != pattern || source.pattern != pattern || len(source.keys) != 1 || source.keys[0] != "seat-key" || !source.closed {
 		t.Fatalf("seat stream routing=%+v", source)
+	}
+	if len(source.demand) != 1 || source.demand[0] != shared.LiveDemandKey("thsr_seats", "THSR") {
+		t.Fatalf("seat stream demand=%v", source.demand)
 	}
 	source = &railLiveSource{payload: []byte{0xff}}
 	stream = &railRecordingStream[pb.RespThsrSeats]{ctx: t.Context()}

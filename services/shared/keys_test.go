@@ -19,3 +19,18 @@ func TestMQTTChannelFlattensTopicSeparators(t *testing.T) {
 		t.Fatalf("MQTTChannel = %q", got)
 	}
 }
+
+func TestParseLiveDemandKeyInvertsLiveDemandKey(t *testing.T) {
+	dataset, partition, ok := ParseLiveDemandKey(LiveDemandKey("bus_eta", "Tainan"))
+	if !ok || dataset != "bus_eta" || partition != "Tainan" {
+		t.Fatalf("parsed %q %q %v", dataset, partition, ok)
+	}
+	for _, key := range []string{"live:owned:bike:Taipei", "live:demand:tra", "bus_eta:Tainan"} {
+		if _, _, ok := ParseLiveDemandKey(key); ok {
+			t.Fatalf("%q parsed as a demand key", key)
+		}
+	}
+	if LiveWakeChannel != "live:wake" {
+		t.Fatalf("wake channel=%q", LiveWakeChannel)
+	}
+}

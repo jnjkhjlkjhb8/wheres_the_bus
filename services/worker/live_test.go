@@ -276,10 +276,13 @@ func readFixture(t *testing.T, name string) []byte {
 	return b
 }
 
-// specByKey returns the registered pipeline.LiveSpec with the given key.
+// specByKey returns the registered pipeline.LiveSpec with the given key. The
+// callers test job bodies, so the demand gate is opened for them; the gate has
+// its own tests.
 func specByKey(t *testing.T, key string) pipeline.LiveSpec {
 	t.Helper()
-	for _, s := range liveRegistry(nil, nil) {
+	t.Setenv("LIVE_DEMAND_GATE", "off")
+	for _, s := range liveRegistry(nil, nil, nil) {
 		if s.Key == key {
 			return s
 		}

@@ -24,7 +24,18 @@ type rawThsrAvailableSeatStatus struct {
 	} `json:"Items"`
 }
 
-func ThsrAvailableSeats(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
+// ThsrAvailableSeats refreshes today's THSR seat availability while someone
+// watches it.
+func ThsrAvailableSeats(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, guard *pipeline.LiveFetchGuard) error {
+	release, ok := pipeline.ClaimLiveDemand(ctx, sink, guard, "thsr_seats", "THSR")
+	if !ok {
+		return nil
+	}
+	defer release()
+	return fetchThsrSeats(ctx, fetch, sink)
+}
+
+func fetchThsrSeats(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink) error {
 	date := time.Now().In(pipeline.Taipei).Format(time.DateOnly)
 	zap.S().Infow("start", "component", "thsr_seats", "action", "thsr_seats", "event", "start", "date", date)
 	result, err := fetch(ctx, fmt.Sprintf("/v2/Rail/THSR/AvailableSeatStatus/Train/OD/TrainDate/%s", date), "thsr_availableseats")

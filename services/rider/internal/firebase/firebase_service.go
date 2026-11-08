@@ -486,12 +486,14 @@ type DemandToucher interface {
 	Touch(ctx context.Context, key string, ttl time.Duration)
 }
 
-// RedisDemand is the production DemandToucher. A failed write costs freshness,
-// not correctness: realtime simply polls that city on its slower default.
+// RedisDemand is the production DemandToucher. Its writes never shorten a
+// longer demand TTL, so one reminder cannot cut another's. A failed write is
+// counted and logged rather than returned: the reminder is already stored, and
+// its city is then fetched only while other demand covers it.
 type RedisDemand struct{ RC *redis.Client }
 
 func (d RedisDemand) Touch(ctx context.Context, key string, ttl time.Duration) {
-	if err := d.RC.Set(ctx, key, "1", ttl).Err(); err != nil {
+	if _, err := shared.TouchLiveDemand(ctx, d.RC, key, ttl); err != nil {
 		obs.IncRedisError()
 		zap.S().Warnw("failed", "component", "firebase", "action", "touch_demand", "event", "failed", "key", key, "err", err)
 	}

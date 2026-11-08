@@ -453,19 +453,13 @@ const (
 	OwnedKeysTTL     = 24 * time.Hour
 )
 
-const (
-	LiveColdCadence = 5 * time.Minute
-)
-
+// LiveDemandGate reports whether anyone needs dataset's partition right now. A
+// partition nobody watches is not fetched at all, so its live keys expire.
 func LiveDemandGate(ctx context.Context, sink LiveSink, dataset, city string) bool {
 	if os.Getenv("LIVE_DEMAND_GATE") == "off" {
 		return true
 	}
-
-	if activeLiveDemand(ctx, sink, dataset, city) {
-		return true
-	}
-	return coldLiveDemandDue(ctx, sink, dataset, city)
+	return activeLiveDemand(ctx, sink, dataset, city)
 }
 
 func InvalidateTDXFetch(fetch *shared.TDXFetch) error {
@@ -543,37 +537,6 @@ func activeLiveDemand(ctx context.Context, sink LiveSink, dataset, city string) 
 	}
 
 	return false
-}
-
-func coldLiveDemandDue(ctx context.Context, sink LiveSink, dataset, city string) bool {
-	coldKey := shared.LiveColdKey(dataset, city)
-	_, err := sink.GetString(ctx, coldKey)
-	if err == nil {
-		return false
-	}
-	if !errors.Is(err, redis.Nil) {
-		return true
-	}
-
-	claimLiveCadence(ctx, sink, dataset, city, coldKey)
-	return true
-}
-
-func claimLiveCadence(ctx context.Context, sink LiveSink, dataset, city, coldKey string) {
-	// Claim this cadence window before fetching. A failed write only costs the
-	// next tick a second fetch, so it is logged rather than turned into a skip.
-	pipe := sink.Pipe()
-	pipe.Set(coldKey, "1", LiveColdCadence)
-	if err := pipe.Exec(ctx); err != nil {
-		zap.S().Warnw("cold marker write failed",
-			"component", "live",
-			"action", "demand_gate",
-			"dataset", dataset,
-			"city", city,
-			"event", "failed",
-			"err", err,
-		)
-	}
 }
 
 func (s RedisLiveSink) refreshOwnedMembers(ctx context.Context, key string, ttl time.Duration, members []string) error {

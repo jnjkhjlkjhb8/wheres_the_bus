@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/firebase"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/notify"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
@@ -75,7 +76,7 @@ func runRiderWorker(waitShutdown func()) error {
 	}
 
 	bootCtx, bootCancel := context.WithTimeout(context.Background(), _bootTimeout)
-	restoreReminderDemand(bootCtx, db, pipeline.NewRedisLiveSink(rc))
+	restoreReminderDemand(bootCtx, db, firebase.RedisDemand{RC: rc})
 	bootCancel()
 
 	r := cron.New(cron.WithSeconds())
