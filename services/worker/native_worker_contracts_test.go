@@ -157,7 +157,7 @@ func workerContractMaintenanceFailure(t *testing.T, component, message string, o
 	r := cron.New(cron.WithSeconds())
 	registerWorkerCrons(r, nil, workerContractRedis(t), nil)
 	entries := r.Entries()
-	if len(entries) != 9 {
+	if len(entries) != 11 {
 		t.Fatalf("scheduled entries=%d", len(entries))
 	}
 	entries[len(entries)-offset].Job.Run()

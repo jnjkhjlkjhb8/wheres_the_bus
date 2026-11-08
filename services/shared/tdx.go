@@ -117,6 +117,7 @@ func NewTDXClient(cfg TDXConfig) *TDXClient {
 			req.SetAuthToken(token)
 			return nil
 		})
+	installTDXUsage(c.http, cfg.Store)
 	return c
 }
 
@@ -526,7 +527,7 @@ func noopTDXFetch(invalidate func() error) *TDXFetch {
 // its marker until the returned fetch's Ack is called. A 304 returns a
 // Modified=false fetch with safe no-op Ack and Close functions.
 func (c *TDXClient) Get(ctx context.Context, url, name string) (*TDXFetch, error) {
-	ctx = contextOrBackground(ctx)
+	ctx = withTDXUsageName(contextOrBackground(ctx), name)
 	marker, err := c.since(ctx, name)
 	if err != nil {
 		return nil, err
@@ -612,7 +613,7 @@ type TDXIntoResult struct {
 }
 
 func (c *TDXClient) GetInto(ctx context.Context, url, name string, commit func(TDXIntoCommit) error) (result TDXIntoResult, err error) {
-	ctx = contextOrBackground(ctx)
+	ctx = withTDXUsageName(contextOrBackground(ctx), name)
 	marker, err := c.since(ctx, name)
 	if err != nil {
 		return result, err

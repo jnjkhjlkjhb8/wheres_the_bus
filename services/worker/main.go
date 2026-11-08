@@ -176,6 +176,7 @@ func registerWorkerCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, 
 	// Arrival events go to rider, which owns reminders and push delivery.
 	waker := registerLiveCrons(r, tdx, rc, db, riderevent.Publisher{RC: rc})
 	registerGTFSRTCron(r, db, rc)
+	registerTDXUsageCrons(r, rc)
 	_, _ = addStaticCron(r, "@every 10m", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), weather.HTTPTimeout)
 		defer cancel()

@@ -142,7 +142,7 @@ func TestWorkerMaintenanceCronCallbacks(t *testing.T) {
 	defer func() { _ = rc.Close() }()
 	registerWorkerCrons(r, nil, rc, nil)
 	entries := r.Entries()
-	if len(entries) != 9 {
+	if len(entries) != 11 {
 		t.Fatalf("scheduled jobs=%d", len(entries))
 	}
 	for _, entry := range entries[len(entries)-3:] {
