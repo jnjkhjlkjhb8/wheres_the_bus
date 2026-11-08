@@ -44,7 +44,7 @@ func TestGrpcStatusFor(t *testing.T) {
 		{"other", errors.New("boom"), codes.Internal},
 	}
 	for _, tc := range cases {
-		if got := status.Code(store.GRPCStatusFor(tc.err, "not found")); got != tc.want {
+		if got := status.Code(store.GRPCStatusFor(tc.err, "test", "not found")); got != tc.want {
 			t.Fatalf("%s got %v want %v", tc.name, got, tc.want)
 		}
 	}
@@ -52,15 +52,15 @@ func TestGrpcStatusFor(t *testing.T) {
 
 func TestGrpcStatusForRecordsDBErrorOnlyForGenuineFailures(t *testing.T) {
 	before := parseCounterTotal(t, "router_db_errors_total")
-	_ = store.GRPCStatusFor(pgx.ErrNoRows, "not found")
-	_ = store.GRPCStatusFor(redis.Nil, "not found")
-	_ = store.GRPCStatusFor(obs.NotFound(errors.New("missing")), "not found")
+	_ = store.GRPCStatusFor(pgx.ErrNoRows, "test", "not found")
+	_ = store.GRPCStatusFor(redis.Nil, "test", "not found")
+	_ = store.GRPCStatusFor(obs.NotFound(errors.New("missing")), "test", "not found")
 	if got := parseCounterTotal(t, "router_db_errors_total"); got != before {
 		t.Fatalf("not-found mappings must not move router_db_errors_total: before=%d after=%d", before, got)
 	}
 
-	_ = store.GRPCStatusFor(errors.New("boom"), "not found")
-	_ = store.GRPCStatusFor(errors.New("boom again"), "not found")
+	_ = store.GRPCStatusFor(errors.New("boom"), "test", "not found")
+	_ = store.GRPCStatusFor(errors.New("boom again"), "test", "not found")
 	after := parseCounterTotal(t, "router_db_errors_total")
 	if after != before+2 {
 		t.Fatalf("router_db_errors_total = %d, want %d (before %d + 2 genuine failures)", after, before+2, before)

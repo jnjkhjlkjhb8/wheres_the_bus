@@ -44,13 +44,7 @@ func (s *BusRouteserver) BusRouteStatic(ctx context.Context, in *pb.Bus_Ask_Rout
 	}
 	data, err := store.BusStaticPayload(ctx, s.db, route)
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "bus_static",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "route not found")
+		return nil, store.GRPCStatusFor(err, "bus_static", "route not found")
 	}
 	s.cacheBusStatic(route, data)
 	return busStaticResponse(data)
@@ -143,13 +137,7 @@ func (s *BusRouteserver) BusDailytable(ctx context.Context, in *pb.Bus_Ask_Route
 	route := in.SubRouteUID
 	val, err := s.rc.Get(ctx, shared.BusDailyTimetableKey(route)).Result()
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "bus_dailytable",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "timetable not found")
+		return nil, store.GRPCStatusFor(err, "bus_dailytable", "timetable not found")
 	}
 	tt, err := livestream.DecodePayload([]byte(val), &pb.Bus_DailyTimetables{})
 	if err != nil {
@@ -181,13 +169,7 @@ func (s *BusStationserver) Group(ctx context.Context, in *pb.Bus_Ask_StationGrou
 func busStationGroup(ctx context.Context, db store.DB, groupUID string) (*pb.Bus_StationGroup, error) {
 	header, err := store.BusStationGroupHeader(ctx, db, groupUID)
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "bus_station_group",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "station group not found")
+		return nil, store.GRPCStatusFor(err, "bus_station_group", "station group not found")
 	}
 	members, err := store.BusStationGroupMembers(ctx, db, groupUID)
 	if err != nil {
@@ -220,13 +202,7 @@ func (s *BikeServer) BikeStatic(ctx context.Context, in *pb.BikeRequest) (*pb.Bi
 	}
 	row, err := store.BikeStaticData(ctx, s.db, in.StationUID)
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "bike_static",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "bike station not found")
+		return nil, store.GRPCStatusFor(err, "bike_static", "bike station not found")
 	}
 	resp := bikeStaticResponse(in.StationUID, row)
 	s.cacheBikeStatic(in.StationUID, resp)

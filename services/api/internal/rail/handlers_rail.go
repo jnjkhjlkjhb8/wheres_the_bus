@@ -153,13 +153,7 @@ func (s *TraTimetableServer) StationBoard(ctx context.Context, in *pb.AskStation
 	limit := stationBoardLimit(in.Limit)
 	today, err := s.traStationBoardDay(ctx, in.StationId, day, in.Direction)
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "tra_station_board",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "station board not found")
+		return nil, store.GRPCStatusFor(err, "tra_station_board", "station board not found")
 	}
 	items, topUpErr := stationBoardWindow(today, in.After, limit, func() ([]*pb.TraStationDeparture, error) {
 		return s.traStationBoardDay(ctx, in.StationId, day.AddDate(0, 0, 1), in.Direction)
@@ -201,13 +195,7 @@ func (s *ThsrServer) StationBoard(ctx context.Context, in *pb.ThsrAskStationBoar
 	limit := stationBoardLimit(in.Limit)
 	today, err := s.thsrStationBoardDay(ctx, in.StationId, day, in.Direction)
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "thsr_station_board",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "station board not found")
+		return nil, store.GRPCStatusFor(err, "thsr_station_board", "station board not found")
 	}
 	items, topUpErr := stationBoardWindow(today, in.After, limit, func() ([]*pb.ThsrStationDeparture, error) {
 		return s.thsrStationBoardDay(ctx, in.StationId, day.AddDate(0, 0, 1), in.Direction)
@@ -237,8 +225,7 @@ func (s *TraTimetableServer) traFare(ctx context.Context, in *pb.AskRoute) (*pb.
 		return payload, len(payload), err
 	})
 	if err != nil {
-		zap.S().Errorw("query failed", "component", "grpc", "action", "tra_fare", "event", "query_failed", "err", err)
-		return nil, store.GRPCStatusFor(err, "fare not found")
+		return nil, store.GRPCStatusFor(err, "tra_fare", "fare not found")
 	}
 	if b == nil {
 		return nil, status.Error(codes.NotFound, "fare not found")
@@ -261,13 +248,7 @@ func (s *ThsrServer) thsrFare(ctx context.Context, in *pb.AskRoute) (*pb.Resp_Da
 		return s.thsrFarePayload(ctx, in)
 	})
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "thsr_fare",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "fare not found")
+		return nil, store.GRPCStatusFor(err, "thsr_fare", "fare not found")
 	}
 	if b == nil {
 		return nil, status.Error(codes.NotFound, "fare not found")
@@ -289,13 +270,7 @@ func (s *TraTimetableServer) traTimetable(ctx context.Context, in *pb.AskRoute) 
 		return TRATimetablePayload(ctx, s.db, in.OriginStationId, in.DestinationStationId, da)
 	})
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "tra_timetable",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "timetable not found")
+		return nil, store.GRPCStatusFor(err, "tra_timetable", "timetable not found")
 	}
 	if b == nil {
 		return nil, status.Error(codes.NotFound, "timetable not found")
@@ -317,13 +292,7 @@ func (s *ThsrServer) thsrTimetable(ctx context.Context, in *pb.AskRoute) (*pb.Re
 		return THSRTimetablePayload(ctx, s.db, in.OriginStationId, in.DestinationStationId, da)
 	})
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "thsr_timetable",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "timetable not found")
+		return nil, store.GRPCStatusFor(err, "thsr_timetable", "timetable not found")
 	}
 	if b == nil {
 		return nil, status.Error(codes.NotFound, "timetable not found")
@@ -339,13 +308,7 @@ func (s *TraDetainServer) traStops(ctx context.Context, in *pb.AskDetain) (*pb.R
 		return TRAStoptimesPayload(ctx, s.db, in.Trainno, date)
 	})
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "tra_stops",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "stops not found")
+		return nil, store.GRPCStatusFor(err, "tra_stops", "stops not found")
 	}
 	if b == nil {
 		return nil, status.Error(codes.NotFound, "stops not found")
@@ -361,13 +324,7 @@ func (s *ThsrDetainServer) thsrStops(ctx context.Context, in *pb.ThsrAskDetain) 
 		return THSRStoptimesPayload(ctx, s.db, in.Trainno, date)
 	})
 	if err != nil {
-		zap.S().Errorw("query failed",
-			"component", "grpc",
-			"action", "thsr_stops",
-			"event", "query_failed",
-			"err", err,
-		)
-		return nil, store.GRPCStatusFor(err, "stops not found")
+		return nil, store.GRPCStatusFor(err, "thsr_stops", "stops not found")
 	}
 	if b == nil {
 		return nil, status.Error(codes.NotFound, "stops not found")
