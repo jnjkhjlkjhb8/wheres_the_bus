@@ -151,6 +151,8 @@ func workerContractMaintenanceFailure(t *testing.T, component, message string, o
 	cause := errors.New("owned scheduled refresh unavailable")
 	workerContractHTTPFailure(t, cause)
 	t.Setenv("CWA_API_KEY", "owned-test-key")
+	t.Setenv("TDX_CLIENT_ID", "test-id")
+	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
 	workerContractHealth(t, filepath.Join(t.TempDir(), "healthy"))
 	r := cron.New(cron.WithSeconds())
 	registerWorkerCrons(r, nil, workerContractRedis(t), nil)
@@ -228,6 +230,8 @@ func (*workerContractDeadlineStore) Del(context.Context, ...string) error { retu
 
 func TestWorkerNativeManualLiveCommandBoundsFetchToTwoHours(t *testing.T) {
 	t.Setenv("LIVE_DEMAND_GATE", "off")
+	t.Setenv("TDX_CLIENT_ID", "test-id")
+	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
 	store := &workerContractDeadlineStore{}
 	tdx := shared.NewTDXClient(shared.TDXConfig{Store: store, IMSKey: shared.TDXLegacyIMSKey})
 	before := time.Now()

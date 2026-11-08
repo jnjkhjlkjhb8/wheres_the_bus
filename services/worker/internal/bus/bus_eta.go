@@ -341,7 +341,7 @@ func (j busLiveJob) runCityGuarded(ctx context.Context, city string) (err error)
 }
 
 func (j busLiveJob) shouldRunCity(ctx context.Context, city string) bool {
-	if j.demandDataset == "" || j.snapshot {
+	if j.demandDataset == "" {
 		return true
 	}
 	return pipeline.LiveDemandGate(ctx, j.sink, j.demandDataset, city)

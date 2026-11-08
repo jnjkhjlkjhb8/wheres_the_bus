@@ -132,6 +132,8 @@ func TestWorkerMaintenanceCronCallbacks(t *testing.T) {
 	http.DefaultTransport = workerRoundTripper(func(r *http.Request) (*http.Response, error) { return nil, errors.New("calendar unavailable") })
 	t.Cleanup(func() { http.DefaultTransport = oldTransport })
 	t.Setenv("CWA_API_KEY", "")
+	t.Setenv("TDX_CLIENT_ID", "test-id")
+	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
 	oldHealth := _health
 	_health = newHealthFile(filepath.Join(t.TempDir(), "healthy"))
 	t.Cleanup(func() { _health = oldHealth })
@@ -162,6 +164,8 @@ func (*failedWorkerTDXStore) Del(context.Context, ...string) error              
 
 func TestManualLiveJobKeepsFailureInsideTheLiveRunner(t *testing.T) {
 	t.Setenv("LIVE_DEMAND_GATE", "off")
+	t.Setenv("TDX_CLIENT_ID", "test-id")
+	t.Setenv("TDX_CLIENT_SECRET", "test-secret")
 	rc := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
 	_ = rc.Close()
 	store := &failedWorkerTDXStore{}

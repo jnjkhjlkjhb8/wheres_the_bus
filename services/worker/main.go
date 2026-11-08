@@ -91,9 +91,9 @@ func runOnce(job string, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Po
 	if job == "gtfs-rt" {
 		return runManualGTFS(db, rc)
 	}
-	name, ok := map[string]string{"bikeeta": "bike", "traeta": "tra", "buseta": "bus"}[job]
-	if !ok {
-		return _oops.With("args", job).Errorf("unknown job")
+	name, err := manualLiveJob(job)
+	if err != nil {
+		return err
 	}
 	runManualLive(name, tdx, rc, db)
 	return nil

@@ -2,12 +2,19 @@ package bus
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 )
 
-func TestBusEtaSnapshotTickIgnoresDemandGate(t *testing.T) {
+// TestBusEtaSnapshotTickHonorsDemandGate: collecting history is never a reason
+// to fetch a city, so a snapshot tick skips a cold city like any other tick.
+func TestBusEtaSnapshotTickHonorsDemandGate(t *testing.T) {
 	ctx := context.Background()
 	sink := &captureLiveSink{}
 
@@ -19,9 +26,25 @@ func TestBusEtaSnapshotTickIgnoresDemandGate(t *testing.T) {
 		t.Fatal("second tick was not skipped, so the city is not cold")
 	}
 
-	snapshot := busLiveJob{sink: sink, demandDataset: "bus_eta", snapshot: true}
-	if !snapshot.shouldRunCity(ctx, "YilanCounty") {
-		t.Fatal("a snapshot tick was gated away; bus_eta_history would lose the city")
+	// Stops are served so that, were the gate bypassed, the run would reach the
+	// fetch rather than stop early.
+	prefix := busmodel.CityPrefix["YilanCounty"]
+	predict.StaticMapCache().Delete(prefix)
+	t.Cleanup(func() { predict.StaticMapCache().Delete(prefix) })
+	var fetched []string
+	snapshot := busLiveJob{
+		sink: sink, demandDataset: "bus_eta", snapshot: true, now: time.Now,
+		store: &fakeBusEtaStore{stops: []busmodel.StationMap{{SubRouteUID: prefix + "1", StopUID: "S1"}}},
+		fetch: func(_ context.Context, _, name string) (*shared.TDXFetch, error) {
+			fetched = append(fetched, name)
+			return nil, errors.New("unexpected fetch")
+		},
+	}
+	if err := snapshot.runDemandCity(ctx, "YilanCounty"); err != nil {
+		t.Fatalf("runDemandCity = %v", err)
+	}
+	if len(fetched) != 0 {
+		t.Fatalf("snapshot tick fetched %v for a cold city", fetched)
 	}
 
 	// The same job on an ordinary tick is still gated, or the gate saves nothing.

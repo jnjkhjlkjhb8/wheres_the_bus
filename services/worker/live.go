@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -56,6 +57,65 @@ func liveRegistry(db *pgxpool.Pool, notifier bus.ArrivalNotifier) []pipeline.Liv
 	}
 }
 
+// _tdxLiveJobs are the live jobs whose only source is TDX REST. bus_fast
+// (Data.taipei) and mrt (Metro Taipei API) are absent: they run without TDX.
+var _tdxLiveJobs = map[string]struct{}{
+	"bike":       {},
+	"bus":        {},
+	"tra":        {},
+	"thsr_seats": {},
+}
+
+// _manualLiveJobs maps a `functions run <job>` name to its live spec key.
+var _manualLiveJobs = map[string]string{"bikeeta": "bike", "traeta": "tra", "buseta": "bus"}
+
+// tdxCredentialsSet follows the pipeline ingestor's convention: an empty TDX
+// credential means TDX is off, not misconfigured.
+func tdxCredentialsSet() bool {
+	return os.Getenv("TDX_CLIENT_ID") != "" && os.Getenv("TDX_CLIENT_SECRET") != ""
+}
+
+func liveJobNeedsTDX(key string) bool {
+	_, ok := _tdxLiveJobs[key]
+	return ok
+}
+
+// runnableLiveSpecs drops the TDX-REST jobs when TDX is off, so they are never
+// scheduled instead of failing on every tick.
+func runnableLiveSpecs(specs []pipeline.LiveSpec, hasTDX bool) []pipeline.LiveSpec {
+	if hasTDX {
+		return specs
+	}
+	kept, skipped := splitTDXLiveSpecs(specs)
+	zap.S().Infow("skip TDX live jobs", "component", "live", "action", "register", "event", "skip_tdx", "reason", "no_tdx_credentials", "jobs", skipped)
+	return kept
+}
+
+func splitTDXLiveSpecs(specs []pipeline.LiveSpec) (kept []pipeline.LiveSpec, skipped []string) {
+	for _, spec := range specs {
+		if liveJobNeedsTDX(spec.Key) {
+			skipped = append(skipped, spec.Key)
+			continue
+		}
+		kept = append(kept, spec)
+	}
+	return kept, skipped
+}
+
+// manualLiveJob resolves a manual run to its live spec key. Every manual live
+// job reads TDX, so without credentials it fails up front instead of running
+// a job that can only error.
+func manualLiveJob(job string) (string, error) {
+	name, ok := _manualLiveJobs[job]
+	if !ok {
+		return "", _oops.With("args", job).Errorf("unknown job")
+	}
+	if !tdxCredentialsSet() {
+		return "", _oops.With("job", job).Errorf("TDX credentials missing: set TDX_CLIENT_ID and TDX_CLIENT_SECRET")
+	}
+	return name, nil
+}
+
 const _liveJobTimeout = 25 * time.Second
 
 func liveTickDeadline(cadence string) time.Duration {
@@ -69,7 +129,7 @@ func liveTickDeadline(cadence string) time.Duration {
 func registerLiveCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool, notifier bus.ArrivalNotifier) {
 	src := pipeline.NewRESTLiveSource(tdx)
 	sink := pipeline.NewRedisLiveSink(rc)
-	specs := liveRegistry(db, notifier)
+	specs := runnableLiveSpecs(liveRegistry(db, notifier), tdxCredentialsSet())
 
 	order, byCadence := groupLiveCadences(specs)
 
