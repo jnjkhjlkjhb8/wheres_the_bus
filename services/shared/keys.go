@@ -38,6 +38,12 @@ func BusPositionRawKey(city string) string {
 	return "bus:raw:position:" + city
 }
 
+// BusCityPublishedKey marks a city whose live bus snapshot published recently.
+// Its TTL bounds how long a failing city may keep re-arming its stale keys.
+func BusCityPublishedKey(city string) string {
+	return "bus:published:" + city
+}
+
 // BusStaticGenerationKey is the durable cross-process version of one city's
 // static stop map. The loader increments it only after the PostgreSQL snapshot
 // commits; realtime workers compare it before reusing their local cache.

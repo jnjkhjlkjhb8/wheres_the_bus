@@ -104,37 +104,6 @@ func TestDataTaipeiCrowdLevel(t *testing.T) {
 	}
 }
 
-func TestMergeDataTaipeiPositions(t *testing.T) {
-	tdx := []busmodel.RawPosition{
-		{SubRouteUID: "TPE11202", Direction: 1, PlateNumb: ""},
-		{SubRouteUID: "TPE11202", Direction: 0, PlateNumb: ""},
-		{SubRouteUID: "TPE99999", Direction: 0, PlateNumb: ""},
-	}
-	fresh := []busmodel.RawPosition{
-		{SubRouteUID: "TPE11202", Direction: 1, PlateNumb: "757-FW"},
-	}
-
-	got := mergeDataTaipeiPositions(tdx, fresh)
-
-	// The covered direction comes from Data.taipei alone; the other direction and
-	// the subroute it never reported keep their TDX rows.
-	if len(got) != 3 {
-		t.Fatalf("merged = %d rows, want 3: %+v", len(got), got)
-	}
-	for _, p := range got {
-		if p.SubRouteUID == "TPE11202" && p.Direction == 1 && p.PlateNumb != "757-FW" {
-			t.Errorf("TDX row survived for a covered subroute direction: %+v", p)
-		}
-	}
-}
-
-func TestMergeDataTaipeiPositionsEmptyKeepsTDX(t *testing.T) {
-	tdx := []busmodel.RawPosition{{SubRouteUID: "TPE11202", Direction: 1}}
-	if got := mergeDataTaipeiPositions(tdx, nil); len(got) != 1 {
-		t.Fatalf("merged = %d rows, want the 1 TDX row back", len(got))
-	}
-}
-
 func TestDataTaipeiStopStatus(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -316,48 +285,57 @@ func TestOverlayVehicles(t *testing.T) {
 	fresh := []busmodel.RawPosition{{SubRouteUID: "TPE11202", Direction: 1, PlateNumb: "757-FW"}}
 
 	tests := []struct {
-		name      string
-		job       busLiveJob
-		city      string
-		wantPlate string
+		name       string
+		job        busLiveJob
+		city       string
+		wantPlates []string
 	}{
 		{
-			name:      "covered city takes the richer feed",
-			job:       busLiveJob{vehicles: map[string]vehicleSource{dataset.DataTaipeiCity: stubVehicleSource{rows: fresh}}},
-			city:      dataset.DataTaipeiCity,
-			wantPlate: "757-FW",
+			name:       "covered city takes the richer feed",
+			job:        busLiveJob{vehicles: map[string]vehicleSource{dataset.DataTaipeiCity: stubVehicleSource{rows: fresh}}},
+			city:       dataset.DataTaipeiCity,
+			wantPlates: []string{"757-FW"},
 		},
 		{
-			name:      "a second covered city also takes the richer feed",
-			job:       busLiveJob{vehicles: map[string]vehicleSource{"NewTaipei": stubVehicleSource{rows: fresh}}},
-			city:      "NewTaipei",
-			wantPlate: "757-FW",
+			name:       "a second covered city also takes the richer feed",
+			job:        busLiveJob{vehicles: map[string]vehicleSource{"NewTaipei": stubVehicleSource{rows: fresh}}},
+			city:       "NewTaipei",
+			wantPlates: []string{"757-FW"},
 		},
 		{
-			name: "other cities are untouched",
-			job:  busLiveJob{vehicles: map[string]vehicleSource{dataset.DataTaipeiCity: stubVehicleSource{rows: fresh}}},
-			city: "Taichung",
+			name:       "other cities are untouched",
+			job:        busLiveJob{vehicles: map[string]vehicleSource{dataset.DataTaipeiCity: stubVehicleSource{rows: fresh}}},
+			city:       "Taichung",
+			wantPlates: []string{""},
 		},
 		{
-			name: "a failing feed falls back to TDX",
+			name: "a failing feed publishes no positions",
 			job:  busLiveJob{vehicles: map[string]vehicleSource{dataset.DataTaipeiCity: stubVehicleSource{err: errors.New("blob unreachable")}}},
 			city: dataset.DataTaipeiCity,
 		},
 		{
-			name: "no feed configured stays on TDX",
-			job:  busLiveJob{},
+			name: "an empty feed never falls back to TDX rows",
+			job:  busLiveJob{vehicles: map[string]vehicleSource{dataset.DataTaipeiCity: stubVehicleSource{}}},
 			city: dataset.DataTaipeiCity,
+		},
+		{
+			name:       "no feed configured stays on TDX",
+			job:        busLiveJob{},
+			city:       dataset.DataTaipeiCity,
+			wantPlates: []string{""},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.job.overlayVehicles(context.Background(), tt.city, tdx)
-			if len(got) != 1 {
-				t.Fatalf("positions = %d rows, want 1", len(got))
+			if len(got) != len(tt.wantPlates) {
+				t.Fatalf("positions = %+v, want plates %q", got, tt.wantPlates)
 			}
-			if got[0].PlateNumb != tt.wantPlate {
-				t.Errorf("PlateNumb = %q, want %q", got[0].PlateNumb, tt.wantPlate)
+			for i, p := range got {
+				if p.PlateNumb != tt.wantPlates[i] {
+					t.Errorf("PlateNumb[%d] = %q, want %q", i, p.PlateNumb, tt.wantPlates[i])
+				}
 			}
 		})
 	}

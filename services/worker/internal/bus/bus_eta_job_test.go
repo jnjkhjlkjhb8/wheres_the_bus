@@ -351,7 +351,7 @@ func TestBusLiveJobReusesStaticStopCache(t *testing.T) {
 
 func TestBusSpec304RefreshesCityTTL(t *testing.T) {
 	src := &fakeLiveSource{fixtures: map[string][]byte{}}
-	sink := &captureLiveSink{}
+	sink := &captureLiveSink{strings: map[string]string{shared.BusCityPublishedKey("Taipei"): "1"}}
 	predict.StoreStaticMap(busmodel.CityPrefix["Taipei"], []busmodel.StationMap{{SubRouteUID: "TPE1", StopUID: "S1"}})
 	t.Cleanup(func() { predict.StoreStaticMap(busmodel.CityPrefix["Taipei"], nil) })
 
@@ -379,30 +379,38 @@ func TestBusSpec304RefreshesCityTTL(t *testing.T) {
 	}
 }
 
-func TestBusCityAbortRefreshesCityTTL(t *testing.T) {
-	src := &fakeLiveSource{fixtures: map[string][]byte{
-		"bus_EstimatedTimeOfArrival" + "Taipei": []byte(`[]`),
-		"bus_RealTimeByFrequency" + "Taipei":    []byte(`[{"PlateNumb":`),
-	}}
-	sink := &captureLiveSink{}
-	predict.StoreStaticMap(busmodel.CityPrefix["Taipei"], []busmodel.StationMap{{SubRouteUID: "TPE1", StopUID: "S1"}})
-	t.Cleanup(func() { predict.StoreStaticMap(busmodel.CityPrefix["Taipei"], nil) })
+// TestBusCityAbortRefreshesCityTTLOnlyAfterRecentPublish: a failed tick re-arms
+// the city's keys only while its last publish is inside the refresh window
+// (the marker's TTL); past it the stale keys are left to expire.
+func TestBusCityAbortRefreshesCityTTLOnlyAfterRecentPublish(t *testing.T) {
+	tests := []struct {
+		name        string
+		strings     map[string]string
+		wantRefresh int
+	}{
+		{name: "recent publish re-arms the city", strings: map[string]string{shared.BusCityPublishedKey("Taipei"): "1"}, wantRefresh: 1},
+		{name: "no recent publish lets the keys expire", strings: map[string]string{}, wantRefresh: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := &fakeLiveSource{fixtures: map[string][]byte{
+				"bus_EstimatedTimeOfArrival" + "Taipei": []byte(`[{"PlateNumb":`),
+			}}
+			sink := &captureLiveSink{strings: tt.strings}
+			predict.StoreStaticMap(busmodel.CityPrefix["Taipei"], []busmodel.StationMap{{SubRouteUID: "TPE1", StopUID: "S1"}})
+			t.Cleanup(func() { predict.StoreStaticMap(busmodel.CityPrefix["Taipei"], nil) })
 
-	job := busLiveJob{
-		fetch:    pipeline.BindFetch(src, sink, busTestSpec()),
-		sink:     sink,
-		store:    pgBusEtaStore{},
-		notifier: nil,
-		now:      time.Now,
-	}
-	if err := job.runCity(context.Background(), "Taipei"); err == nil {
-		t.Fatal("want the malformed position payload to fail the city run")
-	}
-	if len(sink.refresh) != 1 {
-		t.Fatalf("refreshTTL calls = %d, want 1 (the abort must re-arm the city)", len(sink.refresh))
-	}
-	if got, want := sink.refresh[0], busEtaTTLPatterns("Taipei"); len(got) != len(want) {
-		t.Fatalf("refresh patterns = %+v, want %+v", got, want)
+			job := busLiveJob{fetch: pipeline.BindFetch(src, sink, busTestSpec()), sink: sink, store: pgBusEtaStore{}, now: time.Now}
+			if err := job.runCity(context.Background(), "Taipei"); err == nil {
+				t.Fatal("want the malformed ETA payload to fail the city run")
+			}
+			if len(sink.refresh) != tt.wantRefresh {
+				t.Fatalf("refreshTTL calls = %d, want %d", len(sink.refresh), tt.wantRefresh)
+			}
+			if tt.wantRefresh == 1 && len(sink.refresh[0]) != len(busEtaTTLPatterns("Taipei")) {
+				t.Fatalf("refresh patterns = %+v, want %+v", sink.refresh[0], busEtaTTLPatterns("Taipei"))
+			}
+		})
 	}
 }
 
@@ -430,5 +438,9 @@ func TestBusCityPublishSkipsRedundantRefresh(t *testing.T) {
 	}
 	if len(sink.refresh) != 0 {
 		t.Fatalf("refreshTTL calls = %d, want 0 after a publish", len(sink.refresh))
+	}
+	marker := sink.setFor(shared.BusCityPublishedKey("Taipei"))
+	if marker == nil || marker.ttl != 5*time.Minute {
+		t.Fatalf("published marker = %+v, want a 5m TTL", marker)
 	}
 }

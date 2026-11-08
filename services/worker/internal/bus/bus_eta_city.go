@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
@@ -47,8 +48,13 @@ func (j busLiveJob) publishStaticCity(ctx context.Context, city, prefix string, 
 	return j.publishCity(ctx, city, mp, published)
 }
 
+// _busFailureRefreshWindow is how long after a city's last successful publish a
+// failing tick may still re-arm the city's live keys. Past it the keys expire,
+// so a city that keeps failing goes dark instead of serving stale arrivals.
+const _busFailureRefreshWindow = 5 * time.Minute
+
 func (j busLiveJob) refreshFailedCity(ctx context.Context, city string, err *error, published *bool) {
-	if !needsCityFailureRefresh(ctx, *err, *published) {
+	if !j.failureRefreshAllowed(ctx, city, *err, *published) {
 		return
 	}
 	if refreshErr := j.sink.RefreshTTL(ctx, busEtaTTLPatterns(city)); refreshErr != nil {
@@ -56,8 +62,19 @@ func (j busLiveJob) refreshFailedCity(ctx context.Context, city string, err *err
 	}
 }
 
+func (j busLiveJob) failureRefreshAllowed(ctx context.Context, city string, err error, published bool) bool {
+	return needsCityFailureRefresh(ctx, err, published) && j.publishedRecently(ctx, city)
+}
+
 func needsCityFailureRefresh(ctx context.Context, err error, published bool) bool {
 	return err != nil && !published && ctx.Err() == nil
+}
+
+// publishedRecently treats an unreadable marker like a missing one: without
+// proof of a recent publish, the stale keys are left to expire.
+func (j busLiveJob) publishedRecently(ctx context.Context, city string) bool {
+	_, err := j.sink.GetString(ctx, shared.BusCityPublishedKey(city))
+	return err == nil
 }
 
 func (j busLiveJob) cityStaticStops(ctx context.Context, city, prefix string) ([]busmodel.StationMap, error) {
@@ -165,6 +182,34 @@ func (j busLiveJob) loadCityPositions(ctx context.Context, city string, f *busCi
 	return nil
 }
 
+// loadPositions never fails the city: without positions the ETA still
+// publishes, only without vehicles on the map.
+func (j busLiveJob) loadPositions(ctx context.Context, city string, f *busCityFeeds) {
+	// Data.taipei cities take vehicles from their own feed (overlayVehicles) and
+	// never spend TDX quota on positions.
+	if _, ok := j.vehicles[city]; ok {
+		return
+	}
+	if err := j.loadCityPositions(ctx, city, f); err != nil {
+		dropCityPositions(city, f, err)
+	}
+}
+
+// dropCityPositions also forgets the fetch, so a failed or half-decoded
+// position feed is never acknowledged and the next tick fetches it again.
+func dropCityPositions(city string, f *busCityFeeds, err error) {
+	zap.S().Warnw("positions unavailable; publishing without positions",
+		"component", "bus_eta",
+		"action", "Bus_eta",
+		"city", city,
+		"event", "positions_dropped",
+		"err", err,
+	)
+	f.posit = make([]busmodel.RawPosition, 0)
+	f.positionRaw = nil
+	f.positionFetch = nil
+}
+
 func decodeCityPositions(f *busCityFeeds) error {
 	decodeErr := pipeline.DecodeLiveItems(f.positionFetch.Decoder, func(p busmodel.RawPosition) error {
 		f.posit = append(f.posit, p)
@@ -180,12 +225,26 @@ func decodeCityPositions(f *busCityFeeds) error {
 }
 
 func (j busLiveJob) cacheCityFeeds(ctx context.Context, city string, f *busCityFeeds, pipe pipeline.LivePipe) error {
-	etaErr := cacheBusFeed(ctx, j.sink, pipe, shared.BusETARawKey(city), f.etaModified, f.etaRaw, &f.eat)
-	positionErr := cacheBusFeed(ctx, j.sink, pipe, shared.BusPositionRawKey(city), f.positionFetch.Modified, f.positionRaw, &f.posit)
-	if err := errors.Join(etaErr, positionErr); err != nil {
+	j.cachePositionFeed(ctx, city, f, pipe)
+	if err := cacheBusFeed(ctx, j.sink, pipe, shared.BusETARawKey(city), f.etaModified, f.etaRaw, &f.eat); err != nil {
 		return j.failedFeedCache(ctx, f, pipe, err)
 	}
 	return nil
+}
+
+func (j busLiveJob) cachePositionFeed(ctx context.Context, city string, f *busCityFeeds, pipe pipeline.LivePipe) {
+	if f.positionFetch == nil {
+		return
+	}
+	if err := cacheBusFeed(ctx, j.sink, pipe, shared.BusPositionRawKey(city), f.positionFetch.Modified, f.positionRaw, &f.posit); err != nil {
+		dropUncachedPositions(city, f, err)
+	}
+}
+
+// dropUncachedPositions handles a 304 whose cached rows are gone: invalidating
+// the marker makes the next tick fetch the full position feed again.
+func dropUncachedPositions(city string, f *busCityFeeds, err error) {
+	dropCityPositions(city, f, errors.Join(err, pipeline.InvalidateTDXFetch(f.positionFetch)))
 }
 
 func cacheBusFeed[T any](ctx context.Context, sink pipeline.LiveSink, pipe pipeline.LivePipe, key string, modified bool, raw []byte, rows *[]T) error {
@@ -213,7 +272,7 @@ func (j busLiveJob) failedFeedCache(ctx context.Context, f *busCityFeeds, pipe p
 
 func invalidateUnmodifiedCityFeeds(f *busCityFeeds) error {
 	invalidateErr := invalidateETAFeed(f)
-	if !f.positionFetch.Modified {
+	if f.positionFetch != nil && !f.positionFetch.Modified {
 		invalidateErr = errors.Join(invalidateErr, pipeline.InvalidateTDXFetch(f.positionFetch))
 	}
 	return invalidateErr
@@ -228,10 +287,14 @@ func invalidateETAFeed(f *busCityFeeds) error {
 
 func acknowledgeCityFeeds(f *busCityFeeds) error {
 	ackErr := acknowledgeETAFeed(f)
-	if f.positionFetch.Modified {
+	if positionsModified(f) {
 		ackErr = errors.Join(ackErr, pipeline.AcknowledgeTDXFetch(f.positionFetch))
 	}
 	return ackErr
+}
+
+func positionsModified(f *busCityFeeds) bool {
+	return f.positionFetch != nil && f.positionFetch.Modified
 }
 
 func acknowledgeETAFeed(f *busCityFeeds) error {
@@ -252,7 +315,7 @@ func (j busLiveJob) finishCity(ctx context.Context, city string, f *busCityFeeds
 }
 
 func (j busLiveJob) saveModifiedCityHistory(ctx context.Context, f *busCityFeeds, r *busCitySnapshot) {
-	if f.etaModified || f.positionFetch.Modified {
+	if f.etaModified || positionsModified(f) {
 		j.store.saveHistory(ctx, r.historyRows)
 		j.store.recordPredictions(ctx, r.predictionRows)
 	}
@@ -263,9 +326,7 @@ func (j busLiveJob) publishCity(ctx context.Context, city string, mp []busmodel.
 	if err := j.loadCityETA(ctx, city, f); err != nil {
 		return err
 	}
-	if err := j.loadCityPositions(ctx, city, f); err != nil {
-		return err
-	}
+	j.loadPositions(ctx, city, f)
 	return j.publishLoadedCity(ctx, city, mp, f, published)
 }
 
@@ -279,6 +340,9 @@ func (j busLiveJob) publishLoadedCity(ctx context.Context, city string, mp []bus
 	if err := r.queueSnapshots(pipe); err != nil {
 		return err
 	}
+	// Written in the snapshot's own pipeline, so the marker exists only once the
+	// snapshot has actually published.
+	pipe.Set(shared.BusCityPublishedKey(city), "1", _busFailureRefreshWindow)
 	return j.commitPublishedCity(ctx, city, f, r, pipe, published)
 }
 

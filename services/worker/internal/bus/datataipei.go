@@ -410,28 +410,9 @@ func dataTaipeiEstimateDirection(goBack string) uint8 {
 	}
 }
 
-func mergeDataTaipeiPositions(tdx, dataTaipei []busmodel.RawPosition) []busmodel.RawPosition {
-	if len(dataTaipei) == 0 {
-		return tdx
-	}
-	covered := make(map[string]struct{}, len(dataTaipei))
-	for _, p := range dataTaipei {
-		covered[busPositionIdentity(p.SubRouteUID, p.Direction)] = struct{}{}
-	}
-	return mergeUncoveredTDXPositions(tdx, dataTaipei, covered)
-}
-
-func mergeUncoveredTDXPositions(tdx, dataTaipei []busmodel.RawPosition, covered map[string]struct{}) []busmodel.RawPosition {
-	merged := make([]busmodel.RawPosition, 0, len(tdx)+len(dataTaipei))
-	merged = append(merged, dataTaipei...)
-	for _, p := range tdx {
-		if _, ok := covered[busPositionIdentity(p.SubRouteUID, p.Direction)]; !ok {
-			merged = append(merged, p)
-		}
-	}
-	return merged
-}
-
+// overlayVehicles returns the positions to publish for a city. A Data.taipei
+// city never fetches TDX positions, so its vehicles come from the Data.taipei
+// feed alone; every other city keeps its TDX rows.
 func (j *busLiveJob) overlayVehicles(ctx context.Context, city string, tdx []busmodel.RawPosition) []busmodel.RawPosition {
 	feed, ok := j.vehicles[city]
 	if !ok {
@@ -439,13 +420,14 @@ func (j *busLiveJob) overlayVehicles(ctx context.Context, city string, tdx []bus
 	}
 	fresh, err := feed.positions(ctx)
 	if err != nil {
-		zap.S().Warnw("fetch failed; keeping TDX positions",
+		zap.S().Warnw("fetch failed; publishing without positions",
 			"component", "datataipei",
 			"action", "positions",
 			"city", city,
+			"event", "positions_dropped",
 			"err", err,
 		)
-		return tdx
+		return nil
 	}
-	return mergeDataTaipeiPositions(tdx, fresh)
+	return fresh
 }

@@ -89,7 +89,7 @@ func TestFailedCityRefreshPreservesOriginalAndRefreshErrors(t *testing.T) {
 	ctx := context.Background()
 	original := errors.New("publish")
 	refreshErr := errors.New("refresh")
-	sink := &captureLiveSink{refreshErr: refreshErr}
+	sink := &captureLiveSink{refreshErr: refreshErr, strings: map[string]string{shared.BusCityPublishedKey("Taipei"): "1"}}
 	j := busLiveJob{sink: sink}
 	err := original
 	published := false

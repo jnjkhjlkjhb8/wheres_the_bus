@@ -9,6 +9,9 @@ func TestBusRawFeedKeysAreNamespacedPerCity(t *testing.T) {
 	if got := BusPositionRawKey("Taipei"); got != "bus:raw:position:Taipei" {
 		t.Fatalf("BusPositionRawKey = %q", got)
 	}
+	if got := BusCityPublishedKey("Taipei"); got != "bus:published:Taipei" {
+		t.Fatalf("BusCityPublishedKey = %q", got)
+	}
 }
 
 func TestMQTTChannelFlattensTopicSeparators(t *testing.T) {

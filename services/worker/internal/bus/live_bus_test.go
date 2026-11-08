@@ -168,7 +168,10 @@ func TestBusOneModifiedFeedUsesCachedCounterpartAndAdvances(t *testing.T) {
 	}
 }
 
-func TestBusMissingCachedCounterpartPersistsModifiedFeedAndInvalidatesMarker(t *testing.T) {
+// TestBusMissingPositionCachePublishesETAAndInvalidatesMarker: a position 304
+// whose cached rows are gone is a positions failure, so the ETA still publishes
+// and the position marker is cleared for a full fetch next tick.
+func TestBusMissingPositionCachePublishesETAAndInvalidatesMarker(t *testing.T) {
 	prefix := busmodel.CityPrefix["Taipei"]
 	predict.StaticMapCache().Delete(prefix)
 	t.Cleanup(func() { predict.StaticMapCache().Delete(prefix) })
@@ -185,8 +188,11 @@ func TestBusMissingCachedCounterpartPersistsModifiedFeedAndInvalidatesMarker(t *
 		notifier: &captureBusArrivalNotifier{}, now: time.Now,
 	}
 
-	if err := job.runCity(context.Background(), "Taipei"); err == nil {
-		t.Fatal("missing cached counterpart returned nil error")
+	if err := job.runCity(context.Background(), "Taipei"); err != nil {
+		t.Fatalf("runCity = %v, want the ETA to publish without positions", err)
+	}
+	if sink.setFor(shared.BusRouteEtaKey("TPE1")) == nil {
+		t.Fatal("route snapshot was not published")
 	}
 	if sw := sink.setFor(shared.BusETARawKey("Taipei")); sw == nil || sw.ttl != _busFeedCacheTTL {
 		t.Fatalf("ETA raw cache = %+v, want durable bounded cache", sw)
