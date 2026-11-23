@@ -353,6 +353,22 @@ void main() {
     await harness.dispose(tester);
   });
 
+  // FDPL-156: iOS has no edge swipe here, so the header button is the way out.
+  testWidgets('header back on results of a picked destination returns to the '
+      'form', (tester) async {
+    final (plan, _) = await harness.pump(tester, const PlanState());
+    await settle(tester);
+    await tapLabel(tester, i18n.goSwapEndpoints);
+    await settle(tester);
+    expect(find.byType(GoogleMap), findsOneWidget);
+
+    await tapLabel(tester, i18n.commonBack);
+    await settle(tester);
+    expect(find.byType(GoogleMap), findsNothing);
+    expect(plan.events.whereType<PlanSearchCancelled>(), hasLength(1));
+    await harness.dispose(tester);
+  });
+
   testWidgets('swapping with nothing to swap changes nothing', (tester) async {
     harness.location.enabled = false;
     final (plan, _) = await harness.pump(tester, const PlanState());

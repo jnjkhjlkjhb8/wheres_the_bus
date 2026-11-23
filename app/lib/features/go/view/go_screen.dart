@@ -774,6 +774,16 @@ class _GoScreenState extends State<GoScreen> {
     }
   }
 
+  // Mirrors the PopScope above: when the route may pop, leave the screen;
+  // otherwise take one step back toward the form.
+  void _mapPhaseBack(bool previewing) {
+    if (previewing || _destinationIsOurs) {
+      _returnToPlanner(false, previewing);
+    } else {
+      context.popOrHome();
+    }
+  }
+
   Widget _plannerContent(
     BuildContext context,
     PlanState state,
@@ -864,7 +874,16 @@ class _GoScreenState extends State<GoScreen> {
           top: 0,
           left: 0,
           right: 0,
+          // Off the planner form there is no system back on iOS: PopScope's
+          // canPop: false also disables the edge swipe. The button takes the
+          // same step outward that Android's back key does.
           child: FloatingAppBar(
+            leading: navigating
+                ? null
+                : AppBarBackButton(
+                    floating: true,
+                    onTap: () => _mapPhaseBack(previewing),
+                  ),
             automaticallyImplyLeading: false,
             middle: _mapHeader(state, navigating, route),
           ),
