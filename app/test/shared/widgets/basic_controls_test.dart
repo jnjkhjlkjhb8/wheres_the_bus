@@ -1,3 +1,5 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
@@ -232,6 +234,24 @@ void main() {
       expect(find.text('停用'), findsNothing);
     },
   );
+
+  testWidgets('iOS draws the Cupertino switch with the same contract', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    bool? changed;
+    await mount(
+      tester,
+      AppSwitch(value: false, onChanged: (value) => changed = value),
+    );
+    final cupertino = find.byType(CupertinoSwitch).evaluate().length;
+    final material = find.byType(Switch).evaluate().length;
+    await tester.tap(find.byType(CupertinoSwitch));
+    debugDefaultTargetPlatformOverride = null;
+
+    expect((cupertino, material), (1, 0));
+    expect(changed, isTrue);
+  });
 
   testWidgets('a labeled switch reads as one toggle with its label', (
     tester,

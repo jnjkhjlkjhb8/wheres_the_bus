@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,7 +10,10 @@ import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/bookmark_button.dart';
+import 'package:wheres_the_bus/shared/widgets/native_controls.dart';
+import 'package:wheres_the_bus/shared/widgets/native_nav_bar.dart';
 
+import '../../support/helpers/fake_uikit.dart';
 import '../../support/helpers/i18n.dart';
 
 void main() {
@@ -365,6 +369,117 @@ void main() {
       await tester.tap(find.text('261'));
       expect(taps, 1);
       handle.dispose();
+    });
+  });
+
+  group('DetailAppBar on iOS', () {
+    setUp(() => debugDefaultTargetPlatformOverride = TargetPlatform.iOS);
+
+    testWidgets('UIKit draws back and title; actions stay Flutter on top', (
+      tester,
+    ) async {
+      final uiKit = FakeUiKit(NativeNavBar.viewType);
+      var backs = 0;
+      var actionTaps = 0;
+      await tester.pumpWidget(
+        i18nApp(
+          Scaffold(
+            appBar: DetailAppBar(
+              title: '自強 123',
+              subtitle: '07/29 (三)',
+              onBack: () => backs++,
+              actions: [
+                Pressable(
+                  onTap: () => actionTaps++,
+                  child: const SizedBox.square(
+                    dimension: AppBarMetrics.tapTarget,
+                    child: Text('a'),
+                  ),
+                ),
+                const SizedBox.square(dimension: AppBarMetrics.tapTarget),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('a'));
+      await uiKit.send(tester, 'back');
+      final bar = tester.getRect(find.byType(DetailAppBar));
+      final native = tester.getRect(find.byType(NativeNavBar));
+      final action = tester.getRect(find.text('a'));
+      final flutterChrome = [
+        find.byType(AppBarBackButton),
+        find.byType(NavigationToolbar),
+        find.text('自強 123'),
+      ].map((f) => f.evaluate().length).toList();
+      debugDefaultTargetPlatformOverride = null;
+
+      expect(flutterChrome, [0, 0, 0]);
+      expect(
+        UiKitBarScope.of(tester.element(find.text('a'))),
+        isTrue,
+        reason: 'actions on the native bar draw as system buttons',
+      );
+      final params = uiKit.creationParams();
+      expect(params['title'], '自強 123');
+      expect(params['subtitle'], '07/29 (三)');
+      // Two actions, one tap target each, kept clear of the system title.
+      expect(params['trailingWidth'], 2 * AppBarMetrics.tapTarget);
+      expect(backs, 1);
+      expect(actionTaps, 1);
+
+      // The UIKit bar spans the slot's width and hugs its top, leaving the
+      // slot's spare height as air above the content.
+      expect(native.width, bar.width);
+      expect(native.height, NativeNavBar.height);
+      expect(native.top, bar.bottom - AppBarMetrics.barHeight);
+      // Actions sit over the bar's trailing edge, inside its height.
+      expect(action.top, greaterThanOrEqualTo(native.top));
+      expect(action.bottom, lessThanOrEqualTo(native.bottom));
+      expect(action.right, bar.right - 8 - AppBarMetrics.tapTarget);
+    });
+
+    testWidgets('no title and no actions reserve nothing', (tester) async {
+      final uiKit = FakeUiKit(NativeNavBar.viewType);
+      await tester.pumpWidget(
+        i18nApp(const Scaffold(appBar: DetailAppBar())),
+      );
+      await tester.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = null;
+
+      final params = uiKit.creationParams();
+      expect(params['title'], '');
+      expect(params['subtitle'], isNull);
+      expect(params['trailingWidth'], 0.0);
+    });
+
+    testWidgets('still dissolves content that scrolls under it', (
+      tester,
+    ) async {
+      FakeUiKit(NativeNavBar.viewType);
+      await tester.pumpWidget(
+        i18nApp(
+          Scaffold(
+            appBar: const DetailAppBar(title: '票價'),
+            body: ListView(
+              children: List.generate(
+                40,
+                (i) => SizedBox(height: 60, child: Text('$i')),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final before = barDecoration(tester).boxShadow;
+      await tester.drag(find.byType(ListView), const Offset(0, -200));
+      await tester.pumpAndSettle();
+      final after = barDecoration(tester).boxShadow;
+      debugDefaultTargetPlatformOverride = null;
+
+      expect(before, isEmpty);
+      expect(after, isNotEmpty);
     });
   });
 }

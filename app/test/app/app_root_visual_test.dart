@@ -1,5 +1,4 @@
 import 'dart:io';
-
 import 'dart:ui' as ui;
 
 import 'package:connectivity_plus_platform_interface/connectivity_plus_platform_interface.dart';
@@ -14,6 +13,8 @@ import 'package:wheres_the_bus/core/bootstrap/app_bootstrap.dart';
 import 'package:wheres_the_bus/core/lifecycle/app_foreground.dart';
 import 'package:wheres_the_bus/core/lifecycle/app_network.dart';
 import 'package:wheres_the_bus/core/live_activity/alight_track_inbound_channel.dart';
+import 'package:wheres_the_bus/core/locale/system_app_language.dart';
+import 'package:wheres_the_bus/core/shortcuts/home_shortcuts.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/shared/map/marker_factory.dart';
 
@@ -91,6 +92,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('root-visual-probe'), findsOneWidget);
   }
+
+  testWidgets('asks the system language and offers shortcuts on start', (
+    tester,
+  ) async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final calls = <String>[];
+    messenger
+      ..setMockMethodCallHandler(SystemAppLanguage.channel, (call) async {
+        calls.add('language.${call.method}');
+        // Unset, so nothing is written to the real settings box.
+        return '';
+      })
+      ..setMockMethodCallHandler(HomeShortcuts.channel, (call) async {
+        calls.add('shortcuts.${call.method}');
+        return null;
+      });
+    addTearDown(
+      () => messenger
+        ..setMockMethodCallHandler(SystemAppLanguage.channel, null)
+        ..setMockMethodCallHandler(HomeShortcuts.channel, null),
+    );
+    await mountReady(tester);
+
+    expect(calls, containsAll(['language.get', 'shortcuts.set']));
+  });
 
   for (final reduceMotion in [false, true]) {
     testWidgets('loading content respects reduce motion: $reduceMotion', (

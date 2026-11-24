@@ -27,6 +27,7 @@ import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
 import 'package:wheres_the_bus/shared/widgets/filter_chip_group.dart';
+import 'package:wheres_the_bus/shared/widgets/native_confirm.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 part '../widgets/search_result_row.dart';

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Languages offered in Settings → Apps → 語言 (Android 13+). Must match
+     AppI18n.supportedLocales and SystemAppLanguage's tag map. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="zh-TW" />
+    <locale android:name="zh-CN" />
+    <locale android:name="en" />
+</locale-config>

@@ -1,3 +1,5 @@
 {
-  "@@locale": "zh_CN"
+  "@@locale": "zh_CN",
+  "commonSearch": "搜索",
+  "favoritesTitle": "我的收藏"
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,8 +8,10 @@ import 'package:hive_ce/hive.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
+import 'package:wheres_the_bus/shared/widgets/native_controls.dart';
 import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';
 
+import '../../support/helpers/fake_uikit.dart';
 import '../../support/helpers/i18n.dart';
 
 void main() {
@@ -52,6 +55,59 @@ void main() {
     expect(repository.items.containsKey(favorite.id), isFalse);
     expect(find.byIcon(Icons.bookmark_border_rounded), findsOneWidget);
     expect(toggled, [true, false]);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('on a UIKit bar the bookmark is a system button', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final uiKit = FakeUiKit(NativeIconButton.viewType);
+    final ready = ValueNotifier(true);
+    final repository = _FavoritesMemory();
+    final bloc = FavoritesBloc(repository, ready);
+    addTearDown(bloc.close);
+    addTearDown(repository.changed.close);
+    addTearDown(ready.dispose);
+    const favorite = Favorite(
+      type: FavoriteType.metroStation,
+      refId: 'TRTC:BL01',
+      title: '頂埔',
+    );
+    await tester.pumpWidget(
+      i18nApp(
+        BlocProvider.value(
+          value: bloc,
+          child: const Scaffold(
+            body: UiKitBarScope(
+              child: FavoriteToggleButton(favorite: favorite),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final before = tester.widget<NativeIconButton>(
+      find.byType(NativeIconButton),
+    );
+    await uiKit.send(tester, 'tap');
+    final after = tester.widget<NativeIconButton>(
+      find.byType(NativeIconButton),
+    );
+    final drawn = find.byIcon(Icons.bookmark_border_rounded).evaluate().length;
+    debugDefaultTargetPlatformOverride = null;
+
+    expect(drawn, 0);
+    expect(
+      (before.symbol, before.label),
+      ('bookmark', zhStrings.commonFavorite),
+    );
+    expect(repository.items.containsKey(favorite.id), isTrue);
+    expect(
+      (after.symbol, after.label),
+      ('bookmark.fill', zhStrings.favoriteRemove),
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

@@ -4,6 +4,7 @@ import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/widgets/app_button.dart';
+import 'package:wheres_the_bus/shared/widgets/native_controls.dart';
 
 class AppTimePicker {
   AppTimePicker._();
@@ -55,19 +56,24 @@ class AppTimePicker {
                 ),
                 SizedBox(
                   height: 216,
-                  child: CupertinoDatePicker(
-                    mode: CupertinoDatePickerMode.time,
-                    use24hFormat: true,
-                    initialDateTime: DateTime(
-                      now.year,
-                      now.month,
-                      now.day,
-                      initial.hour,
-                      initial.minute,
-                    ),
-                    onDateTimeChanged: (dt) =>
-                        picked = TimeOfDay.fromDateTime(dt),
-                  ),
+                  child: usesUiKitControls
+                      ? NativeTimeWheel(
+                          initial: initial,
+                          onChanged: (time) => picked = time,
+                        )
+                      : CupertinoDatePicker(
+                          mode: CupertinoDatePickerMode.time,
+                          use24hFormat: true,
+                          initialDateTime: DateTime(
+                            now.year,
+                            now.month,
+                            now.day,
+                            initial.hour,
+                            initial.minute,
+                          ),
+                          onDateTimeChanged: (dt) =>
+                              picked = TimeOfDay.fromDateTime(dt),
+                        ),
                 ),
               ],
             ),

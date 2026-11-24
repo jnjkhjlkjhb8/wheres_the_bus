@@ -51,6 +51,8 @@ class MainActivity : FlutterActivity() {
         ensureFcmChannel()
         liveActivityPlugin = LiveActivityPlugin(this, notificationPermissionCoordinator)
             .also { it.register(flutterEngine.dartExecutor.binaryMessenger) }
+        HomeShortcutsPlugin(applicationContext).register(flutterEngine.dartExecutor.binaryMessenger)
+        AppLanguagePlugin(applicationContext).register(flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {

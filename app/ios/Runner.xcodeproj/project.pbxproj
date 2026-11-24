@@ -29,6 +29,10 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		A2276EA40E40123022D565FA /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 74E04EA9E4E4FB0696114787 /* ActivityKit.framework */; };
 		B459D7855953BCAB77507B44 /* LiveActivityPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E79F3F99D5409A3366A8B90 /* LiveActivityPlugin.swift */; };
+		AD10A10600000000000000A2 /* NativeDialogPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD10A10600000000000000A1 /* NativeDialogPlugin.swift */; };
+		AD10A10600000000000000B2 /* NativeNavBarFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD10A10600000000000000B1 /* NativeNavBarFactory.swift */; };
+		AD10A10600000000000000C2 /* NativeControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD10A10600000000000000C1 /* NativeControls.swift */; };
+		AD10A10600000000000000D2 /* HomeShortcutsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD10A10600000000000000D1 /* HomeShortcutsPlugin.swift */; };
 		CA4E1E7A0002B0B0C0D0E0F0 /* CancelTrackIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4E1E7A0001B0B0C0D0E0F0 /* CancelTrackIntent.swift */; };
 		CA4E1E7A0003B0B0C0D0E0F0 /* CancelTrackIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4E1E7A0001B0B0C0D0E0F0 /* CancelTrackIntent.swift */; };
 		B9F5E11C90EBC1649EC01C9D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96ECAF6483D7AF9C8039237E /* WidgetKit.framework */; };
@@ -101,6 +105,10 @@
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		86BA370A5D653BC6FACADA97 /* AlightTrackBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AlightTrackBundle.swift; sourceTree = "<group>"; };
 		8E79F3F99D5409A3366A8B90 /* LiveActivityPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveActivityPlugin.swift; sourceTree = "<group>"; };
+		AD10A10600000000000000A1 /* NativeDialogPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NativeDialogPlugin.swift; sourceTree = "<group>"; };
+		AD10A10600000000000000B1 /* NativeNavBarFactory.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NativeNavBarFactory.swift; sourceTree = "<group>"; };
+		AD10A10600000000000000C1 /* NativeControls.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NativeControls.swift; sourceTree = "<group>"; };
+		AD10A10600000000000000D1 /* HomeShortcutsPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HomeShortcutsPlugin.swift; sourceTree = "<group>"; };
 		96ECAF6483D7AF9C8039237E /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
 		9740EEB31CF90195004384FC /* Generated.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Generated.xcconfig; path = Flutter/Generated.xcconfig; sourceTree = "<group>"; };
@@ -251,6 +259,10 @@
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				8E79F3F99D5409A3366A8B90 /* LiveActivityPlugin.swift */,
+				AD10A10600000000000000A1 /* NativeDialogPlugin.swift */,
+				AD10A10600000000000000B1 /* NativeNavBarFactory.swift */,
+				AD10A10600000000000000C1 /* NativeControls.swift */,
+				AD10A10600000000000000D1 /* HomeShortcutsPlugin.swift */,
 				5F05ECF6EE8A9FE4E0994CFE /* DartDefines.swift */,
 			);
 			path = Runner;
@@ -578,6 +590,10 @@
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				B459D7855953BCAB77507B44 /* LiveActivityPlugin.swift in Sources */,
+				AD10A10600000000000000A2 /* NativeDialogPlugin.swift in Sources */,
+				AD10A10600000000000000B2 /* NativeNavBarFactory.swift in Sources */,
+				AD10A10600000000000000C2 /* NativeControls.swift in Sources */,
+				AD10A10600000000000000D2 /* HomeShortcutsPlugin.swift in Sources */,
 				1958ED8D54BED962EDE1B9CA /* DartDefines.swift in Sources */,
 				57838263B4EC57098E256419 /* AlightTrackAttributes.swift in Sources */,
 				CA4E1E7A0002B0B0C0D0E0F0 /* CancelTrackIntent.swift in Sources */,

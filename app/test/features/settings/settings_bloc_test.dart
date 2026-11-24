@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:wheres_the_bus/core/locale/system_app_language.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 import 'package:wheres_the_bus/features/settings/bloc/settings_bloc.dart';
 import 'package:wheres_the_bus/features/settings/bloc/settings_event.dart';
@@ -20,6 +22,8 @@ Future<PackageInfo> _fakePackageInfo({String version = '2.4.1'}) async =>
     );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   SettingsRepository repo([Map<String, Object?>? initial]) =>
       SettingsRepository(store: InMemorySettingsStore(initial));
 
@@ -156,6 +160,28 @@ void main() {
 
       expect(bloc.state.language, Language.en);
       expect(settings.languageCode, Language.en.key);
+    });
+
+    test('language selection is mirrored to the system setting', () async {
+      final sent = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            ..setMockMethodCallHandler(SystemAppLanguage.channel, (call) async {
+              sent.add(call);
+              return null;
+            });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          SystemAppLanguage.channel,
+          null,
+        ),
+      );
+      final bloc = build()..add(const LanguageSelected(Language.zhCn));
+      await bloc.stream.first;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sent.single.method, 'set');
+      expect(sent.single.arguments, 'zh-CN');
     });
   });
 

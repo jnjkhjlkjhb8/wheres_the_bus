@@ -6,6 +6,8 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
+import 'package:wheres_the_bus/shared/widgets/native_controls.dart';
+import 'package:wheres_the_bus/shared/widgets/native_nav_bar.dart';
 
 /// Geometry every app bar shares. Screens compose different rows, but the tap
 /// target, glyph size, slot gap and edge insets are identical so the back
@@ -293,25 +295,58 @@ class _DetailAppBarState extends State<DetailAppBar> {
         bottom: false,
         child: SizedBox(
           height: AppBarMetrics.barHeight,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppTheme.space4,
-              AppTheme.space4,
-              AppTheme.space8,
-              AppTheme.space4,
-            ),
-            child: NavigationToolbar(
-              leading: AppBarBackButton(onTap: widget.onBack),
-              middle: _titleSlot,
-              trailing: _actionSlot,
-              centerMiddle: widget.centerTitle,
-              middleSpacing: 8,
-            ),
-          ),
+          child: usesUiKitControls ? _uiKitRow : _flutterRow,
         ),
       ),
     );
   }
+
+  Widget get _flutterRow => Padding(
+    padding: const EdgeInsets.fromLTRB(
+      AppTheme.space4,
+      AppTheme.space4,
+      AppTheme.space8,
+      AppTheme.space4,
+    ),
+    child: NavigationToolbar(
+      leading: AppBarBackButton(onTap: widget.onBack),
+      middle: _titleSlot,
+      trailing: _actionSlot,
+      centerMiddle: widget.centerTitle,
+      middleSpacing: 8,
+    ),
+  );
+
+  /// iOS draws the back button and title itself. The bar sits at the top of
+  /// the slot, where UIKit puts one, which leaves the slot's spare height as
+  /// air above the content. Actions stay Flutter widgets laid over the bar's
+  /// trailing edge, with that width reserved so a long title stops short.
+  Widget get _uiKitRow => Align(
+    alignment: Alignment.topCenter,
+    child: SizedBox(
+      height: NativeNavBar.height,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          NativeNavBar(
+            title: widget.title ?? '',
+            subtitle: widget.subtitle,
+            onBack: widget.onBack,
+            trailingWidth:
+                (widget.actions?.length ?? 0) * AppBarMetrics.tapTarget,
+          ),
+          Positioned(
+            top: 0,
+            bottom: 0,
+            right: AppTheme.space8,
+            child: UiKitBarScope(
+              child: _actionSlot ?? const SizedBox.shrink(),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget? get _titleSlot => widget.title == null
       ? null

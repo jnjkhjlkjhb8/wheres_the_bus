@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -10,8 +11,11 @@ import 'package:wheres_the_bus/shared/widgets/app_date_picker.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/app_time_picker.dart';
 import 'package:wheres_the_bus/shared/widgets/clock_dial.dart';
+import 'package:wheres_the_bus/shared/widgets/native_controls.dart';
 import 'package:wheres_the_bus/shared/widgets/state_cards.dart';
 import 'package:wheres_the_bus/shared/widgets/thsr_station_picker.dart';
+
+import '../../support/helpers/fake_uikit.dart';
 
 Widget host(Widget child) => MaterialApp(
   theme: AppTheme.light,
@@ -114,6 +118,35 @@ void main() {
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(result, isNull);
+  });
+
+  testWidgets('on iOS the time picker is the UIKit wheel', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final uiKit = FakeUiKit(NativeTimeWheel.viewType);
+    TimeOfDay? result;
+    await tester.pumpWidget(
+      launcher(
+        (context) => () async {
+          result = await AppTimePicker.show(
+            context,
+            const TimeOfDay(hour: 8, minute: 5),
+          );
+        },
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    final cupertino = find.byType(CupertinoDatePicker).evaluate().length;
+    final wheel = tester.widget<NativeTimeWheel>(find.byType(NativeTimeWheel));
+    await uiKit.send(tester, 'changed', arguments: {'hour': 12, 'minute': 35});
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+    debugDefaultTargetPlatformOverride = null;
+
+    expect(cupertino, 0);
+    expect(wheel.initial, const TimeOfDay(hour: 8, minute: 5));
+    expect(result, const TimeOfDay(hour: 12, minute: 35));
   });
 
   testWidgets('THSR picker returns the chosen station or cancellation', (

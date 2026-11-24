@@ -12,7 +12,9 @@ import 'package:wheres_the_bus/core/lifecycle/app_foreground.dart';
 import 'package:wheres_the_bus/core/lifecycle/app_network.dart';
 import 'package:wheres_the_bus/core/live_activity/alight_track.dart';
 import 'package:wheres_the_bus/core/live_activity/alight_track_inbound_channel.dart';
+import 'package:wheres_the_bus/core/locale/system_app_language.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
+import 'package:wheres_the_bus/core/shortcuts/home_shortcuts.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
 import 'package:wheres_the_bus/core/update/update_gate.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
@@ -276,6 +278,7 @@ class _AppShellViewState extends State<_AppShellView> {
   @override
   void initState() {
     super.initState();
+    unawaited(SystemAppLanguage.adopt(SettingsRepository.instance));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       // Delayed so the alert streams (TRA/THSR gRPC + Remote Config) don't
@@ -324,7 +327,10 @@ class _AppShellViewState extends State<_AppShellView> {
             devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
             textScaler: MediaQuery.textScalerOf(context),
           );
-          final gated = UpdateGate(child: NotificationToastHost(child: base));
+          final gated = HomeShortcuts(
+            router: widget.router ?? AppRouter.router,
+            child: UpdateGate(child: NotificationToastHost(child: base)),
+          );
           return SkeletonizerConfig(
             data: AppTheme.skeleton(
               Theme.of(context).colorScheme,

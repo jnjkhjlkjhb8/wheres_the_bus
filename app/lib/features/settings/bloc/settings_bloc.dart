@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:wheres_the_bus/core/firebase/firebase_bootstrap.dart';
 import 'package:wheres_the_bus/core/firebase/remote_config.dart';
+import 'package:wheres_the_bus/core/locale/system_app_language.dart';
 import 'package:wheres_the_bus/core/powersync/powersync_service.dart';
 import 'package:wheres_the_bus/core/update/update_status.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
@@ -117,6 +118,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
   /// write, so the whole UI switches language on the same frame as the row.
   void _onLanguageSelected(LanguageSelected e, Emitter<SettingsState> emit) {
     _settings.languageCode = e.language.key;
+    unawaited(SystemAppLanguage.push(e.language.key));
     emit(state.copyWith(language: e.language));
   }
 
