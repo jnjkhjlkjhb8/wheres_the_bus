@@ -1,6 +1,6 @@
 module github.com/jnjkhjlkjhb8/wheres_the_bus
 
-go 1.26.10
+go 1.26.11
 
 require (
 	firebase.google.com/go/v4 v4.20.0
