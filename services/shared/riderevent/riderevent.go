@@ -19,9 +19,11 @@ const (
 	StreamKey = "rider:arrivals"
 	// Group is the consumer group every rider-worker reads through.
 	Group = "rider-worker"
-	// _maxLen caps the stream. A backlog this deep is minutes of events, all
-	// stale enough that the reminder they would fire has passed anyway.
-	_maxLen = 20000
+	// MaxAge is how old an event may be and still be dispatched: an arrival two
+	// minutes stale has already happened. The stream is trimmed to this age.
+	// A cap by entry count did not bound memory, because one entry is a whole
+	// city's batch, several megabytes for Taipei.
+	MaxAge = 2 * time.Minute
 
 	_fieldEvents = "events"
 	_fieldAt     = "at"
@@ -63,11 +65,11 @@ func (p Publisher) publishArrivalBatch(ctx context.Context, body []byte) error {
 	if p.Now != nil {
 		now = p.Now
 	}
+	at := now()
 	err := p.RC.XAdd(ctx, &redis.XAddArgs{
 		Stream: StreamKey,
-		MaxLen: _maxLen,
-		Approx: true,
-		Values: map[string]any{_fieldEvents: body, _fieldAt: now().UnixMilli()},
+		MinID:  strconv.FormatInt(at.Add(-MaxAge).UnixMilli(), 10),
+		Values: map[string]any{_fieldEvents: body, _fieldAt: at.UnixMilli()},
 	}).Err()
 	if err != nil {
 		return _oops.Wrapf(err, "publish arrival events")

@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	// _arrivalMaxAge drops events too old to act on: an arrival two minutes
-	// stale has already happened, and firing its reminder now would be wrong.
-	_arrivalMaxAge = 2 * time.Minute
+	// _arrivalMaxAge drops events too old to act on: firing a reminder for an
+	// arrival that has already happened would be wrong.
+	_arrivalMaxAge = riderevent.MaxAge
 	// _arrivalReclaimIdle is how long an event may sit unacknowledged with a
 	// consumer before another one takes it: a consumer that crashed mid-batch.
 	_arrivalReclaimIdle = time.Minute

@@ -262,7 +262,7 @@ func TestRiderScheduledJobsHandleDisabledPushAndEmptyStore(t *testing.T) {
 	dispatcher := notify.NewDispatcher(notify.NewStore(db), nil)
 	registerRiderJobs(r, rc, db, dispatcher, notify.NewTrackPusher(nil, nil))
 	entries := r.Entries()
-	if len(entries) != 4 {
+	if len(entries) != 5 {
 		t.Fatalf("rider scheduled jobs=%d", len(entries))
 	}
 	for _, entry := range entries {

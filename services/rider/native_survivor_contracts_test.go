@@ -242,7 +242,7 @@ func riderContractCron(t *testing.T, db *pgxpool.Pool, dispatcher *notify.Dispat
 	_ = rc.Close()
 	r := cron.New(cron.WithSeconds())
 	registerRiderJobs(r, rc, db, dispatcher, notify.NewTrackPusher(nil, nil))
-	if len(r.Entries()) != 4 {
+	if len(r.Entries()) != 5 {
 		t.Fatalf("scheduled jobs=%d", len(r.Entries()))
 	}
 	return r

@@ -160,8 +160,9 @@ func refreshBootWeather(rc *redis.Client) {
 }
 
 func registerWorkerCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, db *pgxpool.Pool) *liveWaker {
-	// Arrival events go to rider, which owns reminders and push delivery.
-	waker := registerLiveCrons(r, tdx, rc, db, riderevent.Publisher{RC: rc})
+	// Arrival events go to rider, which owns reminders and push delivery; only
+	// the ones a reminder waits on are sent.
+	waker := registerLiveCrons(r, tdx, rc, db, riderevent.Watched{Publisher: riderevent.Publisher{RC: rc}})
 	registerGTFSRTCron(r, db, rc)
 	registerTDXUsageCrons(r, rc)
 	_, _ = addStaticCron(r, "@every 10m", func() {

@@ -177,6 +177,7 @@ func registerRiderJobs(r *cron.Cron, rc *redis.Client, db *pgxpool.Pool, dispatc
 			return pruneRouteAlertOutbox(ctx, db)
 		})
 	})
+	registerArrivalWatchCron(r, db, rc)
 
 }
 

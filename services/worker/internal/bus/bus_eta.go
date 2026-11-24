@@ -91,8 +91,8 @@ func buildDirectionAwareBusPositionMap(city string, positions []busmodel.RawPosi
 	return byIdentity
 }
 
-// ArrivalNotifier receives each tick's arrival events: riderevent.Publisher in
-// production, which hands them to rider for reminder dispatch.
+// ArrivalNotifier receives each tick's arrival events: riderevent.Watched in
+// production, which hands the watched ones to rider for reminder dispatch.
 type ArrivalNotifier interface {
 	Arrivals(context.Context, []riderevent.ArrivalEvent) error
 }
