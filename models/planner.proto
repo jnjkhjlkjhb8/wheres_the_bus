@@ -1,0 +1,188 @@
+syntax = "proto3";
+option go_package = "github.com/jnjkhjlkjhb8/wheres_the_bus/models";
+
+import "google/protobuf/timestamp.proto";
+import "maas.proto";
+
+// The planner contract that carries MOTIS's identities instead of TDX's
+// strings. MaasService.plan and planStream keep answering the app versions
+// that call them.
+service PlannerService {
+  rpc plan(PlannerRequest) returns (PlannerResponse) {}
+  // A fresh plan arrives as two messages: the itineraries without map
+  // geometry, then the same itineraries in the same order with it. A cache hit
+  // sends one message with complete = true.
+  rpc planStream(PlannerRequest) returns (stream PlannerUpdate) {}
+}
+
+// Every sort is an ordering over the itineraries MOTIS returned; none of them
+// asks MOTIS for different itineraries. Ties fall through to the next axis
+// listed, then to MOTIS's own order, which is by departure.
+enum PlannerSort {
+  PLANNER_SORT_UNSPECIFIED = 0; // FASTEST
+  PLANNER_SORT_FASTEST = 1; // travel time, transfers, walking
+  // Itineraries whose every transit leg has a fare first, by total fare; the
+  // rest after them, by travel time. Bus fares are not resolved, so a bus leg
+  // makes its itinerary's fare incomplete rather than free.
+  PLANNER_SORT_CHEAPEST = 2;
+  PLANNER_SORT_FEWEST_TRANSFERS = 3; // transfers, travel time, walking
+  PLANNER_SORT_LEAST_WALKING = 4; // walking, travel time, transfers
+}
+
+enum PlannerAccessMode {
+  PLANNER_ACCESS_MODE_UNSPECIFIED = 0; // walk
+  PLANNER_ACCESS_MODE_WALK = 1;
+  PLANNER_ACCESS_MODE_BIKE = 2;
+  PLANNER_ACCESS_MODE_CAR = 3;
+  PLANNER_ACCESS_MODE_SHARED_BIKE = 4;
+}
+
+enum PlannerTransitMode {
+  PLANNER_TRANSIT_MODE_UNSPECIFIED = 0;
+  PLANNER_TRANSIT_MODE_BUS = 1;
+  PLANNER_TRANSIT_MODE_COACH = 2;
+  PLANNER_TRANSIT_MODE_SUBWAY = 3;
+  PLANNER_TRANSIT_MODE_TRAM = 4;
+  PLANNER_TRANSIT_MODE_HIGH_SPEED_RAIL = 5;
+  PLANNER_TRANSIT_MODE_RAIL = 6;
+  PLANNER_TRANSIT_MODE_FERRY = 7;
+  PLANNER_TRANSIT_MODE_CABLE_CAR = 8;
+}
+
+enum PlannerLegKind {
+  PLANNER_LEG_KIND_UNSPECIFIED = 0;
+  PLANNER_LEG_KIND_WALK = 1;
+  PLANNER_LEG_KIND_BIKE = 2;
+  PLANNER_LEG_KIND_RENTAL = 3; // shared bike
+  PLANNER_LEG_KIND_CAR = 4;
+  PLANNER_LEG_KIND_TRANSIT = 5;
+}
+
+enum TransferLevel {
+  TRANSFER_LEVEL_UNSPECIFIED = 0; // a leg time was missing
+  TRANSFER_LEVEL_COMFORTABLE = 1;
+  TRANSFER_LEVEL_TIGHT = 2; // the margin is under three minutes
+}
+
+message PlannerRequest {
+  Location from = 1;
+  Location to = 2;
+  google.protobuf.Timestamp time = 3; // unset plans from now
+  bool arrive_by = 4;
+  PlannerSort sort = 5;
+  // Empty allows every mode. BUS and COACH filter together, as the single
+  // 公車 choice MaasPlanRequest offered.
+  repeated PlannerTransitMode transit_modes = 6;
+  int32 top = 7; // itinerary count, 1..10 (default 5)
+  // Slack every transfer must leave on top of its walk, 0..60. 0 asks for no
+  // slack beyond MOTIS's own walking and same-stop transfer times. This is
+  // not MaasPlanRequest's minimum transfer time: a minimum hides how long the
+  // walk is, a buffer can be taken back out of it.
+  int32 transfer_buffer_minutes = 8;
+  PlannerAccessMode first_mile_mode = 9;
+  int32 first_mile_minutes = 10; // 1..60 (default 10)
+  PlannerAccessMode last_mile_mode = 11;
+  int32 last_mile_minutes = 12; // 1..60 (default 10)
+  bool wheelchair = 13;
+  int32 walk_speed_cm_per_sec = 14; // 0 leaves MOTIS's default
+  optional int32 max_transfers = 15;
+  bool avoid_reservation = 16;
+  bool carry_bike = 17;
+  // Echo back a cursor from the previous response for 更早 / 更晚.
+  string page_cursor = 18;
+  int32 leg_alternatives = 19; // 0..5 alternatives per transit leg
+}
+
+message PlannerUpdate {
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat).
+  reserved 1000;
+  PlannerResponse plan = 1;
+  bool complete = 2;
+}
+
+message PlannerResponse {
+  repeated PlannerItinerary itineraries = 1;
+  string previous_page_cursor = 2;
+  string next_page_cursor = 3;
+}
+
+message PlannerItinerary {
+  // MOTIS's itinerary id: opaque, built from scheduled times, so a delay does
+  // not change it, and accepted by MOTIS's refresh-itinerary. If MOTIS sends
+  // none, a hash of each leg's mode, trip, stops and scheduled times.
+  string id = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  int64 duration_seconds = 4;
+  int32 transfer_count = 5;
+  // Every walk leg, first and last mile included, without the transfer
+  // buffer.
+  int64 walk_seconds = 6;
+  int32 total_fare = 7; // NT$, sum of the leg fares that resolved
+  bool fare_complete = 8; // every transit leg has a fare
+  repeated PlannerLeg legs = 9;
+  repeated PlannerTransfer transfers = 10;
+}
+
+message PlannerLeg {
+  PlannerLegKind kind = 1;
+  PlannerTransitMode mode = 2; // UNSPECIFIED unless kind is TRANSIT
+  PlannerStop from = 3;
+  PlannerStop to = 4;
+  google.protobuf.Timestamp start_time = 5;
+  // MOTIS ends a walk leg between two transit legs only once the transfer
+  // buffer has passed, so its end time and duration include the buffer.
+  google.protobuf.Timestamp end_time = 6;
+  int64 duration_seconds = 7;
+  double distance_meters = 8; // non-transit legs only
+  PlannerTransit transit = 9; // set when kind is TRANSIT
+  repeated PlannerStop intermediate_stops = 10;
+  NotificationIdentity notification_identity = 11;
+  int32 fare = 12; // NT$, 0 when unresolved
+  // Street geometry for a non-transit leg, the vehicle's shape for a transit
+  // leg. Empty on the routes-only stream message.
+  repeated Location path = 13;
+  repeated WalkStep walk_steps = 14;
+  // Other departures of a service that could replace this transit leg; their
+  // fares are left unresolved.
+  repeated PlannerLeg alternatives = 15;
+}
+
+message PlannerStop {
+  string name = 1;
+  string stop_id = 2; // MOTIS stop id; empty for a street coordinate
+  Location location = 3;
+  google.protobuf.Timestamp arrival = 4;
+  google.protobuf.Timestamp departure = 5;
+}
+
+message PlannerTransit {
+  // MOTIS's trip id, which already names the service day and the trip's
+  // scheduled start: what MOTIS needs to find this run again.
+  string trip_id = 1;
+  string route_id = 2;
+  google.protobuf.Timestamp scheduled_departure = 3; // at this leg's first stop
+  google.protobuf.Timestamp scheduled_arrival = 4; // at this leg's last stop
+  bool real_time = 5; // MOTIS had live data for this run
+  string name = 6;
+  string short_name = 7;
+  string long_name = 8;
+  string headsign = 9;
+  string route_color = 10;
+  Agency agency = 11;
+}
+
+// One change between two consecutive transit legs.
+message PlannerTransfer {
+  int32 from_leg = 1; // index into legs: the leg arrived on
+  int32 to_leg = 2; // index into legs: the leg departed on
+  // Next departure minus arrival, minus the walking between them: the time a
+  // rider can lose and still make the connection. It includes the transfer
+  // buffer. Negative when a delay has already broken the transfer.
+  int64 margin_seconds = 3;
+  TransferLevel level = 4;
+  // The leg arrived on is a bus riding at least one stop pair whose running
+  // time is distance-estimated rather than observed, so its arrival, and with
+  // it the margin, is a guess.
+  bool times_estimated = 5;
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -12,6 +13,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func localRouterEnvironment(t *testing.T) {
@@ -74,6 +80,7 @@ func TestRouterStartupServesAndShutsDownBothListeners(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("JWKS status = %d", resp.StatusCode)
 	}
+	assertPlannerServed(t, grpcListener.Addr().String())
 	shutdown <- syscall.SIGTERM
 	select {
 	case err := <-done:
@@ -89,6 +96,23 @@ func TestRouterStartupServesAndShutsDownBothListeners(t *testing.T) {
 			_ = conn.Close()
 			t.Fatal("listener remained open after cleanup")
 		}
+	}
+}
+
+// assertPlannerServed reaches PlannerService's own argument check, which an
+// unregistered service would answer with Unimplemented instead.
+func assertPlannerServed(t *testing.T, address string) {
+	t.Helper()
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = pb.NewPlannerServiceClient(conn).Plan(ctx, &pb.PlannerRequest{TransitModes: make([]pb.PlannerTransitMode, 17)})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("PlannerService plan = %v, want InvalidArgument", err)
 	}
 }
 

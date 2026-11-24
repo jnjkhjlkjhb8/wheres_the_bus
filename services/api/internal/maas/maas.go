@@ -87,8 +87,25 @@ func redisContextError(ctx context.Context, err error) error {
 }
 
 func expiredRedisDeadline(ctx context.Context, err error) bool {
+	return deadlinePassed(ctx) && networkTimeout(err)
+}
+
+func deadlinePassed(ctx context.Context) bool {
 	deadline, hasDeadline := ctx.Deadline()
-	return hasDeadline && !time.Now().Before(deadline) && networkTimeout(err)
+	return hasDeadline && !time.Now().Before(deadline)
+}
+
+// workDone is ctx.Err() that also reports a deadline the context's timer has
+// not recorded yet: a cache read on the same deadline can return first, and
+// its miss must not send the expired work on upstream.
+func workDone(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadlinePassed(ctx) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func networkTimeout(err error) bool {
@@ -328,7 +345,7 @@ func (s *MaasServer) streamPlan(workCtx context.Context, req *pb.MaasPlanRequest
 	if response, ok := s.cachedPlan(workCtx, cacheKey); ok {
 		return stream.Send(&pb.MaasPlanUpdate{Plan: response, Complete: true})
 	}
-	if err := workCtx.Err(); err != nil {
+	if err := workDone(workCtx); err != nil {
 		return status.FromContextError(err).Err()
 	}
 
@@ -356,7 +373,7 @@ func (s *MaasServer) streamFreshPlan(workCtx context.Context, req *pb.MaasPlanRe
 
 // cachePlan stores a finished plan best-effort. The rider already has the
 // answer by this point, so a cache failure is logged, never returned.
-func (s *MaasServer) cachePlan(ctx context.Context, cacheKey string, response *pb.MaasPlanResponse) {
+func (s *MaasServer) cachePlan(ctx context.Context, cacheKey string, response proto.Message) {
 	encoded, err := proto.Marshal(response)
 	if err != nil {
 		return
@@ -385,7 +402,7 @@ func (s *MaasServer) runSharedPlan(cacheKey string, req *pb.MaasPlanRequest) (*p
 	if response, ok := s.cachedPlan(workCtx, cacheKey); ok {
 		return response, nil
 	}
-	if err := workCtx.Err(); err != nil {
+	if err := workDone(workCtx); err != nil {
 		return nil, err
 	}
 
@@ -429,15 +446,16 @@ func (s *MaasServer) persistEncodedPlan(ctx context.Context, cacheKey string, en
 }
 
 func (s *MaasServer) cachedPlan(ctx context.Context, key string) (*pb.MaasPlanResponse, bool) {
+	var response pb.MaasPlanResponse
+	return &response, s.loadCached(ctx, key, &response)
+}
+
+func (s *MaasServer) loadCached(ctx context.Context, key string, into proto.Message) bool {
 	cached, err := s.cache.Get(ctx, key)
 	if err != nil {
-		return nil, false
+		return false
 	}
-	var response pb.MaasPlanResponse
-	if err := proto.Unmarshal(cached, &response); err != nil {
-		return nil, false
-	}
-	return &response, true
+	return proto.Unmarshal(cached, into) == nil
 }
 
 func (s *MaasServer) get(ctx context.Context, req *pb.MaasPlanRequest) (*pb.MaasPlanResponse, error) {

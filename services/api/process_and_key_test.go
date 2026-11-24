@@ -100,7 +100,7 @@ func TestGRPCConfigurationServesTLSWithTheConfiguredCertificate(t *testing.T) {
 	}
 	t.Setenv("GRPC_TLS_CERT_FILE", certFile)
 	t.Setenv("GRPC_TLS_KEY_FILE", keyFile)
-	opts, err := grpcOptionsFromEnv(httpServerConfig{}, ratelimit.New())
+	opts, err := grpcOptionsFromEnv(httpServerConfig{}, ratelimit.New(), ratelimit.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestGRPCConfigurationFailsClosedForInvalidFirebaseConfiguration(t *testing.
 	t.Setenv("FIREBASE_PROJECT_ID", "")
 	t.Setenv("FIREBASE_CONFIG", "{")
 	t.Setenv("GRPC_TLS", "false")
-	if _, err := grpcOptionsFromEnv(httpServerConfig{}, ratelimit.New()); err == nil {
+	if _, err := grpcOptionsFromEnv(httpServerConfig{}, ratelimit.New(), ratelimit.New()); err == nil {
 		t.Fatal("invalid Firebase configuration allowed startup")
 	}
 }

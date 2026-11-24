@@ -72,6 +72,7 @@ type motisPlanResponse struct {
 }
 
 type motisItinerary struct {
+	ID        string     `json:"id"`
 	Duration  int64      `json:"duration"`
 	StartTime string     `json:"startTime"`
 	EndTime   string     `json:"endTime"`
@@ -80,25 +81,30 @@ type motisItinerary struct {
 }
 
 type motisLeg struct {
-	Mode              string        `json:"mode"`
-	From              motisPlace    `json:"from"`
-	To                motisPlace    `json:"to"`
-	Duration          int64         `json:"duration"`
-	StartTime         string        `json:"startTime"`
-	EndTime           string        `json:"endTime"`
-	Distance          float64       `json:"distance"`
-	Headsign          string        `json:"headsign"`
-	RouteShortName    string        `json:"routeShortName"`
-	RouteLongName     string        `json:"routeLongName"`
-	RouteColor        string        `json:"routeColor"`
-	DisplayName       string        `json:"displayName"`
-	AgencyID          string        `json:"agencyId"`
-	AgencyName        string        `json:"agencyName"`
-	AgencyURL         string        `json:"agencyUrl"`
-	IntermediateStops []motisPlace  `json:"intermediateStops"`
-	LegGeometry       motisPolyline `json:"legGeometry"`
-	Steps             []motisStep   `json:"steps"`
-	Alternatives      [][]motisLeg  `json:"alternatives"`
+	Mode               string        `json:"mode"`
+	From               motisPlace    `json:"from"`
+	To                 motisPlace    `json:"to"`
+	Duration           int64         `json:"duration"`
+	StartTime          string        `json:"startTime"`
+	EndTime            string        `json:"endTime"`
+	ScheduledStartTime string        `json:"scheduledStartTime"`
+	ScheduledEndTime   string        `json:"scheduledEndTime"`
+	RealTime           bool          `json:"realTime"`
+	TripID             string        `json:"tripId"`
+	RouteID            string        `json:"routeId"`
+	Distance           float64       `json:"distance"`
+	Headsign           string        `json:"headsign"`
+	RouteShortName     string        `json:"routeShortName"`
+	RouteLongName      string        `json:"routeLongName"`
+	RouteColor         string        `json:"routeColor"`
+	DisplayName        string        `json:"displayName"`
+	AgencyID           string        `json:"agencyId"`
+	AgencyName         string        `json:"agencyName"`
+	AgencyURL          string        `json:"agencyUrl"`
+	IntermediateStops  []motisPlace  `json:"intermediateStops"`
+	LegGeometry        motisPolyline `json:"legGeometry"`
+	Steps              []motisStep   `json:"steps"`
+	Alternatives       [][]motisLeg  `json:"alternatives"`
 }
 
 type motisPlace struct {
@@ -139,10 +145,26 @@ func (c *motisClient) Plan(
 	ctx context.Context,
 	req *pb.MaasPlanRequest,
 ) (*motisPlanResult, error) {
+	out, err := c.fetch(ctx, motisPlanQuery(req, time.Now()))
+	if err != nil {
+		return nil, err
+	}
+	api, geometry := convertMotisItineraries(out.Itineraries)
+	return &motisPlanResult{
+		api:      api,
+		geometry: geometry,
+		previous: out.PreviousPageCursor,
+		next:     out.NextPageCursor,
+	}, nil
+}
+
+// fetch returns MOTIS's answer with unusable overnight waits already removed;
+// an answer with nothing left is errMaasNoRoute.
+func (c *motisClient) fetch(ctx context.Context, query url.Values) (*motisPlanResponse, error) {
 	var out motisPlanResponse
 	resp, err := c.http.R().
 		SetContext(ctx).
-		SetQueryParamsFromValues(motisPlanQuery(req, time.Now())).
+		SetQueryParamsFromValues(query).
 		SetResult(&out).
 		Get(_motisPlanPath)
 	if err != nil {
@@ -151,17 +173,11 @@ func (c *motisClient) Plan(
 	if !resp.IsSuccess() {
 		return nil, motisHTTPError(resp)
 	}
-	itineraries := dropLongWaits(out.Itineraries)
-	if len(itineraries) == 0 {
+	out.Itineraries = dropLongWaits(out.Itineraries)
+	if len(out.Itineraries) == 0 {
 		return nil, _oops.Join(errMaasNoRoute, errMotisNoItinerary)
 	}
-	api, geometry := convertMotisItineraries(itineraries)
-	return &motisPlanResult{
-		api:      api,
-		geometry: geometry,
-		previous: out.PreviousPageCursor,
-		next:     out.NextPageCursor,
-	}, nil
+	return &out, nil
 }
 
 func dropLongWaits(itineraries []motisItinerary) []motisItinerary {

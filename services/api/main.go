@@ -279,7 +279,10 @@ func (runtime *routerRuntime) startConfigured(httpConfig httpServerConfig, shutd
 	}
 	lis, httpRuntime, rider := serving.grpcListener, serving.http, serving.rider
 	rl := ratelimit.NewWithTrustedProxies(httpConfig.TrustedProxies)
-	serverOptions, err := grpcOptionsFromEnv(httpConfig, rl)
+	// One limiter across both interceptor chains and PlannerServer, so the
+	// planner quota is spent per caller, not per method (see _maasQuotaScope).
+	maasRL := ratelimit.NewWithTrustedProxies(httpConfig.TrustedProxies)
+	serverOptions, err := grpcOptionsFromEnv(httpConfig, rl, maasRL)
 	if err != nil {
 		return err
 	}
@@ -303,6 +306,7 @@ func (runtime *routerRuntime) startConfigured(httpConfig httpServerConfig, shutd
 	// flight is canceled and joined before those backends close under it.
 	runtime.addCleanup(maasServer.Close)
 	pb.RegisterMaasServiceServer(grpcServer, maasServer)
+	pb.RegisterPlannerServiceServer(grpcServer, maas.NewPlannerServer(maasServer, maasRL, maas.DefaultMaasResourceConfig))
 	// Rider state lives behind rider-api (ADR-0026); api forwards after App
 	// Check and rate limiting.
 	pb.RegisterFirebase_ServiceServer(grpcServer, riderfwd.Firebase{Client: pb.NewFirebase_ServiceClient(rider.conn)})
@@ -358,7 +362,7 @@ func (runtime *routerRuntime) plannerMonitor(motisBaseURL string) *maas.PlannerH
 	return plannerMonitor
 }
 
-func grpcOptionsFromEnv(httpConfig httpServerConfig, rl *ratelimit.Limiter) ([]grpc.ServerOption, error) {
+func grpcOptionsFromEnv(httpConfig httpServerConfig, rl, maasRL *ratelimit.Limiter) ([]grpc.ServerOption, error) {
 	tlsCredentials, err := firebase.GRPCTLSCredentialsFromEnv()
 	if err != nil {
 		return nil, _oops.Wrapf(err, "gRPC TLS initialization failed")
@@ -367,9 +371,6 @@ func grpcOptionsFromEnv(httpConfig httpServerConfig, rl *ratelimit.Limiter) ([]g
 	if err != nil {
 		return nil, _oops.Wrapf(err, "initialize Firebase Admin")
 	}
-	// One limiter across both chains so the planner quota is spent per caller,
-	// not per method (see _maasQuotaScope).
-	maasRL := ratelimit.NewWithTrustedProxies(httpConfig.TrustedProxies)
 	serverOptions := []grpc.ServerOption{
 		// Stop is the bounded GracefulStop fallback. Waiting for handlers here
 		// keeps backend ownership valid until canceled RPC handlers return.
