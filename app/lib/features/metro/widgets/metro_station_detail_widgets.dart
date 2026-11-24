@@ -286,14 +286,17 @@ class _MetroCongestionStrip extends StatelessWidget {
           label: hasData
               ? AppI18n.of(context).metroCrowding
               : AppI18n.of(context).metroCrowdingUnavailable,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final (i, color) in cars.reversed.indexed) ...[
-                if (i > 0) const SizedBox(width: 3),
-                _CongestionCar(color: color, head: i == 0),
+          // The train is one shape while loading, not six car-sized bones.
+          child: Skeleton.unite(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final (i, color) in cars.reversed.indexed) ...[
+                  if (i > 0) const SizedBox(width: 3),
+                  _CongestionCar(color: color, head: i == 0),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         const SizedBox(width: AppTheme.space8),

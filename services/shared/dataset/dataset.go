@@ -287,7 +287,9 @@ func BusDailyTimetableSkip(city string) bool {
 
 // The last TrainDate TDX serves, in days after today (checked live 2026-10-10).
 // THSR answers 400 "no data beyond the supply date" from day 30; TRA answers
-// 200 "[]" with no Last-Modified on day 60 and 400 from day 61.
+// 200 "[]" with no Last-Modified on day 60 and 400 from day 61. THSR's supply
+// date moves in batches (day 28 already 400 on 2026-11-24); the TDX client
+// lands those dates as empty partitions instead of failing the run.
 const (
 	THSRDateWindow = 29
 	TRADateWindow  = 59

@@ -936,6 +936,54 @@ func TestGetIntoLandsEmptyPayloadWithoutLastModified(t *testing.T) {
 	}
 }
 
+// THSR answers 400 for a TrainDate past its published supply date; that date
+// lands empty, while any other 400 still fails.
+func TestGetIntoBadRequestBeyondSupplyDate(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		wantLanded bool
+	}{
+		{"beyond supply date", `{"Message":"TrainDate: 無提供查詢超過供應日期的資料"}`, true},
+		{"other bad request", `{"Message":"City: 'X' is not accepted"}`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+			store := newMemTDXStore()
+			store.data[TDXTokenKey] = "tok"
+			client := NewTDXClient(TDXConfig{Store: store, IMSKey: legacyIMSKey, BaseURL: srv.URL})
+
+			var body []byte
+			landed := false
+			result, err := client.GetInto(context.Background(), "/x", "thing", func(commit TDXIntoCommit) error {
+				landed = true
+				var readErr error
+				body, readErr = io.ReadAll(commit.Body)
+				return readErr
+			})
+			if !tt.wantLanded {
+				var statusErr *TDXStatusError
+				if !errors.As(err, &statusErr) || statusErr.Status != http.StatusBadRequest || landed {
+					t.Fatalf("err = %v landed = %v, want TDXStatusError 400 and no landing", err, landed)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetInto: %v", err)
+			}
+			if !result.Modified || result.Marker != TDXEmptyPayloadMarker || string(body) != "[]" {
+				t.Fatalf("result=%+v body=%q, want empty payload landed", result, body)
+			}
+			if got := store.get(TDXLegacyIMSKey("thing")); got != "" {
+				t.Fatalf("IMS marker = %q, want none cached", got)
+			}
+		})
+	}
+}
+
 func TestGetIntoEmptyPayloadPropagatesCommitError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("[]"))

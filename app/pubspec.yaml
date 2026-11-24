@@ -114,3 +114,7 @@ flutter:
       fonts:
         - asset: assets/fonts/IBMPlexMono-Regular.ttf
           weight: 400
+
+dependency_overrides:
+  google_maps_flutter_android:
+    path: third_party/google_maps_flutter_android

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/widget_previews.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/arrival_display.dart';
@@ -302,6 +303,8 @@ class EtaValue extends StatelessWidget {
     );
   }
 
+  // Number and unit are separate Texts for their two type styles; under a
+  // Skeletonizer they must still read as one bone, not a digit and a speck.
   Widget _value(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final live = source.isLive;
@@ -320,45 +323,55 @@ class EtaValue extends StatelessWidget {
         onDark: AppTheme.statusApproach,
         onLight: AppTheme.etaApproaching,
       ),
-      EtaMinutes(:final value) => Row(
-        textBaseline: TextBaseline.alphabetic,
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '$value',
-            style: _bigTime(cs, live: live),
-          ),
-          const SizedBox(width: AppTheme.space2),
-          Text(
-            AppI18n.of(context).goMinutesUnit,
-            style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
-          ),
-        ],
+      EtaMinutes(:final value) => Skeleton.unite(
+        child: Row(
+          textBaseline: TextBaseline.alphabetic,
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$value',
+              style: _bigTime(cs, live: live),
+            ),
+            const SizedBox(width: AppTheme.space2),
+            Text(
+              AppI18n.of(context).goMinutesUnit,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
       ),
-      EtaMinutesSeconds(:final minutes, :final seconds) => Row(
-        textBaseline: TextBaseline.alphabetic,
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '$minutes',
-            style: _bigTime(cs, live: live),
-          ),
-          Text(
-            AppI18n.of(context).goMinutesUnit,
-            style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
-          ),
-          const SizedBox(width: AppTheme.space2),
-          Text(
-            seconds.toString().padLeft(2, '0'),
-            style: _bigTime(cs, live: live),
-          ),
-          Text(
-            AppI18n.of(context).etaSecondsUnit,
-            style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
-          ),
-        ],
+      EtaMinutesSeconds(:final minutes, :final seconds) => Skeleton.unite(
+        child: Row(
+          textBaseline: TextBaseline.alphabetic,
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$minutes',
+              style: _bigTime(cs, live: live),
+            ),
+            Text(
+              AppI18n.of(context).goMinutesUnit,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: AppTheme.space2),
+            Text(
+              seconds.toString().padLeft(2, '0'),
+              style: _bigTime(cs, live: live),
+            ),
+            Text(
+              AppI18n.of(context).etaSecondsUnit,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
       ),
       EtaLabel(:final text) when _isClock(text) => Text(
         text,

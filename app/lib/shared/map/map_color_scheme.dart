@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart'
+    show MapColorScheme;
 
 const _darkMapStyle = '''
 [
@@ -27,3 +29,11 @@ const _darkMapStyle = '''
 /// overridable in settings, so the map must track [Theme], not the OS.
 String? mapStyleOf(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark ? _darkMapStyle : null;
+
+/// Passed at map creation so Android draws its first frame in this scheme;
+/// [mapStyleOf] alone lands after the SDK has already drawn its light style.
+/// Android-only for now (via the vendored plugin); iOS ignores it.
+MapColorScheme mapColorSchemeOf(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? MapColorScheme.dark
+    : MapColorScheme.light;

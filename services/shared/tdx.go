@@ -643,7 +643,34 @@ func (c *TDXClient) commitModifiedResponse(ctx context.Context, resp *resty.Resp
 	if successWithoutMarker(resp) {
 		return commitEmptyPayload(resp, name, invalidate, commit)
 	}
+	if resp.StatusCode() == http.StatusBadRequest {
+		return commitBeyondSupplyDate(resp, name, invalidate, commit)
+	}
 	return c.commitMarkedResponse(ctx, resp, name, invalidate, commit)
+}
+
+// tdxBeyondSupplyDate is part of the 400 message TDX returns for a TrainDate
+// past the operator's published supply date. THSR publishes its timetable in
+// batches, so that date moves unevenly and a fixed fetch window can cross it.
+const tdxBeyondSupplyDate = "超過供應日期"
+
+// commitBeyondSupplyDate lands an empty partition for a date with no timetable
+// published yet. Any other 400 is still a TDXStatusError.
+func commitBeyondSupplyDate(resp *resty.Response, name string, invalidate func() error, commit func(TDXIntoCommit) error) (TDXIntoResult, error) {
+	body, err := decodedTDXBody(resp)
+	if err != nil {
+		return TDXIntoResult{}, err
+	}
+	head, readErr := io.ReadAll(io.LimitReader(body, 512))
+	if err := errors.Join(readErr, body.Close()); err != nil {
+		return TDXIntoResult{}, err
+	}
+	if !strings.Contains(string(head), tdxBeyondSupplyDate) {
+		return TDXIntoResult{}, &TDXStatusError{Name: name, Status: resp.StatusCode()}
+	}
+	zap.S().Infow("beyond supply date", "component", "tdx", "action", "fetch", "event", "beyond_supply_date", "name", name)
+	result := TDXIntoResult{Modified: true, Marker: TDXEmptyPayloadMarker, Invalidate: invalidate}
+	return result, invokeTDXCommit(commit, strings.NewReader("[]"), TDXEmptyPayloadMarker)
 }
 
 func (c *TDXClient) commitMarkedResponse(ctx context.Context, resp *resty.Response, name string, invalidate func() error, commit func(TDXIntoCommit) error) (result TDXIntoResult, err error) {

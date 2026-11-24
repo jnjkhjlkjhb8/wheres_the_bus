@@ -255,6 +255,7 @@ class _BusStopScreenState extends State<BusStopScreen> {
     final target = _mapTarget(state.members, hint);
     return GoogleMap(
       style: mapStyleOf(context),
+      colorScheme: mapColorSchemeOf(context),
       initialCameraPosition: CameraPosition(
         target: target,
         zoom: 16,

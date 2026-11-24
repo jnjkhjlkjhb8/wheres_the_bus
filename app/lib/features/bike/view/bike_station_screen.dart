@@ -178,6 +178,7 @@ class _BikeStationScreenState extends State<BikeStationScreen> {
     final target = hasStation ? LatLng(state.lat, state.lon) : _kDefaultPos;
     return GoogleMap(
       style: mapStyleOf(context),
+      colorScheme: mapColorSchemeOf(context),
       initialCameraPosition: CameraPosition(target: target, zoom: 16),
       markers: _stationMarkers(state, target),
       myLocationEnabled: true,
