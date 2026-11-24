@@ -23,9 +23,12 @@ import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 const _counterThreshold = 200;
 
 class FeedbackScreen extends StatelessWidget {
-  const FeedbackScreen({this.fromScreen, super.key});
+  const FeedbackScreen({this.fromScreen, this.about, super.key});
 
   final String? fromScreen;
+
+  /// The opening page's name for its subject (`FeedbackSubject`), if any.
+  final String? about;
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +40,7 @@ class FeedbackScreen extends StatelessWidget {
             locale: Localizations.localeOf(context).toLanguageTag(),
           ),
         ),
-      child: const FeedbackView(),
+      child: FeedbackView(subject: about),
     );
   }
 }
@@ -46,15 +49,42 @@ class FeedbackScreen extends StatelessWidget {
 /// over a [FeedbackBloc] built on a fake repository.
 @visibleForTesting
 class FeedbackView extends StatefulWidget {
-  const FeedbackView({super.key});
+  const FeedbackView({this.subject, super.key});
+
+  final String? subject;
 
   @override
   State<FeedbackView> createState() => _FeedbackViewState();
 }
 
+/// What the rider had typed when they last left the page without sending.
+///
+/// In memory only: it survives backing out and coming back, which is the
+/// common case (checking the route they are reporting), but not a cold start.
+@visibleForTesting
+class FeedbackDraft {
+  FeedbackDraft._();
+
+  static String body = '';
+  static FeedbackCategory category = FeedbackCategory.routeData;
+
+  static void clear() {
+    body = '';
+    category = FeedbackCategory.routeData;
+  }
+}
+
 class _FeedbackViewState extends State<FeedbackView> {
-  final _controller = TextEditingController();
-  FeedbackCategory _category = FeedbackCategory.routeData;
+  final _controller = TextEditingController(text: FeedbackDraft.body);
+  FeedbackCategory _category = FeedbackDraft.category;
+  late String? _subject = _nonEmpty(widget.subject);
+
+  static String? _nonEmpty(String? s) => s == null || s.isEmpty ? null : s;
+
+  void _clearSubject() {
+    setState(() => _subject = null);
+    context.read<FeedbackBloc>().add(const FeedbackSubjectCleared());
+  }
 
   @override
   void initState() {
@@ -72,12 +102,16 @@ class _FeedbackViewState extends State<FeedbackView> {
     super.dispose();
   }
 
-  void _onTextChanged() => setState(() {});
+  void _onTextChanged() {
+    FeedbackDraft.body = _controller.text;
+    setState(() {});
+  }
 
   String get _body => _controller.text.trim();
 
   void _selectCategory(FeedbackCategory category) {
     if (category == _category) return;
+    FeedbackDraft.category = category;
     setState(() => _category = category);
   }
 
@@ -99,6 +133,7 @@ class _FeedbackViewState extends State<FeedbackView> {
           // Fired on arrival rather than on the tap: the buzz means the report
           // is stored, and a failed submission must not feel like a success.
           if (state.status == FeedbackStatus.sent) {
+            FeedbackDraft.clear();
             unawaited(HapticService.instance.mediumTap());
           }
         },
@@ -141,6 +176,8 @@ class _FeedbackViewState extends State<FeedbackView> {
           onSubmit: _submit,
           body: _body,
           state: state,
+          subject: _subject,
+          onClearSubject: _clearSubject,
         );
 }
 
@@ -152,9 +189,13 @@ class _Composer extends StatelessWidget {
     required this.onSubmit,
     required this.body,
     required this.state,
+    required this.onClearSubject,
+    this.subject,
     super.key,
   });
 
+  final String? subject;
+  final VoidCallback onClearSubject;
   final TextEditingController controller;
   final FeedbackCategory category;
   final ValueChanged<FeedbackCategory> onCategoryChanged;
@@ -170,6 +211,14 @@ class _Composer extends StatelessWidget {
       body.runes.length <= feedbackBodyLimit &&
       state.diagnostics != null &&
       !state.submitting;
+
+  /// Why the submit button is greyed out, said once beside it. An over-limit
+  /// body is already explained by the counter, so it adds nothing here.
+  String? _blockedReason(AppI18n i18n) {
+    if (body.isEmpty) return i18n.feedbackNeedsBody;
+    if (state.diagnostics == null) return i18n.feedbackReadingDevice;
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -187,6 +236,10 @@ class _Composer extends StatelessWidget {
               AppTheme.space8,
             ),
             children: [
+              if (subject case final about?) ...[
+                _SubjectCard(subject: about, onClear: onClearSubject),
+                const SizedBox(height: AppTheme.space20),
+              ],
               _CategoryPicker(value: category, onChanged: onCategoryChanged),
               const SizedBox(height: AppTheme.space20),
               AppInput(
@@ -230,6 +283,21 @@ class _Composer extends StatelessWidget {
               ],
             ),
           ),
+        if (_blockedReason(AppI18n.of(context)) case final reason?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space20,
+              AppTheme.space4,
+              AppTheme.space20,
+              0,
+            ),
+            child: Text(
+              reason,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ),
         Padding(
           // The button sits on the bottom edge of the page, so it has to clear
           // the gesture bar itself.
@@ -253,6 +321,74 @@ class _Composer extends StatelessWidget {
 /// Four chips rather than a segmented control: the labels are long enough that
 /// four fixed-width segments would clip at a large system text size, and a
 /// Wrap simply takes a second line instead.
+/// Names what the report is about, as the page it came from called it, with
+/// the one correction a rider needs: it is not about that.
+class _SubjectCard extends StatelessWidget {
+  const _SubjectCard({required this.subject, required this.onClear});
+
+  final String subject;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        AppTheme.space8,
+        AppTheme.space8,
+        AppTheme.space8,
+      ),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  i18n.feedbackSubjectLabel,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.space2),
+                Text(
+                  subject,
+                  style: AppTextStyles.bodyRegular.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Pressable(
+            onTap: onClear,
+            semanticLabel: i18n.feedbackSubjectNotThis,
+            minTapSize: 44,
+            child: Padding(
+              padding: const EdgeInsets.all(AppTheme.space8),
+              child: Text(
+                i18n.feedbackSubjectNotThis,
+                style: AppTextStyles.bodySmall.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CategoryPicker extends StatelessWidget {
   const _CategoryPicker({required this.value, required this.onChanged});
 

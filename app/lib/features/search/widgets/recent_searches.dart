@@ -18,24 +18,15 @@ class _ZeroInputSuggestions extends StatelessWidget {
 
   Future<void> _clearAll(BuildContext context) async {
     final bloc = context.read<SearchBloc>();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(AppI18n.of(context).searchRecentClearTitle),
-        content: Text(AppI18n.of(context).searchRecentClearBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(AppI18n.of(context).searchRecentKeep),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(AppI18n.of(context).searchRecentClear),
-          ),
-        ],
-      ),
+    final i18n = AppI18n.of(context);
+    final confirmed = await confirmDestructive(
+      context,
+      title: i18n.searchRecentClearTitle,
+      message: i18n.searchRecentClearBody,
+      confirmLabel: i18n.searchRecentClear,
+      cancelLabel: i18n.searchRecentKeep,
     );
-    if (confirmed ?? false) {
+    if (confirmed) {
       bloc.add(const SearchRecentsCleared());
     }
   }
@@ -202,8 +193,10 @@ class _RecentRow extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: AppTheme.space2),
+                  // Same subtitle as a live result: two 307s from different
+                  // cities have to read as different rows here too.
                   Text(
-                    result.subtitle,
+                    searchRowSubtitle(result),
                     style: AppTextStyles.bodySmall.copyWith(
                       color: cs.onSurfaceVariant,
                       height: 1.3,

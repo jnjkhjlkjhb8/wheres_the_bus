@@ -33,6 +33,8 @@ class NearStationViewModel extends Equatable {
     required this.distanceMeters,
     this.routed = true,
     this.lineIds = const [],
+    this.city = '',
+    this.headsigns = const [],
   });
 
   final NearStationType type;
@@ -47,6 +49,13 @@ class NearStationViewModel extends Equatable {
   /// a straight-line (geodesic) estimate.
   final bool routed;
   final List<String> lineIds;
+
+  /// The station's city as the server names it (`Taipei`); keys its live
+  /// data.
+  final String city;
+
+  /// Bus only: up to two terminals its routes run to, most routes first.
+  final List<String> headsigns;
 
   String get displayDistance => formatNearDistance(distanceMeters);
 

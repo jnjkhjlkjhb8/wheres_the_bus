@@ -351,7 +351,7 @@ void main() {
       void send(BikeStationEvent event) => bloc.add(event);
       send(const BikeStationEtaFailed(OfflineError()));
       await flush(tester);
-      expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
+      expect(find.text(AppI18nZh().bikeLiveUnavailable), findsOneWidget);
       send(
         const BikeStationEtaUpdated(
           available: 0,
@@ -361,7 +361,7 @@ void main() {
         ),
       );
       await flush(tester);
-      expect(find.byIcon(Icons.cloud_off_rounded), findsNothing);
+      expect(find.text(AppI18nZh().bikeLiveUnavailable), findsNothing);
       expect(tester.widget<GoogleMap>(find.byType(GoogleMap)).markers, isEmpty);
     },
   );

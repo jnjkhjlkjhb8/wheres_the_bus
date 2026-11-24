@@ -61,6 +61,9 @@ enum RailQueryMode { od, train }
 /// Optional seed for the sheet: pre-fills the origin (and, when known, dest and
 /// date) so opening from a station detail — or re-opening after a home-sheet
 /// hand-off — shows the query that is actually in effect.
+/// Wide enough for 「台鐵」「高鐵」 at the largest supported text scale.
+const double _kSystemToggleWidth = 136;
+
 class RailQueryPreset {
   const RailQueryPreset({
     required this.system,
@@ -396,33 +399,30 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
                   ),
                 ),
               ),
-            Text(
-              AppI18n.of(context).railTimetableTitle,
-              style: AppTextStyles.bodyLarge.copyWith(
-                fontWeight: FontWeight.w700,
-                fontSize: 22,
-                color: cs.onSurface,
+            Expanded(
+              child: Text(
+                AppI18n.of(context).railTimetableTitle,
+                style: AppTextStyles.bodyLarge.copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 22,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            // Beside the title rather than a full-width row: three stacked
+            // segment bars pushed the query button below the fold.
+            SizedBox(
+              width: _kSystemToggleWidth,
+              child: AppSlidingSegment<RailSystem>(
+                options: {
+                  RailSystem.tra: AppI18n.of(context).modeTra,
+                  RailSystem.thsr: AppI18n.of(context).modeThsr,
+                },
+                value: _system,
+                onChanged: _switchSystem,
               ),
             ),
           ],
-        ),
-        const SizedBox(height: AppTheme.space16),
-        AppSlidingSegment<RailQueryMode>(
-          options: {
-            RailQueryMode.od: AppI18n.of(context).railModeOd,
-            RailQueryMode.train: AppI18n.of(context).railModeTrain,
-          },
-          value: _mode,
-          onChanged: _setMode,
-        ),
-        const SizedBox(height: AppTheme.space12),
-        AppSlidingSegment<RailSystem>(
-          options: {
-            RailSystem.tra: AppI18n.of(context).modeTra,
-            RailSystem.thsr: AppI18n.of(context).modeThsr,
-          },
-          value: _system,
-          onChanged: _switchSystem,
         ),
         const SizedBox(height: AppTheme.space16),
         if (reduceMotion)
@@ -439,6 +439,7 @@ class _RailQuerySheetContentState extends State<RailQuerySheetContent> {
               child: KeyedSubtree(key: ValueKey(_mode), child: pane),
             ),
           ),
+        _ModeSwitch(mode: _mode, onChanged: _setMode),
       ],
     );
   }
@@ -782,6 +783,45 @@ class _SubmitButton extends StatelessWidget {
             color: enabled ? cs.onPrimary : cs.onSurfaceVariant,
             fontWeight: FontWeight.w600,
             fontSize: 15,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The less common query, offered as a link under the form instead of a
+/// segment bar above it: most riders search by stations, and the bar cost the
+/// form a row before the query button.
+class _ModeSwitch extends StatelessWidget {
+  const _ModeSwitch({required this.mode, required this.onChanged});
+
+  final RailQueryMode mode;
+  final ValueChanged<RailQueryMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    final (label, target) = mode == RailQueryMode.od
+        ? (i18n.railSwitchToTrain, RailQueryMode.train)
+        : (i18n.railSwitchToOd, RailQueryMode.od);
+    return Center(
+      child: Pressable(
+        onTap: () => onChanged(target),
+        semanticLabel: label,
+        minTapSize: 44,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.space12,
+            vertical: AppTheme.space12,
+          ),
+          child: Text(
+            label,
+            style: AppTextStyles.bodyRegular.copyWith(
+              color: cs.onSurface,
+              decoration: TextDecoration.underline,
+            ),
           ),
         ),
       ),

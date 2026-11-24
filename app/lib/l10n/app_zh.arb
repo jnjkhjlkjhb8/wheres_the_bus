@@ -493,7 +493,7 @@
   "@favoritesEmpty": {
     "description": "Empty state of the favorites screen."
   },
-  "favoritesEmptyHint": "在站牌或路線頁點收藏即可加入，釘選後會顯示在首頁",
+  "favoritesEmptyHint": "在站牌或路線頁點收藏即可加入，也會顯示在首頁",
   "@favoritesEmptyHint": {
     "description": "Empty-state detail explaining how to add and pin a favorite."
   },
@@ -654,7 +654,7 @@
   "@metroEtaUnavailable": {
     "description": "Heading when the live arrival feed is unreachable."
   },
-  "metroEtaUnavailableBody": "目前無法取得資料，請聯絡開發者",
+  "metroEtaUnavailableBody": "即時資料暫時無法取得，下方首末班時間仍可參考",
   "@metroEtaUnavailableBody": {
     "description": "Detail reassuring the rider that service continues even though ETAs are missing."
   },
@@ -816,7 +816,7 @@
   "@bikeUnitDocks": {
     "description": "Counter unit for empty docks available for returns."
   },
-  "bikeReturnSpaces": "可還車位",
+  "bikeReturnSpaces": "可還",
   "@bikeReturnSpaces": {
     "description": "Caption over the empty-dock count."
   },
@@ -1132,13 +1132,17 @@
   "@busStopNoRoutesHint": {
     "description": "Detail suggesting the stop may be wrong or the data late."
   },
-  "busStopNoData": "目前沒有任何資料",
+  "busStopNoData": "收不到這站的即時到站",
   "@busStopNoData": {
-    "description": "Empty state when a stop returns nothing at all."
+    "description": "Stop page when the stop is known but no live arrivals came back, e.g. while realtime is off. Names the cause instead of claiming there is no data at all."
   },
-  "busStopNoDataHint": "稍後再試,或下拉重新整理",
+  "busStopLiveMissingBody": "路線照常列出，到站時間暫時顯示「—」",
+  "@busStopLiveMissingBody": {
+    "description": "Bus stop page: body of the notice shown when no live arrival frame came; the routes stopping here are still listed without times"
+  },
+  "busStopNoDataHint": "即時資料暫時無法取得，稍後再試一次",
   "@busStopNoDataHint": {
-    "description": "Detail suggesting a retry or pull-to-refresh."
+    "description": "Detail under busStopNoData; a reload button follows it."
   },
   "busStopFallbackTitle": "公車站牌",
   "@busStopFallbackTitle": {
@@ -1246,9 +1250,9 @@
   "@goPlanFailedTitle": {
     "description": "Planner error heading for an unclassified failure."
   },
-  "goPlanFailedBody": "請確認網路後再試一次",
+  "goPlanFailedBody": "路線服務出了點問題，稍後再試一次",
   "@goPlanFailedBody": {
-    "description": "Planner error detail suggesting a network check."
+    "description": "Planner error detail for a failure with no more specific cause. Says nothing about the network: an offline device is already announced by the notice rail."
   },
   "goBadgeFastest": "最快",
   "@goBadgeFastest": {
@@ -3969,5 +3973,140 @@
         "example": "大安"
       }
     }
+  },
+  "goSortFastest": "最快",
+  "@goSortFastest": {
+    "description": "Planner results sort: shortest travel time first."
+  },
+  "goSortCheapest": "最便宜",
+  "@goSortCheapest": {
+    "description": "Planner results sort: lowest complete fare first."
+  },
+  "goSortFewestTransfers": "最少轉乘",
+  "@goSortFewestTransfers": {
+    "description": "Planner results sort: fewest changes between vehicles first."
+  },
+  "goSortLeastWalking": "最少步行",
+  "@goSortLeastWalking": {
+    "description": "Planner results sort: least time on foot first."
+  },
+  "goTransferBuffer": "轉乘多留時間",
+  "@goTransferBuffer": {
+    "description": "Options row label for extra minutes kept free at every transfer, on top of the walk."
+  },
+  "transferMarginComfortable": "有 {minutes} 分鐘 · 充裕",
+  "@transferMarginComfortable": {
+    "description": "Room a measured transfer leaves, and that it is comfortable. Follows 轉乘 in a sentence.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "transferMarginTight": "只有 {minutes} 分鐘 · 容易接不上",
+  "@transferMarginTight": {
+    "description": "Room a transfer leaves, and that it is easy to miss. Follows 轉乘 in a sentence.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "transferMarginEstimated": "約 {minutes} 分鐘 · 充裕 · 時間為估計",
+  "@transferMarginEstimated": {
+    "description": "Room a comfortable transfer leaves when the arriving bus's times are estimated, qualified as an estimate. Follows 轉乘 in a sentence.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "transferMarginTightEstimated": "約 {minutes} 分鐘 · 容易接不上 · 時間為估計",
+  "@transferMarginTightEstimated": {
+    "description": "Room a transfer leaves when it is easy to miss and the arriving bus's times are estimated. Follows 轉乘 in a sentence.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "transferMarginCard": "轉乘{detail}",
+  "@transferMarginCard": {
+    "description": "Result card line about the transfer most likely to be missed; detail is one of the transferMargin phrases.",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "example": "有 6 分鐘 · 充裕"
+      }
+    }
+  },
+  "transferMarginPreview": "轉乘 · {detail}",
+  "@transferMarginPreview": {
+    "description": "Itinerary preview line at a change between two vehicles; detail is one of the transferMargin phrases.",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "example": "有 6 分鐘 · 充裕"
+      }
+    }
+  },
+  "feedbackNeedsBody": "先寫下狀況說明才能送出",
+  "@feedbackNeedsBody": {
+    "description": "Line beside the disabled submit button saying why it is disabled: the description field is still empty."
+  },
+  "bikeLiveUnavailable": "收不到即時車位",
+  "@bikeLiveUnavailable": {
+    "description": "Title of the notice on a bike station whose live availability never arrived."
+  },
+  "bikeLiveUnavailableBody": "車位數暫時顯示「—」，不是 0",
+  "@bikeLiveUnavailableBody": {
+    "description": "Explains that the dashes in the gauge mean unknown, not an empty station."
+  },
+  "goPlanFailedSubtitle": "規劃失敗",
+  "@goPlanFailedSubtitle": {
+    "description": "Subtitle under 建議路線 once a search has failed, replacing 規劃中."
+  },
+  "homeFavoritesEmptyBody": "在站牌或路線頁點書籤，就會出現在這裡",
+  "@homeFavoritesEmptyBody": {
+    "description": "Body of the empty favorites tab on home: names where the bookmark control is."
+  },
+  "alightBoardThisBus": "我在這台車",
+  "@alightBoardThisBus": {
+    "description": "Button on a live vehicle in a route's stop list: binds an alight reminder to that bus and asks for the stop to get off at."
+  },
+  "goLegProgress": "第 {index} 段，共 {total} 段",
+  "@goLegProgress": {
+    "description": "Navigation bottom bar: which leg of the trip the rider is on.",
+    "placeholders": {
+      "index": {"type": "int", "example": "1"},
+      "total": {"type": "int", "example": "3"}
+    }
+  },
+  "goArrivesAt": "{time} 抵達",
+  "@goArrivesAt": {
+    "description": "Navigation bottom bar: planned arrival clock time of the whole trip.",
+    "placeholders": {
+      "time": {"type": "String", "example": "14:52"}
+    }
+  },
+  "railSwitchToTrain": "改用車次查詢",
+  "@railSwitchToTrain": {
+    "description": "Link under the station-to-station rail form that switches to looking up a train by number."
+  },
+  "railSwitchToOd": "改用起訖查詢",
+  "@railSwitchToOd": {
+    "description": "Link under the train-number form that switches back to station-to-station."
+  },
+  "feedbackSubjectLabel": "你在回報",
+  "@feedbackSubjectLabel": {
+    "description": "Caption over the route or stop the report was opened from."
+  },
+  "feedbackSubjectNotThis": "不是這個",
+  "@feedbackSubjectNotThis": {
+    "description": "Drops the route or stop from the report, together with the page location it would have sent."
   }
 }

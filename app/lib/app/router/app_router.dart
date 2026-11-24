@@ -259,7 +259,10 @@ List<RouteBase> buildAppRoutes({
           GoRoute(
             path: AppRoutes.feedback,
             pageBuilder: (_, state) => _page(
-              FeedbackScreen(fromScreen: state.uri.queryParameters['from']),
+              FeedbackScreen(
+                fromScreen: state.uri.queryParameters['from'],
+                about: state.uri.queryParameters['about'],
+              ),
             ),
           ),
           GoRoute(

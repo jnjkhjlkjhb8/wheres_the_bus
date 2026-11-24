@@ -66,7 +66,8 @@ class _StopBody extends StatelessWidget {
   bool _selectionChanged(BusStopState previous, BusStopState next) =>
       previous.status != next.status ||
       previous.selectedStationUid != next.selectedStationUid ||
-      previous.error != next.error;
+      previous.error != next.error ||
+      previous.liveWaitExpired != next.liveWaitExpired;
 
   bool _rowsChanged(BusStopState previous, BusStopState next) =>
       !identical(previous.members, next.members) ||
@@ -123,6 +124,7 @@ class _StopBody extends StatelessWidget {
 
     final flatCount = visibleGroups.fold(0, (n, g) => n + g.$2.length);
     return [
+      ..._liveMissingRows(context, state, flatCount),
       if (hasFilter) ...[
         () => _StationFilterBar(
           members: chipMembers,
@@ -145,14 +147,48 @@ class _StopBody extends StatelessWidget {
             if (i < group.$2.length - 1) divider,
           ],
         ],
-      if (members.isNotEmpty && flatCount == 0)
-        () => _StopMessage(
-          icon: Icons.directions_bus_outlined,
-          title: AppI18n.of(context).busStopNoData,
-          hint: AppI18n.of(context).busStopNoDataHint,
-        ),
+      ..._noDataRows(context, members, flatCount),
     ];
   }
+
+  static void _retry(BuildContext context) =>
+      context.read<BusStopBloc>().add(const BusStopRetryRequested());
+
+  /// Rows are the members' static routes here, every time a 「—」.
+  List<Widget Function()> _liveMissingRows(
+    BuildContext context,
+    BusStopState state,
+    int flatCount,
+  ) => [
+    if (state.liveWaitExpired && state.arrivals.isEmpty && flatCount > 0)
+      () => Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.space16,
+          AppTheme.space12,
+          AppTheme.space16,
+          AppTheme.space4,
+        ),
+        child: LiveDataNotice(
+          title: AppI18n.of(context).busStopNoData,
+          body: AppI18n.of(context).busStopLiveMissingBody,
+          onReload: () => _retry(context),
+        ),
+      ),
+  ];
+
+  List<Widget Function()> _noDataRows(
+    BuildContext context,
+    List<BusStationMember> members,
+    int flatCount,
+  ) => [
+    if (members.isNotEmpty && flatCount == 0)
+      () => _StopMessage(
+        icon: Icons.directions_bus_outlined,
+        title: AppI18n.of(context).busStopNoData,
+        hint: AppI18n.of(context).busStopNoDataHint,
+        onRetry: () => _retry(context),
+      ),
+  ];
 }
 
 class _StationFilterBar extends StatelessWidget {
@@ -299,10 +335,15 @@ class _StopMessage extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.hint,
+    this.onRetry,
   });
   final IconData icon;
   final String title;
   final String hint;
+
+  /// Shown as a visible reload. Pull-to-refresh does the same, but nothing on
+  /// an empty page says it exists.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -333,6 +374,13 @@ class _StopMessage extends StatelessWidget {
             textAlign: TextAlign.center,
             style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
           ),
+          if (onRetry case final retry?) ...[
+            const SizedBox(height: AppTheme.space16),
+            AppButton.outlined(
+              label: AppI18n.of(context).commonReload,
+              onPressed: retry,
+            ),
+          ],
         ],
       ),
     );

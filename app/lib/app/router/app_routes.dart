@@ -25,9 +25,15 @@ class AppRoutes {
   static const go = '/go';
   static const feedback = '/feedback';
 
-  static String feedbackLocation({String? from}) => from == null || from.isEmpty
-      ? feedback
-      : _location(feedback, {'from': from});
+  /// [about] is the page's own name for what the rider was looking at
+  /// (`FeedbackSubject`), shown back to them on the form.
+  static String feedbackLocation({String? from, String? about}) {
+    final params = {
+      if (from != null && from.isNotEmpty) 'from': from,
+      if (about != null && about.isNotEmpty) 'about': about,
+    };
+    return params.isEmpty ? feedback : _location(feedback, params);
+  }
 
   /// Route pattern for the bus route detail screen; use [busRoute] to build a
   /// concrete location.

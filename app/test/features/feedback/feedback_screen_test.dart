@@ -65,7 +65,11 @@ bool _submitEnabled(WidgetTester tester) {
   return pressable.enabled && pressable.onTap != null;
 }
 
-Future<void> _pumpPage(WidgetTester tester, _FakeRepo repo) async {
+Future<void> _pumpPage(
+  WidgetTester tester,
+  _FakeRepo repo, {
+  String? subject,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       locale: const Locale('zh'),
@@ -75,7 +79,7 @@ Future<void> _pumpPage(WidgetTester tester, _FakeRepo repo) async {
         create: (_) =>
             FeedbackBloc(repository: repo)
               ..add(const FeedbackOpened(screen: '/settings', locale: 'zh-TW')),
-        child: const FeedbackView(),
+        child: FeedbackView(subject: subject),
       ),
     ),
   );
@@ -83,11 +87,99 @@ Future<void> _pumpPage(WidgetTester tester, _FakeRepo repo) async {
 }
 
 void main() {
+  // The draft is process-wide on purpose; one test's typing must not leak
+  // into the next one's empty page.
+  setUp(FeedbackDraft.clear);
+
   testWidgets('an empty report cannot be sent', (tester) async {
     await _pumpPage(tester, _FakeRepo());
 
     expect(_submitEnabled(tester), isFalse);
     expect(find.text('回報問題'), findsOneWidget);
+  });
+
+  testWidgets('a disabled send says why, and the reason goes once typed', (
+    tester,
+  ) async {
+    await _pumpPage(tester, _FakeRepo());
+    expect(find.text('先寫下狀況說明才能送出'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '顯示 2 分，等了 10 分');
+    await tester.pump();
+
+    expect(find.text('先寫下狀況說明才能送出'), findsNothing);
+    expect(_submitEnabled(tester), isTrue);
+  });
+
+  testWidgets('a disabled send waits on the device read, and says so', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppI18n.localizationsDelegates,
+        supportedLocales: AppI18n.supportedLocales,
+        // No FeedbackOpened: the diagnostics never arrive.
+        home: BlocProvider(
+          create: (_) => FeedbackBloc(repository: _FakeRepo()),
+          child: const FeedbackView(),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), '有內容');
+    await tester.pump();
+
+    expect(_submitEnabled(tester), isFalse);
+    // The disclosure says it too; the line by the button is the second one.
+    expect(find.text('正在讀取裝置資訊…'), findsNWidgets(2));
+  });
+
+  testWidgets('leaving keeps the draft, and the next visit picks it up', (
+    tester,
+  ) async {
+    await _pumpPage(tester, _FakeRepo());
+    await tester.tap(find.text('到站時間'));
+    await tester.enterText(find.byType(TextField), '寫到一半');
+    await tester.pump();
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpPage(tester, _FakeRepo());
+
+    expect(find.text('寫到一半'), findsOneWidget);
+    expect(FeedbackDraft.category, FeedbackCategory.eta);
+    expect(_submitEnabled(tester), isTrue);
+  });
+
+  testWidgets('the page it came from is named, and 不是這個 drops it', (
+    tester,
+  ) async {
+    await _pumpPage(tester, _FakeRepo(), subject: '307 · 往 板橋');
+    expect(find.text('你在回報'), findsOneWidget);
+    expect(find.text('307 · 往 板橋'), findsOneWidget);
+    expect(find.textContaining('/settings'), findsOneWidget);
+
+    await tester.tap(find.text('不是這個'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('307 · 往 板橋'), findsNothing);
+    // The page location goes with it, so the report no longer points there.
+    expect(find.textContaining('/settings'), findsNothing);
+  });
+
+  testWidgets('no subject, no card', (tester) async {
+    await _pumpPage(tester, _FakeRepo(), subject: '');
+    expect(find.text('你在回報'), findsNothing);
+  });
+
+  testWidgets('a stored report clears the draft', (tester) async {
+    await _pumpPage(tester, _FakeRepo());
+    await tester.enterText(find.byType(TextField), '送出去');
+    await tester.pump();
+    await tester.tap(find.text('送出'));
+    await tester.pumpAndSettle();
+
+    expect(FeedbackDraft.body, isEmpty);
+    expect(FeedbackDraft.category, FeedbackCategory.routeData);
   });
 
   testWidgets('whitespace alone is not a report', (tester) async {

@@ -305,11 +305,17 @@ class _SettingsView extends StatelessWidget {
                       onChanged: (v) =>
                           bloc.add(ShakeToReportToggled(value: v)),
                     ),
+                    // A way in that does not depend on the shake toggle: with
+                    // it off, this row is the only route to the report page.
                     _SettingsRow(
-                      icon: Icons.info_outline_rounded,
-                      label: i18n.settingsAppVersion,
-                      value: state.appVersion.isEmpty ? '—' : state.appVersion,
-                      monoValue: true,
+                      icon: Icons.feedback_outlined,
+                      label: i18n.feedbackTitle,
+                      chevron: true,
+                      onTap: () => unawaited(
+                        context.push(
+                          AppRoutes.feedbackLocation(from: AppRoutes.settings),
+                        ),
+                      ),
                     ),
                     _UpdateCheckRow(state: state, bloc: bloc),
                     if (_showEnvironment)
@@ -322,7 +328,7 @@ class _SettingsView extends StatelessWidget {
                 ),
                 const SizedBox(height: AppTheme.space24),
                 const _TdxAttribution(),
-                _AppIdentityFooter(version: state.appVersion),
+                const _AppIdentityFooter(),
               ],
             ),
           ),
@@ -701,21 +707,13 @@ class _UpdateCheckRow extends StatelessWidget {
       _ => i18n.settingsUpdateCheck,
     };
 
-    final value = switch (state.updateCheck) {
-      UpdateCheck.idle => null,
-      UpdateCheck.checking => i18n.settingsUpdateChecking,
-      UpdateCheck.upToDate => i18n.settingsUpdateUpToDate,
-      UpdateCheck.failed => i18n.settingsUpdateFailed,
-      UpdateCheck.available => state.latestVersion,
-    };
-
     return _SettingsRow(
       icon: Icons.system_update_rounded,
       label: label,
-      value: value,
+      value: _value(i18n),
       // Versions are figures, so they get mono like every other one; the
       // status strings are prose and stay in the body face.
-      monoValue: found,
+      monoValue: _showsVersion,
       // Ink, not a status colour: the design system reserves hue for transit
       // line identity, so a found release is emphasised by contrast alone.
       valueColor: found ? cs.onSurface : null,
@@ -723,6 +721,21 @@ class _UpdateCheckRow extends StatelessWidget {
       onTap: _tapHandler(url),
     );
   }
+
+  // Before a check runs, the row carries the installed version: it is the
+  // number the check compares against, and the page shows it nowhere else.
+  String? _value(AppI18n i18n) => switch (state.updateCheck) {
+    UpdateCheck.idle => state.appVersion.isEmpty ? null : state.appVersion,
+    UpdateCheck.checking => i18n.settingsUpdateChecking,
+    UpdateCheck.upToDate => i18n.settingsUpdateUpToDate,
+    UpdateCheck.failed => i18n.settingsUpdateFailed,
+    UpdateCheck.available => state.latestVersion,
+  };
+
+  bool get _showsVersion => switch (state.updateCheck) {
+    UpdateCheck.idle || UpdateCheck.available => true,
+    _ => false,
+  };
 
   VoidCallback? _tapHandler(Uri? url) => switch (state.updateCheck) {
     UpdateCheck.checking => null,
@@ -841,32 +854,23 @@ class _SettingsRow extends StatelessWidget {
 /// Closes the list with the app's own name and version, so the About group
 /// isn't the only place the app identifies itself.
 class _AppIdentityFooter extends StatelessWidget {
-  const _AppIdentityFooter({required this.version});
-
-  final String version;
+  const _AppIdentityFooter();
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // The version lives on the update row above, so the footer names the app
+    // and nothing else.
     return Padding(
       padding: const EdgeInsets.only(top: 28, bottom: AppTheme.space8),
-      child: Column(
-        children: [
-          Text(
-            AppI18n.of(context).appName,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: cs.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-            ),
+      child: Center(
+        child: Text(
+          AppI18n.of(context).appName,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: cs.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
           ),
-          if (version.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              version,
-              style: AppTextStyles.memo.copyWith(color: cs.outline),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }

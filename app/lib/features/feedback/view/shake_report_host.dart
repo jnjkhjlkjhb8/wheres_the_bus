@@ -9,6 +9,7 @@ import 'package:smooth_sheets/smooth_sheets.dart' show SheetOffset;
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/diagnostics/feedback_subject.dart';
 import 'package:wheres_the_bus/core/haptics/haptic_service.dart';
 import 'package:wheres_the_bus/core/sensors/shake_recognizer.dart';
 import 'package:wheres_the_bus/core/storage/hive_store.dart';
@@ -146,7 +147,14 @@ class _ShakeReportHostState extends State<ShakeReportHost> {
       _asking = false;
     }
     if (!mounted || confirmed != true) return;
-    unawaited(router.push(AppRoutes.feedbackLocation(from: screen)));
+    unawaited(
+      router.push(
+        AppRoutes.feedbackLocation(
+          from: screen,
+          about: FeedbackSubject.current,
+        ),
+      ),
+    );
   }
 
   @override

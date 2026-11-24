@@ -41,6 +41,7 @@ import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_state.dart';
 import 'package:wheres_the_bus/features/favorites/widgets/favorite_tile.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_bloc.dart';
+import 'package:wheres_the_bus/features/home/bloc/nearby_eta_cubit.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_event.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_state.dart';
 import 'package:wheres_the_bus/features/home/bloc/nearby_viewport_query.dart';
@@ -61,6 +62,7 @@ import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/edge_fade.dart';
 import 'package:wheres_the_bus/shared/widgets/error_state_view.dart';
+import 'package:wheres_the_bus/shared/widgets/filter_chip_group.dart';
 import 'package:wheres_the_bus/shared/widgets/route_tab_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
@@ -349,7 +351,12 @@ HomeBackStep homeBackStep({
 Widget buildNearbyRowForTest({
   required NearStationViewModel station,
   required ValueChanged<NearStationViewModel> onStationTap,
-}) => _NearbyStationRow(station: station, onStationTap: onStationTap);
+  List<BusStopArrivalItem> arrivals = const [],
+}) => _NearbyStationRow(
+  station: station,
+  onStationTap: onStationTap,
+  arrivals: arrivals,
+);
 
 @visibleForTesting
 Widget buildFilterGroupForTest({

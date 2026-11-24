@@ -8,7 +8,6 @@ import 'package:wheres_the_bus/features/bus/bloc/bus_route_bloc.dart';
 import 'package:wheres_the_bus/features/bus/view/bus_route_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
-import 'package:wheres_the_bus/shared/widgets/alight_track/alight_swipe_row.dart';
 import 'package:wheres_the_bus/shared/widgets/transit_timeline.dart';
 
 TimelineStop _stop(
@@ -59,7 +58,7 @@ void main() {
     String? lead,
     String? bound,
     ValueChanged<String>? onPickStop,
-    void Function(String, int)? onSwipeVehicle,
+    void Function(String, int)? onBoardVehicle,
     ValueChanged<String>? onTapStop,
     ValueChanged<String>? onTapVehicle,
     ThemeData? theme,
@@ -82,7 +81,7 @@ void main() {
             leadStopUid: lead,
             boundPlate: bound,
             onPickStop: onPickStop,
-            onSwipeVehicle: onSwipeVehicle,
+            onBoardVehicle: onBoardVehicle,
             onTapStop: onTapStop,
             onTapVehicle: onTapVehicle,
           ),
@@ -173,22 +172,26 @@ void main() {
       _stop('b', live: true, time: '3', plate: plate),
     ];
 
-    testWidgets('swipes only with a plate, a handler and no pick in flight', (
+    testWidgets('offers 我在這台車 only with a plate, a handler and no pick', (
       tester,
     ) async {
-      void swipe(String plate, int index) {}
+      final boarded = <(String, int)>[];
+      void board(String plate, int index) => boarded.add((plate, index));
+      final button = find.text('我在這台車');
 
-      await pump(tester, withBus('AB-1'), onSwipeVehicle: swipe);
-      expect(find.byType(AlightSwipeRow), findsOneWidget);
+      await pump(tester, withBus('AB-1'), onBoardVehicle: board);
+      expect(button, findsOneWidget);
+      await tester.tap(button);
+      expect(boarded, [('AB-1', 1)]);
 
-      await pump(tester, withBus(''), onSwipeVehicle: swipe);
-      expect(find.byType(AlightSwipeRow), findsNothing);
+      await pump(tester, withBus(''), onBoardVehicle: board);
+      expect(button, findsNothing);
 
       await pump(tester, withBus('AB-1'));
-      expect(find.byType(AlightSwipeRow), findsNothing);
+      expect(button, findsNothing);
 
-      await pump(tester, withBus('AB-1'), onSwipeVehicle: swipe, picking: true);
-      expect(find.byType(AlightSwipeRow), findsNothing);
+      await pump(tester, withBus('AB-1'), onBoardVehicle: board, picking: true);
+      expect(button, findsNothing);
     });
 
     testWidgets('is tappable only with a plate, a handler and no pick', (

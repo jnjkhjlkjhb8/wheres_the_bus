@@ -11,6 +11,7 @@ class _RouteSheet extends StatelessWidget {
     required this.isLoading,
     required this.onDirectionChanged,
     required this.sheetAnimation,
+    required this.subRouteUid,
     required this.routeName,
     required this.dirNames,
     required this.routeState,
@@ -20,7 +21,7 @@ class _RouteSheet extends StatelessWidget {
     required this.leadStopUid,
     required this.boundPlate,
     required this.onPickStop,
-    required this.onSwipeVehicle,
+    required this.onBoardVehicle,
     required this.onCancelPick,
     required this.onTapStop,
     required this.onTapVehicle,
@@ -35,6 +36,7 @@ class _RouteSheet extends StatelessWidget {
   final bool isLoading;
   final ValueChanged<int> onDirectionChanged;
   final Animation<double> sheetAnimation;
+  final String subRouteUid;
   final String routeName;
   final List<String> dirNames;
   final BusRouteState routeState;
@@ -57,8 +59,8 @@ class _RouteSheet extends StatelessWidget {
 
   final void Function(String uid) onPickStop;
 
-  /// Swiping a vehicle marker right opens the flow bound to that plate.
-  final void Function(String plate, int markerIndex) onSwipeVehicle;
+  /// 「我在這台車」 on a vehicle marker opens the flow bound to that plate.
+  final void Function(String plate, int markerIndex) onBoardVehicle;
 
   /// Leaves pick-mode with nothing started.
   final VoidCallback onCancelPick;
@@ -139,7 +141,7 @@ class _RouteSheet extends StatelessWidget {
                     leadStopUid: leadStopUid,
                     boundPlate: boundPlate,
                     onPickStop: onPickStop,
-                    onSwipeVehicle: onSwipeVehicle,
+                    onBoardVehicle: onBoardVehicle,
                     onTapStop: onTapStop,
                     onTapVehicle: onTapVehicle,
                   ),
@@ -185,8 +187,13 @@ class _RouteSheet extends StatelessWidget {
                           AppTheme.space16,
                           0,
                         ),
+                        // The raised sheet covers the floating app bar, so
+                        // its two controls come along into this row.
                         child: Row(
                           children: [
+                            AppBarBackButton(
+                              onTap: () => unawaited(context.maybePopOrHome()),
+                            ),
                             Text(
                               routeName,
                               style: AppTextStyles.bodyRegular.copyWith(
@@ -205,7 +212,13 @@ class _RouteSheet extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                            ],
+                            ] else
+                              const Spacer(),
+                            BookmarkButton(
+                              routeType: 'bus',
+                              routeKey: subRouteUid,
+                              routeLabel: routeName,
+                            ),
                           ],
                         ),
                       ),
@@ -288,7 +301,9 @@ class _RouteSheet extends StatelessWidget {
   }
 
   Widget _soleDirection(BuildContext context, int sole) {
-    final name = dirNames[sole].isNotEmpty ? dirNames[sole] : routeName;
+    final name = dirNames[sole].isNotEmpty
+        ? _towards(context, dirNames[sole])
+        : routeName;
     return AppStaticSegment(
       label: name,
       leading: Icons.repeat_rounded,
@@ -296,8 +311,18 @@ class _RouteSheet extends StatelessWidget {
     );
   }
 
+  // Headsigns are bare terminus names. Alone on a button 「板橋」 reads as a
+  // place, not a direction, so it is said as 「往 板橋」 like every other
+  // headsign in the app; one that already carries 往 is left alone.
+  String _towards(BuildContext context, String headsign) =>
+      headsign.startsWith('往')
+      ? headsign
+      : AppI18n.of(context).towardsSpaced(headsign);
+
   String _directionName(BuildContext context, int direction) {
-    if (dirNames[direction].isNotEmpty) return dirNames[direction];
+    if (dirNames[direction].isNotEmpty) {
+      return _towards(context, dirNames[direction]);
+    }
     return direction == 0
         ? AppI18n.of(context).busDirectionOutbound
         : AppI18n.of(context).busDirectionInbound;

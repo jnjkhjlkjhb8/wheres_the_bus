@@ -56,17 +56,11 @@ class _NavHeader extends StatelessWidget {
     required this.route,
     required this.activeLeg,
     required this.walkStepIndex,
-    required this.onEnd,
   });
 
   final PlanRoute route;
   final int activeLeg;
   final int walkStepIndex;
-
-  /// Ends the journey. The header is navigation's only chrome, so it carries
-  /// the way out: system back does the same thing (PopScope), but a
-  /// full-screen map has to show one.
-  final VoidCallback onEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -83,9 +77,8 @@ class _NavHeader extends StatelessWidget {
       // Clip so the tinted 「接著」 strip honours the card's bottom corners.
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: cs.brightness == Brightness.light
-            ? Colors.white
-            : cs.surfaceContainerHigh,
+        // The raised level in both modes (white in light, #282828 in dark).
+        color: cs.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(AppTheme.radiusCard),
         boxShadow: AppShadows.floating,
       ),
@@ -114,20 +107,6 @@ class _NavHeader extends StatelessWidget {
                   buildWhen: (p, c) => p.phase != c.phase || p.eta != c.eta,
                   builder: (context, js) =>
                       _headerTrailing(context, section, js, reduce),
-                ),
-                const SizedBox(width: AppTheme.space8),
-                Pressable(
-                  onTap: onEnd,
-                  semanticLabel: AppI18n.of(context).goEndNavigation,
-                  minTapSize: 44,
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppTheme.space4),
-                    child: Icon(
-                      Icons.close_rounded,
-                      size: 20,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
                 ),
               ],
             ),
@@ -241,12 +220,13 @@ class _NavHeader extends StatelessWidget {
           _stepDistanceLine(context, metersToManeuver),
           if (metersToManeuver != null) ...[
             const SizedBox(height: AppTheme.space2),
+            // Two lines: a long street name cut short is the one thing a
+            // walker needs from this sentence.
             Text(
               announced.instruction,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: AppTextStyles.bodyLarge.copyWith(
-                fontSize: 15,
                 fontWeight: FontWeight.w600,
                 color: cs.onSurface,
               ),
@@ -264,11 +244,7 @@ class _NavHeader extends StatelessWidget {
         AppI18n.of(context).goArrivingSoon,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: AppTextStyles.bodyLarge.copyWith(
-          fontSize: 22,
-          fontWeight: FontWeight.w700,
-          color: cs.onSurface,
-        ),
+        style: AppTextStyles.heading1.copyWith(color: cs.onSurface),
       );
     }
     final (value, unit) = _stepDistanceParts(
@@ -281,7 +257,9 @@ class _NavHeader extends StatelessWidget {
           TextSpan(text: value),
           TextSpan(
             text: ' $unit',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            style: AppTextStyles.bodyLarge.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -321,19 +299,14 @@ class _NavHeader extends StatelessWidget {
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: AppTextStyles.bodyLarge.copyWith(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: cs.onSurface,
-          ),
+          style: AppTextStyles.heading2.copyWith(color: cs.onSurface),
         ),
         const SizedBox(height: AppTheme.space2),
         Text(
           sub,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: AppTextStyles.bodySmall.copyWith(
-            fontSize: 13,
+          style: AppTextStyles.bodyRegular.copyWith(
             color: cs.onSurfaceVariant,
           ),
         ),
@@ -366,7 +339,6 @@ class _NavHeader extends StatelessWidget {
             Text(
               label,
               style: AppTextStyles.bodySmall.copyWith(
-                fontSize: 11,
                 color: cs.onSurfaceVariant,
               ),
             ),
@@ -471,7 +443,6 @@ class _NextStrip extends StatelessWidget {
             Text(
               AppI18n.of(context).goNext,
               style: AppTextStyles.bodySmall.copyWith(
-                fontSize: 12.5,
                 color: cs.onSurfaceVariant,
               ),
             ),
@@ -484,7 +455,7 @@ class _NextStrip extends StatelessWidget {
                   children: [
                     TextSpan(
                       text: step.instruction,
-                      style: TextStyle(
+                      style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: cs.onSurface,
                       ),
@@ -495,12 +466,112 @@ class _NextStrip extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: AppTextStyles.bodySmall.copyWith(
-                  fontSize: 12.5,
                   color: cs.onSurfaceVariant,
                 ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Navigation's way out and its sense of the whole trip, at the bottom where
+/// the thumb is and away from the turn instruction it used to sit beside.
+class _NavBottomBar extends StatelessWidget {
+  const _NavBottomBar({
+    required this.route,
+    required this.activeLeg,
+    required this.onEnd,
+  });
+
+  final PlanRoute route;
+  final int activeLeg;
+  final VoidCallback onEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    final arrival = formatClock(route.endTime);
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        border: Border(top: BorderSide(color: cs.outlineVariant)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.space16,
+            AppTheme.space12,
+            AppTheme.space16,
+            AppTheme.space12,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      i18n.towards(_lastNamedArrival(i18n, route.sections)),
+                      style: AppTextStyles.heading2,
+                    ),
+                    const SizedBox(height: AppTheme.space2),
+                    Text(
+                      _progress(i18n, arrival),
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppTheme.space12),
+              _EndButton(onTap: onEnd),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _progress(AppI18n i18n, String arrival) {
+    final legs = i18n.goLegProgress(activeLeg + 1, route.sections.length);
+    return arrival.isEmpty ? legs : '$legs · ${i18n.goArrivesAt(arrival)}';
+  }
+}
+
+class _EndButton extends StatelessWidget {
+  const _EndButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final label = AppI18n.of(context).goEndNavigation;
+    return Pressable(
+      onTap: onTap,
+      semanticLabel: label,
+      minTapSize: 44,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          border: Border.all(color: cs.outline),
+          borderRadius: BorderRadius.circular(AppTheme.radiusButton),
+        ),
+        child: Text(
+          label,
+          style: AppTextStyles.bodyRegular.copyWith(
+            fontWeight: FontWeight.w600,
+            color: cs.onSurface,
+          ),
         ),
       ),
     );

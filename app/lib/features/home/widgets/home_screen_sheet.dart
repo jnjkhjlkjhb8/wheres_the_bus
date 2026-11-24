@@ -163,7 +163,9 @@ extension _HomeScreenSheetX on _HomeScreenState {
           .pushAndRemoveUntil(
             PagedSheetRoute<void>(
               scrollConfiguration: const SheetScrollConfiguration(),
-              initialOffset: AppSheetSnap.half,
+              // Full, not half: at half the query button sat below the fold.
+              // It is a form to fill in, not a list to glance at over the map.
+              initialOffset: AppSheetSnap.full,
               snapGrid: AppSheetSnap.grid,
               builder: (_) => const HomeRailQuerySheet(),
             ),

@@ -158,6 +158,7 @@ class BusStationMember {
     required this.stationName,
     required this.lat,
     required this.lon,
+    this.routes = const [],
   });
 
   final String stationUid;
@@ -165,6 +166,10 @@ class BusStationMember {
   final String stationName;
   final double lat;
   final double lon;
+
+  /// Routes that stop here, from static data and without an estimate, so the
+  /// page can list them before (or without) a live frame.
+  final List<BusStopArrival> routes;
 }
 
 enum CrowdLevel { unknown, comfortable, normal, crowded }

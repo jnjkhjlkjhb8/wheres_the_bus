@@ -22,6 +22,8 @@ enum NearbyFilter {
   }
 }
 
+/// The same chip as search and the planner: one chip style app-wide, where
+/// home used to paint its own filled variant.
 class _FilterButtonGroup extends StatelessWidget {
   const _FilterButtonGroup({
     required this.selectedFilter,
@@ -33,51 +35,16 @@ class _FilterButtonGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    const filters = NearbyFilter.values;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    final i18n = AppI18n.of(context);
+    return FilterChipGroup<NearbyFilter>(
+      options: {
+        for (final filter in NearbyFilter.values) filter: filter.labelOf(i18n),
+      },
+      selected: {selectedFilter},
+      onToggle: onFilterChanged,
       padding: const EdgeInsets.symmetric(
         horizontal: AppTheme.space16,
         vertical: AppTheme.space12,
-      ),
-      child: Row(
-        spacing: AppTheme.space8,
-        children: [
-          for (final filter in filters)
-            Pressable(
-              onTap: () => onFilterChanged(filter),
-              // 36 matches the second-layer station chips; the hit target is
-              // widened back to the 44px floor rather than the painted chip.
-              minTapSize: 44,
-              child: AnimatedContainer(
-                duration: AppMotion.micro,
-                curve: AppMotion.easeInOut,
-                height: 36,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppTheme.space16,
-                ),
-                decoration: BoxDecoration(
-                  color: filter == selectedFilter
-                      ? cs.primary
-                      : cs.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  filter.labelOf(AppI18n.of(context)),
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: filter == selectedFilter
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: filter == selectedFilter
-                        ? cs.onPrimary
-                        : cs.onSurface,
-                  ),
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }
@@ -88,9 +55,13 @@ class _NearbyStationsTab extends StatefulWidget {
     required this.onStationTap,
     required this.sheetController,
     required this.sheetTicks,
+    this.busRepository,
   });
 
   final ValueChanged<NearStationViewModel> onStationTap;
+
+  /// Source of the bus rows' next arrivals; the shared repository when null.
+  final BusRepository? busRepository;
   final SheetController sheetController;
 
   /// Offset ticks that stop while a detail page covers this one — the filter
@@ -104,6 +75,25 @@ class _NearbyStationsTab extends StatefulWidget {
 
 class _NearbyStationsTabState extends State<_NearbyStationsTab> {
   NearbyFilter _selectedFilter = NearbyFilter.all;
+  NearbyEtaCubit? _etas;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final etas = _etas ??= NearbyEtaCubit(
+      i18n: AppI18n.of(context),
+      repository: widget.busRepository,
+    )..watch(context.read<NearbyBloc>().state.stations);
+    // A detail page pushed over home covers the list; it runs its own stream.
+    etas.setVisible(ModalRoute.isCurrentOf(context) ?? true);
+  }
+
+  @override
+  void dispose() {
+    unawaited(_etas?.close());
+    super.dispose();
+  }
+
   bool _showReturnMap = false;
   bool _onScrollNotification(ScrollNotification n) {
     if (n.metrics.axis != Axis.vertical) return false;
@@ -266,15 +256,24 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: EdgeInsets.zero,
                 itemCount: items.length,
-                itemBuilder: (context, i) => _NearbyStationRow(
-                  // Composite key: stationId alone is not guaranteed
-                  // unique across transit types in this mixed list.
-                  key: ValueKey(
-                    '${items[i].type.name}:${items[i].stationId}',
-                  ),
-                  station: items[i],
-                  onStationTap: widget.onStationTap,
-                ),
+                itemBuilder: (context, i) =>
+                    BlocSelector<
+                      NearbyEtaCubit,
+                      Map<String, List<BusStopArrivalItem>>,
+                      List<BusStopArrivalItem>
+                    >(
+                      // Composite key: stationId alone is not guaranteed
+                      // unique across transit types in this mixed list.
+                      key: ValueKey(
+                        '${items[i].type.name}:${items[i].stationId}',
+                      ),
+                      selector: (etas) => _arrivalsFor(items[i], etas),
+                      builder: (context, arrivals) => _NearbyStationRow(
+                        station: items[i],
+                        arrivals: arrivals,
+                        onStationTap: widget.onStationTap,
+                      ),
+                    ),
               ),
             ),
           ),
@@ -295,8 +294,27 @@ class _NearbyStationsTabState extends State<_NearbyStationsTab> {
     return (kind, body);
   }
 
+  List<BusStopArrivalItem> _arrivalsFor(
+    NearStationViewModel station,
+    Map<String, List<BusStopArrivalItem>> etas,
+  ) => station.type == NearStationType.bus
+      ? etas[station.stationId] ?? const []
+      : const [];
+
   @override
   Widget build(BuildContext context) {
+    return BlocProvider.value(
+      value: _etas!,
+      child: BlocListener<NearbyBloc, NearbyState>(
+        listenWhen: (previous, next) =>
+            !identical(previous.stations, next.stations),
+        listener: (_, state) => _etas!.watch(state.stations),
+        child: _tabBody(context),
+      ),
+    );
+  }
+
+  Widget _tabBody(BuildContext context) {
     return Column(
       children: [
         _buildFilterRow(context),
@@ -555,6 +573,7 @@ class _NearbyStationRow extends StatelessWidget {
   const _NearbyStationRow({
     required this.station,
     required this.onStationTap,
+    this.arrivals = const [],
     super.key,
   });
 
@@ -563,6 +582,9 @@ class _NearbyStationRow extends StatelessWidget {
 
   final NearStationViewModel station;
   final ValueChanged<NearStationViewModel> onStationTap;
+
+  /// Bus rows only: the next one or two arrivals, soonest first.
+  final List<BusStopArrivalItem> arrivals;
 
   void _onTap(BuildContext context) {
     onStationTap(station);
@@ -623,6 +645,8 @@ class _NearbyStationRow extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  if (station.headsigns.isNotEmpty)
+                    _NearbyHeadsign(headsigns: station.headsigns),
                   const SizedBox(height: AppTheme.space2),
                   Row(
                     children: [
@@ -649,6 +673,10 @@ class _NearbyStationRow extends StatelessWidget {
                 ],
               ),
             ),
+            if (arrivals.isNotEmpty) ...[
+              const SizedBox(width: AppTheme.space12),
+              _NearbyNextArrivals(arrivals: arrivals),
+            ],
             const SizedBox(width: AppTheme.space12),
             Icon(
               Icons.chevron_right_rounded,
@@ -658,6 +686,66 @@ class _NearbyStationRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Where a bus stop's routes go, so two stops of one name can be told apart.
+class _NearbyHeadsign extends StatelessWidget {
+  const _NearbyHeadsign({required this.headsigns});
+
+  final List<String> headsigns;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      AppI18n.of(context).towards(headsigns.join('、')),
+      style: AppTextStyles.bodySmall.copyWith(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+        height: 1.3,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+/// The next one or two buses at a nearby stop: route, then its time in mono.
+class _NearbyNextArrivals extends StatelessWidget {
+  const _NearbyNextArrivals({required this.arrivals});
+
+  final List<BusStopArrivalItem> arrivals;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final a in arrivals)
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '${a.display.label} ',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+                TextSpan(
+                  text: a.source.displayLabelOf(i18n),
+                  style: AppTextStyles.timeValue(
+                    weight: FontWeight.w600,
+                    color: cs.onSurface,
+                  ),
+                ),
+              ],
+            ),
+            maxLines: 1,
+          ),
+      ],
     );
   }
 }

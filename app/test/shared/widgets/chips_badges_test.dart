@@ -100,4 +100,28 @@ void main() {
     expect(toggles, ['bus', 'rail']);
     semantics.dispose();
   });
+
+  testWidgets(
+    'filter chips carry no check glyph and mark selection by weight',
+    (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _app(
+          FilterChipGroup(
+            options: const {'rail': 'Rail', 'bus': 'Bus'},
+            selected: const {'rail'},
+            onToggle: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.check_rounded), findsNothing);
+      FontWeight? weight(String label) =>
+          tester.widget<Text>(find.text(label)).style?.fontWeight;
+      expect(weight('Rail'), FontWeight.w600);
+      expect(weight('Bus'), FontWeight.w400);
+    },
+  );
 }

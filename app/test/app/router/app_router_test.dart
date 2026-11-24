@@ -10,7 +10,10 @@ import 'package:wheres_the_bus/data/models/metro_map_models.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
+import 'package:wheres_the_bus/features/feedback/view/feedback_screen.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
 import 'package:wheres_the_bus/features/metro/bloc/mrt_track_bloc.dart';
 import 'package:wheres_the_bus/features/metro/view/metro_screen.dart';
 import 'package:wheres_the_bus/features/rail/bloc/rail_event.dart';
@@ -47,6 +50,8 @@ void main() {
     final router = AppRouter.createRouter(initialLocation: location);
     final alertBloc = AlertBloc();
     final planBloc = PlanBloc();
+    final previewBloc = PlanPreviewBloc();
+    final tripBloc = TripBloc();
     // The same blocs `app.dart` provides above the router, minus the platform
     // channels: the routed screens read them on build, so a route test without
     // them proves nothing about whether the location resolves.
@@ -58,6 +63,8 @@ void main() {
     addTearDown(router.dispose);
     addTearDown(alertBloc.close);
     addTearDown(planBloc.close);
+    addTearDown(previewBloc.close);
+    addTearDown(tripBloc.close);
     addTearDown(trackBloc.close);
     addTearDown(favoritesBloc.close);
     // Unmount before the test ends: screens that tick (the rail timetable's
@@ -69,6 +76,8 @@ void main() {
         providers: [
           BlocProvider<AlertBloc>.value(value: alertBloc),
           BlocProvider<PlanBloc>.value(value: planBloc),
+          BlocProvider<PlanPreviewBloc>.value(value: previewBloc),
+          BlocProvider<TripBloc>.value(value: tripBloc),
           BlocProvider<MrtTrackBloc>.value(value: trackBloc),
           BlocProvider<FavoritesBloc>.value(value: favoritesBloc),
         ],
@@ -234,6 +243,18 @@ void main() {
       final args = tester.widget<RailScreen>(find.byType(RailScreen)).args;
       expect(args?.originName, isEmpty);
       expect(args?.submit, isFalse);
+    });
+
+    testWidgets('the report form gets its origin and its subject', (
+      tester,
+    ) async {
+      await pumpAt(
+        tester,
+        AppRoutes.feedbackLocation(from: '/bus/route/X', about: '307'),
+      );
+      final screen = tester.widget<FeedbackScreen>(find.byType(FeedbackScreen));
+      expect(screen.fromScreen, '/bus/route/X');
+      expect(screen.about, '307');
     });
 
     testWidgets('search opens on the query the location names', (tester) async {

@@ -5,16 +5,16 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
-import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
-import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/features/bike/bloc/bike_station_bloc.dart';
+import 'package:wheres_the_bus/features/bike/bloc/bike_station_event.dart';
 import 'package:wheres_the_bus/features/bike/bloc/bike_station_state.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/availability_gauge.dart';
 import 'package:wheres_the_bus/shared/widgets/freshness_stamp.dart';
+import 'package:wheres_the_bus/shared/widgets/live_data_notice.dart';
 import 'package:wheres_the_bus/shared/widgets/sheet_detail_header.dart';
 import 'package:wheres_the_bus/shared/widgets/state_cards.dart';
 
@@ -162,10 +162,16 @@ class _StationSheet extends StatelessWidget {
   }
 
   List<Widget> _loadedContent(BuildContext context, BikeStationState state) => [
-    if (state.liveError != null && !state.hasLiveData)
+    if (_liveMissing(state))
       Padding(
         padding: const EdgeInsets.only(bottom: AppTheme.space12),
-        child: _LiveDataNotice(error: state.liveError!),
+        child: LiveDataNotice(
+          title: AppI18n.of(context).bikeLiveUnavailable,
+          body: AppI18n.of(context).bikeLiveUnavailableBody,
+          onReload: () => context.read<BikeStationBloc>().add(
+            const BikeStationStarted(),
+          ),
+        ),
       ),
     AvailabilityGauge(
       available: state.available,
@@ -184,6 +190,11 @@ class _StationSheet extends StatelessWidget {
       ),
     ],
   ];
+
+  /// No live frame yet, and either the stream failed or the wait ran out.
+  bool _liveMissing(BikeStationState state) =>
+      !state.hasLiveData && (state.liveError != null || state.liveWaitExpired);
+
   bool _hasCoordinates(BikeStationState state) =>
       state.lat != 0 || state.lon != 0;
 }
@@ -201,7 +212,9 @@ class _WalkThereButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppButton(
+    // Secondary on purpose: the counts are what this page is for, and a
+    // filled button would outshine them, worst of all when they are dashes.
+    return AppButton.outlined(
       label: AppI18n.of(context).bikePlanRoute,
       icon: Icons.directions_rounded,
       onPressed: () => unawaited(
@@ -217,32 +230,6 @@ class _WalkThereButton extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// Compact inline notice for a live availability stream that never came up —
-/// deliberately smaller than [ErrorStateCard] since the station's static info
-/// and (stale) counts are still shown underneath it.
-class _LiveDataNotice extends StatelessWidget {
-  const _LiveDataNotice({required this.error});
-
-  final AppError error;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Icon(Icons.cloud_off_rounded, size: 16, color: cs.error),
-        const SizedBox(width: AppTheme.space6),
-        Expanded(
-          child: Text(
-            error.titleOf(AppI18n.of(context)),
-            style: AppTextStyles.bodySmall.copyWith(color: cs.error),
-          ),
-        ),
-      ],
     );
   }
 }

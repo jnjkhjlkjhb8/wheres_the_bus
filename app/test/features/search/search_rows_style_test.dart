@@ -34,9 +34,17 @@ class _Search implements SearchRepository {
   }) async => const [_item, _other];
 }
 
+const _inCity = SearchResult(
+  type: SearchResultType.busRoute,
+  uid: 'u3',
+  name: '307',
+  subtitle: '恆春轉運站 → 萬里桐',
+  city: 'PingtungCounty',
+);
+
 class _History implements SearchRecentRepository {
   @override
-  List<SearchResult> all() => const [_item, _other];
+  List<SearchResult> all() => const [_item, _other, _inCity];
   @override
   Future<void> add(SearchResult result) async {}
   @override
@@ -103,7 +111,15 @@ void main() {
       findsOneWidget,
     );
     expectLineHeights(tester);
-    expect(tester.widget<Divider>(find.byType(Divider)).thickness, 0.5);
+    expect(tester.widget<Divider>(find.byType(Divider).first).thickness, 0.5);
+  });
+
+  testWidgets('a recent row leads with its city, like a live result', (
+    tester,
+  ) async {
+    await mount(tester);
+    expect(find.text(searchRowSubtitle(_inCity)), findsOneWidget);
+    expect(searchRowSubtitle(_inCity), isNot(_inCity.subtitle));
   });
 
   testWidgets('result rows: text line height', (tester) async {

@@ -24,7 +24,13 @@ import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_state.dart';
 import 'package:wheres_the_bus/features/go/map/go_plan_overlay.dart';
 import 'package:wheres_the_bus/features/go/model/planned_place.dart';
 import 'package:wheres_the_bus/features/go/navigation/navigation_coordinator.dart';
@@ -41,7 +47,6 @@ import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/app_date_picker.dart';
 import 'package:wheres_the_bus/shared/widgets/app_quantity_selector.dart';
-import 'package:wheres_the_bus/shared/widgets/app_range_slider.dart';
 import 'package:wheres_the_bus/shared/widgets/app_slider.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
@@ -53,6 +58,7 @@ import 'package:wheres_the_bus/shared/widgets/divider_line.dart';
 import 'package:wheres_the_bus/shared/widgets/filter_chip_group.dart';
 
 part 'go_screen_camera.dart';
+part 'go_view.dart';
 part '../widgets/go_navigation_widgets.dart';
 part '../widgets/go_planner_time_widgets.dart';
 part '../widgets/go_planner_waiting_widgets.dart';
@@ -142,7 +148,7 @@ class _GoScreenState extends State<GoScreen> {
     _sheet = SheetController();
     _previewSheet = SheetController();
     _navigationCoordinator = NavigationCoordinator(
-      planBloc: context.read<PlanBloc>(),
+      tripBloc: context.read<TripBloc>(),
       journeySessionBloc: context.read<JourneySessionBloc>(),
       liveActivityEnabled: () =>
           SettingsRepository.instance.liveActivityEnabled,
@@ -150,7 +156,7 @@ class _GoScreenState extends State<GoScreen> {
       onAutoAction: _onAutoNavAction,
       onFollowUpdate: _onFollowUpdate,
     );
-    if (context.read<PlanBloc>().state.activeLegIndex == null) {
+    if (context.read<TripBloc>().state.activeLegIndex == null) {
       unawaited(_initOrigin());
     }
     unawaited(_loadCapabilities());
@@ -272,6 +278,9 @@ class _GoScreenState extends State<GoScreen> {
     final when = _queryTime();
     String two(int v) => v.toString().padLeft(2, '0');
     _overlay.invalidate();
+    // An edited or swapped endpoint is a new question; the previewed route
+    // answered the old one.
+    context.read<PlanPreviewBloc>().add(const PreviewClosed());
     context.read<PlanBloc>().add(
       PlanSearchRequested(
         fromLat: from.latLng.latitude,
@@ -419,27 +428,33 @@ class _GoScreenState extends State<GoScreen> {
   bool _sameQueryInstant(_TimeMode mode, DateTime at) =>
       mode == _TimeMode.leaveNow || at == _timeAt;
 
-  // A results card tap selects the route and enters preview (never navigates).
+  // A results card tap, or the saved route shown while waiting, enters
+  // preview (never navigates).
   void _previewRoute(PlanRoute route) {
-    final routes = context.read<PlanBloc>().state.result?.routes ?? const [];
-    _previewRouteIndex(routes.indexOf(route));
+    context.read<PlanPreviewBloc>().add(PreviewOpened(route));
   }
 
-  // A map alternate-polyline tap selects that route and enters preview.
+  // A map alternate-polyline tap previews that route. The index is into the
+  // result the map was last drawn from.
   void _previewRouteIndex(int index) {
-    if (index < 0) return;
-    context.read<PlanBloc>().add(RouteSelected(index: index));
+    final routes = _layerResult?.routes ?? const <PlanRoute>[];
+    if (index < 0 || index >= routes.length) return;
+    _previewRoute(routes[index]);
   }
 
   void _closePreview() {
-    context.read<PlanBloc>().add(const PreviewClosed());
+    context.read<PlanPreviewBloc>().add(const PreviewClosed());
+  }
+
+  void _sortBy(PlanSort sort) {
+    context.read<PlanBloc>().add(PlanSortChanged(sort));
   }
 
   // Preview CTA: navigation starts here (the only entry point), so the heavier
   // haptic that used to live on the card tap moves to this commit.
-  void _startFromPreview(PlanRoute route, int routeIndex) {
+  void _startFromPreview(PlanRoute route) {
     unawaited(HapticService.instance.heavyTap());
-    unawaited(_startNavigation(route: route, routeIndex: routeIndex));
+    unawaited(_startNavigation(route));
   }
 
   void _toggleSave(PlanRoute route) {
@@ -458,18 +473,8 @@ class _GoScreenState extends State<GoScreen> {
     }
   }
 
-  void _openSaved(PlanRoute route) {
-    context.read<PlanBloc>().add(SavedRouteOpened(route));
-  }
-
-  Future<void> _startNavigation({
-    required PlanRoute route,
-    required int routeIndex,
-  }) async {
-    final start = await _navigationCoordinator.start(
-      route: route,
-      routeIndex: routeIndex,
-    );
+  Future<void> _startNavigation(PlanRoute route) async {
+    final start = await _navigationCoordinator.start(route: route);
     if (!mounted) return;
     // (Re)starting navigation re-arms follow and reseeds the puck heading; the
     // compass then rotates the puck (never the map) as fixes drive the camera.
@@ -505,7 +510,7 @@ class _GoScreenState extends State<GoScreen> {
   }
 
   bool _canApplyHeading(double heading) =>
-      context.read<PlanBloc>().state.activeLegIndex != null &&
+      context.read<TripBloc>().state.activeLegIndex != null &&
       shouldApplyHeading(
         last: _lastAppliedHeading,
         next: heading,
@@ -519,7 +524,7 @@ class _GoScreenState extends State<GoScreen> {
     // Cache every fix (even while paused) so the recenter button and the puck
     // always have a fresh position.
     _lastFix = fix;
-    final navigating = context.read<PlanBloc>().state.activeLegIndex != null;
+    final navigating = context.read<TripBloc>().state.activeLegIndex != null;
     // Move the directional puck to the new fix.
     if (navigating) setState(() {});
     _followWhenActive(fix, navigating);
@@ -611,28 +616,86 @@ class _GoScreenState extends State<GoScreen> {
     );
   }
 
+  /// The result the map was last drawn from, so a tap on one of its lines can
+  /// name the route it belongs to.
+  PlanResult? _layerResult;
+
+  // A route drawn on its own (a trip, or a saved route that is not among the
+  // results) is wrapped once and reused, so the overlay's identity memo still
+  // holds across the rebuild every GPS fix triggers.
+  PlanRoute? _aloneRoute;
+  late PlanResult _aloneResult;
+
+  PlanResult _alone(PlanRoute route) {
+    if (!identical(_aloneRoute, route)) {
+      _aloneRoute = route;
+      _aloneResult = PlanResult(routes: [route]);
+    }
+    return _aloneResult;
+  }
+
   @override
   Widget build(BuildContext context) {
-    // The session can reach `done` on its own (last leg alighted, or the 8h
-    // ActivityKit cap). Mirror that back into PlanBloc + PiP so the panel
-    // reverts even when the user didn't tap 結束導航.
-    return BlocListener<JourneySessionBloc, JourneySessionState>(
-      listenWhen: (p, c) => p.phase != c.phase && c.phase == JourneyPhase.done,
-      listener: (context, _) => unawaited(_reconcileJourneyDone()),
+    return MultiBlocListener(
+      listeners: [
+        // The session can reach `done` on its own (last leg alighted, or the
+        // 8h ActivityKit cap). Mirror that back into the trip + PiP so the
+        // panel reverts even when the user didn't tap 結束導航.
+        BlocListener<JourneySessionBloc, JourneySessionState>(
+          listenWhen: (p, c) =>
+              p.phase != c.phase && c.phase == JourneyPhase.done,
+          listener: (context, _) => unawaited(_reconcileJourneyDone()),
+        ),
+        BlocListener<PlanBloc, PlanState>(
+          listenWhen: (p, c) => p.result != c.result,
+          listener: _refreshHeldRoutes,
+        ),
+        BlocListener<PlanBloc, PlanState>(
+          listenWhen: _cameraStatusChanged,
+          listener: _onPlanStatusChanged,
+        ),
+        BlocListener<PlanPreviewBloc, PlanPreviewState>(
+          listenWhen: (p, c) => !_sameItinerary(p.route, c.route),
+          listener: _onPreviewChanged,
+        ),
+      ],
       child: _buildPlanner(),
     );
   }
 
+  // The preview and the trip hold their route by value; the planner's second
+  // message brings the same itineraries with map geometry.
+  void _refreshHeldRoutes(BuildContext context, PlanState state) {
+    final routes = state.result?.routes;
+    if (routes == null) return;
+    context.read<PlanPreviewBloc>().add(PreviewRoutesRefreshed(routes));
+    context.read<TripBloc>().add(TripRoutesRefreshed(routes));
+  }
+
+  // A geometry refresh of the same itinerary is not a new selection, so the
+  // camera stays where the rider left it.
+  bool _sameItinerary(PlanRoute? a, PlanRoute? b) =>
+      identical(a, b) || (a != null && a.id.isNotEmpty && a.id == b?.id);
+
   Widget _buildPlanner() {
-    return BlocConsumer<PlanBloc, PlanState>(
-      listenWhen: (p, c) =>
-          _cameraStatusChanged(p, c) || _routeSelectionChanged(p, c),
+    return BlocBuilder<TripBloc, TripState>(
       // activeStopIndex advances within a leg as the user progresses but does
       // not affect this subtree, so skip those emissions.
       buildWhen: (p, c) =>
-          _plannerStructureChanged(p, c) || _savedRouteStatusChanged(p, c),
-      listener: _onPlannerChanged,
-      builder: _plannerFrame,
+          p.route != c.route ||
+          p.activeLegIndex != c.activeLegIndex ||
+          p.activeWalkStepIndex != c.activeWalkStepIndex,
+      builder: (context, trip) =>
+          BlocBuilder<PlanPreviewBloc, PlanPreviewState>(
+            builder: (context, preview) => BlocBuilder<PlanBloc, PlanState>(
+              buildWhen: (p, c) =>
+                  _queryStateChanged(p, c) || _savedRouteStatusChanged(p, c),
+              builder: (context, plan) => _plannerFrame(
+                context,
+                _GoView(plan: plan, preview: preview.route, trip: trip),
+              ),
+            ),
+          ),
     );
   }
 
@@ -642,66 +705,54 @@ class _GoScreenState extends State<GoScreen> {
   bool _hasCameraStatus(PlanStatus status) =>
       status == PlanStatus.success || status == PlanStatus.loading;
 
-  bool _routeSelectionChanged(PlanState p, PlanState c) =>
-      p.selectedRouteIndex != c.selectedRouteIndex ||
-      p.previewing != c.previewing;
-
-  bool _plannerStructureChanged(PlanState p, PlanState c) =>
-      _queryStateChanged(p, c) ||
-      _routeSelectionChanged(p, c) ||
-      _navigationProgressChanged(p, c);
-
   bool _queryStateChanged(PlanState p, PlanState c) =>
-      p.status != c.status || p.result != c.result || p.error != c.error;
-
-  bool _navigationProgressChanged(PlanState p, PlanState c) =>
-      p.activeLegIndex != c.activeLegIndex ||
-      p.activeWalkStepIndex != c.activeWalkStepIndex;
+      p.status != c.status ||
+      p.result != c.result ||
+      p.error != c.error ||
+      p.sort != c.sort;
 
   bool _savedRouteStatusChanged(PlanState p, PlanState c) =>
       p.savedRoutes.length != c.savedRoutes.length ||
       p.savedRoutesReady != c.savedRoutesReady ||
       p.savedRoutesLoadError != c.savedRoutesLoadError;
 
-  void _onPlannerChanged(BuildContext context, PlanState state) {
-    // Navigation drives its own camera.
-    if (state.activeLegIndex != null) return;
+  // Navigation drives its own camera.
+  bool get _navigating => context.read<TripBloc>().state.active;
+
+  void _onPlanStatusChanged(BuildContext context, PlanState state) {
+    if (_navigating) return;
     if (state.status == PlanStatus.loading) {
       _fitPending();
       return;
     }
-    _framePlannerResult(state);
+    if (context.read<PlanPreviewBloc>().state.previewing) return;
+    _fitResult(state.result);
   }
 
-  void _framePlannerResult(PlanState state) {
-    final result = state.result;
-    if (result == null || result.routes.isEmpty) return;
-    _frameResult(state, result);
-  }
-
-  // Preview frames the selected route; results frame every alternative.
-  void _frameResult(PlanState state, PlanResult result) {
-    if (state.previewing) {
-      final route = _activeRoute(state);
-      if (route != null) _fitTo(route);
-    } else {
-      _fitAll(result);
+  // Preview frames the selected route; closing it frames every alternative.
+  void _onPreviewChanged(BuildContext context, PlanPreviewState state) {
+    if (_navigating) return;
+    final route = state.route;
+    if (route != null) {
+      _fitTo(route);
+      return;
     }
+    _fitResult(context.read<PlanBloc>().state.result);
   }
 
-  Widget _plannerFrame(BuildContext context, PlanState state) {
-    final navigating = state.activeLegIndex != null;
-    final previewing = state.previewing;
-    final route = _activeRoute(state);
-    final result = state.result;
-    final selectedIndex = _selectedIndex(state);
-    _layer = _plannerLayer(context, state, result, selectedIndex, route);
+  void _fitResult(PlanResult? result) {
+    if (result == null || result.routes.isEmpty) return;
+    _fitAll(result);
+  }
+
+  Widget _plannerFrame(BuildContext context, _GoView view) {
+    _layer = _plannerLayer(context, view);
     // Back walks the phases outward: navigating → end nav, previewing →
     // results list, results → destination form, form → leave the screen.
     return PopScope(
-      canPop: !navigating && !previewing && !_destinationIsOurs,
+      canPop: !view.navigating && !view.previewing && !_destinationIsOurs,
       onPopInvokedWithResult: (didPop, _) =>
-          _plannerBack(didPop, navigating, previewing),
+          _plannerBack(didPop, view.navigating, view.previewing),
       child: Scaffold(
         resizeToAvoidBottomInset: false,
         body: AnimatedSwitcher(
@@ -710,48 +761,35 @@ class _GoScreenState extends State<GoScreen> {
               : AppMotion.medium,
           switchInCurve: AppMotion.easeOut,
           switchOutCurve: AppMotion.easeOut,
-          child: _plannerContent(
-            context,
-            state,
-            navigating,
-            previewing,
-            route,
-            result,
-            selectedIndex,
-          ),
+          child: _plannerContent(context, view),
         ),
       ),
     );
   }
 
-  GoMapLayer _plannerLayer(
-    BuildContext context,
-    PlanState state,
-    PlanResult? result,
-    int? selectedIndex,
-    PlanRoute? route,
-  ) {
-    final navigating = state.activeLegIndex != null;
+  GoMapLayer _plannerLayer(BuildContext context, _GoView view) {
     final colors = Theme.of(context).colorScheme;
-    if (!_hasSelectedRoute(result, selectedIndex, route)) {
+    final route = view.route;
+    if (route == null) {
+      _layerResult = null;
       return _overlay.pending(
         origin: _origin?.latLng,
         destination: _dest?.latLng,
         colors: colors,
       );
     }
+    final inResults = view.indexInResults(route);
+    final result = inResults < 0 ? _alone(route) : view.plan.result!;
+    _layerResult = result;
     return _overlay.forPlan(
-      result: result!,
-      selectedIndex: selectedIndex!,
+      result: result,
+      selectedIndex: math.max(inResults, 0),
       colors: colors,
-      activeLeg: state.activeLegIndex,
-      fix: _navigationFix(navigating),
+      activeLeg: view.trip.activeLegIndex,
+      fix: _navigationFix(view.navigating),
       puckHeading: _puckHeading,
     );
   }
-
-  bool _hasSelectedRoute(PlanResult? result, int? index, PlanRoute? route) =>
-      result != null && index != null && route != null;
 
   LatLng? _navigationFix(bool navigating) {
     final fix = _lastFix;
@@ -784,26 +822,19 @@ class _GoScreenState extends State<GoScreen> {
     }
   }
 
-  Widget _plannerContent(
-    BuildContext context,
-    PlanState state,
-    bool navigating,
-    bool previewing,
-    PlanRoute? route,
-    PlanResult? result,
-    int? selectedIndex,
-  ) => _entryVisible(navigating, previewing)
+  Widget _plannerContent(BuildContext context, _GoView view) =>
+      _entryVisible(view)
       ? _PlannerEntry(
           key: const ValueKey('entry'),
           origin: _origin,
           originStatus: _originStatus,
-          savedRoutes: state.savedRoutes,
-          savedRoutesReady: state.savedRoutesReady,
-          savedRoutesLoadError: state.savedRoutesLoadError,
+          savedRoutes: view.plan.savedRoutes,
+          savedRoutesReady: view.plan.savedRoutesReady,
+          savedRoutesLoadError: view.plan.savedRoutesLoadError,
           onEditOrigin: () => _editField(origin: true),
           onSwap: _swap,
           onPickDestination: _pickDestination,
-          onOpenSaved: _openSaved,
+          onOpenSaved: _previewRoute,
           onToggleSave: _toggleSave,
           onBack: context.popOrHome,
           onEnableLocation: () => unawaited(_initOrigin()),
@@ -813,40 +844,25 @@ class _GoScreenState extends State<GoScreen> {
         )
       : KeyedSubtree(
           key: const ValueKey('map'),
-          child: _mapPhase(
-            context,
-            state,
-            navigating: navigating,
-            previewing: previewing,
-            route: route,
-            result: result,
-            selectedIndex: selectedIndex,
-          ),
+          child: _mapPhase(context, view),
         );
 
-  bool _entryVisible(bool navigating, bool previewing) =>
-      !navigating && !previewing && _dest == null;
+  bool _entryVisible(_GoView view) =>
+      !view.navigating && !view.previewing && _dest == null;
 
-  Widget _mapPhase(
-    BuildContext context,
-    PlanState state, {
-    required bool navigating,
-    required bool previewing,
-    required PlanRoute? route,
-    required PlanResult? result,
-    required int? selectedIndex,
-  }) {
+  Widget _mapPhase(BuildContext context, _GoView view) {
+    final navigating = view.navigating;
     return Stack(
       children: [
         Positioned.fill(
           child: GoogleMap(
             style: mapStyleOf(context),
+            colorScheme: mapColorSchemeOf(context),
             initialCameraPosition: const CameraPosition(
               target: _kDefaultPos,
               zoom: 14,
             ),
-            onMapCreated: (c) =>
-                _onMapCreated(c, navigating, previewing, route, result),
+            onMapCreated: (c) => _onMapCreated(c, view),
             // Fires for programmatic moves too, so ignore the app's own
             // animations (via the guard counter) and only treat a real user
             // gesture during navigation as a follow pause.
@@ -882,30 +898,37 @@ class _GoScreenState extends State<GoScreen> {
                 ? null
                 : AppBarBackButton(
                     floating: true,
-                    onTap: () => _mapPhaseBack(previewing),
+                    onTap: () => _mapPhaseBack(view.previewing),
                   ),
             automaticallyImplyLeading: false,
-            middle: _mapHeader(state, navigating, route),
+            middle: _mapHeader(view),
           ),
         ),
-        // Navigating is map-first: the header carries the maneuver and the way
-        // out, and nothing else sits over the route.
-        if (_showPlannerSheet(navigating, route))
-          _sheetSwap(state, route, selectedIndex),
+        // Navigating is map-first: the header carries the maneuver, the bottom
+        // bar the trip and the way out, and nothing else sits over the route.
+        if (!navigating) _sheetSwap(view),
+        if (navigating)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _NavBottomBar(
+              route: view.trip.route!,
+              activeLeg: view.trip.activeLegIndex!,
+              onEnd: _endNav,
+            ),
+          ),
       ],
     );
   }
 
-  bool _showPlannerSheet(bool navigating, PlanRoute? route) =>
-      !navigating || route == null;
-
-  Widget _mapHeader(PlanState state, bool navigating, PlanRoute? route) {
-    if (navigating && route != null) {
+  Widget _mapHeader(_GoView view) {
+    final trip = view.trip;
+    if (view.navigating) {
       return _NavHeader(
-        route: route,
-        activeLeg: state.activeLegIndex!,
-        walkStepIndex: state.activeWalkStepIndex,
-        onEnd: _endNav,
+        route: trip.route!,
+        activeLeg: trip.activeLegIndex!,
+        walkStepIndex: trip.activeWalkStepIndex,
       );
     }
     return _PlannerHeader(
@@ -917,28 +940,20 @@ class _GoScreenState extends State<GoScreen> {
     );
   }
 
-  void _onMapCreated(
-    GoogleMapController controller,
-    bool navigating,
-    bool previewing,
-    PlanRoute? route,
-    PlanResult? result,
-  ) {
+  void _onMapCreated(GoogleMapController controller, _GoView view) {
     _map = controller;
-    if (navigating) return;
+    if (view.navigating) return;
+    final preview = view.preview;
+    if (preview != null) {
+      _fitTo(preview);
+      return;
+    }
+    final result = view.plan.result;
     if (result == null) {
       _fitPending();
       return;
     }
-    _frameCreatedMap(previewing, route, result);
-  }
-
-  void _frameCreatedMap(bool previewing, PlanRoute? route, PlanResult result) {
-    if (previewing && route != null) {
-      _fitTo(route);
-    } else {
-      _fitAll(result);
-    }
+    _fitAll(result);
   }
 
   void _onCameraMoveStarted(bool navigating) {
@@ -954,12 +969,12 @@ class _GoScreenState extends State<GoScreen> {
   Duration _swapDuration(bool reduced, Duration duration) =>
       reduced ? Duration.zero : duration;
 
-  Widget _sheetSwap(PlanState state, PlanRoute? route, int? selectedIndex) {
+  Widget _sheetSwap(_GoView view) {
     final reduce = MediaQuery.disableAnimationsOf(context);
-    final showPreview = state.previewing && route != null;
-    final child = showPreview
-        ? _previewSheetFor(state, route, selectedIndex)
-        : _plannerSheetFor(state);
+    final preview = view.preview;
+    final child = preview != null
+        ? _previewSheetFor(view, preview)
+        : _plannerSheetFor(view.plan);
     return AnimatedSwitcher(
       duration: _swapDuration(reduce, AppMotion.medium),
       reverseDuration: _swapDuration(reduce, AppMotion.micro),
@@ -979,17 +994,7 @@ class _GoScreenState extends State<GoScreen> {
     );
   }
 
-  bool _isFastest(PlanState state, int? index) =>
-      _hasAlternatives(state) && (index ?? 0) == 0;
-
-  bool _hasAlternatives(PlanState state) =>
-      (state.result?.routes.length ?? 0) > 1;
-
-  Widget _previewSheetFor(
-    PlanState state,
-    PlanRoute route,
-    int? selectedIndex,
-  ) => _PreviewSheet(
+  Widget _previewSheetFor(_GoView view, PlanRoute route) => _PreviewSheet(
     key: const ValueKey('preview'),
     controller: _previewSheet,
     // Carry the planner sheet's height into the preview swap.
@@ -1000,12 +1005,12 @@ class _GoScreenState extends State<GoScreen> {
       fallback: AppSheetSnap.halfFrac,
     ),
     route: route,
-    isFastest: _isFastest(state, selectedIndex),
-    isSaved: state.savedKeys.contains(route.savedKey),
+    isFastest: view.isFastest(route),
+    isSaved: view.plan.savedKeys.contains(route.savedKey),
     origin: _origin?.name,
     dest: _dest?.name,
     onBack: _closePreview,
-    onStartNavigation: () => _startFromPreview(route, selectedIndex ?? 0),
+    onStartNavigation: () => _startFromPreview(route),
     onToggleSave: () => _toggleSave(route),
   );
 
@@ -1033,20 +1038,6 @@ class _GoScreenState extends State<GoScreen> {
     onAdjustTime: _adjustTime,
     onPage: _page,
     onToggleSave: _toggleSave,
+    onSort: _sortBy,
   );
-
-  int? _selectedIndex(PlanState state) {
-    final routes = state.result?.routes;
-    if (routes == null || routes.isEmpty) return null;
-    final i = state.selectedRouteIndex ?? 0;
-    return _boundedRouteIndex(i, routes.length);
-  }
-
-  int _boundedRouteIndex(int index, int count) =>
-      index >= 0 && index < count ? index : 0;
-
-  PlanRoute? _activeRoute(PlanState state) {
-    final i = _selectedIndex(state);
-    return i == null ? null : state.result!.routes[i];
-  }
 }

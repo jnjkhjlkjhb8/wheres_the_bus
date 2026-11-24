@@ -319,6 +319,7 @@ class _PlannerSheet extends StatelessWidget {
     required this.onAdjustTime,
     required this.onToggleSave,
     required this.onPage,
+    required this.onSort,
     super.key,
   });
 
@@ -341,6 +342,8 @@ class _PlannerSheet extends StatelessWidget {
   /// Asks the planner for earlier or later departures, carrying the opaque
   /// cursor the last response returned for that direction.
   final void Function(String cursor) onPage;
+
+  final ValueChanged<PlanSort> onSort;
 
   @override
   Widget build(BuildContext context) {
@@ -376,6 +379,16 @@ class _PlannerSheet extends StatelessWidget {
               ],
             ),
           ),
+          if (hasDestination)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.space20,
+                0,
+                AppTheme.space20,
+                AppTheme.space4,
+              ),
+              child: _SortChips(sort: state.sort, onSort: onSort),
+            ),
           const DividerLine(),
           Expanded(
             child: _PlannerBody(
@@ -401,10 +414,12 @@ class _SheetTitle extends StatelessWidget {
 
   final PlanState state;
 
-  String _subtitle(AppI18n i18n, int count) =>
-      state.status == PlanStatus.success && count > 0
-      ? i18n.suggestionCount(count)
-      : i18n.goPlanning;
+  // A failed search must not keep saying 「規劃中」 above its own error.
+  String _subtitle(AppI18n i18n, int count) => switch (state.status) {
+    PlanStatus.success when count > 0 => i18n.suggestionCount(count),
+    PlanStatus.failure => i18n.goPlanFailedSubtitle,
+    _ => i18n.goPlanning,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -426,6 +441,30 @@ class _SheetTitle extends StatelessWidget {
           style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
         ),
       ],
+    );
+  }
+}
+
+/// The four orderings the planner offers. Single choice, so the chip group's
+/// selection is always exactly the current sort.
+class _SortChips extends StatelessWidget {
+  const _SortChips({required this.sort, required this.onSort});
+
+  final PlanSort sort;
+  final ValueChanged<PlanSort> onSort;
+
+  @override
+  Widget build(BuildContext context) {
+    final i18n = AppI18n.of(context);
+    return FilterChipGroup<PlanSort>(
+      options: {
+        PlanSort.fastest: i18n.goSortFastest,
+        PlanSort.cheapest: i18n.goSortCheapest,
+        PlanSort.fewestTransfers: i18n.goSortFewestTransfers,
+        PlanSort.leastWalking: i18n.goSortLeastWalking,
+      },
+      selected: {sort},
+      onToggle: onSort,
     );
   }
 }

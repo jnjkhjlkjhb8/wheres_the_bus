@@ -14,6 +14,7 @@ class FeedbackBloc extends Bloc<FeedbackEvent, FeedbackState> {
       super(const FeedbackState()) {
     on<FeedbackOpened>(_onOpened);
     on<FeedbackSubmitted>(_onSubmitted);
+    on<FeedbackSubjectCleared>(_onSubjectCleared);
   }
 
   final FeedbackRepository _repository;
@@ -27,6 +28,24 @@ class FeedbackBloc extends Bloc<FeedbackEvent, FeedbackState> {
       locale: event.locale,
     );
     emit(state.copyWith(diagnostics: diagnostics));
+  }
+
+  void _onSubjectCleared(
+    FeedbackSubjectCleared _,
+    Emitter<FeedbackState> emit,
+  ) {
+    final d = state.diagnostics;
+    if (d == null) return;
+    emit(
+      state.copyWith(
+        diagnostics: FeedbackDiagnostics(
+          appVersion: d.appVersion,
+          platform: d.platform,
+          osVersion: d.osVersion,
+          locale: d.locale,
+        ),
+      ),
+    );
   }
 
   Future<void> _onSubmitted(

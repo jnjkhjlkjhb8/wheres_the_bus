@@ -37,6 +37,7 @@ import 'package:wheres_the_bus/shared/motion/app_motion.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_spinner.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
+import 'package:wheres_the_bus/shared/widgets/filter_chip_group.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
 
 import '../../support/fakes/map_platform.dart';
@@ -118,6 +119,19 @@ class _Bus extends BusRepository {
             lon: 121.001,
           ),
         ];
+  }
+
+  /// Never closed: a closed live stream would make the home list reconnect.
+  final etaFrames =
+      StreamController<Map<String, List<BusStopArrival>>>.broadcast();
+  int etasCalls = 0;
+
+  @override
+  Stream<Map<String, List<BusStopArrival>>> stationEtas(
+    List<(String, String)> groups,
+  ) {
+    etasCalls++;
+    return etaFrames.stream;
   }
 
   @override
@@ -362,6 +376,14 @@ void main() {
     router.go(AppRoutes.railQuery());
     await flush(tester);
     expect(find.byType(HomeRailQuerySheet), findsOneWidget);
+    // A form opens tall enough to reach its own query button.
+    final controller = tester
+        .widget<PagedSheet>(find.byType(PagedSheet))
+        .controller!;
+    expect(
+      controller.metrics!.offset / controller.metrics!.viewportSize.height,
+      greaterThan(AppSheetSnap.halfFrac + 0.1),
+    );
     router.go(AppRoutes.home);
     await flush(tester);
     expect(find.byType(HomeRailQuerySheet), findsNothing);
@@ -431,6 +453,51 @@ void main() {
     await flush(tester);
     expect(fraction(), closeTo(AppSheetSnap.peekFrac, 0.02));
     await unmount(tester);
+  });
+
+  testWidgets('nearby bus rows say where they go and when the next bus is', (
+    tester,
+  ) async {
+    final near = _Near()
+      ..stations = [
+        const NearStationViewModel(
+          type: NearStationType.bus,
+          stationId: 'group',
+          stationName: 'Test station',
+          lat: 25,
+          lon: 121,
+          walkingMinutes: 1,
+          distanceMeters: 40,
+          city: 'Taipei',
+          headsigns: ['陽明山'],
+        ),
+      ];
+    final bus = _Bus();
+    await mount(tester, near, bus);
+    await tester.drag(
+      find.byType(SheetDragHandle).first,
+      const Offset(0, -700),
+    );
+    await flush(tester);
+    expect(find.text('往陽明山'), findsOneWidget);
+    expect(bus.etasCalls, 1);
+
+    bus.etaFrames.add({
+      'group': [
+        const BusStopArrival(
+          stationId: 'pole-a',
+          subRouteUid: 'sub-260',
+          routeName: '260',
+          destination: '陽明山',
+          estimateSeconds: 180,
+        ),
+      ],
+    });
+    await flush(tester);
+    expect(find.text('260 3分', findRichText: true), findsOneWidget);
+    await unmount(tester);
+    // Leaving home closes the stream rather than leaving it open unseen.
+    expect(bus.etaFrames.hasListener, isFalse);
   });
 
   for (final reduced in [false, true]) {
@@ -1181,10 +1248,10 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the sheet states its search hint and the empty pinned tab', (
+  testWidgets('the sheet states its search hint and the empty favorites tab', (
     tester,
   ) async {
-    final router = await mount(tester, _Near(), _Bus());
+    await mount(tester, _Near(), _Bus());
     final i18n = lookupAppI18n(const Locale('zh'));
     final hint = find.text(i18n.homeSearchHint);
     expect(hint, findsOneWidget);
@@ -1196,19 +1263,49 @@ void main() {
     await flush(tester);
     await tester.tap(find.text(i18n.homeTabFavorites));
     await flush(tester);
-    expect(find.text(i18n.homeNoPinned), findsOneWidget);
+    expect(find.text(i18n.favoritesEmpty), findsOneWidget);
     expect(
-      tester.widget<Text>(find.text(i18n.homeNoPinnedBody)).style!.height,
+      tester.widget<Text>(find.text(i18n.homeFavoritesEmptyBody)).style!.height,
       1.5,
     );
-    await tester.tap(find.text(i18n.homeGoToFavorites));
-    await flush(tester);
-    expect(find.text('favorites destination'), findsOneWidget);
-    router.pop();
-    await flush(tester);
+    // No button into an equally empty favorites page.
+    expect(find.text(i18n.homeGoToFavorites), findsNothing);
     await tester.tap(hint);
     await flush(tester);
     expect(find.text('search destination'), findsOneWidget);
+    await unmount(tester);
+  });
+
+  testWidgets('an unpinned favorite shows on home, after the pinned ones', (
+    tester,
+  ) async {
+    await mount(tester, _Near(), _Bus());
+    await tester.drag(
+      find.byType(SheetDragHandle).first,
+      const Offset(0, -500),
+    );
+    await flush(tester);
+    await tester.tap(
+      find.text(lookupAppI18n(const Locale('zh')).homeTabFavorites),
+    );
+    await flush(tester);
+    // Saved while the tab is on screen: the list has to rebuild for it.
+    await FavoritesRepository.instance.add(
+      const Favorite(type: FavoriteType.busRoute, refId: 'A', title: 'Saved'),
+    );
+    await FavoritesRepository.instance.add(
+      const Favorite(
+        type: FavoriteType.busRoute,
+        refId: 'B',
+        title: 'Pinned',
+        pinned: true,
+      ),
+    );
+    await flush(tester);
+
+    final saved = tester.getTopLeft(find.text('Saved').first).dy;
+    final pinned = tester.getTopLeft(find.text('Pinned').first).dy;
+    expect(pinned, lessThan(saved));
     await unmount(tester);
   });
 
@@ -2010,6 +2107,26 @@ void main() {
         await unmount(tester);
       });
     }
+
+    testWidgets('the nearby filter uses the app-wide chip, margin inside', (
+      tester,
+    ) async {
+      await mount(tester, _Near(), _Bus());
+      await expandSheet(tester);
+
+      final group = tester.widget<FilterChipGroup<NearbyFilter>>(
+        find.byType(FilterChipGroup<NearbyFilter>),
+      );
+      expect(group.selected, {NearbyFilter.all});
+      expect(
+        tester.widget<SingleChildScrollView>(filterRow).padding,
+        const EdgeInsets.symmetric(
+          horizontal: AppTheme.space16,
+          vertical: AppTheme.space12,
+        ),
+      );
+      await unmount(tester);
+    });
 
     testWidgets('a filter that hides every nearby station says so, and one '
         'tap shows them all again', (tester) async {

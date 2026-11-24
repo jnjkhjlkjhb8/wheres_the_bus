@@ -91,6 +91,8 @@ Future<void> _submit(WidgetTester tester) async {
 }
 
 void main() {
+  setUp(FeedbackDraft.clear);
+
   testWidgets('a rejected report does not buzz', (tester) async {
     final calls = _recordPlatformCalls(tester);
     await _pump(tester, _Repo(error: const GrpcError.resourceExhausted()));

@@ -8,6 +8,13 @@ class FavoritesState extends Equatable {
 
   List<Favorite> get pinned => items.where((f) => f.pinned).toList();
 
+  /// Every favorite, pinned ones first. Saving something is enough to put it
+  /// on home; pinning only moves it up.
+  List<Favorite> get forHome => [
+    ...pinned,
+    ...items.where((f) => !f.pinned),
+  ];
+
   bool contains(String id) => items.any((f) => f.id == id);
 
   @override

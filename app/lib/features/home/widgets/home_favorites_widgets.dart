@@ -52,17 +52,17 @@ class _FavoritesTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<FavoritesBloc, FavoritesState>(
-      buildWhen: (p, c) => p.pinned != c.pinned,
+      buildWhen: (p, c) => p.items != c.items,
       builder: (context, state) {
-        final pinned = state.pinned;
-        if (pinned.isEmpty) {
+        final favorites = state.forHome;
+        if (favorites.isEmpty) {
           return const _FavoritesEmpty();
         }
         return EdgeFade(
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
-              ...pinned.map((fav) => FavoriteTile(fav: fav)),
+              ...favorites.map((fav) => FavoriteTile(fav: fav)),
               _SeeMoreButton(),
             ],
           ),
@@ -123,16 +123,12 @@ class _FavoritesEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // No button: the favorites page would be just as empty, so the way in is
+    // the bookmark on a stop or route page, which the body names.
     return _EmptyState(
-      icon: Icons.push_pin_outlined,
-      heading: AppI18n.of(context).homeNoPinned,
-      body: AppI18n.of(context).homeNoPinnedBody,
-      action: (
-        label: AppI18n.of(context).homeGoToFavorites,
-        onTap: () {
-          unawaited(context.push(AppRoutes.favorites));
-        },
-      ),
+      icon: Icons.bookmark_border_rounded,
+      heading: AppI18n.of(context).favoritesEmpty,
+      body: AppI18n.of(context).homeFavoritesEmptyBody,
     );
   }
 }

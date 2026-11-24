@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 import 'package:wheres_the_bus/features/settings/bloc/settings_bloc.dart';
 import 'package:wheres_the_bus/features/settings/bloc/settings_event.dart';
@@ -48,10 +49,16 @@ void main() {
   ) async {
     await tester.pumpWidget(_wrap(buildScreen()));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('目前版本'), 200);
+    await tester.scrollUntilVisible(find.text('檢查更新'), 200);
 
+    // Once, on the update row; the footer no longer repeats it.
     expect(find.text('4.5.6'), findsOneWidget);
     expect(find.text('1.0.0'), findsNothing);
+    // A version is a figure, so it is set in mono like every other one.
+    expect(
+      tester.widget<Text>(find.text('4.5.6')).style?.fontFamily,
+      AppTextStyles.memo.fontFamily,
+    );
   });
 
   testWidgets('FAQ and privacy-policy rows stay out until they have a target', (
@@ -66,7 +73,8 @@ void main() {
 
     expect(find.text('常見問題 FAQ'), findsNothing);
     expect(find.text('隱私權政策'), findsNothing);
-    expect(find.text('目前版本'), findsOneWidget);
+    expect(find.text('目前版本'), findsNothing);
+    expect(find.text('回報問題'), findsOneWidget);
   });
 
   testWidgets('the language row is a live picker showing the current choice', (

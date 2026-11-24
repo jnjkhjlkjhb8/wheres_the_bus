@@ -1,9 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_confirm_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_pick_capsule.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_track_bell.dart';
+import 'package:wheres_the_bus/shared/widgets/native_controls.dart';
+
+import '../../support/helpers/fake_uikit.dart';
 
 Widget _host(Widget child) => MaterialApp(
   localizationsDelegates: AppI18n.localizationsDelegates,
@@ -36,6 +40,44 @@ void main() {
         ),
       );
       expect(find.byIcon(Icons.notifications_active_rounded), findsOneWidget);
+    });
+
+    testWidgets('on a UIKit bar it is a system button that commits', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final uiKit = FakeUiKit(NativeIconButton.viewType);
+      var taps = 0;
+      Future<void> pump({required bool active}) => tester.pumpWidget(
+        _host(
+          UiKitBarScope(
+            child: AlightTrackBell(
+              active: active,
+              onTap: () => taps++,
+              semanticLabel: active ? '已設定' : '設定',
+            ),
+          ),
+        ),
+      );
+      await pump(active: false);
+      await tester.pumpAndSettle();
+      await uiKit.send(tester, 'tap');
+      final idle = tester.widget<NativeIconButton>(
+        find.byType(NativeIconButton),
+      );
+      await pump(active: true);
+      final armed = tester.widget<NativeIconButton>(
+        find.byType(NativeIconButton),
+      );
+      debugDefaultTargetPlatformOverride = null;
+
+      expect((idle.symbol, idle.prominent, idle.label), ('bell', false, '設定'));
+      expect(
+        (armed.symbol, armed.prominent, armed.label),
+        ('bell.badge.fill', true, '已設定'),
+      );
+      expect(taps, 1);
     });
 
     testWidgets('keeps a 44px touch target around its 40px circle', (
@@ -133,6 +175,55 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('開始追蹤'));
       expect(started, [3]);
+    });
+
+    testWidgets('the dock sits on the raised surface, not the scaffold', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(
+            colorScheme: const ColorScheme.dark(
+              surface: Color(0xFF111111),
+              surfaceContainerHigh: Color(0xFF282828),
+            ),
+          ),
+          localizationsDelegates: AppI18n.localizationsDelegates,
+          supportedLocales: AppI18n.supportedLocales,
+          locale: const Locale('zh'),
+          home: Scaffold(
+            body: AlightConfirmBar(
+              targetName: '市政府',
+              lead: 1,
+              onLeadChanged: (_) {},
+              onStart: () {},
+              onCancel: () {},
+            ),
+          ),
+        ),
+      );
+
+      final dock = tester.widget<Material>(
+        find
+            .ancestor(
+              of: find.byType(SafeArea),
+              matching: find.byType(Material),
+            )
+            .first,
+      );
+      expect(dock.color, const Color(0xFF282828));
+      final box = tester.widget<Container>(
+        find
+            .descendant(
+              of: find.byType(SafeArea),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      expect(
+        (box.decoration! as BoxDecoration).color,
+        const Color(0xFF282828),
+      );
     });
 
     testWidgets('an incomplete binding blocks the CTA on its own', (

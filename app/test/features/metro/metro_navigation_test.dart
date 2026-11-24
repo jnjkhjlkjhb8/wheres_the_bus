@@ -33,6 +33,7 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_confirm_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_pick_capsule.dart';
+import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 import 'package:wheres_the_bus/shared/widgets/transport_icon.dart';
@@ -380,6 +381,16 @@ void main() {
     await tester.drag(find.byType(SheetDragHandle), const Offset(0, -600));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text(zhStrings.commonReload));
+    // Names the cause and what still holds, and the reload is a real button.
+    expect(find.text(zhStrings.metroEtaUnavailableBody), findsOneWidget);
+    expect(zhStrings.metroEtaUnavailableBody, isNot(contains('開發者')));
+    expect(
+      find.ancestor(
+        of: find.text(zhStrings.commonReload),
+        matching: find.byType(AppButton),
+      ),
+      findsOneWidget,
+    );
     final eta = tester
         .element(find.byType(RefreshIndicator))
         .read<MetroEtaBloc>();

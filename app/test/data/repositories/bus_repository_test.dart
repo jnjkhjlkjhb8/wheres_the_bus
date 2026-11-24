@@ -70,16 +70,45 @@ void main() {
       expect(frames.single, isEmpty);
     },
   );
+
+  test('stationEtas asks for every group and decodes each one', () async {
+    final station = _FakeBusStationClient(
+      etasFrames: [
+        Resp_Bus_station_etas(
+          groups: {
+            'G1': Bus_StationArrival(
+              routes: [Bus_StopEstimate(routeName: '307', estimate: 120)],
+            ),
+          }.entries,
+        ),
+      ],
+    );
+    final repo = BusRepository(stationClient: station);
+
+    final frames = await repo.stationEtas([
+      ('Taipei', 'G1'),
+      ('NewTaipei', 'G2'),
+    ]).toList();
+
+    expect(
+      [for (final g in station.etasRequest!.groups) (g.city, g.groupUid)],
+      [('Taipei', 'G1'), ('NewTaipei', 'G2')],
+    );
+    expect(frames.single['G1']!.single.routeName, '307');
+  });
 }
 
 class _FakeBusStationClient implements Bus_Station_ServiceClient {
   _FakeBusStationClient({
     Bus_StationGroup? group,
     this.etaFrames = const [],
+    this.etasFrames = const [],
   }) : _group = group ?? Bus_StationGroup();
 
   final Bus_StationGroup _group;
   final List<Resp_Bus_station_eta> etaFrames;
+  final List<Resp_Bus_station_etas> etasFrames;
+  Bus_Ask_StationGroups? etasRequest;
 
   Bus_Ask_StationGroup? groupRequest;
   Bus_Ask_StationGroup? etaRequest;
@@ -102,6 +131,15 @@ class _FakeBusStationClient implements Bus_Station_ServiceClient {
   }) {
     etaRequest = request;
     return FakeResponseStream(Stream.fromIterable(etaFrames));
+  }
+
+  @override
+  ResponseStream<Resp_Bus_station_etas> etas(
+    Bus_Ask_StationGroups request, {
+    CallOptions? options,
+  }) {
+    etasRequest = request;
+    return FakeResponseStream(Stream.fromIterable(etasFrames));
   }
 
   @override

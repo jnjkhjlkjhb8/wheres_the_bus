@@ -195,6 +195,95 @@ void main() {
 
     expect(cancelled, isTrue);
   });
+
+  group('first-frame wait', () {
+    // A live stream that stays open and never sends: the station page's
+    // "waiting forever" case.
+    Stream<BikeAvailability> silent() =>
+        Stream.fromFuture(Completer<BikeAvailability>().future);
+
+    test('marks the wait expired when no frame arrives in time', () async {
+      final bloc = BikeStationBloc(
+        stationUid: 'bike-tpe',
+        repository: _FakeBikeRepository(etaSource: silent),
+        liveWait: const Duration(milliseconds: 20),
+      );
+      addTearDown(bloc.close);
+
+      final state = await bloc.stream.firstWhere((s) => s.liveWaitExpired);
+      expect(state.hasLiveData, isFalse);
+    });
+
+    test('a frame inside the wait means it never expires', () async {
+      const frame = BikeAvailability(
+        generalBikes: 2,
+        electricBikes: 1,
+        returnDocks: 5,
+      );
+      final bloc = BikeStationBloc(
+        stationUid: 'bike-tpe',
+        repository: _FakeBikeRepository(
+          etaSource: () => Stream.value(frame),
+        ),
+        liveWait: const Duration(milliseconds: 20),
+      );
+      addTearDown(bloc.close);
+
+      await bloc.stream.firstWhere((s) => s.hasLiveData);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(bloc.state.liveWaitExpired, isFalse);
+    });
+
+    test('an expiry that races a late frame is ignored', () async {
+      final bloc = BikeStationBloc(
+        stationUid: 'bike-tpe',
+        repository: _FakeBikeRepository(etaSource: silent),
+        liveWait: const Duration(hours: 1),
+      );
+      addTearDown(bloc.close);
+      bloc.add(
+        const BikeStationEtaUpdated(
+          available: 1,
+          returnDocks: 1,
+          generalBikes: 1,
+          electricBikes: 0,
+        ),
+      );
+      await bloc.stream.firstWhere((s) => s.hasLiveData);
+
+      bloc.add(const BikeStationLiveWaitExpired());
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.liveWaitExpired, isFalse);
+    });
+
+    test('a reload clears the expired flag and waits again', () async {
+      final bloc = BikeStationBloc(
+        stationUid: 'bike-tpe',
+        repository: _FakeBikeRepository(etaSource: silent),
+        liveWait: const Duration(milliseconds: 20),
+      );
+      addTearDown(bloc.close);
+      await bloc.stream.firstWhere((s) => s.liveWaitExpired);
+
+      bloc.add(const BikeStationStarted());
+      await bloc.stream.firstWhere((s) => !s.liveWaitExpired);
+      final again = await bloc.stream.firstWhere((s) => s.liveWaitExpired);
+      expect(again.liveWaitExpired, isTrue);
+    });
+
+    test('closing before the wait runs out leaves no timer behind', () async {
+      final bloc = BikeStationBloc(
+        stationUid: 'bike-tpe',
+        repository: _FakeBikeRepository(etaSource: silent),
+        liveWait: const Duration(milliseconds: 20),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await bloc.close();
+      // Adding after close throws, so a surviving timer would surface here.
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(bloc.isClosed, isTrue);
+    });
+  });
 }
 
 class _FakeBikeRepository implements BikeRepository {

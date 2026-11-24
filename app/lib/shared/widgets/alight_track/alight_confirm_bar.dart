@@ -206,8 +206,11 @@ class _Dock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // The raised level, not the scaffold: on `surface` the dock sat darker
+    // than the sheet it covers in dark mode, reading as a hole, not a layer.
+    final raised = cs.surfaceContainerHigh;
     return Material(
-      color: cs.surface,
+      color: raised,
       child: SafeArea(
         top: false,
         child: Container(
@@ -219,7 +222,7 @@ class _Dock extends StatelessWidget {
             AppTheme.space16,
           ),
           decoration: BoxDecoration(
-            color: cs.surface,
+            color: raised,
             border: Border(top: BorderSide(color: cs.outlineVariant)),
           ),
           child: Column(

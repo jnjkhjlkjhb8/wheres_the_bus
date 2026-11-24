@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wheres_the_bus/core/errors/app_error.dart';
 import 'package:wheres_the_bus/data/models/bike_models.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/data/repositories/bike_repository.dart';
 import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/features/bike/bloc/bike_station_bloc.dart';
+import 'package:wheres_the_bus/features/bike/bloc/bike_station_event.dart';
 import 'package:wheres_the_bus/features/bike/view/bike_station_detail_view.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -44,15 +46,23 @@ class _Favorites implements FavoritesRepository {
 
 void main() {
   late _Bike bike;
+  late BikeStationBloc bloc;
   late AppI18n i18n;
 
-  Future<void> mount(WidgetTester tester, {String? name}) async {
+  Future<void> mount(
+    WidgetTester tester, {
+    String? name,
+    Duration? liveWait,
+  }) async {
     bike = _Bike();
     addTearDown(bike.live.close);
-    final bloc = BikeStationBloc(
+    // No wait by default: the bloc outlives the test body here, and a pending
+    // wait timer would trip the pending-timer check before teardown runs.
+    bloc = BikeStationBloc(
       stationUid: 'bike-uid',
       repository: bike,
       name: name,
+      liveWait: liveWait,
     );
     addTearDown(bloc.close);
     final favorites = FavoritesBloc(_Favorites(), ValueNotifier(true));
@@ -189,5 +199,69 @@ void main() {
         );
       });
     }
+  });
+
+  group('live data that never comes', () {
+    testWidgets('an overdue first frame offers a reload, which waits again', (
+      tester,
+    ) async {
+      await mount(
+        tester,
+        name: '測試站',
+        liveWait: const Duration(seconds: 1),
+      );
+      await land(tester, name: '測試站', capacity: 10);
+      expect(find.text(i18n.bikeLiveUnavailable), findsNothing);
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text(i18n.bikeLiveUnavailable), findsOneWidget);
+      expect(find.text(i18n.bikeLiveUnavailableBody), findsOneWidget);
+
+      await tester.tap(find.text(i18n.commonReload));
+      await tester.pump();
+      expect(find.text(i18n.bikeLiveUnavailable), findsNothing);
+
+      // Let the new wait run out, so no timer outlives the test body.
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text(i18n.bikeLiveUnavailable), findsOneWidget);
+    });
+
+    testWidgets('a failed stream shows the same notice at once', (
+      tester,
+    ) async {
+      await mount(tester, name: '測試站');
+      await land(tester, name: '測試站', capacity: 10);
+
+      // Straight to the bloc: a real stream error would schedule the feed's
+      // reconnect timer, which this test has no reason to wait out.
+      bloc.add(BikeStationEtaFailed(AppError.from(Exception('stream down'))));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text(i18n.bikeLiveUnavailable), findsOneWidget);
+    });
+
+    testWidgets('a first frame takes the notice away', (tester) async {
+      await mount(
+        tester,
+        name: '測試站',
+        liveWait: const Duration(seconds: 1),
+      );
+      await land(tester, name: '測試站', capacity: 10);
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text(i18n.bikeLiveUnavailable), findsOneWidget);
+
+      bike.live.add(
+        const BikeAvailability(
+          generalBikes: 1,
+          electricBikes: 0,
+          returnDocks: 9,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text(i18n.bikeLiveUnavailable), findsNothing);
+    });
   });
 }

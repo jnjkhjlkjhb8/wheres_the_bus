@@ -106,7 +106,7 @@ void main() {
     );
 
     expect(find.text('可借 · 一般 8 · 電輔 4'), findsOneWidget);
-    expect(find.text('可還車位'), findsOneWidget);
+    expect(find.text('可還'), findsOneWidget);
     expect(find.text('車輛偏少'), findsNothing);
     expect(find.text('暫停服務'), findsNothing);
   });

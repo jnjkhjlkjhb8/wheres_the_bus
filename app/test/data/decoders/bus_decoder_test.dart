@@ -316,6 +316,33 @@ void main() {
     });
   });
 
+  group('decodeStationEtas', () {
+    test('decodes each group the way one group decodes', () {
+      final resp = Resp_Bus_station_etas(
+        groups: {
+          'G1': Bus_StationArrival(
+            routes: [
+              Bus_StopEstimate(
+                stopUid: 'S1',
+                subRouteUid: 'SR1',
+                routeName: '307',
+                arrivalUnix: Int64(_nowUnix + 180),
+              ),
+            ],
+          ),
+          'G2': Bus_StationArrival(),
+        }.entries,
+      );
+      final out = _decoder.decodeStationEtas(resp, now: _now);
+      expect(out.keys, unorderedEquals(['G1', 'G2']));
+      final a = out['G1']!.single;
+      expect(a.routeName, '307');
+      expect(a.estimateSeconds, 180);
+      expect(a.destination, '去程');
+      expect(out['G2'], isEmpty);
+    });
+  });
+
   group('decodeStationMembers', () {
     test('maps member fields', () {
       final group = Bus_StationGroup(
@@ -340,6 +367,35 @@ void main() {
 
     test('empty members yields empty list', () {
       expect(_decoder.decodeStationMembers(Bus_StationGroup()), isEmpty);
+    });
+
+    test('hands each member its own routes, untimed', () {
+      final group = Bus_StationGroup(
+        members: [
+          Bus_StationGroupMember(stationUid: 'U1'),
+          Bus_StationGroupMember(stationUid: 'U2'),
+        ],
+        routes: [
+          Bus_StopEstimate(
+            stopUid: 'U1',
+            subRouteUid: 'SR1',
+            routeName: '307',
+            destination: '板橋',
+          ),
+          Bus_StopEstimate(stopUid: 'U2', subRouteUid: 'SR2', direction: 1),
+        ],
+      );
+      final [first, second] = _decoder.decodeStationMembers(group);
+      final r = first.routes.single;
+      expect(r.stationId, 'U1');
+      expect(r.subRouteUid, 'SR1');
+      expect(r.routeName, '307');
+      expect(r.destination, '板橋');
+      // The proto's zero estimate would read as 進站中; this must not.
+      expect(r.estimateSeconds, -1);
+      expect(r.stopStatus, -1);
+      expect(r.displayStatus, BusStopDisplayStatus.unknown);
+      expect(second.routes.single.destination, '返程');
     });
   });
 

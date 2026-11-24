@@ -12,6 +12,7 @@ import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platf
 import 'package:hive_ce_flutter/adapters.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/diagnostics/feedback_subject.dart';
 import 'package:wheres_the_bus/data/models/bus_models.dart';
 import 'package:wheres_the_bus/data/models/bus_route_detail.dart';
 import 'package:wheres_the_bus/data/models/fare_type.dart';
@@ -26,10 +27,10 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_confirm_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_pick_capsule.dart';
-import 'package:wheres_the_bus/shared/widgets/alight_track/alight_swipe_row.dart';
 import 'package:wheres_the_bus/shared/widgets/app_accordion.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
+import 'package:wheres_the_bus/shared/widgets/bookmark_button.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
 
 import '../../support/fakes/map_platform.dart';
@@ -81,6 +82,7 @@ class _Bus extends BusRepository {
     this.odFares = false,
     this.overflowFares = false,
     this.missingEndpoints = false,
+    this.bareHeadsigns = false,
     this.emptyStops = false,
     this.operatorUrl = 'https://operator.example/route',
     this.operatorPhone = '(02)2999-2020',
@@ -114,6 +116,9 @@ class _Bus extends BusRepository {
   final bool odFares;
   final bool overflowFares;
   final bool missingEndpoints;
+
+  /// Headsigns as the server sends them: a bare terminus name, no 往.
+  final bool bareHeadsigns;
   final bool emptyStops;
   final String operatorUrl;
   final String operatorPhone;
@@ -135,8 +140,10 @@ class _Bus extends BusRepository {
       departureStopName: missingEndpoints ? '' : startName,
       destinationStopName: missingEndpoints ? '' : endName,
       city: emptyCity ? '' : 'Taipei',
-      headsignGo: missingEndpoints ? '' : '往 End',
-      headsignReturn: missingEndpoints ? '' : '往 Start',
+      headsignGo: missingEndpoints ? '' : (bareHeadsigns ? 'End' : '往 End'),
+      headsignReturn: missingEndpoints
+          ? ''
+          : (bareHeadsigns ? 'Start' : '往 Start'),
       operators: details
           ? [
               BusOperatorInfo(
@@ -447,6 +454,20 @@ void main() {
     );
   }
 
+  testWidgets('a one-way route says its bare headsign as a direction', (
+    tester,
+  ) async {
+    await pump(tester, _Bus(returnOnly: true, bareHeadsigns: true));
+    expect(
+      find.descendant(
+        of: find.byType(AppStaticSegment),
+        matching: find.text('往 Start'),
+      ),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('route fit leaves room for the floating app bar', (
     tester,
   ) async {
@@ -495,6 +516,29 @@ void main() {
     expect(find.text('307'), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets('a raised sheet carries back and bookmark, and back lowers it', (
+    tester,
+  ) async {
+    await pump(tester, _Bus());
+    Finder inSheet(Type type) => find.descendant(
+      of: find.byType(AppSheet),
+      matching: find.byType(type),
+    );
+    expect(inSheet(AppBarBackButton), findsNothing);
+
+    await tester.drag(find.byType(SheetDragHandle), const Offset(0, -600));
+    await tester.pumpAndSettle();
+    expect(inSheet(AppBarBackButton), findsOneWidget);
+    expect(inSheet(BookmarkButton), findsOneWidget);
+
+    await tester.tap(inSheet(AppBarBackButton));
+    await tester.pumpAndSettle();
+    // Back steps the sheet down first, exactly like the system gesture.
+    expect(inSheet(AppBarBackButton), findsNothing);
+    expect(find.byType(BusRouteScreen), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('buffer stop and second section remain visible in the route', (
@@ -594,10 +638,12 @@ void main() {
   Future<void> swipeVehicle(WidgetTester tester) async {
     await tester.drag(find.byType(SheetDragHandle), const Offset(0, -450));
     await flushLive(tester);
-    final row = find.byType(AlightSwipeRow).first;
-    await tester.ensureVisible(row);
+    final board = find
+        .text(lookupAppI18n(const Locale('zh')).alightBoardThisBus)
+        .first;
+    await tester.ensureVisible(board);
     await flushLive(tester);
-    await tester.drag(row, const Offset(400, 0));
+    await tester.tap(board);
     await flushLive(tester);
     expect(find.byType(AlightPickCapsule), findsOneWidget);
   }
@@ -946,6 +992,39 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('the route names itself as a report subject, with direction', (
+    tester,
+  ) async {
+    await pump(tester, _Bus());
+    expect(FeedbackSubject.current, '307 · 往 End');
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(FeedbackSubject.current, isNull);
+
+    await pump(tester, _Bus(bareHeadsigns: true));
+    expect(FeedbackSubject.current, '307 · 往 End');
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    await pump(tester, _Bus(missingEndpoints: true));
+    expect(FeedbackSubject.current, '307');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a bare headsign is said as a direction on the toggle', (
+    tester,
+  ) async {
+    await pump(tester, _Bus(bareHeadsigns: true));
+    final segment = find.byType(AppSlidingSegment<int>);
+    expect(
+      find.descendant(of: segment, matching: find.text('往 End')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: segment, matching: find.text('往 Start')),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     'route opens with stops and selecting return '

@@ -19,6 +19,7 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     BusRepository? repository,
     void Function(Object error, StackTrace stack) reportError =
         CrashReporter.record,
+    this.liveWait = const Duration(seconds: 8),
   }) : _i18n = i18n,
        _repository = repository ?? BusRepository.instance,
        _reportError = reportError,
@@ -27,12 +28,18 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     on<BusStopRetryRequested>(_onStarted);
     on<BusStopArrivalsUpdated>(_onUpdated);
     on<BusStopStationSelected>(_onStationSelected);
+    on<BusStopLiveWaitExpired>(_onLiveWaitExpired);
     on<BusStopFailed>(_onFailed);
     add(const BusStopStarted());
   }
 
   final String? stopId;
   final String? city;
+
+  /// How long the page waits for the first live frame before saying so; null
+  /// never says so.
+  final Duration? liveWait;
+  Timer? _liveWaitTimer;
 
   final AppI18n _i18n;
   final BusRepository _repository;
@@ -50,7 +57,14 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
       emit(state.copyWith(status: BusStopStatus.empty, clearError: true));
       return;
     }
-    emit(state.copyWith(status: BusStopStatus.loading, clearError: true));
+    emit(
+      state.copyWith(
+        status: BusStopStatus.loading,
+        clearError: true,
+        liveWaitExpired: false,
+      ),
+    );
+    _restartLiveWait();
     await _sub?.cancel();
     await _loadStationMembers(id, emit);
     if (isClosed) return;
@@ -64,6 +78,13 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
             BusStopArrivalsUpdated(emission.arrivals, kind: emission.kind),
           ),
         );
+  }
+
+  void _restartLiveWait() {
+    _liveWaitTimer?.cancel();
+    if (liveWait case final wait?) {
+      _liveWaitTimer = Timer(wait, () => add(const BusStopLiveWaitExpired()));
+    }
   }
 
   Future<void> _loadStationMembers(
@@ -87,8 +108,21 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     Emitter<BusStopState> emit,
   ) {
     if (isClosed || members.isEmpty) return;
-    emit(state.copyWith(status: BusStopStatus.loaded, members: members));
+    final (displays, byStation) = _arrivalViews(state.arrivals, members);
+    emit(
+      state.copyWith(
+        status: BusStopStatus.loaded,
+        members: members,
+        displays: displays,
+        arrivalsByStation: byStation,
+      ),
+    );
   }
+
+  void _onLiveWaitExpired(
+    BusStopLiveWaitExpired _,
+    Emitter<BusStopState> emit,
+  ) => emit(state.copyWith(liveWaitExpired: true));
 
   void _onStationSelected(
     BusStopStationSelected event,
@@ -111,15 +145,28 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
   }
 
   (List<BusStopArrivalItem>, Map<String, List<BusStopArrivalItem>>)
-  _arrivalViews(List<BusStopArrival> arrivals) {
+  _arrivalViews(List<BusStopArrival> arrivals, List<BusStationMember> members) {
+    // A route the live frame does not carry still stops here: list it from
+    // the member's static routes, without a time.
+    final live = {for (final a in arrivals) '${a.stationId}:${a.subRouteUid}'};
     final displays = [
       for (final arrival in arrivals) BusStopArrivalItem(_i18n, arrival),
-    ]..sort((a, b) => a.rank.compareTo(b.rank));
+      for (final m in members)
+        for (final r in m.routes)
+          if (!live.contains('${r.stationId}:${r.subRouteUid}'))
+            BusStopArrivalItem(_i18n, r),
+    ]..sort(_byRankThenRoute);
     final byStation = <String, List<BusStopArrivalItem>>{};
     for (final item in displays) {
       byStation.putIfAbsent(item.stationId, () => []).add(item);
     }
     return (displays, byStation);
+  }
+
+  // List.sort is not stable, and every untimed row shares one rank.
+  static int _byRankThenRoute(BusStopArrivalItem a, BusStopArrivalItem b) {
+    final byRank = a.rank.compareTo(b.rank);
+    return byRank != 0 ? byRank : a.display.label.compareTo(b.display.label);
   }
 
   void _updateDecay(
@@ -128,7 +175,7 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
     Emitter<BusStopState> emit,
   ) {
     if (!changed) return;
-    final (displays, byStation) = _arrivalViews(arrivals);
+    final (displays, byStation) = _arrivalViews(arrivals, state.members);
     emit(
       state.copyWith(
         arrivals: arrivals,
@@ -151,7 +198,7 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
       emit(state.copyWith(status: status, clearError: true));
       return;
     }
-    final (displays, byStation) = _arrivalViews(arrivals);
+    final (displays, byStation) = _arrivalViews(arrivals, state.members);
     emit(
       state.copyWith(
         status: status,
@@ -170,6 +217,7 @@ class BusStopBloc extends Bloc<BusStopEvent, BusStopState> {
 
   @override
   Future<void> close() async {
+    _liveWaitTimer?.cancel();
     await _sub?.cancel();
     return super.close();
   }

@@ -42,7 +42,6 @@ void main() {
       nextPageCursor: next,
       previousPageCursor: previous,
     ),
-    selectedRouteIndex: 0,
   );
 
   TextStyle styleOf(WidgetTester tester, String text) =>
@@ -202,7 +201,28 @@ void main() {
       );
       await tester.pump();
       expect(find.byIcon(icon), findsOneWidget);
+      // The title stops claiming a search is still running.
+      expect(find.text(i18n.goPlanFailedSubtitle), findsOneWidget);
+      expect(find.text(i18n.goPlanning), findsNothing);
       await harness.dispose(tester);
     }
+  });
+
+  testWidgets('a failure with no known cause does not blame the network', (
+    tester,
+  ) async {
+    await harness.pump(
+      tester,
+      const PlanState(
+        status: PlanStatus.failure,
+        failure: PlanFailureKind.unknown,
+      ),
+      destination: goTestDestination,
+    );
+    await tester.pump();
+    expect(find.text(i18n.goPlanFailedTitle), findsOneWidget);
+    expect(find.text(i18n.goPlanFailedBody), findsOneWidget);
+    expect(i18n.goPlanFailedBody, isNot(contains('網路')));
+    await harness.dispose(tester);
   });
 }

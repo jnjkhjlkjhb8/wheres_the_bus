@@ -4,6 +4,7 @@ import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_state.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 import 'support/go_harness.dart';
@@ -77,22 +78,15 @@ void main() {
   final i18n = lookupAppI18n(const Locale('zh'));
   final light = AppTheme.light.colorScheme;
 
-  PlanState navigating(PlanSection leg, {int step = 0}) => PlanState(
-    status: PlanStatus.success,
-    result: PlanResult(
-      routes: [
-        PlanRoute(
-          travelTime: 600,
-          startTime: '',
-          endTime: '2026-08-18T09:30:00',
-          transfers: 0,
-          sections: [leg],
-        ),
-      ],
+  TripState navigating(PlanSection leg, {int step = 0}) => goTripOn(
+    PlanRoute(
+      travelTime: 600,
+      startTime: '',
+      endTime: '2026-08-18T09:30:00',
+      transfers: 0,
+      sections: [leg],
     ),
-    selectedRouteIndex: 0,
-    activeLegIndex: 0,
-    activeWalkStepIndex: step,
+    walkStep: step,
   );
 
   Iterable<Text> richTexts(WidgetTester tester) => tester
@@ -116,7 +110,8 @@ void main() {
     ]) {
       await harness.pump(
         tester,
-        navigating(
+        const PlanState(),
+        trip: navigating(
           _leg(
             type: 'walk',
             steps: [
@@ -132,7 +127,7 @@ void main() {
       final text = rich(tester, value);
       expect(text.textSpan!.toPlainText(), '$value $unit', reason: '$meters');
       final spans = (text.textSpan! as TextSpan).children!.cast<TextSpan>();
-      expect(spans.last.style!.fontSize, 15);
+      expect(spans.last.style!.fontSize, 16);
       expect(spans.last.style!.fontWeight, FontWeight.w600);
       expect(text.style!.fontSize, 26);
       expect(text.style!.fontWeight, FontWeight.w700);
@@ -146,7 +141,8 @@ void main() {
   ) async {
     await harness.pump(
       tester,
-      navigating(
+      const PlanState(),
+      trip: navigating(
         _leg(
           type: 'walk',
           steps: [
@@ -160,13 +156,13 @@ void main() {
     );
     await tester.pump();
     final instruction = plain(tester, 'turn here').style!;
-    expect(instruction.fontSize, 15);
+    expect(instruction.fontSize, 16);
     expect(instruction.fontWeight, FontWeight.w600);
     expect(instruction.color, light.onSurface);
     final label = plain(tester, i18n.goNext).style!;
-    expect(label.fontSize, 12.5);
+    expect(label.fontSize, 12);
     final strip = rich(tester, 'then there');
-    expect(strip.style!.fontSize, 12.5);
+    expect(strip.style!.fontSize, 12);
     expect(strip.textSpan!.toPlainText(), 'then there  80 公尺');
     final icons = tester.widgetList<Icon>(find.byType(Icon));
     expect(icons.where((i) => i.size == 36), isNotEmpty);
@@ -176,7 +172,8 @@ void main() {
   testWidgets('arriving soon is a 22pt bold line', (tester) async {
     await harness.pump(
       tester,
-      navigating(
+      const PlanState(),
+      trip: navigating(
         _leg(
           type: 'walk',
           steps: [
@@ -189,7 +186,7 @@ void main() {
     );
     await tester.pump();
     final style = plain(tester, i18n.goArrivingSoon).style!;
-    expect(style.fontSize, 22);
+    expect(style.fontSize, 24);
     expect(style.fontWeight, FontWeight.w700);
     await harness.dispose(tester);
   });
@@ -197,13 +194,14 @@ void main() {
   testWidgets('a walk without steps titles where it heads', (tester) async {
     await harness.pump(
       tester,
-      navigating(_leg(type: 'walk', to: 'Dest', seconds: 600)),
+      const PlanState(),
+      trip: navigating(_leg(type: 'walk', to: 'Dest', seconds: 600)),
     );
     await tester.pump();
     final title = plain(tester, i18n.walkToward('Dest')).style!;
-    expect((title.fontSize, title.fontWeight), (17, FontWeight.w700));
+    expect((title.fontSize, title.fontWeight), (18, FontWeight.w600));
     final sub = plain(tester, i18n.aboutMinutes(10)).style!;
-    expect(sub.fontSize, 13);
+    expect(sub.fontSize, 14);
     final icon = tester
         .widgetList<Icon>(find.byType(Icon))
         .firstWhere((i) => i.icon == Icons.directions_walk_rounded);
@@ -214,7 +212,8 @@ void main() {
   testWidgets('a ride titles its vehicle and what remains', (tester) async {
     await harness.pump(
       tester,
-      navigating(
+      const PlanState(),
+      trip: navigating(
         _leg(type: 'transit', mode: 'BUS', headsign: 'Head', stops: 4),
       ),
     );
@@ -228,7 +227,8 @@ void main() {
     for (final dark in [false, true]) {
       await harness.pump(
         tester,
-        navigating(_leg(type: 'walk')),
+        const PlanState(),
+        trip: navigating(_leg(type: 'walk')),
         dark: dark,
       );
       await tester.pump();
@@ -249,7 +249,11 @@ void main() {
       PlanSection leg, {
       JourneySessionState? journey,
     }) async {
-      final (_, js) = await harness.pump(tester, navigating(leg));
+      final (_, js) = await harness.pump(
+        tester,
+        const PlanState(),
+        trip: navigating(leg),
+      );
       if (journey != null) js.show(journey);
       await tester.pumpAndSettle();
       return js;
@@ -263,7 +267,7 @@ void main() {
         _leg(type: 'walk', arrivalTime: '2026-08-18T08:05:00'),
       );
       expect(plain(tester, '08:05').style!.fontSize, 24);
-      expect(plain(tester, i18n.goExpectedArrival).style!.fontSize, 11);
+      expect(plain(tester, i18n.goExpectedArrival).style!.fontSize, 12);
       await harness.dispose(tester);
     });
 

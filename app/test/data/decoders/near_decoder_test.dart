@@ -38,6 +38,25 @@ void main() {
       expect(byType[NearStationType.thsr]!.stationId, 'thsr1');
     });
 
+    test('carries a bus group city and headsigns', () {
+      final resp = resp_near(
+        nearBusStations: {
+          'g': array_near(
+            nearStations: [
+              _station('g', '站')
+                ..city = 'Taipei'
+                ..headsigns.addAll(['陽明山', '新北投']),
+            ],
+          ),
+        }.entries,
+      );
+
+      final vm = NearDecoder.instance.decode(resp).single;
+
+      expect(vm.city, 'Taipei');
+      expect(vm.headsigns, ['陽明山', '新北投']);
+    });
+
     test('maps every scalar field', () {
       final resp = resp_near(
         nearMrtStations: [_station('mrt1', '捷運站')],

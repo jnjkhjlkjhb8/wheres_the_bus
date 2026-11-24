@@ -38,6 +38,11 @@ class BusStopStationSelected extends BusStopEvent {
   List<Object?> get props => [stationUid];
 }
 
+/// The first live frame did not arrive within the bloc's wait.
+class BusStopLiveWaitExpired extends BusStopEvent {
+  const BusStopLiveWaitExpired();
+}
+
 class BusStopFailed extends BusStopEvent {
   const BusStopFailed(this.error);
 

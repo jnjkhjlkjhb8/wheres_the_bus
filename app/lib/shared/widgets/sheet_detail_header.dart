@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/diagnostics/feedback_subject.dart';
 import 'package:wheres_the_bus/data/models/favorite.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_event.dart';
@@ -14,6 +15,7 @@ import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
 import 'package:wheres_the_bus/shared/widgets/app_snackbar.dart';
 import 'package:wheres_the_bus/shared/widgets/bottom_sheet_shell.dart';
+import 'package:wheres_the_bus/shared/widgets/native_controls.dart';
 
 class SheetDetailHeader extends StatelessWidget {
   const SheetDetailHeader({
@@ -46,6 +48,15 @@ class SheetDetailHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Every station sheet names itself here, so a shake report opened from it
+    // can say which stop it is about without each page wiring that up.
+    return FeedbackSubjectScope(
+      label: title,
+      child: _header(context, cs),
+    );
+  }
+
+  Widget _header(BuildContext context, ColorScheme cs) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -129,28 +140,44 @@ class FavoriteToggleButton extends StatelessWidget {
   double get _iconSize => onPlate ? AppBarMetrics.icon : 22;
 
   @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return BlocBuilder<FavoritesBloc, FavoritesState>(
-      buildWhen: (p, n) => p.contains(favorite.id) != n.contains(favorite.id),
-      builder: (context, state) {
-        final saved = state.contains(favorite.id);
-        return Pressable(
-          onTap: () => _toggle(context),
-          semanticLabel: saved
-              ? AppI18n.of(context).favoriteRemove
-              : AppI18n.of(context).commonFavorite,
-          child: Padding(
-            // 22pt icon + 11pt padding on each side = 44pt hit envelope.
-            padding: _padding,
-            child: Icon(
-              saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-              size: _iconSize,
-              color: cs.onSurface,
-            ),
-          ),
-        );
-      },
+  Widget build(BuildContext context) =>
+      BlocBuilder<FavoritesBloc, FavoritesState>(
+        buildWhen: (p, n) => p.contains(favorite.id) != n.contains(favorite.id),
+        builder: (context, state) =>
+            _button(context, saved: state.contains(favorite.id)),
+      );
+
+  Widget _button(BuildContext context, {required bool saved}) {
+    final label = saved
+        ? AppI18n.of(context).favoriteRemove
+        : AppI18n.of(context).commonFavorite;
+    if (UiKitBarScope.of(context)) {
+      return NativeIconButton(
+        symbol: saved ? 'bookmark.fill' : 'bookmark',
+        label: label,
+        onTap: () => _toggle(context),
+      );
+    }
+    return _drawn(context, saved: saved, label: label);
+  }
+
+  Widget _drawn(
+    BuildContext context, {
+    required bool saved,
+    required String label,
+  }) {
+    return Pressable(
+      onTap: () => _toggle(context),
+      semanticLabel: label,
+      child: Padding(
+        // 22pt icon + 11pt padding on each side = 44pt hit envelope.
+        padding: _padding,
+        child: Icon(
+          saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+          size: _iconSize,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
     );
   }
 }

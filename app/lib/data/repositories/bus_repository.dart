@@ -103,6 +103,22 @@ class BusRepository {
           .eta(Bus_Ask_StationGroup(city: city, groupUid: groupUid))
           .map(BusDecoder.instance.decodeStationEta);
 
+  /// Server-streaming: the home list's groups in one stream, each with its
+  /// few soonest arrivals, keyed by group uid. [groups] are (city, group uid)
+  /// pairs; the server reads at most the first 10.
+  Stream<Map<String, List<BusStopArrival>>> stationEtas(
+    List<(String, String)> groups,
+  ) => _station
+      .etas(
+        Bus_Ask_StationGroups(
+          groups: [
+            for (final (city, uid) in groups)
+              Bus_Ask_StationGroup(city: city, groupUid: uid),
+          ],
+        ),
+      )
+      .map(BusDecoder.instance.decodeStationEtas);
+
   final _stationGroups = <String, List<BusStationMember>>{};
 
   /// Resolves a station group's member stops as decoded domain types.

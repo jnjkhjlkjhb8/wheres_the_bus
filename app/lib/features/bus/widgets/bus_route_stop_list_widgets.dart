@@ -44,7 +44,7 @@ class StopListTab extends StatelessWidget {
     this.leadStopUid,
     this.boundPlate,
     this.onPickStop,
-    this.onSwipeVehicle,
+    this.onBoardVehicle,
     this.onTapStop,
     this.onTapVehicle,
     super.key,
@@ -71,7 +71,7 @@ class StopListTab extends StatelessWidget {
 
   final ValueChanged<String>? onPickStop;
 
-  final void Function(String plate, int markerIndex)? onSwipeVehicle;
+  final void Function(String plate, int markerIndex)? onBoardVehicle;
 
   /// Outside pick-mode a row tap centres the map on that stop's marker, and a
   /// marker tap centres it on the bus — the sheet and the map are two views of
@@ -146,16 +146,25 @@ class StopListTab extends StatelessWidget {
       stops[index - 1].fareSection == 1 &&
       !stops[index].isBuffer;
 
+  // A visible control, not a gesture: the earlier swipe-right had no hint on
+  // screen and fought the left-edge back swipe for the same direction.
   Widget _vehicleRow(BuildContext context, int index, TimelineStop stop) {
     final plate = stop.plate;
     final tappableMarker = _tappableVehicle(context, plate);
-    return plate.isEmpty || onSwipeVehicle == null || picking
-        ? tappableMarker
-        : AlightSwipeRow(
-            rowKey: plate,
-            onSwiped: () => onSwipeVehicle!(plate, index),
-            child: tappableMarker,
-          );
+    final board = onBoardVehicle;
+    if (plate.isEmpty || board == null || picking) return tappableMarker;
+    return Row(
+      children: [
+        Expanded(child: tappableMarker),
+        Padding(
+          padding: const EdgeInsets.only(right: AppTheme.space16),
+          child: AppButton.outlined(
+            label: AppI18n.of(context).alightBoardThisBus,
+            onPressed: () => board(plate, index),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _tappableVehicle(BuildContext context, String plate) {

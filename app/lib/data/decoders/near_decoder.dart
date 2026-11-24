@@ -34,5 +34,7 @@ class NearDecoder {
         walkingMinutes: s.walk,
         distanceMeters: s.distance,
         routed: s.routed,
+        city: s.city,
+        headsigns: s.headsigns,
       );
 }

@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/adapters.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:wheres_the_bus/app/router/app_routes.dart';
+import 'package:wheres_the_bus/core/diagnostics/feedback_subject.dart';
 import 'package:wheres_the_bus/data/repositories/settings_repository.dart';
 import 'package:wheres_the_bus/features/feedback/view/shake_report_host.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -22,6 +23,9 @@ Future<void> _shake(
   }
   await tester.pumpAndSettle();
 }
+
+/// The `about` each opened form was handed, alongside `openedFrom`.
+final _openedAbout = <String?>[];
 
 Future<void> _pump(
   WidgetTester tester,
@@ -44,12 +48,18 @@ Future<void> _pump(
         routes: [
           GoRoute(
             path: AppRoutes.busStop,
-            builder: (_, _) => host(const Scaffold(body: Text('stop'))),
+            builder: (_, _) => host(
+              const FeedbackSubjectScope(
+                label: '臺北車站(鄭州)',
+                child: Scaffold(body: Text('stop')),
+              ),
+            ),
           ),
           GoRoute(
             path: AppRoutes.feedback,
             builder: (_, state) {
               openedFrom.add(state.uri.queryParameters['from']);
+              _openedAbout.add(state.uri.queryParameters['about']);
               return host(const Scaffold(body: Text('form')));
             },
           ),
@@ -68,6 +78,8 @@ void main() {
   tearDownAll(Hive.close);
 
   setUp(() async {
+    _openedAbout.clear();
+    FeedbackSubject.reset();
     samples = StreamController<UserAccelerometerEvent>.broadcast();
     openedFrom = [];
     await Hive.box<dynamic>(
@@ -203,6 +215,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('form'), findsOneWidget);
+    // The stop page's own name rides along, for the form to show back.
+    expect(_openedAbout.last, '臺北車站(鄭州)');
     expect(openedFrom, [AppRoutes.busStop]);
   });
 

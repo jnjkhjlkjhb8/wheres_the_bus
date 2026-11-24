@@ -13,6 +13,7 @@ class BikeStationState extends Equatable {
     this.electricBikes = 0,
     this.loading = true,
     this.hasLiveData = false,
+    this.liveWaitExpired = false,
     this.updatedAt,
     this.error,
     this.liveError,
@@ -32,6 +33,10 @@ class BikeStationState extends Equatable {
   /// is a legitimate reading once this is true; while it's false, the zero
   /// shown is only the field default, not a confirmed empty station (F27).
   final bool hasLiveData;
+
+  /// True once the first live frame is overdue. The gauge stops saying
+  /// 「等待即時資料…」 forever and the page offers a reload instead.
+  final bool liveWaitExpired;
 
   /// When the last live availability frame landed. Shown as a clock time, so
   /// counts that stopped updating are visibly stale rather than silently old.
@@ -54,6 +59,7 @@ class BikeStationState extends Equatable {
     int? electricBikes,
     bool? loading,
     bool? hasLiveData,
+    bool? liveWaitExpired,
     DateTime? updatedAt,
     AppError? error,
     bool clearError = false,
@@ -70,6 +76,7 @@ class BikeStationState extends Equatable {
     electricBikes: electricBikes ?? this.electricBikes,
     loading: loading ?? this.loading,
     hasLiveData: hasLiveData ?? this.hasLiveData,
+    liveWaitExpired: liveWaitExpired ?? this.liveWaitExpired,
     updatedAt: updatedAt ?? this.updatedAt,
     error: clearError ? null : (error ?? this.error),
     liveError: clearLiveError ? null : (liveError ?? this.liveError),
@@ -87,6 +94,7 @@ class BikeStationState extends Equatable {
     electricBikes,
     loading,
     hasLiveData,
+    liveWaitExpired,
     updatedAt,
     error,
     liveError,

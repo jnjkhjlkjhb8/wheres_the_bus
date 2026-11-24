@@ -46,3 +46,8 @@ final class BikeStationEtaFailed extends BikeStationEvent {
 final class BikeStationEtaRecovered extends BikeStationEvent {
   const BikeStationEtaRecovered();
 }
+
+/// The first live frame did not arrive within the bloc's wait.
+final class BikeStationLiveWaitExpired extends BikeStationEvent {
+  const BikeStationLiveWaitExpired();
+}

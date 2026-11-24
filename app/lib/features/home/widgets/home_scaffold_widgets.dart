@@ -13,6 +13,7 @@ extension _HomeScreenScaffold on _HomeScreenState {
           builder: (context, _) => GoogleMap(
             initialCameraPosition: CameraPosition(target: _center, zoom: 15),
             style: mapStyleOf(context),
+            colorScheme: mapColorSchemeOf(context),
             onMapCreated: (controller) {
               _mapController = controller;
               _camCenter = _center;
@@ -390,6 +391,7 @@ extension _HomeScreenScaffold on _HomeScreenState {
                 onStationTap: _onStationTap,
                 sheetController: _sheetController,
                 sheetTicks: _rootSheetTicks,
+                busRepository: widget.busRepository,
               ),
             ],
           ),

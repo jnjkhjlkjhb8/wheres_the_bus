@@ -122,51 +122,12 @@ class MetroArrivalsEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final status = schedule.isEmpty
         ? const MetroServiceStatus(state: MetroServiceState.running)
         : metroServiceStatus(schedule, now ?? DateTime.now());
 
     if (status.state == MetroServiceState.running) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              AppI18n.of(context).metroEtaUnavailable,
-              style: AppTextStyles.bodyRegular.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              AppI18n.of(context).metroEtaUnavailableBody,
-              style: AppTextStyles.bodySmall.copyWith(
-                color: cs.onSurfaceVariant,
-              ),
-            ),
-            if (onRetry != null) ...[
-              const SizedBox(height: AppTheme.space8),
-              // A recovery hint, not the primary action on the screen — plain
-              // text per the design system's Text/Tertiary style, not a
-              // filled button.
-              Pressable(
-                onTap: onRetry,
-                semanticLabel: AppI18n.of(context).commonReload,
-                child: Text(
-                  AppI18n.of(context).commonReload,
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: cs.onSurface,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      );
+      return _UnavailableNotice(onRetry: onRetry);
     }
 
     return _closedServiceCard(context, status);
@@ -272,6 +233,63 @@ class _MetroLiveErrorNotice extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The live feed is down while the line is running. Same shape as the bike
+/// station's notice: what is missing, what still holds, and a reload that
+/// looks like one.
+class _UnavailableNotice extends StatelessWidget {
+  const _UnavailableNotice({this.onRetry});
+
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: AppTheme.space8),
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.space16,
+        AppTheme.space12,
+        AppTheme.space12,
+        AppTheme.space12,
+      ),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  i18n.metroEtaUnavailable,
+                  style: AppTextStyles.bodyRegular.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.space2),
+                Text(
+                  i18n.metroEtaUnavailableBody,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (onRetry case final retry?) ...[
+            const SizedBox(width: AppTheme.space12),
+            AppButton.outlined(label: i18n.commonReload, onPressed: retry),
+          ],
+        ],
+      ),
     );
   }
 }

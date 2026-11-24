@@ -29,3 +29,12 @@ class FeedbackSubmitted extends FeedbackEvent {
   @override
   List<Object?> get props => [category, body];
 }
+
+/// The rider said the report is not about the page it was opened from. The
+/// page location is dropped from what gets sent, along with the subject line.
+class FeedbackSubjectCleared extends FeedbackEvent {
+  const FeedbackSubjectCleared();
+
+  @override
+  List<Object?> get props => [];
+}

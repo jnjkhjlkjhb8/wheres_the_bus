@@ -54,6 +54,37 @@ FeedbackReceipt _receipt() => FeedbackReceipt(
 );
 
 void main() {
+  test('not about this page: the location is dropped, the rest kept', () async {
+    final repo = _FakeRepo()
+      ..collected = const FeedbackDiagnostics(
+        appVersion: '1.4.2+312',
+        platform: 'ios',
+        osVersion: '18.2',
+        screen: '/bus/route/X',
+        locale: 'zh-TW',
+      );
+    final bloc = FeedbackBloc(repository: repo);
+    addTearDown(bloc.close);
+
+    // Before the diagnostics arrive there is nothing to drop.
+    bloc.add(const FeedbackSubjectCleared());
+    await Future<void>.delayed(Duration.zero);
+    expect(bloc.state.diagnostics, isNull);
+
+    bloc.add(const FeedbackOpened(screen: '/bus/route/X', locale: 'zh-TW'));
+    await bloc.stream.firstWhere((s) => s.diagnostics != null);
+    expect(bloc.state.diagnostics!.screen, '/bus/route/X');
+    bloc.add(const FeedbackSubjectCleared());
+    await Future<void>.delayed(Duration.zero);
+
+    final d = bloc.state.diagnostics!;
+    expect(d.screen, isEmpty);
+    expect(d.appVersion, repo.collected.appVersion);
+    expect(d.platform, repo.collected.platform);
+    expect(d.osVersion, repo.collected.osVersion);
+    expect(d.locale, repo.collected.locale);
+  });
+
   test('opening collects the diagnostics the sheet will disclose', () async {
     final repo = _FakeRepo();
     final bloc = FeedbackBloc(repository: repo);

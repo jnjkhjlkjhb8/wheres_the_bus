@@ -13,6 +13,7 @@ import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_shadows.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
+import 'package:wheres_the_bus/core/diagnostics/feedback_subject.dart';
 import 'package:wheres_the_bus/core/haptics/alight_haptics.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/core/location/nearest_within.dart';
@@ -41,9 +42,9 @@ import 'package:wheres_the_bus/shared/motion/motion_aware_scroll.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_confirm_bar.dart';
 import 'package:wheres_the_bus/shared/widgets/alight_track/alight_pick_capsule.dart';
-import 'package:wheres_the_bus/shared/widgets/alight_track/alight_swipe_row.dart';
 import 'package:wheres_the_bus/shared/widgets/app_accordion.dart';
 import 'package:wheres_the_bus/shared/widgets/app_bars.dart';
+import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/app_card.dart';
 import 'package:wheres_the_bus/shared/widgets/app_input.dart';
 import 'package:wheres_the_bus/shared/widgets/app_sliding_segment.dart';
@@ -501,7 +502,7 @@ class _BusRouteScreenState extends State<BusRouteScreen>
     unawaited(_syncMap(_bloc.state));
   }
 
-  void _enterPickFromSwipe(String plate, int markerIndex) {
+  void _enterPickForVehicle(String plate, int markerIndex) {
     setState(() {
       _pinnedPlate = plate;
       _pickingStop = true;
@@ -694,6 +695,15 @@ class _BusRouteScreenState extends State<BusRouteScreen>
   String _directionName(List<String> names, int direction) =>
       names[direction == 0 ? 0 : 1];
 
+  /// 「307 · 往 板橋」: how a report opened from here names its subject.
+  String _reportSubject(BuildContext context, String route, String headsign) {
+    if (route.isEmpty || headsign.isEmpty) return route;
+    final towards = headsign.startsWith('往')
+        ? headsign
+        : AppI18n.of(context).towardsSpaced(headsign);
+    return '$route · $towards';
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -739,11 +749,17 @@ class _BusRouteScreenState extends State<BusRouteScreen>
               resizeToAvoidBottomInset: false,
               body: Stack(
                 children: [
+                  // Paints nothing; names this route for a shake report.
+                  FeedbackSubjectScope(
+                    label: _reportSubject(context, routeName, dirName),
+                    child: const SizedBox.shrink(),
+                  ),
                   Positioned.fill(
                     child: ValueListenableBuilder<BusMapLayer>(
                       valueListenable: _mapLayer,
                       builder: (context, layer, _) => GoogleMap(
                         style: mapStyleOf(context),
+                        colorScheme: mapColorSchemeOf(context),
                         initialCameraPosition: _kDefaultCamera,
                         myLocationEnabled: true,
                         myLocationButtonEnabled: false,
@@ -886,6 +902,7 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                     onDirectionChanged: (dir) =>
                         _changeDirection(context, state, dir),
                     sheetAnimation: sheetAnimation,
+                    subRouteUid: widget.subRouteUid,
                     routeName: routeName,
                     dirNames: dirNames,
                     routeState: state,
@@ -895,7 +912,7 @@ class _BusRouteScreenState extends State<BusRouteScreen>
                     leadStopUid: _leadStopUid,
                     boundPlate: _boundPlate(context),
                     onPickStop: _onPickStop,
-                    onSwipeVehicle: _enterPickFromSwipe,
+                    onBoardVehicle: _enterPickForVehicle,
                     onCancelPick: _cancelPick,
                     onTapStop: _flashStop,
                     onTapVehicle: _togglePin,

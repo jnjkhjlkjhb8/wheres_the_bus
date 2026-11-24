@@ -86,6 +86,7 @@ class BusStopState extends Equatable {
     this.selectedStationUid,
     this.updatedAt,
     this.error,
+    this.liveWaitExpired = false,
   });
 
   final BusStopStatus status;
@@ -105,6 +106,10 @@ class BusStopState extends Equatable {
   final DateTime? updatedAt;
   final AppError? error;
 
+  /// The wait for a first live frame ran out. Rows then come from the routes
+  /// each member lists, and the page says live times are missing.
+  final bool liveWaitExpired;
+
   BusStopState copyWith({
     BusStopStatus? status,
     List<BusStationMember>? members,
@@ -116,6 +121,7 @@ class BusStopState extends Equatable {
     DateTime? updatedAt,
     AppError? error,
     bool clearError = false,
+    bool? liveWaitExpired,
   }) => BusStopState(
     status: status ?? this.status,
     members: members ?? this.members,
@@ -127,6 +133,7 @@ class BusStopState extends Equatable {
         : (selectedStationUid ?? this.selectedStationUid),
     updatedAt: updatedAt ?? this.updatedAt,
     error: clearError ? null : (error ?? this.error),
+    liveWaitExpired: liveWaitExpired ?? this.liveWaitExpired,
   );
 
   // [displays] and [arrivalsByStation] are a deterministic function of
@@ -140,5 +147,6 @@ class BusStopState extends Equatable {
     selectedStationUid,
     updatedAt,
     error,
+    liveWaitExpired,
   ];
 }

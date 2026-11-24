@@ -93,7 +93,8 @@ void main() {
             )
             .first,
       );
-      expect(material.color, scheme.surface);
+      // The raised level, so the dock reads as a layer above the sheet.
+      expect(material.color, scheme.surfaceContainerHigh);
       final dock = tester.widget<Container>(
         find
             .descendant(
@@ -113,7 +114,7 @@ void main() {
         ),
       );
       final decoration = dock.decoration! as BoxDecoration;
-      expect(decoration.color, scheme.surface);
+      expect(decoration.color, scheme.surfaceContainerHigh);
       expect(
         decoration.border,
         Border(top: BorderSide(color: scheme.outlineVariant)),

@@ -45,6 +45,11 @@ void main() {
           path: AppRoutes.settingsOfflineBus,
           builder: (_, _) => const Text('offline-bus-page'),
         ),
+        GoRoute(
+          path: AppRoutes.feedback,
+          builder: (_, state) =>
+              Text('feedback-from-${state.uri.queryParameters['from']}'),
+        ),
         for (final route in routes)
           GoRoute(
             path: route,
@@ -134,6 +139,17 @@ void main() {
     expect(find.text('offline-bus-page'), findsOneWidget);
     // The path is a deep link, so it is pinned rather than only round-tripped.
     expect(AppRoutes.settingsOfflineBus, '/settings/offline-bus');
+  });
+
+  testWidgets('the report row opens the report page, tagged with settings', (
+    tester,
+  ) async {
+    await mount(tester, SettingsRepository(store: InMemorySettingsStore()));
+    final i18n = AppI18n.of(tester.element(find.byType(SettingsScreen)));
+    await tester.scrollUntilVisible(find.text(i18n.feedbackTitle), 150);
+    await tester.tap(find.text(i18n.feedbackTitle));
+    await tester.pumpAndSettle();
+    expect(find.text('feedback-from-/settings'), findsOneWidget);
   });
 
   testWidgets('canceling a picker keeps its previous setting', (tester) async {

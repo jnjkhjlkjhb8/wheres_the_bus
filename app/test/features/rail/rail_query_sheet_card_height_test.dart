@@ -23,7 +23,7 @@ void main() {
     final card = find.byType(AppCard).first;
     final odHeight = tester.getSize(card).height;
 
-    await tester.tap(find.text('車次查詢'));
+    await tester.tap(find.text('改用車次查詢'));
     await tester.pumpAndSettle();
 
     expect(tester.getSize(card).height, odHeight);

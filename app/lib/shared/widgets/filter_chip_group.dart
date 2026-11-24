@@ -10,6 +10,7 @@ class FilterChipGroup<T> extends StatelessWidget {
     required this.options,
     required this.selected,
     required this.onToggle,
+    this.padding = EdgeInsets.zero,
     super.key,
   });
 
@@ -17,10 +18,15 @@ class FilterChipGroup<T> extends StatelessWidget {
   final Set<T> selected;
   final ValueChanged<T> onToggle;
 
+  /// Inside the scroll view, so chips scroll under the page margin instead of
+  /// being clipped at it.
+  final EdgeInsetsGeometry padding;
+
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
+      padding: padding,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         spacing: AppTheme.space8,
@@ -84,25 +90,14 @@ class _Chip extends StatelessWidget {
     ),
   );
 
-  Widget _content(ColorScheme cs) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // The check keeps its slot when unselected so toggling a chip
-        // never reflows the row around it.
-        Opacity(
-          opacity: selected ? 1 : 0,
-          child: Icon(Icons.check_rounded, size: 14, color: cs.onSurface),
-        ),
-        const SizedBox(width: AppTheme.space4),
-        Text(
-          label,
-          style: AppTextStyles.bodySmall.copyWith(
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-            color: selected ? cs.onSurface : cs.onSurfaceVariant,
-          ),
-        ),
-      ],
-    );
-  }
+  // No check glyph: border, fill and weight already mark the selection, and a
+  // glyph slot that stays reserved when unselected pushes every label off
+  // centre.
+  Widget _content(ColorScheme cs) => Text(
+    label,
+    style: AppTextStyles.bodySmall.copyWith(
+      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+      color: selected ? cs.onSurface : cs.onSurfaceVariant,
+    ),
+  );
 }

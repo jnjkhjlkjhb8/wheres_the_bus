@@ -36,10 +36,13 @@ import '../../support/fakes/map_platform.dart';
 class _Bus extends BusRepository {
   final members = Completer<List<BusStationMember>>();
   final arrivals = StreamController<List<BusStopArrival>>.broadcast();
+  int groupCalls = 0;
 
   @override
-  Future<List<BusStationMember>> stationGroup(String groupUid) =>
-      members.future;
+  Future<List<BusStationMember>> stationGroup(String groupUid) {
+    groupCalls++;
+    return members.future;
+  }
 
   @override
   Stream<List<BusStopArrival>> stationEta(String city, String groupUid) =>
@@ -362,6 +365,11 @@ void main() {
       await flush(tester);
       final i18n = AppI18n.of(tester.element(find.byType(BusStopDetailView)));
       expect(find.text(i18n.busStopNoData), findsOneWidget);
+      // The empty page offers its own reload, which starts the stop over.
+      final before = bus.groupCalls;
+      await tester.tap(find.text(i18n.commonReload));
+      await flush(tester);
+      expect(bus.groupCalls, before + 1);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await flush(tester);
@@ -761,6 +769,63 @@ void main() {
 
       final i18n = AppI18n.of(tester.element(find.byType(BusStopDetailView)));
       expect(find.text(i18n.busStopNoRoutes), findsOneWidget);
+    });
+
+    testWidgets('without live data the stop still lists its routes', (
+      tester,
+    ) async {
+      final (bus, bloc) = await open(tester);
+      bus.members.complete([
+        BusStationMember(
+          stationUid: 'east',
+          stationId: 'east',
+          stationName: '東側站牌',
+          lat: 25,
+          lon: 121,
+          routes: [_arrival('east', '307', status: -1, seconds: -1)],
+        ),
+      ]);
+      await flush(tester);
+      final i18n = AppI18n.of(tester.element(find.byType(BusStopDetailView)));
+      expect(find.text('307'), findsOneWidget);
+      expect(find.text('—'), findsOneWidget);
+      expect(find.text(i18n.etaArriving), findsNothing);
+      // The rows show before the wait runs out; only then does the page say
+      // the times are missing.
+      expect(find.text(i18n.busStopLiveMissingBody), findsNothing);
+
+      bloc.add(const BusStopLiveWaitExpired());
+      await flush(tester);
+      expect(find.text(i18n.busStopNoData), findsOneWidget);
+      expect(find.text(i18n.busStopLiveMissingBody), findsOneWidget);
+
+      bus.arrivals.add([_arrival('east', '307')]);
+      await flush(tester);
+      expect(find.text(i18n.busStopLiveMissingBody), findsNothing);
+      expect(find.text('—'), findsNothing);
+    });
+
+    testWidgets('the missing-live notice reloads the stop', (tester) async {
+      final (bus, bloc) = await open(tester);
+      bus.members.complete([
+        BusStationMember(
+          stationUid: 'east',
+          stationId: 'east',
+          stationName: '東側站牌',
+          lat: 25,
+          lon: 121,
+          routes: [_arrival('east', '307', status: -1, seconds: -1)],
+        ),
+      ]);
+      await flush(tester);
+      bloc.add(const BusStopLiveWaitExpired());
+      await flush(tester);
+      final i18n = AppI18n.of(tester.element(find.byType(BusStopDetailView)));
+      final before = bus.groupCalls;
+      await tester.tap(find.text(i18n.commonReload));
+      await flush(tester);
+      expect(bus.groupCalls, before + 1);
+      expect(find.text(i18n.busStopLiveMissingBody), findsNothing);
     });
 
     testWidgets('a different error replaces the one on screen', (

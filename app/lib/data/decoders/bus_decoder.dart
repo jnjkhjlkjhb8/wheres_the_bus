@@ -57,9 +57,23 @@ class BusDecoder {
   List<BusStopArrival> decodeStationEta(
     Resp_Bus_station_eta resp, {
     DateTime? now,
+  }) => _stationArrivals(resp.data, now ?? DateTime.now());
+
+  /// Decodes a nearby-list frame: each group's few soonest arrivals, keyed by
+  /// group uid.
+  Map<String, List<BusStopArrival>> decodeStationEtas(
+    Resp_Bus_station_etas resp, {
+    DateTime? now,
   }) {
     final at = now ?? DateTime.now();
-    return resp.data.routes.map((r) {
+    return {
+      for (final MapEntry(:key, :value) in resp.groups.entries)
+        key: _stationArrivals(value, at),
+    };
+  }
+
+  List<BusStopArrival> _stationArrivals(Bus_StationArrival data, DateTime at) {
+    return data.routes.map((r) {
       final arrivalUnix = r.arrivalUnix.toInt();
       final estimateSeconds = etaRemainingSeconds(
         arrivalUnix: arrivalUnix,
@@ -70,11 +84,7 @@ class BusDecoder {
         stationId: r.stopUid,
         subRouteUid: r.subRouteUid,
         routeName: r.routeName,
-        // Terminal stop name from static data; direction label only when the
-        // server knows no terminal for this subroute+direction.
-        destination: r.destination.isNotEmpty
-            ? r.destination
-            : (r.direction == 1 ? '返程' : '去程'),
+        destination: _destination(r),
         estimateSeconds: estimateSeconds,
         nextBusTime: r.nextBusTime,
         stopStatus: r.stopStatus,
@@ -88,6 +98,12 @@ class BusDecoder {
 
   /// Decodes a station group's member stops. An empty [group] members list
   /// yields an empty list rather than throwing.
+  // Terminal stop name from static data; direction label only when the server
+  // knows no terminal for this subroute+direction.
+  String _destination(Bus_StopEstimate r) => r.destination.isNotEmpty
+      ? r.destination
+      : (r.direction == 1 ? '返程' : '去程');
+
   List<BusStationMember> decodeStationMembers(Bus_StationGroup group) {
     return group.members
         .map(
@@ -97,6 +113,20 @@ class BusDecoder {
             stationName: m.stationName,
             lat: m.positionLat,
             lon: m.positionLon,
+            routes: [
+              for (final r in group.routes)
+                if (r.stopUid == m.stationUid)
+                  // No estimate: -1 status falls through to 「—」, where the
+                  // proto's zero would read as 進站中.
+                  BusStopArrival(
+                    stationId: r.stopUid,
+                    subRouteUid: r.subRouteUid,
+                    routeName: r.routeName,
+                    destination: _destination(r),
+                    estimateSeconds: -1,
+                    stopStatus: -1,
+                  ),
+            ],
           ),
         )
         .toList();

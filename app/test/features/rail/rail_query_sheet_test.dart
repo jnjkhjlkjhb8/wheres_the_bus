@@ -269,11 +269,14 @@ void main() {
       {'system': 'tra', 'trainNo': '123'},
     ]);
     await show(tester);
-    final mode = tester.widget<AppSlidingSegment<RailQueryMode>>(
-      find.byType(AppSlidingSegment<RailQueryMode>),
-    );
-    mode.onChanged(RailQueryMode.od);
-    mode.onChanged(RailQueryMode.train);
+    // The mode is a link under the form; it toggles back and forth, and
+    // choosing the mode already shown is not offered at all.
+    expect(find.text('改用起訖查詢'), findsNothing);
+    await tester.tap(find.text('改用車次查詢'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('改用起訖查詢'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('改用車次查詢'));
     await tester.pumpAndSettle();
     button(tester, find.text('601')).onTap!();
     await tester.pumpAndSettle();

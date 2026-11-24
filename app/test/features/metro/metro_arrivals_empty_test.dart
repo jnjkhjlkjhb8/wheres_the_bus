@@ -144,7 +144,8 @@ void main() {
       );
 
       expect(find.text('收不到即時到站資料'), findsOneWidget);
-      expect(find.text('目前無法取得資料，請聯絡開發者'), findsOneWidget);
+      // What still holds, not a request to contact the developer.
+      expect(find.text('即時資料暫時無法取得，下方首末班時間仍可參考'), findsOneWidget);
       expect(find.text('今日已收班'), findsNothing);
       // Not the old dead-end string.
       expect(find.text('此站目前沒有班次資訊'), findsNothing);
