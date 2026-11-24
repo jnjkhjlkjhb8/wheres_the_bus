@@ -106,7 +106,7 @@ func TestBusStopSnapshotPreservesPlateSpeedCrowdAndLastBus(t *testing.T) {
 	nearest := &models.BusPosition{PlateNumb: "near", Speed: 17, PositionLat: 25, PositionLon: 121, CrowdLevel: models.BusCrowdLevel_BUS_CROWD_CROWDED}
 	speed := int16(2)
 	r := &busCitySnapshot{city: "Taipei", now: now, totalStops: map[string]int{"route": 5}, stations: map[string]*models.Bus_StationArrival{}, routes: map[string]*models.Bus_RouteArrival{}, busmap: map[string][]*models.BusPosition{key: {nearest}}, atStopMap: map[busAtStopKey]stopPresence{{"route", 1, "stop"}: {plate: "at", speed: &speed}}}
-	eta := busmodel.RawEstimated{EstimatedTime: 0, PlateNumb: " KKA-1288 ", IsLastBus: 1, NextBusTime: "next", SrcUpdateTime: now.Format(time.RFC3339)}
+	eta := busmodel.RawEstimated{EstimatedTime: 0, PlateNumb: " KKA-1288 ", IsLastBus: true, NextBusTime: "next", SrcUpdateTime: now.Format(time.RFC3339)}
 	plate := r.liveStopPlate(b, eta, key)
 	if plate == nil || *plate != "KKA-1288" {
 		t.Fatalf("plate=%v", plate)
@@ -124,7 +124,7 @@ func TestBusStopSnapshotPreservesPlateSpeedCrowdAndLastBus(t *testing.T) {
 	if !r.stations["group"].Routes[0].IsLastBus || !r.routes["route"].Stops[0].IsLastBus {
 		t.Fatal("last-bus flag lost")
 	}
-	eta.IsLastBus = 0
+	eta.IsLastBus = false
 	r.appendStationStop(b, eta, 0, 0, "", key, 0, nil, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)
 	r.appendRouteStop(b, eta, 0, 0, "", key, 0, nil, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)
 	if r.stations["group"].Routes[1].IsLastBus || r.routes["route"].Stops[1].IsLastBus {

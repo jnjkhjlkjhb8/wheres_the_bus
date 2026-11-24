@@ -265,7 +265,7 @@ func (r *busCitySnapshot) appendStationStop(b busmodel.StationMap, eta busmodel.
 		Buses:          r.busmap[positionKey],
 		ArrivalUnix:    arrivalUnix,
 		CrowdLevel:     crowdForPlate(r.busmap[positionKey], plateNumb),
-		IsLastBus:      eta.IsLastBus == 1,
+		IsLastBus:      eta.IsLastBus,
 		EstimateSource: source,
 	})
 }
@@ -315,7 +315,7 @@ func (r *busCitySnapshot) appendRouteStop(b busmodel.StationMap, eta busmodel.Ra
 		ArrivalUnix:    arrivalUnix,
 		PlateNumb:      normalizeArrivalPlate(eta.PlateNumb),
 		CrowdLevel:     crowdForPlate(r.busmap[positionKey], plateNumb),
-		IsLastBus:      eta.IsLastBus == 1,
+		IsLastBus:      eta.IsLastBus,
 		EstimateSource: source,
 	})
 }

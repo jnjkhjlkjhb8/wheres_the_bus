@@ -148,9 +148,10 @@ type RawEstimated struct {
 	NextBusTime   string `json:"NextBusTime"`
 	StopStatus    uint8  `json:"StopStatus"`
 	SrcUpdateTime string `json:"SrcUpdateTime"`
-	IsLastBus     uint8  `json:"IsLastBus"`
-	DataTime      string `json:"DataTime"`
-	SrcTransTime  string `json:"SrcTransTime"`
+	// TDX sends a JSON boolean (checked live 2026-11-24); some cities omit it.
+	IsLastBus    bool   `json:"IsLastBus"`
+	DataTime     string `json:"DataTime"`
+	SrcTransTime string `json:"SrcTransTime"`
 }
 
 // RawPosition decodes a TDX Bus/RealTimeByFrequency element: a bus's live GPS
