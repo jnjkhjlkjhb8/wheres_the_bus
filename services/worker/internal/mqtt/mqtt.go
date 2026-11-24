@@ -131,7 +131,8 @@ type routeAlertRow struct {
 }
 
 // routeAlertRows fans each alert out over the routes it names. The dedupe key
-// is route plus alert id, and the id is a hash of the body: TDX republishes an
+// is route plus alert id joined by "|" (PostgreSQL text rejects NUL, which the
+// old separator was), and the id is a hash of the body: TDX republishes an
 // ongoing disruption with fresh ids and timestamps but the same text, and that
 // must not notify twice, while changed text is a new alert.
 func routeAlertRows(items []*pb.Alert_Item) []routeAlertRow {
@@ -143,7 +144,7 @@ func routeAlertRows(items []*pb.Alert_Item) []routeAlertRow {
 		}
 		for _, routeKey := range keys {
 			rows = append(rows, routeAlertRow{
-				dedupeKey: item.RouteType + "\x00" + routeKey + "\x00" + item.Id,
+				dedupeKey: item.RouteType + "|" + routeKey + "|" + item.Id,
 				routeType: item.RouteType,
 				routeKey:  routeKey,
 				body:      item.Body,

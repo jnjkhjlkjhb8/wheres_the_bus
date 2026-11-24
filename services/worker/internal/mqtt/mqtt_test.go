@@ -3,6 +3,7 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -259,6 +260,10 @@ func TestRouteAlertRowsFanOutPerRoute(t *testing.T) {
 	rows := routeAlertRows([]*pb.Alert_Item{{RouteType: "bus", RouteKeys: []string{"R1", "R2"}, Id: "A1", Body: "x"}})
 	if len(rows) != 2 || rows[0].dedupeKey == rows[1].dedupeKey {
 		t.Fatalf("same alert on two routes = %+v, want two distinct rows", rows)
+	}
+	// PostgreSQL text rejects NUL, so a NUL in the key fails every insert.
+	if strings.ContainsRune(rows[0].dedupeKey, 0) {
+		t.Fatalf("dedupe key %q contains NUL", rows[0].dedupeKey)
 	}
 	lineWide := routeAlertRows([]*pb.Alert_Item{{RouteType: "tra", Id: "A1", Body: "x"}})
 	if len(lineWide) != 1 || lineWide[0].routeKey != "" {
