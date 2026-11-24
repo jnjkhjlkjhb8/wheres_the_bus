@@ -3,9 +3,8 @@
 // Buckets expire on their own window, so an idle caller costs no memory.
 package ratelimit
 
-// Per-caller request rate limiting, and the generic gRPC interceptors that
-// spend from it. The buckets are in-process: the router runs as a single
-// replica, so a shared store would add a dependency for no extra accuracy.
+// The buckets are in-process, so each api replica counts on its own: a caller
+// whose calls land on both pods gets up to twice the per-pod quota.
 
 import (
 	"context"

@@ -171,12 +171,15 @@ func (s *liveStream) closeCause(ch <-chan []byte) error {
 
 // RedisLiveSource adapts *redis.Client to the liveSource seam.
 type RedisLiveSource struct {
-	rc *redis.Client
+	rc  *redis.Client
+	mux *redisMux
 }
 
-// NewRedisLiveSource builds the Redis-backed LiveSource the router streams from.
+// NewRedisLiveSource builds the Redis-backed LiveSource the router streams
+// from. Its subscriptions share one Pub/Sub connection, which closes with rc.
 func NewRedisLiveSource(rc *redis.Client) RedisLiveSource {
-	return RedisLiveSource{rc: rc}
+	ps := rc.Subscribe(context.Background())
+	return RedisLiveSource{rc: rc, mux: newRedisMux(ps, ps.Channel())}
 }
 
 var _ LiveSource = RedisLiveSource{}
@@ -235,45 +238,5 @@ func (r RedisLiveSource) ScanKeys(ctx context.Context, pattern string) []string 
 }
 
 func (r RedisLiveSource) Subscribe(ctx context.Context, channel string) (<-chan []byte, func(), error) {
-	sub := r.rc.Subscribe(ctx, channel)
-	out := make(chan []byte)
-	done := make(chan struct{})
-	go func() {
-		defer close(out)
-		forwardRedisSubscription(done, sub.Channel(), out)
-	}()
-	return out, func() {
-		close(done)
-		_ = sub.Close()
-	}, nil
-}
-
-func forwardRedisSubscription(done <-chan struct{}, in <-chan *redis.Message, out chan<- []byte) {
-	for {
-		msg, ok := nextRedisMessage(done, in)
-		if !ok {
-			return
-		}
-		if !forwardRedisMessage(done, msg, out) {
-			return
-		}
-	}
-}
-
-func nextRedisMessage(done <-chan struct{}, in <-chan *redis.Message) (*redis.Message, bool) {
-	select {
-	case <-done:
-		return nil, false
-	case msg, ok := <-in:
-		return msg, ok
-	}
-}
-
-func forwardRedisMessage(done <-chan struct{}, msg *redis.Message, out chan<- []byte) bool {
-	select {
-	case out <- []byte(msg.Payload):
-		return true
-	case <-done:
-		return false
-	}
+	return r.mux.subscribe(ctx, channel)
 }
