@@ -87,11 +87,6 @@ func MrtLiveSeedPattern(system, stationID string) string {
 	return MrtLiveChannel(system, stationID) + ":*"
 }
 
-// MrtLivePattern matches every metro live-arrival key and station channel.
-func MrtLivePattern() string {
-	return "mrt_live:*"
-}
-
 func MrtTrackKey(trackID string) string {
 	return "mrt_track:state:" + trackID
 }

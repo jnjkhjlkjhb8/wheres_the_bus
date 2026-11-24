@@ -9,30 +9,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Reader checks pipeline_runs for a completed job on a given
-// date. The narrow interface keeps Wait testable without a
-// live database.
-type Reader interface {
-	MarkerExists(ctx context.Context, job string, runDate time.Time) (bool, error)
-}
-
-// PGReader queries pipeline_runs against db (this environment's
-// PG_SCHEMA). pipeline_runs is unqualified, like every other transform target
-// table, so it resolves through db's search_path.
-type PGReader struct{ db *pgxpool.Pool }
-
-func (r PGReader) MarkerExists(ctx context.Context, job string, runDate time.Time) (bool, error) {
-	var exists bool
-	err := r.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM pipeline_runs WHERE job = $1 AND run_date = $2)`,
-		job, runDate.Format(time.DateOnly),
-	).Scan(&exists)
-	if err != nil {
-		return false, _oops.With("job", job).Wrapf(err, "query pipeline_runs marker")
-	}
-	return exists, nil
-}
-
 func recordPipelineMarker(ctx context.Context, db *pgxpool.Pool, job string, runDate time.Time) error {
 	_, err := db.Exec(ctx,
 		`INSERT INTO pipeline_runs (job, run_date) VALUES ($1, $2)
@@ -71,81 +47,7 @@ func RecordWithRetry(ctx context.Context, db *pgxpool.Pool, job string, runDate 
 	)
 }
 
-const (
-	PollInterval = 5 * time.Minute
-	PollDeadline = 2 * time.Hour
-)
-
-func Wait(
-	ctx context.Context,
-	reader Reader,
-	job string,
-	runDate time.Time,
-	interval, deadline time.Duration,
-	now func() time.Time,
-	sleep func(context.Context, time.Duration) error,
-) error {
-	deadlineAt := now().Add(deadline)
-	for {
-		ready, err := readMarkerStatus(ctx, reader, job, runDate)
-		if ready {
-			return nil
-		}
-		if err := waitMarkerInterval(ctx, job, runDate, deadlineAt, interval, now, sleep, err); err != nil {
-			return err
-		}
-	}
-}
-
-func readMarkerStatus(ctx context.Context, reader Reader, job string, runDate time.Time) (bool, error) {
-	ok, err := reader.MarkerExists(ctx, job, runDate)
-	if err != nil {
-		zap.S().Errorw("read error",
-			"component", "pipeline",
-			"action", "wait_marker",
-			"event", "read_error",
-			"job", job,
-			"run_date", runDate.Format(time.DateOnly),
-			"err", err,
-		)
-	} else {
-		if ok {
-			return true, nil
-		}
-		zap.S().Warnw("not ready",
-			"component", "pipeline",
-			"action", "wait_marker",
-			"event", "not_ready",
-			"job", job,
-			"run_date", runDate.Format(time.DateOnly),
-		)
-	}
-	return false, err
-}
-
-func waitMarkerInterval(ctx context.Context, job string, runDate, deadlineAt time.Time, interval time.Duration, now func() time.Time, sleep func(context.Context, time.Duration) error, lastErr error) error {
-	if !now().Before(deadlineAt) {
-		return markerDeadlineError(job, runDate, lastErr)
-	}
-	return sleep(ctx, interval)
-}
-
-func markerDeadlineError(job string, runDate time.Time, lastErr error) error {
-	zap.S().Errorw("give up",
-		"component", "pipeline",
-		"action", "wait_marker",
-		"event", "give_up",
-		"job", job,
-		"run_date", runDate.Format(time.DateOnly),
-	)
-	if lastErr != nil {
-		return _oops.With("job", job).With("run_date", runDate.Format(time.DateOnly)).Wrapf(lastErr, "pipeline marker not confirmed for by deadline")
-	}
-	return _oops.With("job", job).With("run_date", runDate.Format(time.DateOnly)).Errorf("pipeline marker not found for by deadline")
-}
-
-// SleepCtx waits d or returns ctx.Err() if ctx is done first. It is the
-// production sleep implementation passed to Wait.
+// SleepCtx waits d or returns ctx.Err() if ctx is done first.
 func SleepCtx(ctx context.Context, d time.Duration) error {
 	select {
 	case <-ctx.Done():
@@ -154,6 +56,3 @@ func SleepCtx(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
-
-// NewPGReader reads markers from the env-schema pool.
-func NewPGReader(db *pgxpool.Pool) PGReader { return PGReader{db: db} }

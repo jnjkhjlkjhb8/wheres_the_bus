@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func TestPostgresMarkerRetryAndReaderAgreeOnServiceDate(t *testing.T) {
+func TestPostgresMarkerRecordsTheServiceDate(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		if os.Getenv("REQUIRE_DB_TESTS") == "1" {
@@ -33,24 +33,20 @@ func TestPostgresMarkerRetryAndReaderAgreeOnServiceDate(t *testing.T) {
 	if _, err := pool.Exec(ctx, `CREATE TEMP TABLE pipeline_runs(job text,run_date date,completed_at timestamptz DEFAULT now(),PRIMARY KEY(job,run_date))`); err != nil {
 		t.Fatal(err)
 	}
-	reader := NewPGReader(pool)
 	date := time.Date(2026, 10, 10, 8, 0, 0, 0, time.FixedZone("Taipei", 8*60*60))
-	if exists, err := reader.MarkerExists(ctx, "vector", date); err != nil || exists {
+	if exists, err := markerExists(ctx, pool, "vector", date); err != nil || exists {
 		t.Fatalf("before record: %v %v", exists, err)
 	}
 	RecordWithRetry(ctx, pool, "vector", date)
 	RecordWithRetry(ctx, pool, "vector", date)
-	if exists, err := reader.MarkerExists(ctx, "vector", date); err != nil || !exists {
+	if exists, err := markerExists(ctx, pool, "vector", date); err != nil || !exists {
 		t.Fatalf("after upsert: %v %v", exists, err)
 	}
-	if exists, err := reader.MarkerExists(ctx, "vector", date.AddDate(0, 0, 1)); err != nil || exists {
+	if exists, err := markerExists(ctx, pool, "vector", date.AddDate(0, 0, 1)); err != nil || exists {
 		t.Fatalf("other date: %v %v", exists, err)
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := reader.MarkerExists(canceled, "vector", date); err == nil {
-		t.Fatal("canceled marker query accepted")
-	}
 	if err := recordPipelineMarker(canceled, pool, "vector", date); err == nil {
 		t.Fatal("canceled marker write accepted")
 	}
@@ -103,7 +99,7 @@ func TestPostgresMarkerRetriesTransientFailuresWithBackoff(t *testing.T) {
 	if attempts != 3 {
 		t.Fatalf("marker attempts = %d, want 3", attempts)
 	}
-	if exists, err := NewPGReader(pool).MarkerExists(ctx, "retry", date); err != nil || !exists {
+	if exists, err := markerExists(ctx, pool, "retry", date); err != nil || !exists {
 		t.Fatalf("retried marker = %v, %v", exists, err)
 	}
 	if entries := logs.FilterMessage("recorded").All(); len(entries) != 1 || entries[0].ContextMap()["job"] != "retry" {
@@ -117,8 +113,11 @@ func TestPostgresMarkerRetriesTransientFailuresWithBackoff(t *testing.T) {
 	}
 }
 
-func TestMarkerPollingUsesFiveMinutesWithinTwoHours(t *testing.T) {
-	if PollInterval != 5*time.Minute || PollDeadline != 2*time.Hour {
-		t.Fatalf("poll configuration = %v / %v", PollInterval, PollDeadline)
-	}
+// markerExists reads the marker back the way the service date is meant to be
+// stored: as the date in runDate's own zone.
+func markerExists(ctx context.Context, pool *pgxpool.Pool, job string, runDate time.Time) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_runs WHERE job = $1 AND run_date = $2)`,
+		job, runDate.Format(time.DateOnly)).Scan(&exists)
+	return exists, err
 }
