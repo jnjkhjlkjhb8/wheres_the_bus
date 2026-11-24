@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
 	pb "github.com/jnjkhjlkjhb8/wheres_the_bus/models"
+	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/api/internal/nearby"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -96,6 +98,27 @@ func TestStationGroupReadAndLiveCityResolution(t *testing.T) {
 	if _, err := db.Exec(t.Context(), `INSERT INTO bus_station_group_members(station_uid,group_uid,station_id,station_name,city,position) VALUES($1,$2,'2','第二站','Taipei',ST_SetSRID(ST_MakePoint(121.6,25),4326)),($3,$2,'1','第一站','Taipei',ST_SetSRID(ST_MakePoint(121.5,25),4326))`, uid+"-2", uid, uid+"-1"); err != nil {
 		t.Fatal(err)
 	}
+	// Two directions of one sub-route at the same pole collapse to one row.
+	if _, err := db.Exec(t.Context(), `INSERT INTO bus_station_stop_map(station_id,sub_route_uid,direction,route_name,stop_uid,stop_sequence,station_name) VALUES($1,$2,0,'307','s0',1,'第一站'),($1,$2,1,'307','s1',9,'第一站')`, uid+"-1", uid+"-307"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM bus_station_stop_map WHERE sub_route_uid=$1", uid+"-307")
+	})
+	// The terminal the stop is named after is no headsign; the other one is.
+	if _, err := db.Exec(t.Context(), `INSERT INTO bus_subroutes(sub_route_uid,route_uid,direction,destin) VALUES($1,$1,0,'板橋'),($1,$1,1,'測試站')`, uid+"-307"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM bus_subroutes WHERE sub_route_uid=$1", uid+"-307")
+	})
+	near, err := nearby.NewPostgresNearbyStore(db).Find(t.Context(), nearby.NearbyBus, nearby.NearbyQuery{Origin: nearby.GeoPoint{Lon: 121.5, Lat: 25}, RadiusMeters: 50, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(near, func(c nearby.NearbyCandidate) bool { return c.ID == uid }); i < 0 || !slices.Equal(near[i].Headsigns, []string{"板橋"}) {
+		t.Fatalf("nearby group headsigns = %+v", near)
+	}
 	stationArrival := &pb.Bus_StationArrival{StationName: "測試站"}
 	payload, err := proto.Marshal(stationArrival)
 	if err != nil {
@@ -106,6 +129,9 @@ func TestStationGroupReadAndLiveCityResolution(t *testing.T) {
 	got, err := server.Group(t.Context(), &pb.Bus_Ask_StationGroup{GroupUid: uid})
 	if err != nil || got.GroupUid != uid || got.City != "Taipei" || got.GroupName != "測試站" || got.PositionLon != 121.5 || got.PositionLat != 25 || len(got.Members) != 2 || got.Members[0].StationId != "1" || got.Members[1].StationId != "2" {
 		t.Fatalf("station group = %v, error %v", got, err)
+	}
+	if len(got.Routes) != 1 || got.Routes[0].StopUid != uid+"-1" || got.Routes[0].RouteName != "307" || got.Routes[0].Direction != 0 {
+		t.Fatalf("station group routes = %v", got.Routes)
 	}
 	if _, err := server.Group(t.Context(), &pb.Bus_Ask_StationGroup{}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("empty group error = %v", err)

@@ -3,6 +3,8 @@ package nearby
 import (
 	"context"
 	"errors"
+	"reflect"
+	"slices"
 	"testing"
 
 	pgxmock "github.com/pashagolub/pgxmock/v4"
@@ -17,8 +19,8 @@ func TestPostgresNearbyStoreBusReturnsGroupUID(t *testing.T) {
 
 	db.ExpectQuery("FROM bus_station_groups g WHERE ST_DWithin").
 		WithArgs(121.5, 25.0, 500, 80).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "city", "geodesic_meters", "lon", "lat"}).
-			AddRow("G-1", "Taipei Main", "Taipei", 42.0, 121.51, 25.01))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "city", "geodesic_meters", "lon", "lat", "headsigns"}).
+			AddRow("G-1", "Taipei Main", "Taipei", 42.0, 121.51, 25.01, []string{"板橋", "新莊"}))
 
 	rows, err := NewPostgresNearbyStore(db).Find(context.Background(), NearbyBus, NearbyQuery{
 		Origin: GeoPoint{Lon: 121.5, Lat: 25}, RadiusMeters: 500, Limit: 80,
@@ -26,7 +28,7 @@ func TestPostgresNearbyStoreBusReturnsGroupUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].ID != "G-1" || rows[0].Mode != NearbyBus {
+	if len(rows) != 1 || rows[0].ID != "G-1" || rows[0].Mode != NearbyBus || !slices.Equal(rows[0].Headsigns, []string{"板橋", "新莊"}) {
 		t.Fatalf("rows = %+v, want bus group G-1", rows)
 	}
 	if err := db.ExpectationsWereMet(); err != nil {
@@ -53,8 +55,8 @@ func TestPostgresNearbyStorePointModes(t *testing.T) {
 			defer db.Close()
 			db.ExpectQuery("FROM "+tt.table+" WHERE ST_DWithin").
 				WithArgs(121.5, 25.0, 500, 80).
-				WillReturnRows(pgxmock.NewRows([]string{"id", "name", "city", "geodesic_meters", "lon", "lat"}).
-					AddRow("S-1", "Station", "Taipei", 42.0, 121.51, 25.01)).RowsWillBeClosed()
+				WillReturnRows(pgxmock.NewRows([]string{"id", "name", "city", "geodesic_meters", "lon", "lat", "headsigns"}).
+					AddRow("S-1", "Station", "Taipei", 42.0, 121.51, 25.01, []string{})).RowsWillBeClosed()
 			rows, err := NewPostgresNearbyStore(db).Find(t.Context(), tt.mode, NearbyQuery{
 				Origin: GeoPoint{Lon: 121.5, Lat: 25}, RadiusMeters: 500, Limit: 80,
 			})
@@ -62,8 +64,8 @@ func TestPostgresNearbyStorePointModes(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := NearbyCandidate{Mode: tt.mode, ID: "S-1", Name: "Station", City: "Taipei",
-				Point: GeoPoint{Lon: 121.51, Lat: 25.01}, GeodesicMeters: 42}
-			if len(rows) != 1 || rows[0] != want {
+				Point: GeoPoint{Lon: 121.51, Lat: 25.01}, GeodesicMeters: 42, Headsigns: []string{}}
+			if len(rows) != 1 || !reflect.DeepEqual(rows[0], want) {
 				t.Fatalf("rows = %+v, want %+v", rows, want)
 			}
 			if err := db.ExpectationsWereMet(); err != nil {

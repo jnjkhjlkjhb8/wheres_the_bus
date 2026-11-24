@@ -8,6 +8,9 @@ service Bus_Route_Service{
 service Bus_Station_Service{
   rpc eta(Bus_Ask_StationGroup) returns (stream Resp_Bus_station_eta) {}
   rpc group(Bus_Ask_StationGroup) returns (Bus_StationGroup) {}
+  // The home nearby list: one stream for every visible group instead of one
+  // eta stream per row.
+  rpc etas(Bus_Ask_StationGroups) returns (stream Resp_Bus_station_etas) {}
 }
 message Bus_Ask_Route {
   string SubRouteUID = 1;
@@ -15,6 +18,11 @@ message Bus_Ask_Route {
 message Bus_Ask_StationGroup {
   string city = 1;
   string group_uid = 2;
+}
+// Each group needs both city and group_uid; the server skips one missing
+// either and reads at most the first 10.
+message Bus_Ask_StationGroups {
+  repeated Bus_Ask_StationGroup groups = 1;
 }
 message Bus_Ask_Station {
   string StationName = 1;
@@ -40,6 +48,15 @@ message Resp_Bus_station_eta{
   // clients drop any message that carries it.
   reserved 1000;
   Bus_StationArrival data = 1;
+}
+// Soonest estimates per asked group, keyed by group_uid: at most 3 routes
+// each, Buses left empty. A group with no live data yet is absent. Sent again
+// only when a group's data changed.
+message Resp_Bus_station_etas{
+  // 1000 marks the server's idle heartbeat frame (services/api/internal/heartbeat);
+  // clients drop any message that carries it.
+  reserved 1000;
+  map<string, Bus_StationArrival> groups = 1;
 }
 message Resp_Bus_daily_timetable{
   Bus_DailyTimetables data = 1;
@@ -111,6 +128,12 @@ message Bus_StationGroup{
   double position_lon = 4;
   double position_lat = 5;
   repeated Bus_StationGroupMember members = 6;
+  // Routes that stop at each member, from static data, so the stop page can
+  // list them when no live estimate arrives. Only stop_uid (the member's
+  // station_uid), sub_route_uid, route_name, Direction and destination are
+  // set: the zero estimate fields carry no arrival and must not be read as
+  // one.
+  repeated Bus_StopEstimate routes = 7;
 }
 message Bus_StationGroupMember{
   string station_uid = 1;

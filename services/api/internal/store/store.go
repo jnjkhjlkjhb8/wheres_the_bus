@@ -74,6 +74,36 @@ func BusStationGroupMembers(ctx context.Context, db DB, groupUID string) ([]*pb.
 	return collectBusStationGroupMembers(rows)
 }
 
+// BusStationGroupRoutes reads the sub-routes that stop at each member of a
+// station group, one row per member and sub-route. The destination is resolved
+// the way the realtime worker resolves it, so a member's 往X label does not
+// change when live estimates start arriving.
+func BusStationGroupRoutes(ctx context.Context, db DB, groupUID string) ([]*pb.Bus_StopEstimate, error) {
+	rows, err := db.Query(ctx, `
+		SELECT DISTINCT ON (m.station_uid, s.sub_route_uid)
+		       m.station_uid, s.sub_route_uid, COALESCE(s.route_name, ''), s.direction,
+		       COALESCE(sr.destin, st.destin, '')
+		FROM bus_station_group_members m
+		JOIN bus_station_stop_map s ON s.station_id = m.station_uid
+		LEFT JOIN bus_subroutes sr ON sr.sub_route_uid = s.sub_route_uid AND sr.direction = s.direction
+		LEFT JOIN bus_static st ON st.sub_route_uid = s.sub_route_uid
+		WHERE m.group_uid = $1
+		ORDER BY m.station_uid, s.sub_route_uid, s.direction`, groupUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var routes []*pb.Bus_StopEstimate
+	for rows.Next() {
+		r := &pb.Bus_StopEstimate{}
+		if err := rows.Scan(&r.StopUid, &r.SubRouteUid, &r.RouteName, &r.Direction, &r.Destination); err != nil {
+			return nil, err
+		}
+		routes = append(routes, r)
+	}
+	return routes, rows.Err()
+}
+
 func collectBusStationGroupMembers(rows pgx.Rows) ([]*pb.Bus_StationGroupMember, error) {
 	var members []*pb.Bus_StationGroupMember
 	for rows.Next() {

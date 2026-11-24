@@ -276,3 +276,48 @@ func TestBusStationGroupMembersDiscardPartialResultsOnReadFailure(t *testing.T) 
 		})
 	}
 }
+
+// TestBusStationGroupRoutesMapsRows verifies each route row lands in the
+// estimate fields the client reads, and that a failed query or scan is
+// returned rather than a partial list.
+func TestBusStationGroupRoutesMapsRows(t *testing.T) {
+	cols := []string{"station_uid", "sub_route_uid", "route_name", "direction", "destin"}
+	tests := []struct {
+		name    string
+		rows    *pgxmock.Rows
+		err     error
+		wantErr bool
+	}{
+		{name: "rows", rows: pgxmock.NewRows(cols).AddRow("U-1", "TPE307", "307", int32(1), "板橋")},
+		{name: "query error", err: errors.New("down"), wantErr: true},
+		{name: "scan error", rows: pgxmock.NewRows(cols).AddRow("U-1", "TPE307", "307", "north", "板橋"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, err := pgxmock.NewPool()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			q := db.ExpectQuery("JOIN bus_station_stop_map").WithArgs("G-1")
+			if tt.err != nil {
+				q.WillReturnError(tt.err)
+			} else {
+				q.WillReturnRows(tt.rows)
+			}
+
+			routes, err := BusStationGroupRoutes(context.Background(), db, "G-1")
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			r := routes[0]
+			if len(routes) != 1 || r.StopUid != "U-1" || r.SubRouteUid != "TPE307" || r.RouteName != "307" || r.Direction != 1 || r.Destination != "板橋" {
+				t.Fatalf("routes = %v, want one U-1 TPE307 307 dir 1 板橋 row", routes)
+			}
+		})
+	}
+}

@@ -32,6 +32,12 @@ func TestNearbyResponseModeAssignments(t *testing.T) {
 			t.Fatalf("mode %d stations = %v", AllNearbyModes[i], stations)
 		}
 	}
+	bus := candidate(NearbyBus, "group", "Group", 160)
+	bus.Headsigns = []string{"板橋"}
+	withHeadsign, err := nearbyResponse(map[NearbyMode][]NearbyCandidate{NearbyBus: {bus}}, nil)
+	if err != nil || withHeadsign.NearBusStations["group"].NearStations[0].Headsigns[0] != "板橋" {
+		t.Fatalf("bus headsigns = %v, error %v", withHeadsign, err)
+	}
 	if err := appendNearbyResult(response, NearbyMode(999), nil); err == nil {
 		t.Fatal("unsupported mode accepted")
 	}

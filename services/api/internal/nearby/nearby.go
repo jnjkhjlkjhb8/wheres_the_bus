@@ -73,6 +73,8 @@ type NearbyCandidate struct {
 	City           string
 	Point          GeoPoint
 	GeodesicMeters float64
+	// Bus only; see NearStation.headsigns.
+	Headsigns []string
 }
 
 type WalkingMetric struct {
@@ -394,7 +396,7 @@ func nearbyStations(candidates []NearbyCandidate, metrics []WalkingMetric) []*pb
 		stations = append(stations, &pb.NearStation{
 			Type: int32(item.Mode), StationID: item.ID, StationName: item.Name,
 			City: item.City, PositionLon: item.Point.Lon, PositionLat: item.Point.Lat,
-			Walk: walk, Distance: distance, Routed: routed,
+			Walk: walk, Distance: distance, Routed: routed, Headsigns: item.Headsigns,
 		})
 	}
 	return stations

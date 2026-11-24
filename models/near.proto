@@ -33,4 +33,7 @@ message NearStation{
   int32 walk = 7;
   int32 distance = 8;
   bool routed = 9;
+  // Bus only: up to two terminals the group's routes run to, most routes
+  // first, leaving out one the stop is named after. Empty for other modes.
+  repeated string headsigns = 10;
 }

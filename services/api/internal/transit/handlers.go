@@ -175,6 +175,10 @@ func busStationGroup(ctx context.Context, db store.DB, groupUID string) (*pb.Bus
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "station group members: %v", err)
 	}
+	routes, err := store.BusStationGroupRoutes(ctx, db, groupUID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "station group routes: %v", err)
+	}
 	return &pb.Bus_StationGroup{
 		GroupUid:    groupUID,
 		GroupName:   header.GroupName,
@@ -182,6 +186,7 @@ func busStationGroup(ctx context.Context, db store.DB, groupUID string) (*pb.Bus
 		PositionLon: header.Lon,
 		PositionLat: header.Lat,
 		Members:     members,
+		Routes:      routes,
 	}, nil
 }
 
