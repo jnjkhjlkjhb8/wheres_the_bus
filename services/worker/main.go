@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/holiday"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
@@ -50,17 +49,11 @@ func runWorker(args []string, waitShutdown func()) error {
 	_health = newHealthFile(defaultHealthFilePath())
 	defer closeWorkerRedis(rc)
 	defer db.Close()
-	closeArchive, err := history.Init(context.Background(), os.Getenv("ARCHIVE_MYSQL_DSN"))
-	if err != nil {
-		return err
-	}
-	defer closeWorkerArchive(closeArchive)
 	// Live fetches never fall back to a table's updated_at: that fallback only
 	// ever matched the static datasets, which the pipeline service lands.
 	tdx := shared.NewTDXClient(shared.TDXConfig{
 		Store:  shared.RedisTDXStore{RC: rc},
 		IMSKey: shared.TDXLegacyIMSKey,
-		Tap:    history.LiveArchiveTap,
 	})
 	// One-shot manual trigger: `functions run <job>` runs a live job once and
 	// exits, bypassing cron. Needs the same env as the scheduled run.
@@ -75,12 +68,6 @@ func isManualWorkerRun(args []string) bool { return len(args) > 2 && args[1] == 
 func closeWorkerRedis(rc *redis.Client) {
 	if err := rc.Close(); err != nil {
 		zap.S().Errorw("failed", "component", "redis", "action", "close", "event", "failed", "err", err)
-	}
-}
-
-func closeWorkerArchive(closeArchive func() error) {
-	if err := closeArchive(); err != nil {
-		zap.S().Errorw("failed", "component", "archive", "action", "close", "event", "failed", "err", err)
 	}
 }
 
@@ -139,7 +126,7 @@ func runRealtimeWithShutdown(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Clie
 	r.Start()
 	_health.touch()
 	stopWakes := waker.listen(rc)
-	mqttClient := mqtt.StartMQTT(rc, db, history.ArchiveMQTTMessage)
+	mqttClient := mqtt.StartMQTT(rc, db)
 	waitShutdown()
 	// Stop intake before draining jobs so shutdown cannot dispatch more work.
 	if mqttClient != nil {
@@ -194,13 +181,6 @@ func registerWorkerCrons(r *cron.Cron, tdx *shared.TDXClient, rc *redis.Client, 
 			zap.S().Warnw("refresh failed; keeping last good snapshot", "component", "holiday", "err", err)
 		}
 	})
-	// Daily upkeep of the archive this service writes.
-	_, _ = addStaticCron(r, "0 30 4 * * *", func() {
-		pipeline.RunDaily("maintainArchivePartitions", _archiveMaintenanceTimeout, func(ctx context.Context) error {
-			return history.MaintainPartitions(ctx, history.AdminTarget(), time.Now())
-		})
-		history.ReportGaps()
-	})
 	return waker
 }
 
@@ -212,8 +192,6 @@ func waitForShutdown() {
 }
 
 const _shutdownGrace = 30 * time.Second
-
-const _archiveMaintenanceTimeout = 10 * time.Minute
 
 func drainShutdown(cronDone context.Context, boot *sync.WaitGroup, grace time.Duration) {
 	done := make(chan struct{})

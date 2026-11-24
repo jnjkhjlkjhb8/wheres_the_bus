@@ -17,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -228,7 +227,6 @@ func trtcSOAP(ctx context.Context, page, method, user, pass string) ([]byte, err
 	if resp.StatusCode() != http.StatusOK {
 		return nil, _oops.With("method", method).With("status_code", resp.StatusCode()).Errorf("status")
 	}
-	history.ArchiveLivePayload(history.DatasetMRT, method, time.Now(), raw)
 	return trtcJSONArray(raw, method)
 }
 

@@ -16,7 +16,6 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"go.uber.org/zap"
 )
 
@@ -134,7 +133,6 @@ func (f *dataTaipeiFeed) decodeEnvelope(name string, resp *resty.Response, out a
 	if err != nil {
 		return false, err
 	}
-	f.archiveEnvelope(name, body)
 	if err := json.Unmarshal(body, out); err != nil {
 		return false, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
 	}
@@ -153,12 +151,6 @@ func dataTaipeiResponseBody(name string, resp *resty.Response) ([]byte, error) {
 		return nil, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
 	}
 	return body, nil
-}
-
-func (f *dataTaipeiFeed) archiveEnvelope(name string, body []byte) {
-	if history.IsLiveDataTaipeiBlob(name) {
-		history.ArchiveLivePayload(history.DatasetBusFast, f.city+"/"+name, time.Now(), body)
-	}
 }
 
 // getRows fetches one of the blobs that wrap their rows in

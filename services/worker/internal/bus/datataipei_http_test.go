@@ -16,7 +16,6 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 )
 
@@ -138,9 +137,9 @@ func TestModelStopTimeClassifiesScheduleAndModelAndMissingReadings(t *testing.T)
 	at := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
 	for _, offset := range []bool{false, true} {
 		got, source := decodeModelStopTime(at.Format(time.RFC3339), offset)
-		want := history.SourceSchedule
+		want := _sourceSchedule
 		if offset {
-			want = history.SourceModel
+			want = _sourceModel
 		}
 		if !got.Equal(at) || source != want {
 			t.Fatalf("prediction=%v %s", got, source)

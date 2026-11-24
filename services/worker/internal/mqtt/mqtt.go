@@ -38,18 +38,16 @@ func mqttTopicConfigs() []mqttTopicCfg {
 	}
 }
 
-type MQTTArchiver func(topic string, payload []byte)
-
 // OutboxDB is where route alerts are handed to rider for push dispatch.
 type OutboxDB interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-func StartMQTT(rc *redis.Client, outbox OutboxDB, archive MQTTArchiver) mqtt.Client {
-	return startMQTTWithClient(rc, outbox, archive, mqtt.NewClient)
+func StartMQTT(rc *redis.Client, outbox OutboxDB) mqtt.Client {
+	return startMQTTWithClient(rc, outbox, mqtt.NewClient)
 }
 
-func startMQTTWithClient(rc *redis.Client, outbox OutboxDB, archive MQTTArchiver, createClient func(*mqtt.ClientOptions) mqtt.Client) mqtt.Client {
+func startMQTTWithClient(rc *redis.Client, outbox OutboxDB, createClient func(*mqtt.ClientOptions) mqtt.Client) mqtt.Client {
 	clientID := os.Getenv("MQTT_CLIENT_ID")
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
@@ -57,22 +55,16 @@ func startMQTTWithClient(rc *redis.Client, outbox OutboxDB, archive MQTTArchiver
 		zap.S().Warnw("credentials not set \u2014 skipping MQTT subscriber", "component", "mqtt")
 		return nil
 	}
-	opts := mqttClientOptions(clientID, username, password, rc, outbox, archive)
+	opts := mqttClientOptions(clientID, username, password, rc, outbox)
 	c := createClient(opts)
 	connectMQTT(c)
 	return c
 }
 
-func mqttsubscribeall(c mqtt.Client, rc *redis.Client, outbox OutboxDB, archive MQTTArchiver) {
+func mqttsubscribeall(c mqtt.Client, rc *redis.Client, outbox OutboxDB) {
 	for _, t := range _mqttTopics {
 		pattern, ttl := t.pattern, t.ttl
 		tok := c.Subscribe(pattern, 1, func(_ mqtt.Client, msg mqtt.Message) {
-			// Archive before normalizing, so a payload this package cannot parse is
-			// still kept. Those are the messages most worth having: an alert that
-			// never reached a rider leaves no other trace.
-			if archive != nil {
-				archive(msg.Topic(), msg.Payload())
-			}
 			mqtthandle(rc, msg, ttl, outbox)
 		})
 		tok.Wait()
@@ -397,7 +389,7 @@ func mqttCredentialsPresent(clientID, username, password string) bool {
 	return clientID != "" && username != "" && password != ""
 }
 
-func mqttClientOptions(clientID, username, password string, rc *redis.Client, outbox OutboxDB, archive MQTTArchiver) *mqtt.ClientOptions {
+func mqttClientOptions(clientID, username, password string, rc *redis.Client, outbox OutboxDB) *mqtt.ClientOptions {
 	opts := mqtt.NewClientOptions().
 		AddBroker("mqtts://mqtt.transportdata.tw:8883").
 		SetClientID(clientID).
@@ -410,7 +402,7 @@ func mqttClientOptions(clientID, username, password string, rc *redis.Client, ou
 		SetTLSConfig(&tls.Config{}).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			zap.S().Infow("connected", "component", "mqtt")
-			mqttsubscribeall(c, rc, outbox, archive)
+			mqttsubscribeall(c, rc, outbox)
 		}).
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 			zap.S().Warnw("connection lost", "component", "mqtt", "err", err)

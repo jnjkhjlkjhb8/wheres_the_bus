@@ -2,12 +2,15 @@ package history
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // segmentEtaTestPool connects to DATABASE_URL and skips when it is unset, the
@@ -23,96 +26,6 @@ func segmentEtaTestPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("connect: %v", err)
 	}
 	return pool
-}
-
-type fixtureHistory struct {
-	estimate []SegmentObs
-}
-
-func (f fixtureHistory) arrivals(context.Context, time.Time) ([]arrivalEvent, error) {
-	return nil, nil
-}
-
-func (f fixtureHistory) segmentsByEstimate(context.Context, time.Duration) ([]SegmentObs, error) {
-	return f.estimate, nil
-}
-
-func TestComputeSegmentTimesFromEstimates(t *testing.T) {
-	pool := segmentEtaTestPool(t)
-	defer pool.Close()
-	ctx := context.Background()
-
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS bus_segment_time (
-			sub_route_uid text NOT NULL, direction smallint NOT NULL,
-			from_stop_uid text NOT NULL, to_stop_uid text NOT NULL,
-			secs int NOT NULL, sample_count int NOT NULL,
-			updated_at timestamptz NOT NULL DEFAULT NOW(),
-			PRIMARY KEY (sub_route_uid, direction, from_stop_uid, to_stop_uid))`); err != nil {
-		t.Fatalf("ddl: %v", err)
-	}
-
-	const uid = "TESTSEG0001"
-	cleanup := func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM bus_segment_time WHERE sub_route_uid = $1`, uid)
-	}
-	cleanup()
-	t.Cleanup(cleanup)
-
-	// Three rows already in the table: S1->S2 rests on more observations than the
-	// estimate pass offers, S2->S3 on fewer, S4->S5 is a distance-derived
-	// estimate (sample_count 0) that no observation reaches this run.
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO bus_segment_time
-		  (sub_route_uid, direction, from_stop_uid, to_stop_uid, secs, sample_count)
-		VALUES ($1, 0, 'S1', 'S2', 999, 50), ($1, 0, 'S2', 'S3', 999, 1),
-		       ($1, 0, 'S4', 'S5', 777, 0)`, uid); err != nil {
-		t.Fatalf("seed segments: %v", err)
-	}
-
-	hist := fixtureHistory{estimate: []SegmentObs{
-		{SubRouteUID: uid, Direction: 0, fromStopUID: "S1", toStopUID: "S2", secs: 120, sampleCount: 8},
-		{SubRouteUID: uid, Direction: 0, fromStopUID: "S2", toStopUID: "S3", secs: 220, sampleCount: 8},
-		{SubRouteUID: uid, Direction: 0, fromStopUID: "S3", toStopUID: "S4", secs: 300, sampleCount: 8},
-	}}
-	if err := ComputeSegmentTimesFromEstimates(ctx, pool, hist); err != nil {
-		t.Fatalf("ComputeSegmentTimesFromEstimates: %v", err)
-	}
-
-	got := map[string][2]int{}
-	cur, err := pool.Query(ctx, `
-		SELECT from_stop_uid, to_stop_uid, secs, sample_count
-		FROM bus_segment_time WHERE sub_route_uid = $1`, uid)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	defer cur.Close()
-	for cur.Next() {
-		var from, to string
-		var secs, n int
-		if err := cur.Scan(&from, &to, &secs, &n); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		got[from+"->"+to] = [2]int{secs, n}
-	}
-	if err := cur.Err(); err != nil {
-		t.Fatalf("rows: %v", err)
-	}
-
-	if v, ok := got["S1->S2"]; !ok || v[0] != 120 || v[1] != 8 {
-		t.Errorf("S1->S2 = %v, want (120, 8): the fresh figure wins even against a "+
-			"better-sampled older one, or a quiet week freezes the hop forever", v)
-	}
-	if v, ok := got["S2->S3"]; !ok || v[0] != 220 || v[1] != 8 {
-		t.Errorf("S2->S3 = %v, want (220, 8): more observations than the row it replaces", v)
-	}
-	if v, ok := got["S3->S4"]; !ok || v[0] != 300 || v[1] != 8 {
-		t.Errorf("S3->S4 = %v, want (300, 8): a hop nothing covered before", v)
-	}
-	if v, ok := got["S4->S5"]; !ok || v[0] != 777 || v[1] != 0 {
-		t.Errorf("S4->S5 = %v, want the estimate (777, 0) untouched: this pass only "+
-			"writes the hops it observed", v)
-	}
 }
 
 func TestFillSegmentTimesFromDistance(t *testing.T) {
@@ -205,5 +118,23 @@ func TestFillSegmentTimesFromDistance(t *testing.T) {
 	}
 	if secs != 200 || samples != 9 {
 		t.Errorf("observed hop = (%d, %d), want (200, 9) untouched", secs, samples)
+	}
+}
+
+func TestHistoryNativeDistanceFillPreservesDatabaseFailure(t *testing.T) {
+	pool := segmentEtaTestPool(t)
+	pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, cause := pool.Exec(ctx, "SELECT 1")
+	core, logs := observer.New(zap.InfoLevel)
+	restore := zap.ReplaceGlobals(zap.New(core))
+	t.Cleanup(restore)
+	err := FillSegmentTimesFromDistance(ctx, pool)
+	if cause == nil || !errors.Is(err, cause) {
+		t.Fatalf("database failure lost cause: %v / %v", err, cause)
+	}
+	if logs.FilterMessage("complete").Len() != 0 {
+		t.Fatal("failed distance fill reported completion")
 	}
 }

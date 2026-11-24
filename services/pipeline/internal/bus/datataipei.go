@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 )
 
 const _dataTaipeiBlobBase = "https://tcgbusfs.blob.core.windows.net/blobbus/"
@@ -105,7 +104,6 @@ func (f *dataTaipeiFeed) decodeEnvelopeBody(name string, out any, resp *resty.Re
 	if err != nil {
 		return false, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
 	}
-	f.archiveEnvelope(name, body)
 	if err := json.Unmarshal(body, out); err != nil {
 		return false, _oops.With("dataset", name).Wrapf(err, "Data.taipei resource")
 	}
@@ -159,9 +157,3 @@ func dataTaipeiDirection(goBack string) (uint8, bool) {
 // documented values is dropped rather than guessed at.
 
 func isGzipBody(body []byte) bool { return len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b }
-
-func (f *dataTaipeiFeed) archiveEnvelope(name string, body []byte) {
-	if history.IsLiveDataTaipeiBlob(name) {
-		history.ArchiveLivePayload(history.DatasetBusFast, f.city+"/"+name, time.Now(), body)
-	}
-}

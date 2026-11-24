@@ -12,7 +12,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -53,35 +52,28 @@ type bikeAvailability struct {
 // switched on, so an operator TDX adds later must not reject the
 // city. A value this loader has not seen flows through unchanged.
 
-// _bikeHistorySampleGate is the process-wide 5-minute-per-station gate shared
-// across Eta rounds, so history sampling survives between 30s ticks.
-var _bikeHistorySampleGate bikeHistorySampler
-
-// Eta refreshes bike availability for every city with live demand.
-func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
-	return runBikeCities(ctx, busmodel.Cities, fetch, sink, db, guard)
+// Eta refreshes bike availability for every city with live demand. The pool is
+// unused; the parameter keeps the live-job signature uniform.
+func Eta(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, _ *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
+	return runBikeCities(ctx, busmodel.Cities, fetch, sink, guard)
 }
 
 // EtaCity runs Eta for one city at once, for a demand wake. A city TDX serves
 // no availability for runs nothing.
-func EtaCity(ctx context.Context, city string, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
-	return runBikeCities(ctx, []string{city}, fetch, sink, db, guard)
+func EtaCity(ctx context.Context, city string, fetch pipeline.BoundFetch, sink pipeline.LiveSink, _ *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
+	return runBikeCities(ctx, []string{city}, fetch, sink, guard)
 }
 
-func runBikeCities(ctx context.Context, cities []string, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard) error {
+func runBikeCities(ctx context.Context, cities []string, fetch pipeline.BoundFetch, sink pipeline.LiveSink, guard *pipeline.LiveFetchGuard) error {
 	zap.S().Infow("start", "component", "bike_eta", "action", "bike_eta", "event", "start")
 	now := time.Now()
-	var (
-		historyRows [][]any
-		jobErr      error
-	)
+	var jobErr error
 	for _, city := range cities {
 		if !bikeAvailabilityCity(city) {
 			continue
 		}
-		jobErr = errors.Join(jobErr, runBikeCity(ctx, fetch, sink, db, guard, city, now, &historyRows))
+		jobErr = errors.Join(jobErr, runBikeCity(ctx, fetch, sink, guard, city, now))
 	}
-	saveBikeAvailabilityHistory(ctx, history.Target(), historyRows)
 	zap.S().Infow("complete", "component", "bike_eta", "action", "bike_eta", "event", "complete")
 	return jobErr
 }
@@ -93,7 +85,7 @@ func bikeAvailabilityCity(city string) bool {
 
 // runBikeCity fetches a city only while someone needs it. A city without
 // demand is left alone, so its live keys expire.
-func runBikeCity(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, db *pgxpool.Pool, guard *pipeline.LiveFetchGuard, city string, now time.Time, historyRows *[][]any) error {
+func runBikeCity(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.LiveSink, guard *pipeline.LiveFetchGuard, city string, now time.Time) error {
 	release, ok := pipeline.ClaimLiveDemand(ctx, sink, guard, "bike", city)
 	if !ok {
 		return nil
@@ -104,26 +96,26 @@ func runBikeCity(ctx context.Context, fetch pipeline.BoundFetch, sink pipeline.L
 	if err != nil {
 		return _oops.With("city", city).Wrapf(err, "bike fetch")
 	}
-	return commitBikeFetch(ctx, sink, db, result, city, now, historyRows)
+	return commitBikeFetch(ctx, sink, result, city, now)
 }
 
-func commitBikeFetch(ctx context.Context, sink pipeline.LiveSink, db *pgxpool.Pool, result *shared.TDXFetch, city string, now time.Time, historyRows *[][]any) error {
+func commitBikeFetch(ctx context.Context, sink pipeline.LiveSink, result *shared.TDXFetch, city string, now time.Time) error {
 	if !result.Modified {
 		zap.S().Warnw("skip", "component", "bike_eta", "action", "bike_eta", "city", city, "event", "skip", "reason", "not_modified")
 		return nil
 	}
-	err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error { return publishBikeCity(ctx, sink, db, dec, city, now, historyRows) })
+	err := pipeline.CommitTDXFetch(result, func(dec *json.Decoder) error { return publishBikeCity(ctx, sink, dec, city, now) })
 	if err != nil {
 		return _oops.With("city", city).Wrapf(err, "bike process")
 	}
 	return nil
 }
 
-func publishBikeCity(ctx context.Context, sink pipeline.LiveSink, db *pgxpool.Pool, dec *json.Decoder, city string, now time.Time, historyRows *[][]any) error {
+func publishBikeCity(ctx context.Context, sink pipeline.LiveSink, dec *json.Decoder, city string, now time.Time) error {
 	pipe := sink.Pipe()
 	ownedKeys := make([]string, 0)
 	err := pipeline.DecodeLiveItems(dec, func(temp bikeAvailability) error {
-		return queueBikeStation(pipe, db, temp, now, &ownedKeys, historyRows)
+		return queueBikeStation(pipe, temp, now, &ownedKeys)
 	})
 	if err != nil {
 		return err
@@ -148,20 +140,11 @@ func queueBikeAvailability(pipe pipeline.LivePipe, temp bikeAvailability, now ti
 	return key, nil
 }
 
-func sampleBikeHistory(db *pgxpool.Pool, temp bikeAvailability, now time.Time, historyRows *[][]any) {
-	// The process-wide gate preserves station sampling cadence across live rounds.
-	if db != nil && _bikeHistorySampleGate.shouldSample(temp.StationUID, now) {
-		availableRent := int(temp.AvailableRentBikesDetail.GeneralBikes) + int(temp.AvailableRentBikesDetail.ElectricBikes)
-		*historyRows = append(*historyRows, []any{temp.StationUID, availableRent, int(temp.AvailableReturnBikes), now})
-	}
-}
-
-func queueBikeStation(pipe pipeline.LivePipe, db *pgxpool.Pool, temp bikeAvailability, now time.Time, ownedKeys *[]string, historyRows *[][]any) error {
+func queueBikeStation(pipe pipeline.LivePipe, temp bikeAvailability, now time.Time, ownedKeys *[]string) error {
 	key, err := queueBikeAvailability(pipe, temp, now)
 	if err != nil {
 		return err
 	}
 	*ownedKeys = append(*ownedKeys, key)
-	sampleBikeHistory(db, temp, now, historyRows)
 	return nil
 }

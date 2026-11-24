@@ -40,11 +40,6 @@ type rawBusNearStop struct {
 	DutyStatus   uint8  `json:"DutyStatus"`
 	BusStatus    uint8  `json:"BusStatus"`
 	GPSTime      string `json:"GPSTime"`
-	// TripStartTime is the run's first-stop departure and TripStartTimeType says
-	// how it was arrived at: 0 actual, 1 estimated from segment travel times,
-	// 2 not derivable.
-	TripStartTime     string `json:"TripStartTime"`
-	TripStartTimeType uint8  `json:"TripStartTimeType"`
 }
 
 const (
@@ -125,34 +120,5 @@ func (j *busLiveJob) nearStops(ctx context.Context, city string, now time.Time) 
 		)
 		return nil
 	}
-	j.store.saveStopEvents(ctx, busStopEventRows(city, rows, now))
 	return buildNearStopIndex(city, rows, now)
-}
-
-func busStopEventRows(city string, rows []rawBusNearStop, now time.Time) [][]any {
-	out := make([][]any, 0, len(rows))
-	for _, r := range rows {
-		plate := normalizeArrivalPlate(r.PlateNumb)
-		at := parseGPSTimeUnix(r.GPSTime)
-		if !archivableNearStop(plate, r.StopUID, at) {
-			continue
-		}
-		uid, direction := shared.CanonicalSubroute(city, r.SubRouteUID, r.Direction)
-		tripStart := nearStopTripStart(r.TripStartTime)
-		out = append(out, []any{
-			plate, city, uid, int16(direction), r.StopUID, int16(r.StopSequence),
-			int16(r.A2EventType), time.Unix(at, 0), tripStart, int16(r.TripStartTimeType), now,
-		})
-	}
-	return out
-}
-
-func archivableNearStop(plate, stop string, at int64) bool {
-	return plate != "" && stop != "" && at != 0
-}
-func nearStopTripStart(raw string) any {
-	if t, ok := parseSrcUpdateTime(raw); ok {
-		return t
-	}
-	return nil
 }

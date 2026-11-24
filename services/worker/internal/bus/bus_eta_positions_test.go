@@ -76,9 +76,6 @@ func TestBusCityPublishesETAWhenTDXPositionsFail(t *testing.T) {
 			if sink.setFor(shared.BusCityPublishedKey("Taipei")) == nil {
 				t.Fatal("published marker missing after a publish without positions")
 			}
-			if store.predictionCalls != 1 {
-				t.Fatalf("history saves = %d, want 1 for a modified ETA feed", store.predictionCalls)
-			}
 		})
 	}
 }

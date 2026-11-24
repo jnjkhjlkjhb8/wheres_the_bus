@@ -11,7 +11,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
@@ -26,10 +25,6 @@ type fakeBusEtaStore struct {
 	nextDepartureBit  int
 	stopOffsetUIDs    []string
 	stopOffsetMap     map[predict.StopOffsetKey]int
-	historyRows       [][]interface{}
-	stopEventRows     [][]interface{}
-	predictions       []history.PredictionRecord
-	predictionCalls   int
 	nextDepartureMap  map[predict.RouteDirKey]time.Time
 }
 
@@ -51,19 +46,6 @@ func (s *fakeBusEtaStore) stopOffsets(_ context.Context, uids []string) map[pred
 		return map[predict.StopOffsetKey]int{}
 	}
 	return s.stopOffsetMap
-}
-
-func (s *fakeBusEtaStore) saveHistory(_ context.Context, rows [][]interface{}) {
-	s.historyRows = rows
-}
-
-func (s *fakeBusEtaStore) saveStopEvents(_ context.Context, rows [][]interface{}) {
-	s.stopEventRows = append(s.stopEventRows, rows...)
-}
-
-func (s *fakeBusEtaStore) recordPredictions(_ context.Context, rows []history.PredictionRecord) {
-	s.predictionCalls++
-	s.predictions = rows
 }
 
 type busArrivalCall struct {
@@ -188,9 +170,6 @@ func TestBusLiveJobModifiedFeedPublishesCanonicalArrivals(t *testing.T) {
 		store:    store,
 		notifier: notifier,
 		now:      func() time.Time { return now },
-		// A recording tick: the assertion below is about which UID reaches the
-		// history row, not about the sampling clock (see history.RecordsHistory).
-		snapshot: true,
 	}
 
 	_ = job.runCity(context.Background(), "InterCity")
@@ -230,48 +209,8 @@ func TestBusLiveJobModifiedFeedPublishesCanonicalArrivals(t *testing.T) {
 	if len(sink.publishs) != 2 {
 		t.Fatalf("publish count = %d, want 2", len(sink.publishs))
 	}
-	if len(store.historyRows) != 1 || store.historyRows[0][0] != "THB9023" || store.historyRows[0][2] != int16(0) {
-		t.Fatalf("canonical history rows = %+v", store.historyRows)
-	}
 	if notifier.batches != 1 || len(notifier.calls) != 1 || notifier.calls[0] != (busArrivalCall{routeKey: "THB9023", stopKey: "STOP1", direction: "0", seconds: 120, plate: "KKA-1234"}) {
 		t.Fatalf("canonical notification batches/calls = %d/%+v", notifier.batches, notifier.calls)
-	}
-}
-
-func TestBusLiveJobPublishesOnNonSnapshotTicks(t *testing.T) {
-	prefix := busmodel.CityPrefix["InterCity"]
-	predict.StaticMapCache().Delete(prefix)
-	t.Cleanup(func() { predict.StaticMapCache().Delete(prefix) })
-
-	now := time.Date(2026, time.July, 6, 9, 15, 0, 0, pipeline.Taipei)
-	src := &fakeLiveSource{fixtures: map[string][]byte{
-		"bus_EstimatedTimeOfArrivalInterCity": []byte(`[{"PlateNumb":"KKA-1234","StopUID":"STOP1","SubRouteUID":"THB902301","Direction":0,"EstimateTime":120,"StopStatus":0,"SrcUpdateTime":"2026-07-06T09:15:00+08:00"}]`),
-		"bus_RealTimeByFrequencyInterCity":    []byte(`[]`),
-	}}
-	sink := &captureLiveSink{}
-	store := &fakeBusEtaStore{stops: []busmodel.StationMap{{
-		StationUID: "STATION1", StationName: "站牌一", GroupUID: "GROUP1", GroupName: "群組一",
-		SubRouteUID: "THB9023", SubRouteName: "9023", Direction: 0, StopUID: "STOP1",
-		StopSequence: 1, Lat: 25.05, Lon: 121.5,
-	}}}
-	job := busLiveJob{
-		fetch:    pipeline.BindFetch(src, sink, busTestSpec()),
-		sink:     sink,
-		store:    store,
-		now:      func() time.Time { return now },
-		snapshot: false,
-	}
-
-	_ = job.runCity(context.Background(), "InterCity")
-
-	if len(store.historyRows) != 0 {
-		t.Errorf("history rows = %+v, want none off a snapshot tick", store.historyRows)
-	}
-	if sink.setFor(shared.BusStationEtaKey("InterCity", "GROUP1")) == nil {
-		t.Error("station snapshot missing: sampling history must not gate the live publish")
-	}
-	if sink.setFor(shared.BusRouteEtaKey("THB9023")) == nil {
-		t.Error("route snapshot missing: sampling history must not gate the live publish")
 	}
 }
 
@@ -312,13 +251,6 @@ func TestBusLiveJobBatchesPredictionInputs(t *testing.T) {
 	}
 	if sink.setFor(shared.BusRouteEtaKey("TPE1")) == nil {
 		t.Fatal("modified feed did not publish the route snapshot")
-	}
-	if store.predictionCalls != 1 || len(store.predictions) != 1 {
-		t.Fatalf("prediction persistence calls/rows = %d/%+v, want one call with one row", store.predictionCalls, store.predictions)
-	}
-	prediction := store.predictions[0]
-	if prediction.SubRouteUID != "TPE1" || prediction.Direction != 1 || prediction.StopUID != "STOP2" || prediction.Source != history.SourcePropagation {
-		t.Fatalf("prediction persistence row = %+v", prediction)
 	}
 }
 

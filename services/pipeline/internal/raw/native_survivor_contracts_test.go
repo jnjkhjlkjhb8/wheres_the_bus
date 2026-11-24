@@ -1,11 +1,9 @@
 package raw
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,29 +39,6 @@ func rawContractLogCause(entry observer.LoggedEntry) error {
 		}
 	}
 	return nil
-}
-
-func TestRawContractArchiveFailureKeepsPayloadAndReportsOriginalCause(t *testing.T) {
-	core, observed := observer.New(zap.InfoLevel)
-	t.Cleanup(zap.ReplaceGlobals(zap.New(core)))
-	want := errors.New("archive host unavailable")
-	db := &fakeExecer{err: want}
-	reader := bytes.NewReader([]byte(`[{"RouteUID":"R1"}]`))
-	ArchivePayload(t.Context(), db, Target{Table: "bus_route", PartCol: "city", PartVal: "Taipei"}, "marker", "cycle", reader)
-	failures := observed.FilterMessage("insert error").All()
-	if len(failures) != 1 || !errors.Is(rawContractLogCause(failures[0]), want) {
-		t.Fatalf("archive failure diagnostics = %#v, want original cause", failures)
-	}
-	if len(observed.FilterMessage("archived payload").All()) != 0 {
-		t.Fatal("failed archive reported success")
-	}
-	if len(db.args) != 1 || gunzip(t, db.args[0][5].([]byte)) != `[{"RouteUID":"R1"}]` {
-		t.Fatalf("archive attempted payload = %#v", db.args)
-	}
-	body, err := io.ReadAll(reader)
-	if err != nil || string(body) != `[{"RouteUID":"R1"}]` {
-		t.Fatalf("body after archive failure = %q, %v", body, err)
-	}
 }
 
 type rawContractCutoff struct{ value time.Time }

@@ -19,7 +19,6 @@ func TestPipelineCLIUsageAndConnectionLifecycle(t *testing.T) {
 		t.Fatalf("invalid usage = %d, %q", code, stderr.String())
 	}
 	loaderTestPool(t)
-	t.Setenv("ARCHIVE_MYSQL_DSN", "")
 	t.Setenv("TDX_CLIENT_ID", "")
 	t.Setenv("TDX_CLIENT_SECRET", "")
 	previousDB, previousDump := raw.DB, raw.DumpEnabled

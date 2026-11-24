@@ -10,14 +10,19 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/holiday"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/weather"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+)
+
+// Prediction tier labels: which tier wrote a stop's NextBusTime.
+const (
+	_sourcePropagation = "propagation"
+	_sourceModel       = "model"
+	_sourceSchedule    = "schedule"
 )
 
 type busCitySnapshot struct {
@@ -32,13 +37,10 @@ type busCitySnapshot struct {
 	totalStops            map[string]int
 	wx                    *weather.Data
 	now                   time.Time
-	isHoliday             bool
 	depMap                map[predict.RouteDirKey]time.Time
 	offsetMap             map[predict.StopOffsetKey]int
 	baselineFor           func(busmodel.StationMap, string, int32) time.Time
 	upstreamByRoute       map[predict.RouteDirKey][]predict.UpstreamObs
-	predictionRows        []history.PredictionRecord
-	historyRows           [][]any
 	arrivalEvents         []riderevent.ArrivalEvent
 	fillsWithoutDeparture int
 }
@@ -56,7 +58,6 @@ func (j busLiveJob) prepareCitySnapshot(ctx context.Context, city string, mp []b
 	}
 	totalStops := buildTotalStops(mp)
 	wx := j.cityWeather(ctx, city)
-	isHoliday := holiday.IsHoliday(now)
 	fillKeys, fillUIDs := collectFillKeys(mp, etamap)
 	todTime := now.Format("15:04:05")
 	// Day-of-week mask only; holiday-aware schedules would need TDX SpecialDays
@@ -84,12 +85,10 @@ func (j busLiveJob) prepareCitySnapshot(ctx context.Context, city string, mp []b
 	// the downstream fill to inherit.
 	upstreamByRoute := buildUpstreamObs(mp, etamap, now, baselineFor)
 	var (
-		predictionRows        []history.PredictionRecord
-		historyRows           [][]any
 		arrivalEvents         []riderevent.ArrivalEvent
 		fillsWithoutDeparture int
 	)
-	return &busCitySnapshot{ctx: ctx, city: city, job: j, stations: stations, routes: routes, etamap: etamap, busmap: busmap, atStopMap: atStopMap, totalStops: totalStops, wx: wx, now: now, isHoliday: isHoliday, depMap: depMap, offsetMap: offsetMap, baselineFor: baselineFor, upstreamByRoute: upstreamByRoute, predictionRows: predictionRows, historyRows: historyRows, arrivalEvents: arrivalEvents, fillsWithoutDeparture: fillsWithoutDeparture}
+	return &busCitySnapshot{ctx: ctx, city: city, job: j, stations: stations, routes: routes, etamap: etamap, busmap: busmap, atStopMap: atStopMap, totalStops: totalStops, wx: wx, now: now, depMap: depMap, offsetMap: offsetMap, baselineFor: baselineFor, upstreamByRoute: upstreamByRoute, arrivalEvents: arrivalEvents, fillsWithoutDeparture: fillsWithoutDeparture}
 }
 
 func (j busLiveJob) cityWeather(ctx context.Context, city string) *weather.Data {
@@ -116,7 +115,7 @@ func (r *busCitySnapshot) resolveStop(b busmodel.StationMap) {
 	status, est, stime := liveStopEstimate(eta, ok, r.now)
 	var plateNumb *string
 	if status == 0 {
-		plateNumb = r.liveStopHistory(b, eta, est, stime, positionKey)
+		plateNumb = r.liveStopPlate(b, eta, positionKey)
 	}
 	eta, fillSource := r.fillScheduleOnlyStop(b, eta, status)
 	source := estimateSourceFor(status, fillSource)
@@ -134,7 +133,7 @@ func (r *busCitySnapshot) resolveStop(b busmodel.StationMap) {
 	}
 }
 
-// fillScheduleOnlyStop returns the history.Source* label of the prediction it
+// fillScheduleOnlyStop returns the _source* label of the prediction it
 // wrote into eta.NextBusTime, or "" when the stop kept TDX's own value.
 func (r *busCitySnapshot) fillScheduleOnlyStop(b busmodel.StationMap, eta busmodel.RawEstimated, status uint8) (busmodel.RawEstimated, string) {
 	if status == 1 && eta.NextBusTime == "" {
@@ -159,7 +158,7 @@ func estimateSourceFor(status uint8, fillSource string) models.BusEstimateSource
 }
 
 func clockEstimateSource(fillSource string) models.BusEstimateSource {
-	if fillSource == history.SourcePropagation || fillSource == history.SourceModel {
+	if fillSource == _sourcePropagation || fillSource == _sourceModel {
 		return models.BusEstimateSource_BUS_ESTIMATE_SOURCE_PREDICTED
 	}
 	return models.BusEstimateSource_BUS_ESTIMATE_SOURCE_SCHEDULED
@@ -180,57 +179,17 @@ func liveStopEstimate(eta busmodel.RawEstimated, ok bool, now time.Time) (uint8,
 	return status, est, stime
 }
 
-func (r *busCitySnapshot) liveStopHistory(b busmodel.StationMap, eta busmodel.RawEstimated, est int32, stime, positionKey string) *string {
-	plateNumb, busSpeed, busDist := r.resolvedStopBus(b, positionKey)
+// liveStopPlate names the vehicle serving a live stop: TDX's own plate, else a
+// vehicle reported at the stop, else the nearest GPS position.
+func (r *busCitySnapshot) liveStopPlate(b busmodel.StationMap, eta busmodel.RawEstimated, positionKey string) *string {
 	if p := normalizeArrivalPlate(eta.PlateNumb); p != "" {
-		plateNumb = &p
+		return &p
 	}
-	if history.RecordsHistory(est, r.job.snapshot) {
-		r.recordStopHistory(b, eta, est, stime, plateNumb, busSpeed, busDist)
+	if plate, _, _, ok := busAtStop(r.atStopMap, busAtStopKey{b.SubRouteUID, b.Direction, b.StopUID}); ok {
+		return plate
 	}
-	return plateNumb
-}
-
-func (r *busCitySnapshot) resolvedStopBus(b busmodel.StationMap, positionKey string) (*string, *int16, *int) {
-	uid, dir := b.SubRouteUID, b.Direction
-	plateNumb, busSpeed, busDist := nearestBus(b.Lat, b.Lon, r.busmap[positionKey])
-	if plate, speed, dist, ok := busAtStop(r.atStopMap, busAtStopKey{uid, dir, b.StopUID}); ok {
-		plateNumb, busDist = plate, dist
-		if speed != nil {
-			busSpeed = speed
-		}
-	}
-	return plateNumb, busSpeed, busDist
-}
-
-func (r *busCitySnapshot) recordStopHistory(b busmodel.StationMap, eta busmodel.RawEstimated, est int32, stime string, plateNumb *string, busSpeed *int16, busDist *int) {
-	uid, dir := b.SubRouteUID, b.Direction
-	var srcTime *time.Time
-	if t, ok := parseSrcUpdateTime(stime); ok {
-		srcTime = &t
-	}
-	var nextBusTimePtr *string
-	if eta.NextBusTime != "" {
-		nbtp := eta.NextBusTime
-		nextBusTimePtr = &nbtp
-	}
-	// nil stays nil when the city has no weather reading: the history
-	// columns are nullable and a zero would read as a real measurement.
-	weatherTemp, weatherPrecip, weatherWind, weatherHumid := historyWeatherFields(r.wx)
-	r.historyRows = append(r.historyRows, []any{
-		uid, b.StopUID, int16(dir),
-		int16(b.StopSequence), int16(r.totalStops[uid]), est, nextBusTimePtr, srcTime,
-		r.city, int16(r.now.Hour()), int16(r.now.Weekday()), r.isHoliday,
-		weatherTemp, weatherPrecip, weatherWind, weatherHumid,
-		plateNumb, busSpeed, busDist, r.now,
-	})
-}
-
-func historyWeatherFields(wx *weather.Data) (temp, precip, wind, humidity any) {
-	if wx != nil {
-		return wx.Temperature, wx.Precipitation, wx.WindSpeed, wx.Humidity
-	}
-	return nil, nil, nil, nil
+	plate, _, _ := nearestBus(b.Lat, b.Lon, r.busmap[positionKey])
+	return plate
 }
 
 func (r *busCitySnapshot) fillStopTime(b busmodel.StationMap, eta busmodel.RawEstimated) (busmodel.RawEstimated, string) {
@@ -239,33 +198,16 @@ func (r *busCitySnapshot) fillStopTime(b busmodel.StationMap, eta busmodel.RawEs
 	if r.depMap[rk].IsZero() {
 		r.fillsWithoutDeparture++
 	}
-	var predictedArrival time.Time
 	var predSource string
 	if propArrival, propOK := predict.PropagateDelay(
 		r.baselineFor(b, uid, int32(dir)), int(b.StopSequence), r.upstreamByRoute[rk], r.now,
 	); propOK {
-		predictedArrival = propArrival
-		predSource = history.SourcePropagation
+		predSource = _sourcePropagation
 		eta.NextBusTime = propArrival.Format(time.RFC3339)
 	} else {
-		eta.NextBusTime, predictedArrival, predSource = r.modelStopTime(b, rk)
+		eta.NextBusTime, _, predSource = r.modelStopTime(b, rk)
 	}
-	r.recordStopPrediction(b, predSource, predictedArrival)
 	return eta, predSource
-}
-
-func (r *busCitySnapshot) recordStopPrediction(b busmodel.StationMap, predSource string, predictedArrival time.Time) {
-	uid, dir := b.SubRouteUID, b.Direction
-	// Record the prediction (actual pending) for daily MAE measurement.
-	if predSource != "" && !predictedArrival.IsZero() {
-		r.predictionRows = append(r.predictionRows, history.PredictionRecord{SubRouteUID: uid,
-			Direction:     int16(dir),
-			StopUID:       b.StopUID,
-			Source:        predSource,
-			PredictedAt:   r.now,
-			PredictedSecs: int(predictedArrival.Sub(r.now).Round(time.Second).Seconds()),
-		})
-	}
 }
 
 func (r *busCitySnapshot) modelStopTime(b busmodel.StationMap, rk predict.RouteDirKey) (nextBusTime string, predictedArrival time.Time, predSource string) {
@@ -297,10 +239,10 @@ func decodeModelStopTime(nextBusTime string, hasOffset bool) (predictedArrival t
 			predictedArrival = t
 			// Without an offset the model tier returns the bare departure
 			// uncorrected, which is a schedule prediction rather than a
-			// model one; label it as such so the two are measured apart.
-			predSource = history.SourceSchedule
+			// model one; label it as such so the client sees it as scheduled.
+			predSource = _sourceSchedule
 			if hasOffset {
-				predSource = history.SourceModel
+				predSource = _sourceModel
 			}
 		}
 	}

@@ -56,7 +56,7 @@ func TestMQTTOptionsAndDisabledCredentials(t *testing.T) {
 		t.Setenv("MQTT_PASSWORD", "pass")
 		t.Setenv(missing, "")
 		called := false
-		if startMQTTWithClient(nil, nil, nil, func(*paho.ClientOptions) paho.Client { called = true; return &controlledMQTTClient{} }) != nil || called {
+		if startMQTTWithClient(nil, nil, func(*paho.ClientOptions) paho.Client { called = true; return &controlledMQTTClient{} }) != nil || called {
 			t.Fatalf("missing %s still connected", missing)
 		}
 	}
@@ -64,7 +64,7 @@ func TestMQTTOptionsAndDisabledCredentials(t *testing.T) {
 	t.Setenv("MQTT_USERNAME", "user")
 	t.Setenv("MQTT_PASSWORD", "pass")
 	connected := &controlledMQTTClient{}
-	if got := startMQTTWithClient(nil, nil, nil, func(options *paho.ClientOptions) paho.Client {
+	if got := startMQTTWithClient(nil, nil, func(options *paho.ClientOptions) paho.Client {
 		if options.ClientID != "client" {
 			t.Fatalf("client ID=%s", options.ClientID)
 		}
@@ -75,7 +75,7 @@ func TestMQTTOptionsAndDisabledCredentials(t *testing.T) {
 	core, logs := observer.New(zap.DebugLevel)
 	restore := zap.ReplaceGlobals(zap.New(core))
 	defer restore()
-	options := mqttClientOptions("client", "user", "pass", nil, nil, nil)
+	options := mqttClientOptions("client", "user", "pass", nil, nil)
 	if options.ClientID != "client" || options.Username != "user" || options.Password != "pass" || !options.CleanSession || !options.AutoReconnect || !options.ConnectRetry || options.ConnectRetryInterval != 10*time.Second || options.TLSConfig == nil {
 		t.Fatalf("options=%v", options)
 	}
@@ -98,13 +98,13 @@ func TestMQTTOptionsAndDisabledCredentials(t *testing.T) {
 	}
 	c.err = errors.New("connect failed")
 	connectMQTT(c)
-	mqttsubscribeall(c, nil, nil, nil)
+	mqttsubscribeall(c, nil, nil)
 	if logs.FilterMessage("initial connect failed; will auto-retry").Len() != 1 || logs.FilterMessage("subscribe failed").Len() != len(_mqttTopics) {
 		t.Fatalf("failure logs=%v", logs.All())
 	}
 }
 
-func TestMQTTSubscriptionArchivesBeforePublishingAndOutbox(t *testing.T) {
+func TestMQTTSubscriptionPublishesAndWritesOutbox(t *testing.T) {
 	addr := os.Getenv("REDIS_TEST_ADDR")
 	if addr == "" {
 		t.Skip("REDIS_TEST_ADDR required")
@@ -118,23 +118,14 @@ func TestMQTTSubscriptionArchivesBeforePublishingAndOutbox(t *testing.T) {
 	core, logs := observer.New(zap.DebugLevel)
 	restore := zap.ReplaceGlobals(zap.New(core))
 	defer restore()
-	archived := 0
 	c := &controlledMQTTClient{}
 	outbox := &recordingOutbox{}
-	mqttsubscribeall(c, rc, outbox, func(gotTopic string, got []byte) {
-		archived++
-		if gotTopic != topic || string(got) != string(raw) {
-			t.Errorf("archive=%s %s", gotTopic, got)
-		}
-		if len(outbox.args) >= archived {
-			t.Error("outbox preceded archival")
-		}
-	})
+	mqttsubscribeall(c, rc, outbox)
 	for _, callback := range c.callbacks {
 		callback(c, controlledMQTTMessage{topic: topic, raw: raw})
 	}
-	if archived != len(_mqttTopics) || len(outbox.args) != len(_mqttTopics) {
-		t.Fatalf("archive=%d outbox=%v", archived, outbox.args)
+	if len(outbox.args) != len(_mqttTopics) {
+		t.Fatalf("outbox=%v", outbox.args)
 	}
 	if value, err := rc.Get(ctx, key).Result(); err != nil || value == "" {
 		t.Fatalf("cache=%q %v", value, err)

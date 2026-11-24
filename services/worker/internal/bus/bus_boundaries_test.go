@@ -107,18 +107,17 @@ func TestBusStopSnapshotPreservesPlateSpeedCrowdAndLastBus(t *testing.T) {
 	speed := int16(2)
 	r := &busCitySnapshot{city: "Taipei", now: now, totalStops: map[string]int{"route": 5}, stations: map[string]*models.Bus_StationArrival{}, routes: map[string]*models.Bus_RouteArrival{}, busmap: map[string][]*models.BusPosition{key: {nearest}}, atStopMap: map[busAtStopKey]stopPresence{{"route", 1, "stop"}: {plate: "at", speed: &speed}}}
 	eta := busmodel.RawEstimated{EstimatedTime: 0, PlateNumb: " KKA-1288 ", IsLastBus: 1, NextBusTime: "next", SrcUpdateTime: now.Format(time.RFC3339)}
-	plate := r.liveStopHistory(b, eta, 0, eta.SrcUpdateTime, key)
-	if plate == nil || *plate != "KKA-1288" || len(r.historyRows) != 1 {
-		t.Fatalf("plate=%v history=%v", plate, r.historyRows)
+	plate := r.liveStopPlate(b, eta, key)
+	if plate == nil || *plate != "KKA-1288" {
+		t.Fatalf("plate=%v", plate)
 	}
-	row := r.historyRows[0]
-	if row[6].(*string) == nil || *row[6].(*string) != "next" || row[17].(*int16) == nil || *row[17].(*int16) != 2 || *row[18].(*int) != 0 {
-		t.Fatalf("history row=%v", row)
-	}
-	r.atStopMap[busAtStopKey{"route", 1, "stop"}] = stopPresence{plate: "at"}
 	eta.PlateNumb = ""
-	if got := r.liveStopHistory(b, eta, 0, eta.SrcUpdateTime, key); got == nil || *got != "at" || *r.historyRows[1][17].(*int16) != 17 {
-		t.Fatalf("near-stop fallback=%v", r.historyRows)
+	if got := r.liveStopPlate(b, eta, key); got == nil || *got != "at" {
+		t.Fatalf("near-stop fallback=%v", got)
+	}
+	delete(r.atStopMap, busAtStopKey{"route", 1, "stop"})
+	if got := r.liveStopPlate(b, eta, key); got == nil || *got != "near" {
+		t.Fatalf("nearest-GPS fallback=%v", got)
 	}
 	r.appendStationStop(b, eta, 0, 0, "", key, now.Unix(), plate, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)
 	r.appendRouteStop(b, eta, 0, 0, "", key, now.Unix(), plate, models.BusEstimateSource_BUS_ESTIMATE_SOURCE_LIVE)

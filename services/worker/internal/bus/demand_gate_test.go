@@ -88,22 +88,21 @@ func TestBusEtaTickFetchesOnlyWatchedCities(t *testing.T) {
 	}
 }
 
-// TestBusEtaSnapshotTickHonorsDemandGate: collecting history is never a reason
-// to fetch a city, so a snapshot tick skips a city without demand.
-func TestBusEtaSnapshotTickHonorsDemandGate(t *testing.T) {
+// TestBusEtaTickHonorsDemandGate: a tick skips a city without demand.
+func TestBusEtaTickHonorsDemandGate(t *testing.T) {
 	t.Setenv("LIVE_DEMAND_GATE", "")
 	seedBusStops(t, "YilanCounty")
 	sink := demandSink()
 	log := &fetchLog{}
-	snapshot := busLiveJob{
-		sink: sink, demand: busDemand{dataset: "bus_eta"}, snapshot: true, now: time.Now,
+	job := busLiveJob{
+		sink: sink, demand: busDemand{dataset: "bus_eta"}, now: time.Now,
 		store: &fakeBusEtaStore{}, fetch: log.fetch,
 	}
-	if err := snapshot.runDemandCity(t.Context(), "YilanCounty"); err != nil {
+	if err := job.runDemandCity(t.Context(), "YilanCounty"); err != nil {
 		t.Fatalf("runDemandCity = %v", err)
 	}
 	if len(log.names) != 0 || len(sink.refresh) != 0 {
-		t.Fatalf("snapshot tick fetched %v refreshed %v", log.names, sink.refresh)
+		t.Fatalf("tick fetched %v refreshed %v", log.names, sink.refresh)
 	}
 	// busEtaFast carries no dataset, so it is never gated at all.
 	fast := busLiveJob{sink: sink}
@@ -125,10 +124,8 @@ func TestBusEtaCityWakeRunsExactlyThatSlowCity(t *testing.T) {
 	if len(log.names) == 0 || log.count("Tainan") != 1 {
 		t.Fatalf("wake fetches=%v", log.names)
 	}
-	// A wake never samples history: the tick after it in the same window would
-	// sample the city again.
 	starts := logs.FilterMessage("start").FilterField(zap.String("component", "bus_eta")).All()
-	if len(starts) != 1 || starts[0].ContextMap()["snapshot"] != false {
+	if len(starts) != 1 {
 		t.Fatalf("wake start logs=%v", starts)
 	}
 	for _, name := range log.names {

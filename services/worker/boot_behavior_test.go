@@ -27,7 +27,7 @@ func TestWorkerBootStartsAndDrainsWithoutExternalCredentials(t *testing.T) {
 		t.Skip("requires disposable PostgreSQL and dedicated Rider Redis")
 	}
 	t.Setenv("REDIS_ADDR", os.Getenv("RIDER_REDIS_TEST_ADDR"))
-	for _, name := range []string{"REDIS_PASSWORD", "TDX_CLIENT_ID", "TDX_CLIENT_SECRET", "MQTT_USERNAME", "MQTT_PASSWORD", "CWA_API_KEY", "ARCHIVE_MYSQL_DSN", "SENTRY_DSN"} {
+	for _, name := range []string{"REDIS_PASSWORD", "TDX_CLIENT_ID", "TDX_CLIENT_SECRET", "MQTT_USERNAME", "MQTT_PASSWORD", "CWA_API_KEY", "SENTRY_DSN"} {
 		t.Setenv(name, "")
 	}
 	healthPath := filepath.Join(t.TempDir(), "healthy")
@@ -55,10 +55,6 @@ func TestWorkerBootStartsAndDrainsWithoutExternalCredentials(t *testing.T) {
 	if err := runWorker([]string{"functions", "run", "missing-job"}, func() { t.Fatal("manual run waited for signal") }); err == nil || !strings.Contains(err.Error(), "unknown job") {
 		t.Fatalf("manual error=%v", err)
 	}
-	t.Setenv("ARCHIVE_MYSQL_DSN", "invalid-without-parse-time")
-	if err := runWorker([]string{"functions"}, func() { t.Fatal("failed startup waited for signal") }); err == nil || !strings.Contains(err.Error(), "parseTime") {
-		t.Fatalf("archive startup error=%v", err)
-	}
 }
 
 func TestWorkerManualGTFSReturnsDatabaseFailure(t *testing.T) {
@@ -85,11 +81,6 @@ func TestManualRunRequiresCommandAndJob(t *testing.T) {
 	}
 	if !isManualWorkerRun([]string{"functions", "run", "traeta"}) {
 		t.Fatal("manual run rejected")
-	}
-	var closedArchive bool
-	closeWorkerArchive(func() error { closedArchive = true; return errors.New("close failed") })
-	if !closedArchive {
-		t.Fatal("archive cleanup not called")
 	}
 	rc := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
 	_ = rc.Close()
@@ -142,10 +133,10 @@ func TestWorkerMaintenanceCronCallbacks(t *testing.T) {
 	defer func() { _ = rc.Close() }()
 	registerWorkerCrons(r, nil, rc, nil)
 	entries := r.Entries()
-	if len(entries) != 11 {
+	if len(entries) != 10 {
 		t.Fatalf("scheduled jobs=%d", len(entries))
 	}
-	for _, entry := range entries[len(entries)-3:] {
+	for _, entry := range entries[len(entries)-2:] {
 		entry.Job.Run()
 	}
 	if _, err := os.Stat(_health.path); err != nil {

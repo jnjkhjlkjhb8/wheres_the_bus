@@ -95,11 +95,6 @@ func closePipelineResource(closeResource func() error, component string) {
 }
 
 func runConfiguredPipeline(db *pgxpool.Pool, rc *redis.Client, name string) error {
-	closeArchive, err := history.Init(context.Background(), os.Getenv("ARCHIVE_MYSQL_DSN"))
-	if err != nil {
-		return err
-	}
-	defer closePipelineResource(closeArchive, "archive")
 	rawPool, closeRawPool, err := rawSourcePool(context.Background(), db)
 	if err != nil {
 		return err
@@ -287,14 +282,9 @@ func stepVector(ctx context.Context, d deps) error {
 	})
 }
 
-// stepSegmentTimes rebuilds bus_segment_time before the GTFS export, so the
-// feed's stop_times use tonight's segment times.
+// stepSegmentTimes fills hops missing from bus_segment_time before the GTFS
+// export, so the feed's stop_times cover every hop.
 func stepSegmentTimes(ctx context.Context, d deps) error {
-	if err := pipeline.RunWithTimeout(ctx, _segmentTimeTimeout, func(ctx context.Context) error {
-		return history.ComputeSegmentTimesFromEstimates(ctx, d.db, history.ResolveSource())
-	}); err != nil {
-		return _oops.Wrapf(err, "compute segment times from estimates")
-	}
 	return pipeline.RunWithTimeout(ctx, _segmentTimeTimeout, func(ctx context.Context) error {
 		return history.FillSegmentTimesFromDistance(ctx, d.db)
 	})
@@ -392,12 +382,9 @@ func runID() string {
 	return fmt.Sprintf("manual-%d", time.Now().UnixNano())
 }
 
+// stepPredictionErrors only prunes bus_eta_prediction_error now: nothing
+// writes it since the arrival archive went away, so it drains to empty.
 func stepPredictionErrors(ctx context.Context, d deps) error {
-	if err := pipeline.RunDailyWithRetry(ctx, _predictionErrorTimeout, time.Minute, func(ctx context.Context) error {
-		return history.MeasurePredictionError(ctx, d.db, history.ResolveSource())
-	}); err != nil {
-		return _oops.Wrapf(err, "measure prediction error")
-	}
 	return pipeline.RunWithTimeout(ctx, _predictionErrorTimeout, func(ctx context.Context) error {
 		return cleanup.PredictionErrors(ctx, d.db)
 	})

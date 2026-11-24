@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/weather"
 )
@@ -58,22 +57,4 @@ func TestFastBusTickReturnsDatabaseFailureBeforeFetchingUpstream(t *testing.T) {
 	if err := EtaFast(t.Context(), fetch, &captureLiveSink{}, db, nil); err == nil {
 		t.Fatal("closed database was accepted")
 	}
-}
-
-func TestStopEventArchiveCanRemainDisabled(t *testing.T) {
-	closeArchive, err := history.Init(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := closeArchive(); err != nil {
-			t.Error(err)
-		}
-	}()
-	if history.Target() != nil {
-		t.Fatal("disabled archive allocated a writer")
-	}
-	store := pgBusEtaStore{}
-	store.saveStopEvents(t.Context(), nil)
-	store.saveStopEvents(t.Context(), [][]any{{"plate", "Taipei", "route", int16(0), "stop"}})
 }

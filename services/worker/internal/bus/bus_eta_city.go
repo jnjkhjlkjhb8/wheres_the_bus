@@ -310,15 +310,7 @@ func (j busLiveJob) finishCity(ctx context.Context, city string, f *busCityFeeds
 			return _oops.With("city", city).Wrapf(err, "dispatch bus arrival reminders")
 		}
 	}
-	j.saveModifiedCityHistory(ctx, f, r)
 	return nil
-}
-
-func (j busLiveJob) saveModifiedCityHistory(ctx context.Context, f *busCityFeeds, r *busCitySnapshot) {
-	if f.etaModified || positionsModified(f) {
-		j.store.saveHistory(ctx, r.historyRows)
-		j.store.recordPredictions(ctx, r.predictionRows)
-	}
 }
 
 func (j busLiveJob) publishCity(ctx context.Context, city string, mp []busmodel.StationMap, published *bool) error {

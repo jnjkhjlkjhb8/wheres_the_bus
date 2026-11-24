@@ -108,7 +108,7 @@ func TestManualRunWithoutTDXCredentialsFailsThroughEntryPoint(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" || os.Getenv("REDIS_ADDR") == "" {
 		t.Skip("requires PostgreSQL and Redis")
 	}
-	for _, name := range []string{"TDX_CLIENT_ID", "TDX_CLIENT_SECRET", "SENTRY_DSN", "ARCHIVE_MYSQL_DSN"} {
+	for _, name := range []string{"TDX_CLIENT_ID", "TDX_CLIENT_SECRET", "SENTRY_DSN"} {
 		t.Setenv(name, "")
 	}
 	t.Setenv("HEALTH_FILE", filepath.Join(t.TempDir(), "healthy"))

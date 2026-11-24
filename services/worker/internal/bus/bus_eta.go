@@ -18,7 +18,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/models"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/pipeline"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/riderevent"
 	"github.com/redis/go-redis/v9"
@@ -138,9 +137,6 @@ type busLiveJob struct {
 	vehicles map[string]vehicleSource
 	eta      map[string]etaSource
 	now      func() time.Time
-	// snapshot is fixed for the whole run so every city lands on the same side
-	// of the history sampling clock (see snapshotTick).
-	snapshot bool
 	demand   busDemand
 }
 
@@ -275,15 +271,13 @@ func Eta(
 	notifier ArrivalNotifier,
 	guard *pipeline.LiveFetchGuard,
 ) error {
-	return runBusEtaTick(ctx, "bus_eta", _busEtaSlowCities, history.SnapshotTick(time.Now(), history.BusEtaTickInterval),
+	return runBusEtaTick(ctx, "bus_eta", _busEtaSlowCities,
 		nil, nil, fetch, sink, db, notifier, busDemand{dataset: "bus_eta", guard: guard})
 }
 
 // EtaCity runs Eta for one city at once, for a demand wake. A city outside
 // busEtaSlowCities runs nothing: Taipei and New Taipei have demand keys too,
-// but their data comes from Data.taipei and must never cost a TDX fetch. A
-// wake run never samples history snapshots, because the tick that follows in
-// the same window would sample the city again.
+// but their data comes from Data.taipei and must never cost a TDX fetch.
 func EtaCity(
 	ctx context.Context,
 	city string,
@@ -297,7 +291,7 @@ func EtaCity(
 		zap.S().Infow("skip", "component", "bus_eta", "action", "wake", "event", "skip", "city", city, "reason", "not_tdx_city")
 		return nil
 	}
-	return runBusEtaTick(ctx, "bus_eta", []string{city}, false,
+	return runBusEtaTick(ctx, "bus_eta", []string{city},
 		nil, nil, fetch, sink, db, notifier, busDemand{dataset: "bus_eta", guard: guard})
 }
 
@@ -317,7 +311,7 @@ func EtaFast(
 		vehicles[city] = feed
 		etaFeeds[city] = feed
 	}
-	return runBusEtaTick(ctx, "bus_eta_fast", _busEtaFastCities, history.SnapshotTick(time.Now(), history.BusEtaFastTickInterval),
+	return runBusEtaTick(ctx, "bus_eta_fast", _busEtaFastCities,
 		vehicles, etaFeeds, fetch, sink, db, notifier, busDemand{})
 }
 
@@ -328,7 +322,6 @@ func runBusEtaTick(
 	ctx context.Context,
 	component string,
 	cityList []string,
-	snapshot bool,
 	vehicles map[string]vehicleSource,
 	eta map[string]etaSource,
 	fetch pipeline.BoundFetch,
@@ -337,7 +330,7 @@ func runBusEtaTick(
 	notifier ArrivalNotifier,
 	demand busDemand,
 ) error {
-	zap.S().Infow("start", "component", component, "action", "Bus_eta", "event", "start", "snapshot", snapshot)
+	zap.S().Infow("start", "component", component, "action", "Bus_eta", "event", "start")
 	job := busLiveJob{
 		fetch:    fetch,
 		sink:     sink,
@@ -345,7 +338,6 @@ func runBusEtaTick(
 		vehicles: vehicles,
 		eta:      eta,
 		now:      time.Now,
-		snapshot: snapshot,
 		demand:   demand,
 	}
 	jobErr := runBusEtaCities(ctx, cityList, &job, notifier)

@@ -16,7 +16,6 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/obs"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/dataset"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"go.uber.org/zap"
 )
 
@@ -467,7 +466,6 @@ func dumpRawTDXReaderWithDB(
 	if err := validateRawReaderInput(t, marker, landingCycle, body); err != nil {
 		return err
 	}
-	ArchivePayload(ctx, history.Target(), t, marker, landingCycle, body)
 	return obs.Retry(ctx, 3, 2*time.Second, func() error {
 		return retryRawLanding(ctx, db, t, marker, landingCycle, body)
 	})

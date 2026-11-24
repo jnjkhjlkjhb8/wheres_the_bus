@@ -4,8 +4,6 @@ SQL migrations in this directory are the single source of truth for the PostgreS
 
 This file is how to write a migration. Bootstrapping a database, the ledger, and applying a file by hand are operator steps in bus-infra's `migrations.md`.
 
-`mysql/` holds the hand-applied DDL for the MySQL history archive (`services/shared/history`); it is not part of the PostgreSQL sequence.
-
 ## Naming
 
 New DDL is a new dated file: `YYYY-MM-DD-short-name.sql`. `baseline/0000-baseline.sql` is the production schema squashed up to 2026-10-09; a fresh database applies it first, then every dated file in filename order.

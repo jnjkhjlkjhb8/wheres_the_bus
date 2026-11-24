@@ -85,13 +85,6 @@ func TestWorkerNativeRedisCloseFailureRetainsCause(t *testing.T) {
 	workerContractFailure(t, logs, "redis", "failed", redis.ErrClosed)
 }
 
-func TestWorkerNativeArchiveCloseFailureRetainsCause(t *testing.T) {
-	logs := workerContractLogs(t)
-	cause := errors.New("owned archive close failed")
-	closeWorkerArchive(func() error { return cause })
-	workerContractFailure(t, logs, "archive", "failed", cause)
-}
-
 func TestWorkerNativeCronHealthFailurePreservesPathAndCause(t *testing.T) {
 	logs := workerContractLogs(t)
 	path := filepath.Join(t.TempDir(), "missing-parent", "healthy")
@@ -157,7 +150,7 @@ func workerContractMaintenanceFailure(t *testing.T, component, message string, o
 	r := cron.New(cron.WithSeconds())
 	registerWorkerCrons(r, nil, workerContractRedis(t), nil)
 	entries := r.Entries()
-	if len(entries) != 11 {
+	if len(entries) != 10 {
 		t.Fatalf("scheduled entries=%d", len(entries))
 	}
 	entries[len(entries)-offset].Job.Run()
@@ -168,11 +161,11 @@ func workerContractMaintenanceFailure(t *testing.T, component, message string, o
 }
 
 func TestWorkerNativeWeatherCronFailureRetainsCause(t *testing.T) {
-	workerContractMaintenanceFailure(t, "weather", "sync failed; keeping last good Redis snapshot", 3)
+	workerContractMaintenanceFailure(t, "weather", "sync failed; keeping last good Redis snapshot", 2)
 }
 
 func TestWorkerNativeHolidayCronFailureRetainsCause(t *testing.T) {
-	workerContractMaintenanceFailure(t, "holiday", "refresh failed; keeping last good snapshot", 2)
+	workerContractMaintenanceFailure(t, "holiday", "refresh failed; keeping last good snapshot", 1)
 }
 
 func TestWorkerNativeGTFSCronFailureIsReportedWithoutPublish(t *testing.T) {

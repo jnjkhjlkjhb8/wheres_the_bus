@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/busmodel"
-	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/history"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared/predict"
 	"go.uber.org/zap"
 )
@@ -16,9 +15,6 @@ type busEtaStore interface {
 	staticStops(context.Context, string) ([]busmodel.StationMap, error)
 	nextDepartures(context.Context, []predict.RouteDirKey, string, int) map[predict.RouteDirKey]time.Time
 	stopOffsets(context.Context, []string) map[predict.StopOffsetKey]int
-	saveHistory(context.Context, [][]any)
-	saveStopEvents(context.Context, [][]any)
-	recordPredictions(context.Context, []history.PredictionRecord)
 }
 
 type pgBusEtaStore struct {
@@ -35,38 +31,6 @@ func (s pgBusEtaStore) nextDepartures(ctx context.Context, keys []predict.RouteD
 
 func (s pgBusEtaStore) stopOffsets(ctx context.Context, uids []string) map[predict.StopOffsetKey]int {
 	return predict.BatchStopOffsets(ctx, s.db, uids)
-}
-
-// The caller's context is deliberately unused: it is the live tick's, and
-// outliving it is the whole point (see history.Submit).
-func (s pgBusEtaStore) saveHistory(_ context.Context, rows [][]any) {
-	if len(rows) == 0 {
-		return
-	}
-	target := history.Target()
-	history.Submit("bus_eta_history", len(rows), func(ctx context.Context) {
-		history.SaveBusEtaHistory(ctx, target, rows)
-	})
-}
-
-func (s pgBusEtaStore) saveStopEvents(_ context.Context, rows [][]any) {
-	if len(rows) == 0 {
-		return
-	}
-	target := history.Target()
-	history.Submit("bus_stop_event", len(rows), func(ctx context.Context) {
-		history.SaveBusStopEvents(ctx, target, rows)
-	})
-}
-
-func (s pgBusEtaStore) recordPredictions(_ context.Context, rows []history.PredictionRecord) {
-	if len(rows) == 0 {
-		return
-	}
-	db := s.db
-	history.Submit("bus_eta_prediction_error", len(rows), func(ctx context.Context) {
-		history.RecordPredictionErrors(ctx, db, rows)
-	})
 }
 
 func busstaticmp(ctx context.Context, db *pgxpool.Pool, city string) ([]busmodel.StationMap, error) {
