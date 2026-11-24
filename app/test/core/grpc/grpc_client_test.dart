@@ -78,7 +78,7 @@ void main() {
       GrpcClient.instance.thsrDetain,
       GrpcClient.instance.alert,
       GrpcClient.instance.near,
-      GrpcClient.instance.maas,
+      GrpcClient.instance.planner,
       GrpcClient.instance.firebase,
       GrpcClient.instance.feedback,
     ];

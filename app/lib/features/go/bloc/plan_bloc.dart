@@ -13,15 +13,9 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
       super(const PlanState()) {
     on<PlanSearchRequested>(_onSearch);
     on<PlanSearchCancelled>(_onSearchCancelled);
-    on<RouteSelected>(_onRouteSelected);
-    on<PreviewClosed>(_onPreviewClosed);
-    on<NavigationStarted>(_onNavigationStarted);
-    on<StopArrived>(_onStopArrived);
-    on<NavigationEnded>(_onNavigationEnded);
-    on<WalkStepAdvanced>(_onWalkStepAdvanced);
+    on<PlanSortChanged>(_onSortChanged);
     on<SavedRoutesLoaded>(_onSavedRoutesLoaded);
     on<RouteSaveToggled>(_onRouteSaveToggled);
-    on<SavedRouteOpened>(_onSavedRouteOpened);
     add(const SavedRoutesLoaded());
   }
 
@@ -30,6 +24,10 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
   // PlanSearchRequested handlers run concurrently (no transformer); a slow
   // earlier search can otherwise resolve after a newer one and clobber it.
   var _searchGeneration = 0;
+
+  /// What a sort change asks again. Null before the first search and after a
+  /// cancel, when there is nothing to reorder.
+  PlanSearchRequested? _lastSearch;
 
   // Cancelled by _stopPlanStream on replacement, cancellation, and close.
   // ignore: cancel_subscriptions
@@ -115,36 +113,41 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     }
   }
 
-  // A saved route lands directly in preview: a one-route result with no results
-  // list behind it. `previewFromSaved` marks that so PreviewClosed restores the
-  // pre-search planner instead of an empty results list.
-  void _onSavedRouteOpened(SavedRouteOpened event, Emitter<PlanState> emit) {
-    emit(
-      state.copyWith(
-        status: PlanStatus.success,
-        result: PlanResult(routes: [event.route]),
-        selectedRouteIndex: 0,
-        previewing: true,
-        previewFromSaved: true,
-        clearError: true,
-      ),
-    );
-  }
-
   Future<void> _onSearch(
     PlanSearchRequested event,
     Emitter<PlanState> emit,
   ) async {
+    _lastSearch = event;
+    await _plan(event, emit);
+  }
+
+  Future<void> _onSortChanged(
+    PlanSortChanged event,
+    Emitter<PlanState> emit,
+  ) async {
+    if (event.sort == state.sort) return;
+    emit(state.copyWith(sort: event.sort));
+    final last = _lastSearch;
+    if (last != null) await _plan(last, emit, resort: true);
+  }
+
+  // A re-sort is answered from the server's cache, so it keeps the current
+  // results on screen instead of flashing the waiting panel and refitting.
+  Future<void> _plan(
+    PlanSearchRequested event,
+    Emitter<PlanState> emit, {
+    bool resort = false,
+  }) async {
     final gen = ++_searchGeneration;
-    emit(
-      state.copyWith(
-        status: PlanStatus.loading,
-        previewing: false,
-        previewFromSaved: false,
-        clearError: true,
-        geometryPending: false,
-      ),
-    );
+    if (!resort) {
+      emit(
+        state.copyWith(
+          status: PlanStatus.loading,
+          clearError: true,
+          geometryPending: false,
+        ),
+      );
+    }
     _stopPlanStream();
     final done = Completer<void>();
     void finish() => _completeSearch(done);
@@ -162,6 +165,7 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
           options: event.options,
           pageCursor: event.pageCursor,
           legAlternatives: event.legAlternatives,
+          sort: state.sort,
         )
         .listen(
           (update) => _planUpdated(update, gen, emit),
@@ -189,9 +193,6 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
       state.copyWith(
         status: PlanStatus.success,
         result: update.result,
-        selectedRouteIndex: 0,
-        previewing: false,
-        previewFromSaved: false,
         geometryPending: !update.complete,
       ),
     );
@@ -216,8 +217,9 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
   // keeping the saved snapshots so the entry surface still has its 路線箱.
   void _onSearchCancelled(PlanSearchCancelled _, Emitter<PlanState> emit) {
     _searchGeneration++;
+    _lastSearch = null;
     _stopPlanStream();
-    emit(PlanState(savedRoutes: state.savedRoutes));
+    emit(PlanState(savedRoutes: state.savedRoutes, sort: state.sort));
   }
 
   // Drops the in-flight plan stream and lets its handler return. Cancelling a
@@ -230,49 +232,6 @@ class PlanBloc extends Bloc<PlanEvent, PlanState> {
     _planFinish = null;
     unawaited(sub?.cancel());
     finish?.call();
-  }
-
-  void _onRouteSelected(RouteSelected event, Emitter<PlanState> emit) {
-    emit(state.copyWith(selectedRouteIndex: event.index, previewing: true));
-  }
-
-  void _onPreviewClosed(PreviewClosed _, Emitter<PlanState> emit) {
-    // A saved-route preview has no results list behind it; reset to the fresh
-    // planner state (keeping the saved snapshots) so the saved list re-shows.
-    if (state.previewFromSaved) {
-      emit(PlanState(savedRoutes: state.savedRoutes));
-      return;
-    }
-    emit(state.copyWith(previewing: false));
-  }
-
-  void _onNavigationStarted(NavigationStarted _, Emitter<PlanState> emit) {
-    emit(
-      state.copyWith(
-        activeLegIndex: 0,
-        activeStopIndex: 0,
-        activeWalkStepIndex: 0,
-      ),
-    );
-  }
-
-  void _onStopArrived(StopArrived event, Emitter<PlanState> emit) {
-    emit(
-      state.copyWith(
-        activeLegIndex: event.legIndex,
-        activeStopIndex: event.stopIndex,
-        // Each leg starts at its first walk step; the coordinator advances it.
-        activeWalkStepIndex: 0,
-      ),
-    );
-  }
-
-  void _onWalkStepAdvanced(WalkStepAdvanced event, Emitter<PlanState> emit) {
-    emit(state.copyWith(activeWalkStepIndex: event.index));
-  }
-
-  void _onNavigationEnded(NavigationEnded _, Emitter<PlanState> emit) {
-    emit(state.copyWith(clearNavigation: true));
   }
 
   @override

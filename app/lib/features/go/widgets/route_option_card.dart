@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
@@ -23,6 +24,8 @@ int routeMinutes(PlanRoute route) {
 }
 
 int walkMinutes(PlanRoute route) {
+  final seconds = route.walkSeconds;
+  if (seconds != null) return (seconds / 60).round().clamp(0, 999);
   var total = 0;
   for (final s in route.sections) {
     if (isWalk(s)) total += sectionMinutes(s);
@@ -51,6 +54,42 @@ int waitMinutes(PlanRoute route) {
   }
   return total;
 }
+
+// Keyed by (tight, timesEstimated). Estimated times qualify the planner's
+// level with 時間為估計 and an approximate 約; they never change the level.
+final _marginWords = <(bool, bool), String Function(AppI18n, int)>{
+  (false, false): (i18n, m) => i18n.transferMarginComfortable(m),
+  (true, false): (i18n, m) => i18n.transferMarginTight(m),
+  (false, true): (i18n, m) => i18n.transferMarginEstimated(m),
+  (true, true): (i18n, m) => i18n.transferMarginTightEstimated(m),
+};
+
+/// How much room a transfer leaves, in words, without the leading 轉乘. Null
+/// when the planner could not time it, so nothing is said rather than a guess.
+String? transferMarginWords(AppI18n i18n, PlanTransfer transfer) =>
+    transfer.timed
+    ? _marginWords[(transfer.tight, transfer.timesEstimated)]!(
+        i18n,
+        transfer.marginMinutes,
+      )
+    : null;
+
+/// Warning for a tight transfer, positive for a measured comfortable one, and
+/// plain secondary text for one whose times are estimated.
+Color transferMarginColor(PlanTransfer transfer, ColorScheme cs) {
+  if (transfer.tight) return _warningText(cs);
+  if (transfer.timesEstimated) return cs.onSurfaceVariant;
+  return _positiveText(cs);
+}
+
+// Each status colour takes a different value on a dark surface, not a fade.
+Color _warningText(ColorScheme cs) => cs.brightness == Brightness.dark
+    ? AppTheme.statusApproach
+    : AppTheme.etaApproaching;
+
+Color _positiveText(ColorScheme cs) => cs.brightness == Brightness.dark
+    ? AppTheme.statusArriving
+    : AppTheme.statusArrivingText;
 
 class RouteOptionCard extends StatelessWidget {
   const RouteOptionCard({
@@ -86,6 +125,9 @@ class RouteOptionCard extends StatelessWidget {
   bool _showEndpoints(String origin, String destination) =>
       highlighted && (origin.isNotEmpty || destination.isNotEmpty);
 
+  // A partial sum would read as cheaper than the trip is.
+  bool get _showFare => route.totalFare > 0 && route.fareComplete;
+
   String _transferLabel(AppI18n i18n) => route.transfers == 0
       ? i18n.goDirect
       : i18n.transfersCount(route.transfers);
@@ -116,33 +158,36 @@ class RouteOptionCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    '$minutes',
-                    style: AppTextStyles.timeValue(
-                      size: AppTextStyles.heading1.fontSize,
-                      weight: AppTextStyles.heading1.fontWeight,
-                      color: cs.onSurface,
+              // One bone for the duration, not one per Text.
+              Skeleton.unite(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(
+                      '$minutes',
+                      style: AppTextStyles.timeValue(
+                        size: AppTextStyles.heading1.fontSize,
+                        weight: AppTextStyles.heading1.fontWeight,
+                        color: cs.onSurface,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 3),
-                  Text(
-                    AppI18n.of(context).goMinutesUnit,
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: cs.onSurfaceVariant,
+                    const SizedBox(width: 3),
+                    Text(
+                      AppI18n.of(context).goMinutesUnit,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               _DepartArriveWindow(departure: departure, arrival: arrival),
             ],
           ),
         ),
-        if (route.totalFare > 0)
+        if (_showFare)
           Padding(
             padding: const EdgeInsets.only(
               left: AppTheme.space8,
@@ -190,26 +235,7 @@ class RouteOptionCard extends StatelessWidget {
           ),
         ],
         const SizedBox(height: AppTheme.space10),
-        Row(
-          children: [
-            Icon(
-              Icons.swap_horiz_rounded,
-              size: 14,
-              color: cs.onSurfaceVariant,
-            ),
-            const SizedBox(width: AppTheme.space4),
-            Text(
-              _transferLabel(AppI18n.of(context)),
-              style: AppTextStyles.bodySmall.copyWith(
-                color: cs.onSurfaceVariant,
-              ),
-            ),
-            if (onToggleSave != null) ...[
-              const Spacer(),
-              _SaveButton(saved: isSaved, onTap: onToggleSave!),
-            ],
-          ],
-        ),
+        ..._footer(context, cs),
       ],
     );
 
@@ -222,6 +248,48 @@ class RouteOptionCard extends StatelessWidget {
         padding: const EdgeInsets.all(AppTheme.space14),
         decoration: _decoration(cs),
         child: content,
+      ),
+    );
+  }
+
+  List<Widget> _footer(BuildContext context, ColorScheme cs) => [
+    Row(
+      children: [
+        Icon(Icons.swap_horiz_rounded, size: 14, color: cs.onSurfaceVariant),
+        const SizedBox(width: AppTheme.space4),
+        Text(
+          _transferLabel(AppI18n.of(context)),
+          style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
+        ),
+        if (onToggleSave != null) ...[
+          const Spacer(),
+          _SaveButton(saved: isSaved, onTap: onToggleSave!),
+        ],
+      ],
+    ),
+    if (route.weakestTransfer case final transfer?)
+      _TransferMarginLine(transfer: transfer),
+  ];
+}
+
+/// The result card's one transfer line: the change most likely to be missed.
+class _TransferMarginLine extends StatelessWidget {
+  const _TransferMarginLine({required this.transfer});
+
+  final PlanTransfer transfer;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: AppTheme.space6),
+      child: Text(
+        i18n.transferMarginCard(transferMarginWords(i18n, transfer)!),
+        style: AppTextStyles.bodySmall.copyWith(
+          color: transferMarginColor(transfer, cs),
+          fontWeight: transfer.tight ? FontWeight.w600 : null,
+        ),
       ),
     );
   }
@@ -287,30 +355,42 @@ class LegStrip extends StatelessWidget {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final i18n = AppI18n.of(context);
-    final children = <Widget>[];
+  Widget _chevron(ColorScheme cs) =>
+      Icon(Icons.chevron_right_rounded, size: 15, color: cs.outline);
 
-    void chevron() => children.add(
-      Icon(Icons.chevron_right_rounded, size: 15, color: cs.outline),
-    );
-
-    for (final (i, s) in sections.indexed) {
-      final wait = waitMinutesBefore(sections, i);
-      if (wait > 0) {
-        children.add(
+  // Adds the wait gap before section i, then the section's own chip.
+  void _addSection(
+    List<Widget> children,
+    int i,
+    ColorScheme cs,
+    AppI18n i18n,
+  ) {
+    final wait = waitMinutesBefore(sections, i);
+    if (wait > 0) {
+      children
+        ..add(
           _GapChip(
             icon: Icons.schedule_rounded,
             minutes: wait,
             semanticLabel: i18n.goWaitMinutes(wait),
           ),
-        );
-        chevron();
-      }
-      children.add(_sectionChip(s, cs, i18n));
-      if (i < sections.length - 1) chevron();
+        )
+        ..add(_chevron(cs));
+    }
+    // A transfer walk's minutes include the transfer buffer, so the chip
+    // would overstate the walk.
+    if (isTransferWalk(sections, i)) return;
+    children.add(_sectionChip(sections[i], cs, i18n));
+    if (i < sections.length - 1) children.add(_chevron(cs));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final i18n = AppI18n.of(context);
+    final children = <Widget>[];
+    for (var i = 0; i < sections.length; i++) {
+      _addSection(children, i, cs, i18n);
     }
     return Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,

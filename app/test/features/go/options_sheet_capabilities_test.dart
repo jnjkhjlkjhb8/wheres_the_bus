@@ -77,7 +77,7 @@ void main() {
 
     // The shared five are still there…
     expect(find.text(i18n.goModes), findsOneWidget);
-    expect(find.text(i18n.goTransferTime), findsOneWidget);
+    expect(find.text(i18n.goTransferBuffer), findsOneWidget);
     // …and nothing TDX would silently ignore.
     expect(find.text(i18n.goMaxTransfers), findsNothing);
     expect(find.text(i18n.goAvoidReservation), findsNothing);

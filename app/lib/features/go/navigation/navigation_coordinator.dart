@@ -6,8 +6,8 @@ import 'package:wheres_the_bus/data/tracking/journey_models.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
-import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
-import 'package:wheres_the_bus/features/go/bloc/plan_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_event.dart';
 import 'package:wheres_the_bus/features/go/widgets/transit_visuals.dart'
     show isWalk;
 
@@ -119,7 +119,7 @@ class NavigationAdvanceResult {
 
 class NavigationCoordinator {
   NavigationCoordinator({
-    required PlanBloc planBloc,
+    required TripBloc tripBloc,
     required JourneySessionBloc journeySessionBloc,
     required bool Function() liveActivityEnabled,
     Stream<Position> Function()? positions,
@@ -131,7 +131,7 @@ class NavigationCoordinator {
     // ignore: avoid_positional_boolean_parameters
     void Function(bool driving)? onAutopilotStatus,
     void Function(Position fix)? onFollowUpdate,
-  }) : _planBloc = planBloc,
+  }) : _tripBloc = tripBloc,
        _journeySessionBloc = journeySessionBloc,
        _liveActivityEnabled = liveActivityEnabled,
        _positions = positions,
@@ -139,7 +139,7 @@ class NavigationCoordinator {
        _onAutopilotStatus = onAutopilotStatus,
        _onFollowUpdate = onFollowUpdate;
 
-  final PlanBloc _planBloc;
+  final TripBloc _tripBloc;
   final JourneySessionBloc _journeySessionBloc;
   final bool Function() _liveActivityEnabled;
   final Stream<Position> Function()? _positions;
@@ -168,13 +168,8 @@ class NavigationCoordinator {
 
   int? _lastAutoBoardedLeg;
 
-  Future<PlanPoint?> start({
-    required PlanRoute route,
-    required int routeIndex,
-  }) async {
-    _planBloc
-      ..add(RouteSelected(index: routeIndex))
-      ..add(const NavigationStarted());
+  Future<PlanPoint?> start({required PlanRoute route}) async {
+    _tripBloc.add(TripStarted(route));
     final legs = JourneyLeg.legsFromRoute(route);
     if (legs.isNotEmpty && _liveActivityEnabled()) {
       _journeySessionBloc.add(JourneyStarted(legs: legs));
@@ -230,9 +225,9 @@ class NavigationCoordinator {
   }
 
   (PlanRoute, int)? _activeNavigation() {
-    final activeLeg = _planBloc.state.activeLegIndex;
+    final activeLeg = _tripBloc.state.activeLegIndex;
     if (activeLeg == null) return null;
-    final route = _currentRoute();
+    final route = _tripBloc.state.route;
     if (route == null) return null;
     return activeLeg < route.sections.length ? (route, activeLeg) : null;
   }
@@ -271,7 +266,7 @@ class NavigationCoordinator {
     // Display-only: advance the turn-by-turn walk step. Never touches leg
     // advancement, which decideNavAction below still owns exclusively.
     if (isWalk(section) && section.walkSteps.isNotEmpty) {
-      final current = _planBloc.state.activeWalkStepIndex;
+      final current = _tripBloc.state.activeWalkStepIndex;
       final next = advanceWalkStep(
         steps: section.walkSteps,
         current: current,
@@ -279,7 +274,7 @@ class NavigationCoordinator {
         lon: position.longitude,
       );
       if (next != current) {
-        _planBloc.add(WalkStepAdvanced(index: next));
+        _tripBloc.add(WalkStepAdvanced(index: next));
       }
     }
   }
@@ -302,7 +297,7 @@ class NavigationCoordinator {
       return const NavigationAdvanceResult(arrived: true);
     }
     final nextLeg = activeLeg + 1;
-    _planBloc.add(StopArrived(legIndex: nextLeg, stopIndex: 0));
+    _tripBloc.add(StopArrived(legIndex: nextLeg, stopIndex: 0));
     return NavigationAdvanceResult(
       arrived: false,
       nextCameraPoint: route.firstPoint(leg: nextLeg),
@@ -311,34 +306,23 @@ class NavigationCoordinator {
 
   Future<void> end() async {
     unawaited(_posSub?.cancel());
-    _planBloc.add(const NavigationEnded());
+    _tripBloc.add(const TripEnded());
     _journeySessionBloc.add(const JourneyCancelled(userInitiated: true));
   }
 
   Future<bool> reconcileJourneyDone() async {
-    final activeLeg = _planBloc.state.activeLegIndex;
+    final activeLeg = _tripBloc.state.activeLegIndex;
     if (activeLeg == null) {
       unawaited(_posSub?.cancel());
       return false;
     }
-    final route = _currentRoute();
+    final route = _tripBloc.state.route;
     if (route != null && _hasTrailingWalk(route)) {
       return false;
     }
     unawaited(_posSub?.cancel());
-    _planBloc.add(const NavigationEnded());
+    _tripBloc.add(const TripEnded());
     return true;
-  }
-
-  /// Resolves the route backing the current navigation, mirroring the lookup
-  /// `_onPosition` performs against `PlanBloc`'s `selectedRouteIndex`/`result`.
-  PlanRoute? _currentRoute() {
-    final routeIndex = _planBloc.state.selectedRouteIndex;
-    final routes = _planBloc.state.result?.routes;
-    if (routeIndex == null || routes == null || routeIndex >= routes.length) {
-      return null;
-    }
-    return routes[routeIndex];
   }
 
   /// True iff a walk section follows the route's last transit section, i.e.

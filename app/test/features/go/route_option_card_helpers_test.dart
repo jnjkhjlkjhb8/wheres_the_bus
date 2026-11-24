@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/features/go/widgets/route_option_card.dart';
+import 'package:wheres_the_bus/features/go/widgets/transit_visuals.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 const _here = PlanPoint(lat: 25, lng: 121.5);
@@ -70,6 +71,32 @@ void main() {
       _section('walk', seconds: 120),
     ]);
     expect(walkMinutes(route), 6);
+  });
+
+  test("walk minutes take the planner's total when it sent one", () {
+    final route = PlanRoute(
+      travelTime: 600,
+      startTime: '',
+      endTime: '',
+      transfers: 1,
+      sections: [_section('walk', seconds: 900)],
+      walkSeconds: 330,
+    );
+    expect(walkMinutes(route), 6);
+  });
+
+  test('only a walk between two rides is a transfer walk', () {
+    final sections = [
+      _section('walk'),
+      _section('transit'),
+      _section('walk'),
+      _section('transit'),
+      _section('walk'),
+    ];
+    expect(
+      [for (var i = 0; i < sections.length; i++) isTransferWalk(sections, i)],
+      [false, false, true, false, false],
+    );
   });
 
   test('a wait is the rounded gap between arrival and next departure', () {
@@ -170,5 +197,23 @@ void main() {
     expect(find.byIcon(Icons.directions_transit_rounded), findsNothing);
     // Three joins plus one before the 8-minute transfer wait; none trailing.
     expect(find.byIcon(Icons.chevron_right_rounded), findsNWidgets(4));
+  });
+
+  testWidgets('a transfer walk gets no chip: its minutes include the buffer', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        LegStrip(
+          sections: [
+            _section('transit', seconds: 840),
+            _section('pedestrian', seconds: 420),
+            _section('transit', seconds: 480, mode: 'mrt'),
+          ],
+        ),
+      ),
+    );
+    expect(find.byIcon(Icons.directions_walk_rounded), findsNothing);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
   });
 }

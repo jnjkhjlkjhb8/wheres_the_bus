@@ -25,6 +25,8 @@ import 'package:wheres_the_bus/features/alerts/bloc/alert_event.dart';
 import 'package:wheres_the_bus/features/alerts/view/notification_toast.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
 import 'package:wheres_the_bus/features/metro/bloc/mrt_track_bloc.dart';
 import 'package:wheres_the_bus/features/metro/bloc/mrt_track_event.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -205,6 +207,8 @@ class _AppShell extends StatelessWidget {
       providers: [
         BlocProvider(create: (_) => AlertBloc()),
         BlocProvider(create: (_) => PlanBloc()),
+        BlocProvider(create: (_) => PlanPreviewBloc()),
+        BlocProvider(create: (_) => TripBloc()),
         BlocProvider(
           create: (_) {
             // iOS drives the Live Activity / Dynamic Island; Android drives

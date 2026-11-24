@@ -12,6 +12,8 @@ import 'package:wheres_the_bus/data/repositories/favorites_repository.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
 import 'package:wheres_the_bus/features/favorites/bloc/favorites_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
 import 'package:wheres_the_bus/features/metro/bloc/mrt_track_bloc.dart';
 import 'package:wheres_the_bus/features/search/view/search_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -27,6 +29,8 @@ void main() {
     final router = AppRouter.createRouter(initialLocation: location);
     final alertBloc = AlertBloc();
     final planBloc = PlanBloc();
+    final previewBloc = PlanPreviewBloc();
+    final tripBloc = TripBloc();
     final trackBloc = MrtTrackBloc(i18n: lookupAppI18n(const Locale('zh')));
     final favoritesBloc = FavoritesBloc(
       FavoritesRepository.instance,
@@ -35,6 +39,8 @@ void main() {
     addTearDown(router.dispose);
     addTearDown(alertBloc.close);
     addTearDown(planBloc.close);
+    addTearDown(previewBloc.close);
+    addTearDown(tripBloc.close);
     addTearDown(trackBloc.close);
     addTearDown(favoritesBloc.close);
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -43,6 +49,8 @@ void main() {
         providers: [
           BlocProvider<AlertBloc>.value(value: alertBloc),
           BlocProvider<PlanBloc>.value(value: planBloc),
+          BlocProvider<PlanPreviewBloc>.value(value: previewBloc),
+          BlocProvider<TripBloc>.value(value: tripBloc),
           BlocProvider<MrtTrackBloc>.value(value: trackBloc),
           BlocProvider<FavoritesBloc>.value(value: favoritesBloc),
         ],

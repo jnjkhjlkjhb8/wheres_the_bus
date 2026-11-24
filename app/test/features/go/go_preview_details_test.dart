@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
@@ -51,13 +52,6 @@ void main() {
   final i18n = lookupAppI18n(const Locale('zh'));
   final scheme = AppTheme.light.colorScheme;
 
-  PlanState preview(PlanRoute route) => PlanState(
-    status: PlanStatus.success,
-    result: PlanResult(routes: [route]),
-    selectedRouteIndex: 0,
-    previewing: true,
-  );
-
   PlanRoute route(List<PlanSection> sections) => PlanRoute(
     travelTime: 1800,
     startTime: '2026-08-18T07:12:00',
@@ -81,15 +75,14 @@ void main() {
   ) async {
     await harness.pump(
       tester,
-      preview(
-        route([
-          _leg('walk', to: 'Named'),
-          _leg('transit', from: 'Board', to: 'Alight', stops: 2, headsign: 'H'),
-          _leg('walk'),
-          _leg('transit', from: 'Next', to: 'End'),
-          _leg('walk', to: ''),
-        ]),
-      ),
+      const PlanState(status: PlanStatus.success),
+      previewing: route([
+        _leg('walk', to: 'Named'),
+        _leg('transit', from: 'Board', to: 'Alight', stops: 2, headsign: 'H'),
+        _leg('walk'),
+        _leg('transit', from: 'Next', to: 'End'),
+        _leg('walk', to: ''),
+      ]),
       destination: goTestDestination,
     );
     await tester.pump();
@@ -104,7 +97,8 @@ void main() {
   testWidgets('the header states both clocks in 15pt mono', (tester) async {
     await harness.pump(
       tester,
-      preview(route([_leg('walk', to: 'X')])),
+      const PlanState(status: PlanStatus.success),
+      previewing: route([_leg('walk', to: 'X')]),
       destination: goTestDestination,
     );
     await tester.pump();
@@ -120,7 +114,8 @@ void main() {
   ) async {
     await harness.pump(
       tester,
-      preview(route([_leg('walk', to: 'X'), _leg('transit')])),
+      const PlanState(status: PlanStatus.success),
+      previewing: route([_leg('walk', to: 'X'), _leg('transit')]),
       destination: goTestDestination,
     );
     await tester.pump();
@@ -154,7 +149,8 @@ void main() {
   ) async {
     await harness.pump(
       tester,
-      preview(route([_leg('walk', to: 'X'), _leg('transit')])),
+      const PlanState(status: PlanStatus.success),
+      previewing: route([_leg('walk', to: 'X'), _leg('transit')]),
       destination: goTestDestination,
     );
     await tester.pump();
@@ -183,14 +179,13 @@ void main() {
         '#${(scheme.outlineVariant.toARGB32() & 0xffffff).toRadixString(16).padLeft(6, '0')}';
     await harness.pump(
       tester,
-      preview(
-        route([
-          _leg('walk', to: 'X'),
-          _leg('walk', to: 'Y'),
-          _leg('transit', color: hex),
-          _leg('transit', color: '#00ff00'),
-        ]),
-      ),
+      const PlanState(status: PlanStatus.success),
+      previewing: route([
+        _leg('walk', to: 'X'),
+        _leg('walk', to: 'Y'),
+        _leg('transit', color: hex),
+        _leg('transit', color: '#00ff00'),
+      ]),
       destination: goTestDestination,
     );
     await tester.pump();
@@ -207,7 +202,8 @@ void main() {
     addTearDown(tester.view.resetViewPadding);
     await harness.pump(
       tester,
-      preview(route([_leg('walk', to: 'X')])),
+      const PlanState(status: PlanStatus.success),
+      previewing: route([_leg('walk', to: 'X')]),
       destination: goTestDestination,
     );
     await tester.pump();
@@ -225,5 +221,167 @@ void main() {
         );
     expect(footer, isNotNull);
     await harness.dispose(tester);
+  });
+
+  testWidgets('walking is the planner total, and a transfer walk shows no '
+      'minutes of its own', (tester) async {
+    await harness.pump(
+      tester,
+      const PlanState(status: PlanStatus.success),
+      previewing: PlanRoute(
+        travelTime: 1800,
+        startTime: '2026-08-18T07:12:00',
+        endTime: '2026-08-18T07:50:00',
+        transfers: 1,
+        sections: [
+          _leg('walk', seconds: 180),
+          _leg('transit'),
+          _leg('walk', seconds: 420),
+          _leg('transit'),
+        ],
+        walkSeconds: 300,
+      ),
+      destination: goTestDestination,
+    );
+    await tester.pump();
+    expect(find.text(i18n.walkMinutes(5)), findsOneWidget);
+    expect(find.text(i18n.minutesValue(3)), findsOneWidget);
+    // The transfer walk runs on through the buffer, so its 7 minutes are not
+    // time on foot.
+    expect(find.text(i18n.minutesValue(7)), findsNothing);
+    await harness.dispose(tester);
+  });
+
+  testWidgets('the fare shows only when every ride was priced', (
+    tester,
+  ) async {
+    PlanRoute priced({required bool complete}) => PlanRoute(
+      travelTime: 1800,
+      startTime: '2026-08-18T07:12:00',
+      endTime: '2026-08-18T07:50:00',
+      transfers: 0,
+      totalFare: 45,
+      fareComplete: complete,
+      sections: [_leg('transit')],
+    );
+    await harness.pump(
+      tester,
+      const PlanState(status: PlanStatus.success),
+      previewing: priced(complete: true),
+      destination: goTestDestination,
+    );
+    await tester.pump();
+    expect(find.text('45'), findsOneWidget);
+    harness.preview.show(priced(complete: false));
+    await tester.pump();
+    expect(find.text('45'), findsNothing);
+    await harness.dispose(tester);
+  });
+
+  group('a change between two rides', () {
+    PlanSection timed(String type, String departs, String arrives) {
+      final leg = _leg(type, from: 'F', to: 'T');
+      return PlanSection(
+        type: leg.type,
+        travelSummary: leg.travelSummary,
+        departure: PlanPlace(name: 'F', type: '', location: _p, time: departs),
+        arrival: PlanPlace(name: 'T', type: '', location: _p, time: arrives),
+        transport: leg.transport,
+        intermediateStops: const [],
+      );
+    }
+
+    PlanRoute changing(PlanTransfer transfer) => PlanRoute(
+      travelTime: 1800,
+      startTime: '2026-08-18T07:12:00',
+      endTime: '2026-08-18T07:50:00',
+      transfers: 1,
+      sections: [
+        timed('transit', '2026-08-18T07:12:00', '2026-08-18T07:20:00'),
+        timed('walk', '2026-08-18T07:20:00', '2026-08-18T07:24:00'),
+        timed('transit', '2026-08-18T07:30:00', '2026-08-18T07:50:00'),
+      ],
+      transferMargins: [transfer],
+    );
+
+    PlanTransfer transfer({
+      TransferReliability reliability = TransferReliability.comfortable,
+      bool estimated = false,
+    }) => PlanTransfer(
+      fromLeg: 0,
+      toLeg: 2,
+      marginSeconds: 360,
+      reliability: reliability,
+      timesEstimated: estimated,
+    );
+
+    testWidgets('says how much room it leaves, in place of the wait', (
+      tester,
+    ) async {
+      await harness.pump(
+        tester,
+        const PlanState(status: PlanStatus.success),
+        previewing: changing(transfer()),
+        destination: goTestDestination,
+      );
+      await tester.pump();
+      final note = tester.widget<Text>(find.text('轉乘 · 有 6 分鐘 · 充裕'));
+      expect(note.style!.color, AppTheme.statusArrivingText);
+      expect(note.style!.fontWeight, FontWeight.w600);
+      expect(find.text(i18n.transferWaitMinutes(6)), findsNothing);
+      await harness.dispose(tester);
+    });
+
+    testWidgets('an estimated margin is said to be an estimate', (
+      tester,
+    ) async {
+      await harness.pump(
+        tester,
+        const PlanState(status: PlanStatus.success),
+        previewing: changing(transfer(estimated: true)),
+        destination: goTestDestination,
+      );
+      await tester.pump();
+      final note = tester.widget<Text>(
+        find.text('轉乘 · 約 6 分鐘 · 充裕 · 時間為估計'),
+      );
+      expect(note.style!.color, AppTheme.light.colorScheme.onSurfaceVariant);
+      await harness.dispose(tester);
+    });
+
+    testWidgets('an untimed change keeps the scheduled wait instead', (
+      tester,
+    ) async {
+      await harness.pump(
+        tester,
+        const PlanState(status: PlanStatus.success),
+        previewing: changing(
+          transfer(reliability: TransferReliability.unknown),
+        ),
+        destination: goTestDestination,
+      );
+      await tester.pump();
+      expect(find.textContaining('轉乘 ·'), findsNothing);
+      expect(find.text(i18n.transferWaitMinutes(6)), findsOneWidget);
+      await harness.dispose(tester);
+    });
+
+    testWidgets('each row starts with its clock time in mono', (tester) async {
+      await harness.pump(
+        tester,
+        const PlanState(status: PlanStatus.success),
+        previewing: changing(transfer()),
+        destination: goTestDestination,
+      );
+      await tester.pump();
+      // 07:12 is also the header's departure clock.
+      expect(find.text('07:12'), findsNWidgets(2));
+      for (final clock in ['07:20', '07:30']) {
+        final text = tester.widget<Text>(find.text(clock));
+        expect(text.style!.fontFamily, AppTextStyles.timeValue().fontFamily);
+        expect(text.style!.fontWeight, FontWeight.w600);
+      }
+      await harness.dispose(tester);
+    });
   });
 }

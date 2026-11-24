@@ -10,9 +10,9 @@ import 'package:wheres_the_bus/data/generated/bike.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/bus.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/feedback.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/firebase.pbgrpc.dart';
-import 'package:wheres_the_bus/data/generated/maas.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/mrt.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/near.pbgrpc.dart';
+import 'package:wheres_the_bus/data/generated/planner.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/thsr.pbgrpc.dart';
 import 'package:wheres_the_bus/data/generated/tra.pbgrpc.dart';
 
@@ -155,8 +155,8 @@ class GrpcClient {
       Alert_ServiceClient(_channel, interceptors: _interceptors);
   Near_Station_ServiceClient get near =>
       Near_Station_ServiceClient(_channel, interceptors: _interceptors);
-  MaasServiceClient get maas =>
-      MaasServiceClient(_channel, interceptors: _interceptors);
+  PlannerServiceClient get planner =>
+      PlannerServiceClient(_channel, interceptors: _interceptors);
   Firebase_ServiceClient get firebase =>
       Firebase_ServiceClient(_channel, interceptors: _interceptors);
   Feedback_ServiceClient get feedback =>

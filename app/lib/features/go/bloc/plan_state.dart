@@ -1,20 +1,18 @@
 import 'package:equatable/equatable.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
+import 'package:wheres_the_bus/data/models/plan_options.dart';
 import 'package:wheres_the_bus/data/repositories/maas_repository.dart';
 
 enum PlanStatus { initial, loading, success, failure }
 
+/// The search and its results, plus the saved-route box shown before any
+/// search. The previewed route and the trip under way live in their own blocs.
 class PlanState extends Equatable {
   const PlanState({
     this.status = PlanStatus.initial,
     this.result,
     this.error,
-    this.selectedRouteIndex,
-    this.previewing = false,
-    this.previewFromSaved = false,
-    this.activeLegIndex,
-    this.activeStopIndex,
-    this.activeWalkStepIndex = 0,
+    this.sort = PlanSort.fastest,
     this.savedRoutes = const [],
     this.savedRoutesReady = false,
     this.savedRoutesLoadError = false,
@@ -25,23 +23,10 @@ class PlanState extends Equatable {
   final PlanStatus status;
   final PlanResult? result;
   final String? error;
-  final int? selectedRouteIndex;
 
-  /// Whether the selected route is shown as a full itinerary (plan preview),
-  /// as opposed to the results list. Navigation can only start from preview.
-  final bool previewing;
-
-  /// Whether the current preview was entered directly from a saved route, so
-  /// there is no results list behind it. Closing such a preview clears the
-  /// injected result rather than falling back to a (non-existent) results list.
-  final bool previewFromSaved;
-
-  final int? activeLegIndex;
-  final int? activeStopIndex;
-
-  /// Index into the active walk section's steps; display-only, resets to 0 on
-  /// each leg change and advances as the walker passes maneuver points.
-  final int activeWalkStepIndex;
+  /// How the results are ordered. Kept across searches: it is the rider's
+  /// stance, not a property of one trip.
+  final PlanSort sort;
 
   /// Locally saved route snapshots, newest first.
   final List<PlanRoute> savedRoutes;
@@ -60,18 +45,17 @@ class PlanState extends Equatable {
   /// Keys of saved snapshots, for O(1) "is this saved?" checks on cards.
   Set<String> get savedKeys => {for (final r in savedRoutes) r.savedKey};
 
+  /// Whether the first result is the quickest, which only the fastest sort
+  /// promises.
+  bool get firstIsFastest =>
+      sort == PlanSort.fastest && (result?.routes.length ?? 0) > 1;
+
   PlanState copyWith({
     PlanStatus? status,
     PlanResult? result,
     String? error,
     bool clearError = false,
-    int? selectedRouteIndex,
-    bool? previewing,
-    bool? previewFromSaved,
-    bool clearNavigation = false,
-    int? activeLegIndex,
-    int? activeStopIndex,
-    int? activeWalkStepIndex,
+    PlanSort? sort,
     List<PlanRoute>? savedRoutes,
     bool? savedRoutesReady,
     bool? savedRoutesLoadError,
@@ -82,20 +66,7 @@ class PlanState extends Equatable {
       status: status ?? this.status,
       result: result ?? this.result,
       error: _clearable(clearError, error, this.error),
-      selectedRouteIndex: selectedRouteIndex ?? this.selectedRouteIndex,
-      previewing: previewing ?? this.previewing,
-      previewFromSaved: previewFromSaved ?? this.previewFromSaved,
-      activeLegIndex: _clearable(
-        clearNavigation,
-        activeLegIndex,
-        this.activeLegIndex,
-      ),
-      activeStopIndex: _clearable(
-        clearNavigation,
-        activeStopIndex,
-        this.activeStopIndex,
-      ),
-      activeWalkStepIndex: _walkIndex(clearNavigation, activeWalkStepIndex),
+      sort: sort ?? this.sort,
       savedRoutes: savedRoutes ?? this.savedRoutes,
       savedRoutesReady: savedRoutesReady ?? this.savedRoutesReady,
       savedRoutesLoadError: savedRoutesLoadError ?? this.savedRoutesLoadError,
@@ -107,20 +78,12 @@ class PlanState extends Equatable {
   T? _clearable<T>(bool clear, T? update, T? current) =>
       clear ? null : update ?? current;
 
-  int _walkIndex(bool clear, int? update) =>
-      clear ? 0 : update ?? activeWalkStepIndex;
-
   @override
   List<Object?> get props => [
     status,
     result,
     error,
-    selectedRouteIndex,
-    previewing,
-    previewFromSaved,
-    activeLegIndex,
-    activeStopIndex,
-    activeWalkStepIndex,
+    sort,
     savedRoutes,
     savedRoutesReady,
     savedRoutesLoadError,

@@ -12,13 +12,20 @@ import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platf
 import 'package:hive_ce_flutter/adapters.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
+import 'package:wheres_the_bus/data/models/plan_models.dart';
 import 'package:wheres_the_bus/data/repositories/planner_repository.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_bloc.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_state.dart';
 import 'package:wheres_the_bus/features/go/model/planned_place.dart';
 import 'package:wheres_the_bus/features/go/view/go_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -95,6 +102,35 @@ class GoPlan extends PlanBloc {
   void show(PlanState state) => emit(state);
 }
 
+class GoPreview extends PlanPreviewBloc {
+  GoPreview([PlanRoute? route]) : super() {
+    emit(PlanPreviewState(route: route));
+  }
+  final events = <PlanPreviewEvent>[];
+  @override
+  void add(PlanPreviewEvent event) => events.add(event);
+  void show(PlanRoute? route) => emit(PlanPreviewState(route: route));
+}
+
+class GoTrip extends TripBloc {
+  GoTrip([TripState state = const TripState()]) : super() {
+    emit(state);
+  }
+  final events = <TripEvent>[];
+  @override
+  void add(TripEvent event) => events.add(event);
+  void show(TripState state) => emit(state);
+}
+
+/// A trip under way on [route], at [leg].
+TripState goTripOn(PlanRoute route, {int leg = 0, int walkStep = 0}) =>
+    TripState(
+      route: route,
+      activeLegIndex: leg,
+      activeStopIndex: 0,
+      activeWalkStepIndex: walkStep,
+    );
+
 class GoJourney extends JourneySessionBloc {
   GoJourney() : super(liveActivityEnabled: () => false);
   final events = <JourneySessionEvent>[];
@@ -114,6 +150,10 @@ class GoHarness {
 
   /// Haptic types fired since the test began, e.g. `lightImpact`.
   final haptics = <String>[];
+
+  /// The preview and trip doubles of the last [pump].
+  late GoPreview preview;
+  late GoTrip trip;
 
   void install() {
     setUpAll(() async {
@@ -167,18 +207,26 @@ class GoHarness {
     PlannedPlace? destination,
     bool dark = false,
     PlannerRepository? repository,
+    PlanRoute? previewing,
+    TripState trip = const TripState(),
   }) async {
     tester.view.physicalSize = const Size(430, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final plan = GoPlan(state);
     final journey = GoJourney();
+    preview = GoPreview(previewing);
+    this.trip = GoTrip(trip);
     addTearDown(plan.close);
     addTearDown(journey.close);
+    addTearDown(preview.close);
+    addTearDown(this.trip.close);
     await tester.pumpWidget(
       MultiBlocProvider(
         providers: [
           BlocProvider<PlanBloc>.value(value: plan),
+          BlocProvider<PlanPreviewBloc>.value(value: preview),
+          BlocProvider<TripBloc>.value(value: this.trip),
           BlocProvider<JourneySessionBloc>.value(value: journey),
         ],
         child: MaterialApp(

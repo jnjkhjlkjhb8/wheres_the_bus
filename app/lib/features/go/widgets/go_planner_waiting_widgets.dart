@@ -341,17 +341,6 @@ class _OptionsButton extends StatelessWidget {
   }
 }
 
-/// Names the stance the cost/time weight currently expresses. The weight is a
-/// solver input with no meaning to a rider, so the readout reports the choice
-/// the slider's end labels promise instead of the raw number.
-String _gcLabel(AppI18n i18n, double gc) => switch (gc) {
-  <= 0.1 => i18n.goPrefCheapest,
-  < 0.4 => i18n.goPrefCheaperLeaning,
-  <= 0.6 => i18n.goPrefBalanced,
-  < 0.9 => i18n.goPrefFasterLeaning,
-  _ => i18n.goPrefFastest,
-};
-
 // Transit-mode ids the planner exposes (excludes 20:航空). Built per call
 // rather than held in a const map: the names follow the rider's language.
 Map<int, String> _kTransitModes(AppI18n i18n) => {
@@ -460,22 +449,6 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                   AppTheme.space8,
                 ),
                 children: [
-                  _sectionRow(
-                    AppI18n.of(context).goPrefRow,
-                    _gcLabel(AppI18n.of(context), _o.gc),
-                    cs,
-                  ),
-                  AppSlider(
-                    value: _o.gc,
-                    divisions: 10,
-                    onChanged: (v) => setState(() => _o = _o.copyWith(gc: v)),
-                  ),
-                  _endLabels(
-                    AppI18n.of(context).goPrefCheapest,
-                    AppI18n.of(context).goPrefFastest,
-                    cs,
-                  ),
-                  const SizedBox(height: AppTheme.space12),
                   _rowControl(
                     AppI18n.of(context).goRouteCount,
                     AppQuantitySelector(
@@ -497,24 +470,16 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                   ),
                   const SizedBox(height: AppTheme.space16),
                   _sectionRow(
-                    AppI18n.of(context).goTransferTime,
-                    AppI18n.of(
-                      context,
-                    ).minutesRange(_o.transferMin, _o.transferMax),
+                    AppI18n.of(context).goTransferBuffer,
+                    AppI18n.of(context).minutesValue(_o.transferBufferMinutes),
                     cs,
                   ),
-                  AppRangeSlider(
-                    values: RangeValues(
-                      _o.transferMin.toDouble(),
-                      _o.transferMax.toDouble(),
-                    ),
+                  AppSlider(
+                    value: _o.transferBufferMinutes.toDouble(),
                     max: 60,
                     divisions: 12,
                     onChanged: (v) => setState(
-                      () => _o = _o.copyWith(
-                        transferMin: v.start.round(),
-                        transferMax: v.end.round(),
-                      ),
+                      () => _o = _o.copyWith(transferBufferMinutes: v.round()),
                     ),
                   ),
                   _endLabels(

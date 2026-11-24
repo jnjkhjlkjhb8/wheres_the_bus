@@ -7,8 +7,8 @@ import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_text_styles.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
-import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
-import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_state.dart';
 import 'package:wheres_the_bus/features/go/widgets/route_option_card.dart';
 import 'package:wheres_the_bus/features/go/widgets/transit_visuals.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
@@ -19,16 +19,15 @@ class NavMiniBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<PlanBloc, PlanState>(
+    return BlocBuilder<TripBloc, TripState>(
       buildWhen: (p, c) =>
-          p.activeLegIndex != c.activeLegIndex ||
-          p.selectedRouteIndex != c.selectedRouteIndex,
+          p.activeLegIndex != c.activeLegIndex || p.route != c.route,
       builder: (context, state) => _barForState(state),
     );
   }
 
-  Widget _barForState(PlanState state) {
-    final route = _route(state);
+  Widget _barForState(TripState state) {
+    final route = state.route;
     final activeLeg = state.activeLegIndex;
     if (route == null || activeLeg == null) return const SizedBox.shrink();
     return _barForRoute(route, activeLeg);
@@ -39,16 +38,6 @@ class NavMiniBar extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return _MiniBar(route: route, activeLeg: activeLeg);
-  }
-
-  PlanRoute? _route(PlanState state) {
-    final routes = state.result?.routes;
-    if (routes == null || routes.isEmpty) return null;
-    return _selectedRoute(routes, state.selectedRouteIndex ?? 0);
-  }
-
-  PlanRoute _selectedRoute(List<PlanRoute> routes, int i) {
-    return routes.asMap()[i] ?? routes.first;
   }
 }
 

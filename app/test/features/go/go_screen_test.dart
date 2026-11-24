@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:hive_ce_flutter/adapters.dart';
+import 'package:wheres_the_bus/app/router/app_routes.dart';
 import 'package:wheres_the_bus/app/theme/app_theme.dart';
 import 'package:wheres_the_bus/core/location/location_service.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
@@ -20,17 +22,25 @@ import 'package:wheres_the_bus/data/tracking/journey_session_event.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_event.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_state.dart';
 import 'package:wheres_the_bus/features/go/model/planned_place.dart';
 import 'package:wheres_the_bus/features/go/view/go_screen.dart';
 import 'package:wheres_the_bus/features/go/view/place_search_screen.dart';
+import 'package:wheres_the_bus/features/go/widgets/route_option_card.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 import 'package:wheres_the_bus/shared/motion/pressable.dart';
 import 'package:wheres_the_bus/shared/widgets/app_button.dart';
 import 'package:wheres_the_bus/shared/widgets/app_date_picker.dart';
+import 'package:wheres_the_bus/shared/widgets/filter_chip_group.dart';
 
 import '../../support/fakes/map_platform.dart';
 import 'go_plan_overlay_test.dart' show route, section;
+import 'support/go_harness.dart' show GoPreview, GoTrip, goTripOn;
 
 Position fix(double latitude, double longitude) => Position(
   latitude: latitude,
@@ -120,6 +130,8 @@ void main() {
   late FakeMapPlatform maps;
   late _Location location;
   var compassCancels = 0;
+  late GoPreview previewBloc;
+  late GoTrip tripBloc;
   setUpAll(() async {
     final directory = await Directory.systemTemp.createTemp(
       'go-screen-quality-',
@@ -162,18 +174,26 @@ void main() {
     bool destination = false,
     bool dark = false,
     bool reduced = false,
+    PlanRoute? previewing,
+    TripState trip = const TripState(),
   }) async {
     tester.view.physicalSize = const Size(430, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final plan = _Plan(state);
     final journey = _Journey();
+    previewBloc = GoPreview(previewing);
+    tripBloc = GoTrip(trip);
     addTearDown(plan.close);
     addTearDown(journey.close);
+    addTearDown(previewBloc.close);
+    addTearDown(tripBloc.close);
     await tester.pumpWidget(
       MultiBlocProvider(
         providers: [
           BlocProvider<PlanBloc>.value(value: plan),
+          BlocProvider<PlanPreviewBloc>.value(value: previewBloc),
+          BlocProvider<TripBloc>.value(value: tripBloc),
           BlocProvider<JourneySessionBloc>.value(value: journey),
         ],
         child: MaterialApp(
@@ -233,23 +253,46 @@ void main() {
     final initial = PlanState(
       status: PlanStatus.success,
       result: PlanResult(routes: [trip]),
-      selectedRouteIndex: 0,
-      activeLegIndex: 0,
     );
-    final (plan, journey) = await pumpGo(tester, initial);
+    final (_, journey) = await pumpGo(
+      tester,
+      initial,
+      trip: goTripOn(trip),
+    );
     expect(find.text('左轉進入中山路'), findsOneWidget);
     expect(find.textContaining('右轉進入巷子', findRichText: true), findsOneWidget);
     expect(find.byIcon(Icons.turn_left_rounded), findsOneWidget);
-    plan.show(initial.copyWith(activeWalkStepIndex: 2));
+    tripBloc.show(goTripOn(trip, walkStep: 2));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.sports_score_rounded), findsOneWidget);
-    plan.show(initial.copyWith(activeWalkStepIndex: 99));
+    tripBloc.show(goTripOn(trip, walkStep: 99));
     await tester.pumpAndSettle();
     expect(find.text('即將抵達'), findsOneWidget);
     await tester.tap(find.byIcon(Icons.close_rounded));
     await tester.pump();
-    expect(plan.events.last, isA<NavigationEnded>());
+    expect(tripBloc.events.last, isA<TripEnded>());
     expect(journey.events.last, isA<JourneyCancelled>());
+    await disposeGo(tester);
+  });
+
+  testWidgets('navigation redraws its header on the next leg', (
+    tester,
+  ) async {
+    final trip = route([section(walk: true), section()]);
+    await pumpGo(
+      tester,
+      PlanState(
+        status: PlanStatus.success,
+        result: PlanResult(routes: [trip]),
+      ),
+      trip: goTripOn(trip),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('步行前往B'), findsOneWidget);
+    tripBloc.show(goTripOn(trip, leg: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('步行前往B'), findsNothing);
+    expect(find.text('搭乘307'), findsOneWidget);
     await disposeGo(tester);
   });
 
@@ -262,8 +305,8 @@ void main() {
       PlanState(
         status: PlanStatus.success,
         result: PlanResult(routes: [trip]),
-        activeLegIndex: 0,
       ),
+      trip: goTripOn(trip),
       dark: true,
     );
     expect(find.textContaining('B'), findsWidgets);
@@ -319,7 +362,6 @@ void main() {
             route([section()]),
           ],
         ),
-        selectedRouteIndex: 99,
         savedRoutes: [route([]), saved],
         savedRoutesReady: true,
       );
@@ -332,8 +374,11 @@ void main() {
       maps.objects.polylines
           .firstWhere((line) => line.consumeTapEvents)
           .onTap!();
-      expect(plan.events.last, isA<RouteSelected>());
-      plan.show(result.copyWith(selectedRouteIndex: 0, previewing: true));
+      expect(
+        (previewBloc.events.last as PreviewOpened).route,
+        result.result!.routes[1],
+      );
+      previewBloc.show(saved);
       await tester.pumpAndSettle();
       expect(find.text('開始導航'), findsOneWidget);
       expect(find.byIcon(Icons.bookmark_rounded), findsWidgets);
@@ -345,7 +390,7 @@ void main() {
       expect(plan.events.last, isA<RouteSaveToggled>());
       expect(plan.events.whereType<RouteSaveToggled>(), hasLength(2));
       await tester.tap(find.byIcon(Icons.chevron_left_rounded).last);
-      expect(plan.events.last, isA<PreviewClosed>());
+      expect(previewBloc.events.last, isA<PreviewClosed>());
       await disposeGo(tester);
       expect(maps.disposed, isNotEmpty);
     },
@@ -367,10 +412,14 @@ void main() {
       final initial = PlanState(
         status: PlanStatus.success,
         result: PlanResult(routes: [trip]),
-        selectedRouteIndex: 0,
-        previewing: true,
       );
-      await pumpGo(tester, initial, destination: true, reduced: reduced);
+      await pumpGo(
+        tester,
+        initial,
+        destination: true,
+        reduced: reduced,
+        previewing: trip,
+      );
       await tester.pumpAndSettle();
       maps.cameraUpdates.clear();
       maps.movedUpdates.clear();
@@ -406,7 +455,6 @@ void main() {
         PlanState(
           status: PlanStatus.success,
           result: PlanResult(routes: [saved]),
-          selectedRouteIndex: 0,
           savedRoutesReady: true,
         ),
       );
@@ -425,29 +473,37 @@ void main() {
       final initial = PlanState(
         status: PlanStatus.success,
         result: PlanResult(routes: [trip]),
-        selectedRouteIndex: 0,
-        previewing: true,
       );
-      final (plan, journey) = await pumpGo(tester, initial, destination: true);
+      final (_, journey) = await pumpGo(
+        tester,
+        initial,
+        destination: true,
+        previewing: trip,
+      );
       await tester.pumpAndSettle();
       tester
           .widget<AppButton>(find.widgetWithText(AppButton, '開始導航'))
           .onPressed!();
       await tester.pump();
-      expect(plan.events.whereType<NavigationStarted>(), hasLength(1));
+      expect(
+        tripBloc.events.whereType<TripStarted>().single.route,
+        same(trip),
+      );
       final start = maps.cameraUpdates
           .whereType<CameraUpdateNewCameraPosition>()
           .last
           .cameraPosition;
       expect(start.target, const LatLng(25, 121));
       expect(compassCancels, 0);
-      plan.show(initial.copyWith(activeLegIndex: 0));
+      tripBloc.show(goTripOn(trip));
       await tester.pumpAndSettle();
       location.positions.add(fix(25.01, 121.01));
       await tester.pump();
       expect(
-        (maps.cameraUpdates.last.toJson() as List).first,
-        'newCameraPosition',
+        (maps.cameraUpdates.last as CameraUpdateNewCameraPosition)
+            .cameraPosition
+            .target,
+        const LatLng(25.01, 121.01),
       );
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 550)),
@@ -467,14 +523,18 @@ void main() {
           break;
         }
       }
-      maps.objects.markers
-          .singleWhere((m) => m.markerId.value == 'nav_puck')
-          .onTap!();
+      final puck = maps.objects.markers.singleWhere(
+        (m) => m.markerId.value == 'nav_puck',
+      );
+      // With the trip under way the compass turns the puck off the
+      // navigation bearing.
+      expect(puck.rotation, 90);
+      puck.onTap!();
       await tester.pump();
       expect(maps.cameraUpdates.length, greaterThan(pausedCount));
       location.positions.add(fix(25.2, 121.2));
       await tester.pump();
-      expect(plan.events.last, isA<NavigationEnded>());
+      expect(tripBloc.events.last, isA<TripEnded>());
       expect(compassCancels, 1);
       expect(journey.events.last, isA<JourneyCancelled>());
       await tester.pump();
@@ -497,21 +557,19 @@ void main() {
       final initial = PlanState(
         status: PlanStatus.success,
         result: PlanResult(routes: [trip]),
-        selectedRouteIndex: 0,
-        previewing: true,
       );
-      final (plan, _) = await pumpGo(tester, initial, destination: true);
+      await pumpGo(tester, initial, destination: true, previewing: trip);
       await tester.pumpAndSettle();
       tester
           .widget<AppButton>(find.widgetWithText(AppButton, '開始導航'))
           .onPressed!();
       await tester.pump();
-      plan.show(initial.copyWith(activeLegIndex: 0));
+      tripBloc.show(goTripOn(trip));
       await tester.pumpAndSettle();
       location.positions.add(fix(25.2, 121.2));
       await tester.pump();
       await tester.pump();
-      expect(plan.events.whereType<StopArrived>().single.legIndex, 1);
+      expect(tripBloc.events.whereType<StopArrived>().single.legIndex, 1);
       expect((maps.cameraUpdates.last.toJson() as List).first, 'newLatLng');
       await disposeGo(tester);
     },
@@ -547,7 +605,6 @@ void main() {
           previousPageCursor: 'earlier',
           nextPageCursor: 'later',
         ),
-        selectedRouteIndex: 0,
       );
       final (plan, _) = await pumpGo(tester, initial, destination: true);
       await tester.pumpAndSettle();
@@ -685,7 +742,7 @@ void main() {
       );
       expect(waiting.lastRoute, saved);
       waiting.onOpenLast!();
-      expect(plan.events.last, isA<RouteSelected>());
+      expect((previewBloc.events.last as PreviewOpened).route, saved);
       final mixed = route([
         section(walk: true),
         section(),
@@ -696,13 +753,75 @@ void main() {
         PlanState(
           status: PlanStatus.success,
           result: PlanResult(routes: [mixed]),
-          selectedRouteIndex: 0,
-          previewing: true,
         ),
       );
+      previewBloc.show(mixed);
       await tester.pumpAndSettle();
       expect(find.text('307'), findsWidgets);
       expect(find.textContaining('A → B'), findsOneWidget);
+      // Back-to-back legs leave no wait to state.
+      expect(find.text('等 0 分'), findsNothing);
+      await disposeGo(tester);
+    },
+  );
+
+  testWidgets(
+    'preview badges only the fastest first result and prices a whole trip',
+    (tester) async {
+      final base = section();
+      final leg = PlanSection(
+        type: base.type,
+        travelSummary: base.travelSummary,
+        departure: PlanPlace(
+          name: 'A',
+          type: '',
+          location: base.departure.location,
+          time: '2030-01-02T08:00:00+08:00',
+        ),
+        arrival: base.arrival,
+        transport: base.transport,
+        intermediateStops: base.intermediateStops,
+      );
+      PlanRoute priced({required bool complete}) => PlanRoute(
+        travelTime: 60,
+        startTime: '',
+        endTime: '',
+        transfers: 0,
+        sections: [leg],
+        totalFare: 35,
+        fareComplete: complete,
+      );
+      final first = priced(complete: true);
+      final second = priced(complete: false);
+      await pumpGo(
+        tester,
+        PlanState(
+          status: PlanStatus.success,
+          result: PlanResult(routes: [first, second]),
+        ),
+        destination: true,
+        previewing: first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('最快'), findsOneWidget);
+      expect(find.text('35'), findsOneWidget);
+      final onSurface = AppTheme.light.colorScheme.onSurface;
+      expect(
+        tester
+            .widgetList<Text>(find.text('08:00'))
+            .any(
+              (t) =>
+                  t.style?.color == onSurface &&
+                  t.style?.fontWeight == FontWeight.w600,
+            ),
+        isTrue,
+      );
+
+      previewBloc.show(second);
+      await tester.pumpAndSettle();
+      expect(find.text('最快'), findsNothing);
+      // A partial sum would understate the trip, so it is not shown.
+      expect(find.text('35'), findsNothing);
       await disposeGo(tester);
     },
   );
@@ -749,6 +868,174 @@ void main() {
     },
   );
 
+  testWidgets('a saved route opens as a preview and closes back to entry', (
+    tester,
+  ) async {
+    final saved = walkingRoute();
+    final (plan, _) = await pumpGo(
+      tester,
+      PlanState(savedRoutesReady: true, savedRoutes: [saved]),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    tester.widget<RouteOptionCard>(find.byType(RouteOptionCard)).onTap();
+    expect((previewBloc.events.last as PreviewOpened).route, saved);
+    previewBloc.show(saved);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('開始導航'), findsOneWidget);
+    scopeBack(tester);
+    expect(previewBloc.events.last, isA<PreviewClosed>());
+    previewBloc.show(null);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('路線箱'), findsOneWidget);
+    expect(plan.events.whereType<PlanSearchCancelled>(), isEmpty);
+    expect(plan.events.whereType<PlanSearchRequested>(), isEmpty);
+    await disposeGo(tester);
+  });
+
+  testWidgets('a new search closes the preview of the old answer', (
+    tester,
+  ) async {
+    final trip = route([section()]);
+    final (plan, _) = await pumpGo(
+      tester,
+      PlanState(
+        status: PlanStatus.success,
+        result: PlanResult(routes: [trip]),
+      ),
+      destination: true,
+      previewing: trip,
+    );
+    await tester.pumpAndSettle();
+    previewBloc.events.clear();
+    plan.events.clear();
+    press(tester, '對調起訖點');
+    expect(previewBloc.events.single, isA<PreviewClosed>());
+    expect(plan.events.whereType<PlanSearchRequested>(), hasLength(1));
+    await disposeGo(tester);
+  });
+
+  testWidgets(
+    'new results and a new sort redraw the planner and refresh held routes',
+    (tester) async {
+      final first = route([section()]);
+      final second = route([section(walk: true)]);
+      final (plan, _) = await pumpGo(
+        tester,
+        PlanState(
+          status: PlanStatus.success,
+          result: PlanResult(routes: [first]),
+        ),
+        destination: true,
+      );
+      await tester.pumpAndSettle();
+      FilterChipGroup<PlanSort> chips() => tester.widget(
+        find.byType(FilterChipGroup<PlanSort>),
+      );
+      final cards = find.byType(RouteOptionCard, skipOffstage: false);
+      expect(cards, findsOneWidget);
+      previewBloc.events.clear();
+      tripBloc.events.clear();
+
+      plan.show(
+        PlanState(
+          status: PlanStatus.success,
+          result: PlanResult(routes: [first, second]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(cards, findsNWidgets(2));
+      expect(
+        (previewBloc.events.single as PreviewRoutesRefreshed).routes,
+        [first, second],
+      );
+      expect(
+        (tripBloc.events.single as TripRoutesRefreshed).routes,
+        [first, second],
+      );
+
+      chips().onToggle(PlanSort.cheapest);
+      expect(
+        plan.events.last,
+        isA<PlanSortChanged>().having((e) => e.sort, 'sort', PlanSort.cheapest),
+      );
+      plan.show(
+        PlanState(
+          status: PlanStatus.success,
+          result: PlanResult(routes: [first, second]),
+          sort: PlanSort.cheapest,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(chips().selected, {PlanSort.cheapest});
+      await disposeGo(tester);
+    },
+  );
+
+  testWidgets(
+    'the camera frames a newly previewed route, not a refresh of the same one',
+    (tester) async {
+      PlanRoute itinerary(String id, PlanSection leg) => PlanRoute(
+        travelTime: 60,
+        startTime: '',
+        endTime: '',
+        transfers: 0,
+        sections: [leg],
+        id: id,
+      );
+      final shown = itinerary('a', section());
+      final refreshed = itinerary(
+        'a',
+        section(stops: const [PlanPoint(lat: 25.1, lng: 121.1)]),
+      );
+      final other = itinerary(
+        'b',
+        section(
+          from: const PlanPoint(lat: 24, lng: 120),
+          to: const PlanPoint(lat: 24.2, lng: 120.2),
+        ),
+      );
+      await pumpGo(
+        tester,
+        PlanState(
+          status: PlanStatus.success,
+          result: PlanResult(routes: [shown, other]),
+        ),
+        destination: true,
+        previewing: shown,
+      );
+      await tester.pumpAndSettle();
+      expect(maps.cameraUpdates.whereType<CameraUpdateNewLatLngBounds>(), [
+        isA<CameraUpdateNewLatLngBounds>(),
+      ]);
+      maps.cameraUpdates.clear();
+
+      previewBloc.show(refreshed);
+      await tester.pumpAndSettle();
+      expect(maps.cameraUpdates, isEmpty);
+
+      previewBloc.show(other);
+      await tester.pumpAndSettle();
+      final framed = maps.cameraUpdates.single as CameraUpdateNewLatLngBounds;
+      expect(framed.bounds.southwest, const LatLng(24, 120));
+      maps.cameraUpdates.clear();
+
+      previewBloc.show(null);
+      await tester.pumpAndSettle();
+      expect(
+        maps.cameraUpdates.last,
+        isA<CameraUpdateNewLatLngBounds>().having(
+          (u) => u.bounds.northeast,
+          'northeast',
+          const LatLng(25.2, 121.2),
+        ),
+      );
+      await disposeGo(tester);
+    },
+  );
+
   testWidgets('saved routes distinguish loading, failure and available cards', (
     tester,
   ) async {
@@ -777,10 +1064,13 @@ void main() {
       final initial = PlanState(
         status: PlanStatus.success,
         result: PlanResult(routes: [trip]),
-        selectedRouteIndex: 0,
-        previewing: true,
       );
-      final (plan, journey) = await pumpGo(tester, initial, destination: true);
+      final (_, journey) = await pumpGo(
+        tester,
+        initial,
+        destination: true,
+        previewing: trip,
+      );
       await tester.pumpAndSettle();
       PopScope<Object?> scope() => tester.widget<PopScope<Object?>>(
         find.byWidgetPredicate(
@@ -788,17 +1078,100 @@ void main() {
         ),
       );
       scope().onPopInvokedWithResult!(false, null);
-      expect(plan.events.last, isA<PreviewClosed>());
-      plan.show(initial.copyWith(activeLegIndex: 0));
+      expect(previewBloc.events.last, isA<PreviewClosed>());
+      tripBloc.show(goTripOn(trip));
       await tester.pumpAndSettle();
       scope().onPopInvokedWithResult!(false, null);
-      expect(plan.events.last, isA<NavigationEnded>());
+      expect(tripBloc.events.last, isA<TripEnded>());
       journey.show(const JourneySessionState(phase: JourneyPhase.done));
       await tester.pumpAndSettle();
-      expect(plan.events.whereType<NavigationEnded>(), hasLength(2));
+      expect(tripBloc.events.whereType<TripEnded>(), hasLength(2));
       await disposeGo(tester);
     },
   );
+
+  // FDPL-156: PopScope's canPop: false also disables the iOS edge swipe, so
+  // the header button must take every step system back takes.
+  testWidgets('header back steps out of preview, a picked destination and '
+      'a handed-in one', (tester) async {
+    final trip = route([section()]);
+    final results = PlanState(
+      status: PlanStatus.success,
+      result: PlanResult(routes: [trip]),
+      selectedRouteIndex: 0,
+    );
+    Future<void> settle() async {
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(milliseconds: 400));
+      }
+    }
+
+    final (previewed, _) = await pumpGo(
+      tester,
+      results.copyWith(previewing: true),
+      destination: true,
+    );
+    await tester.pumpAndSettle();
+    press(tester, '返回');
+    expect(previewed.events.last, isA<PreviewClosed>());
+    await disposeGo(tester);
+
+    final (picked, _) = await pumpGo(tester, const PlanState());
+    await settle();
+    press(tester, '對調起訖點');
+    await settle();
+    picked.show(results);
+    await settle();
+    press(tester, '返回');
+    await settle();
+    expect(picked.events.whereType<PlanSearchCancelled>(), hasLength(1));
+    await disposeGo(tester);
+
+    tester.view.physicalSize = const Size(430, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final handed = _Plan(results);
+    final journey = _Journey();
+    addTearDown(handed.close);
+    addTearDown(journey.close);
+    final router = GoRouter(
+      initialLocation: '/go',
+      routes: [
+        GoRoute(path: AppRoutes.home, builder: (_, _) => const Text('home')),
+        GoRoute(
+          path: '/go',
+          builder: (_, _) => GoScreen(
+            plannerRepository: PlannerRepository(fetchBody: () async => {}),
+            initialDestination: const PlannedPlace(
+              name: '目的地',
+              latLng: LatLng(25.2, 121.2),
+            ),
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      MultiBlocProvider(
+        providers: [
+          BlocProvider<PlanBloc>.value(value: handed),
+          BlocProvider<JourneySessionBloc>.value(value: journey),
+        ],
+        child: MaterialApp.router(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppI18n.localizationsDelegates,
+          supportedLocales: AppI18n.supportedLocales,
+          routerConfig: router,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    press(tester, '返回');
+    await tester.pumpAndSettle();
+    expect(find.text('home'), findsOneWidget);
+    expect(handed.events.whereType<PlanSearchCancelled>(), isEmpty);
+    await disposeGo(tester);
+  });
 
   testWidgets('back leaves only a destination the caller handed in', (
     tester,
@@ -807,7 +1180,6 @@ void main() {
     final results = PlanState(
       status: PlanStatus.success,
       result: PlanResult(routes: [trip]),
-      selectedRouteIndex: 0,
     );
     bool canPop() => tester
         .widget<PopScope<Object?>>(
@@ -823,13 +1195,14 @@ void main() {
       }
     }
 
-    final (plan, _) = await pumpGo(tester, results, destination: true);
+    await pumpGo(tester, results, destination: true);
     await tester.pumpAndSettle();
     expect(canPop(), isTrue);
-    plan.show(results.copyWith(previewing: true));
+    previewBloc.show(trip);
     await tester.pumpAndSettle();
     expect(canPop(), isFalse);
-    plan.show(results.copyWith(activeLegIndex: 0));
+    previewBloc.show(null);
+    tripBloc.show(goTripOn(trip));
     await tester.pumpAndSettle();
     expect(canPop(), isFalse);
     await disposeGo(tester);
@@ -896,10 +1269,12 @@ void main() {
       final initial = PlanState(
         status: PlanStatus.success,
         result: PlanResult(routes: [bus]),
-        selectedRouteIndex: 0,
-        activeLegIndex: 0,
       );
-      final (plan, journey) = await pumpGo(tester, initial);
+      final (_, journey) = await pumpGo(
+        tester,
+        initial,
+        trip: goTripOn(bus),
+      );
       journey.show(
         const JourneySessionState(
           phase: JourneyPhase.waiting,
@@ -916,8 +1291,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('進站中'), findsOneWidget);
+      // Only a finished journey ends the trip.
+      expect(tripBloc.events.whereType<TripEnded>(), isEmpty);
       final rail = route([transit('RAIL', '')]);
-      plan.show(initial.copyWith(result: PlanResult(routes: [rail])));
+      tripBloc.show(goTripOn(rail));
       await tester.pumpAndSettle();
       expect(find.text('08:00'), findsOneWidget);
       journey.show(const JourneySessionState(phase: JourneyPhase.riding));

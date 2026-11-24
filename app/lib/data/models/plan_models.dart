@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:wheres_the_bus/data/generated/maas.pb.dart' as maas;
+import 'package:wheres_the_bus/data/generated/planner.pb.dart'
+    show PlannerTransfer, TransferLevel;
 
 class PlanResult extends Equatable {
   const PlanResult({
@@ -35,9 +37,22 @@ class PlanRoute extends Equatable {
     required this.sections,
     this.totalFare = 0,
     this.raw,
+    this.id = '',
+    this.fareComplete = true,
+    this.transferMargins = const [],
+    this.walkSeconds,
   });
 
-  factory PlanRoute.fromProto(maas.Route proto) => PlanRoute(
+  /// [id], [fareComplete], [transferMargins] and [walkSeconds] exist only on a
+  /// route planned through PlannerService; a saved snapshot's bytes carry none
+  /// of them.
+  factory PlanRoute.fromProto(
+    maas.Route proto, {
+    String id = '',
+    bool fareComplete = true,
+    List<PlanTransfer> transferMargins = const [],
+    int? walkSeconds,
+  }) => PlanRoute(
     travelTime: proto.travelTime.toInt(),
     startTime: proto.startTime,
     endTime: proto.endTime,
@@ -47,6 +62,10 @@ class PlanRoute extends Equatable {
       for (final section in proto.sections) PlanSection.fromProto(section),
     ],
     raw: proto.writeToBuffer(),
+    id: id,
+    fareComplete: fareComplete,
+    transferMargins: transferMargins,
+    walkSeconds: walkSeconds,
   );
 
   /// Rebuild a route from bytes produced by [raw] — a lossless round-trip
@@ -67,6 +86,52 @@ class PlanRoute extends Equatable {
   /// The verbatim proto bytes this route decoded from; null for routes not
   /// built via the proto factory. Persisted as-is when a snapshot is saved.
   final List<int>? raw;
+
+  /// The planner's itinerary id; empty for a saved snapshot.
+  final String id;
+
+  /// False when a transit leg went unpriced, so [totalFare] is a partial sum
+  /// that would read as cheaper than the trip is.
+  final bool fareComplete;
+
+  /// One entry per change between two transit legs, in leg order.
+  final List<PlanTransfer> transferMargins;
+
+  /// Time on foot across the whole trip, without the transfer buffer that a
+  /// transfer walk's own duration runs on to. Null for a saved snapshot.
+  final int? walkSeconds;
+
+  /// The transfer most likely to be missed: the smallest margin among those
+  /// the planner could time. Null when there is none to speak of.
+  PlanTransfer? get weakestTransfer {
+    PlanTransfer? weakest;
+    for (final transfer in transferMargins.where((t) => t.timed)) {
+      if (weakest == null || transfer.marginSeconds < weakest.marginSeconds) {
+        weakest = transfer;
+      }
+    }
+    return weakest;
+  }
+
+  /// The change onto section [leg], if one leads into it and the planner could
+  /// time it.
+  PlanTransfer? timedTransferInto(int leg) {
+    for (final transfer in transferMargins.where((t) => t.timed)) {
+      if (transfer.toLeg == leg) return transfer;
+    }
+    return null;
+  }
+
+  /// This itinerary as it appears in [routes], so a held copy picks up the
+  /// geometry the planner's second message adds. A saved snapshot has no id
+  /// to match by and stays as it is.
+  PlanRoute refreshedFrom(List<PlanRoute> routes) {
+    if (id.isEmpty) return this;
+    for (final route in routes) {
+      if (route.id == id) return route;
+    }
+    return this;
+  }
 
   String get savedKey {
     final bytes = raw;
@@ -118,6 +183,67 @@ class PlanRoute extends Equatable {
     transfers,
     totalFare,
     sections,
+    id,
+    fareComplete,
+    transferMargins,
+    walkSeconds,
+  ];
+}
+
+/// How safe a change between two rides looks. Unknown when the planner was
+/// missing a time to measure it with.
+enum TransferReliability { unknown, comfortable, tight }
+
+const _reliability = <TransferLevel, TransferReliability>{
+  TransferLevel.TRANSFER_LEVEL_COMFORTABLE: TransferReliability.comfortable,
+  TransferLevel.TRANSFER_LEVEL_TIGHT: TransferReliability.tight,
+};
+
+/// One change between two transit legs, as the planner measured it.
+class PlanTransfer extends Equatable {
+  const PlanTransfer({
+    required this.fromLeg,
+    required this.toLeg,
+    required this.marginSeconds,
+    required this.reliability,
+    required this.timesEstimated,
+  });
+
+  factory PlanTransfer.fromProto(PlannerTransfer proto) => PlanTransfer(
+    fromLeg: proto.fromLeg,
+    toLeg: proto.toLeg,
+    marginSeconds: proto.marginSeconds.toInt(),
+    reliability: _reliability[proto.level] ?? TransferReliability.unknown,
+    timesEstimated: proto.timesEstimated,
+  );
+
+  final int fromLeg;
+  final int toLeg;
+
+  /// Negative once a delay has already broken the connection.
+  final int marginSeconds;
+  final TransferReliability reliability;
+
+  /// The arriving leg's times are distance-estimated, not observed, so the
+  /// margin is a guess.
+  final bool timesEstimated;
+
+  /// Whether the planner had both times to measure the margin with.
+  bool get timed => reliability != TransferReliability.unknown;
+
+  bool get tight => reliability == TransferReliability.tight;
+
+  /// Whole minutes, rounded down: a margin read as longer than it is would
+  /// tell a rider they have time they do not.
+  int get marginMinutes => marginSeconds.isNegative ? 0 : marginSeconds ~/ 60;
+
+  @override
+  List<Object?> get props => [
+    fromLeg,
+    toLeg,
+    marginSeconds,
+    reliability,
+    timesEstimated,
   ];
 }
 

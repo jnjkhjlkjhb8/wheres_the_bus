@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:wheres_the_bus/features/alerts/bloc/alert_bloc.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_bloc.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_bloc.dart';
 import 'package:wheres_the_bus/shared/widgets/main_scaffold.dart';
 import 'package:wheres_the_bus/shared/widgets/nav_mini_bar.dart';
 
@@ -28,13 +29,16 @@ void main() {
   Future<void> pump(WidgetTester tester, Widget shell) async {
     final alertBloc = AlertBloc();
     final planBloc = PlanBloc();
+    final tripBloc = TripBloc();
     addTearDown(alertBloc.close);
     addTearDown(planBloc.close);
+    addTearDown(tripBloc.close);
     await tester.pumpWidget(
       MultiBlocProvider(
         providers: [
           BlocProvider<AlertBloc>.value(value: alertBloc),
           BlocProvider<PlanBloc>.value(value: planBloc),
+          BlocProvider<TripBloc>.value(value: tripBloc),
         ],
         child: i18nApp(MainScaffold(shell: shell)),
       ),

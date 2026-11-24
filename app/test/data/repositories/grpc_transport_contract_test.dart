@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grpc/grpc.dart';
 import 'package:wheres_the_bus/data/generated/bike.pbgrpc.dart' as bike;
-import 'package:wheres_the_bus/data/generated/maas.pbgrpc.dart' as maas;
 import 'package:wheres_the_bus/data/generated/near.pbgrpc.dart' as nearby;
+import 'package:wheres_the_bus/data/generated/planner.pbgrpc.dart' as planner;
 import 'package:wheres_the_bus/data/models/plan_options.dart';
 import 'package:wheres_the_bus/data/repositories/bike_repository.dart';
 import 'package:wheres_the_bus/data/repositories/maas_repository.dart';
@@ -77,12 +77,12 @@ class FakeNear implements nearby.Near_Station_ServiceClient {
   dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }
 
-class FakeMaas implements maas.MaasServiceClient {
-  maas.MaasPlanRequest? request;
+class FakePlanner implements planner.PlannerServiceClient {
+  planner.PlannerRequest? request;
   Object? failure;
   @override
-  ResponseStream<maas.MaasPlanUpdate> planStream(
-    maas.MaasPlanRequest request, {
+  ResponseStream<planner.PlannerUpdate> planStream(
+    planner.PlannerRequest request, {
     CallOptions? options,
   }) {
     this.request = request;
@@ -91,11 +91,11 @@ class FakeMaas implements maas.MaasServiceClient {
       error != null
           ? Stream.error(error)
           : Stream.fromIterable([
-              maas.MaasPlanUpdate(
-                plan: maas.MaasPlanResponse(nextPageCursor: 'next'),
+              planner.PlannerUpdate(
+                plan: planner.PlannerResponse(nextPageCursor: 'next'),
               ),
-              maas.MaasPlanUpdate(
-                plan: maas.MaasPlanResponse(),
+              planner.PlannerUpdate(
+                plan: planner.PlannerResponse(),
                 complete: true,
               ),
             ]),
@@ -159,7 +159,7 @@ void main() {
   test(
     'plan streaming keeps paging and accessibility options on the wire',
     () async {
-      final client = FakeMaas();
+      final client = FakePlanner();
       final repo = MaasRepository(client: client);
       final updates = await repo
           .planStream(
@@ -172,12 +172,11 @@ void main() {
             arriveBy: true,
             pageCursor: 'earlier',
             legAlternatives: 2,
+            sort: PlanSort.leastWalking,
             options: const PlanOptions(
-              gc: 1,
               top: 3,
-              transitModes: [4],
-              transferMin: 5,
-              transferMax: 20,
+              transitModes: [4, 5, 99],
+              transferBufferMinutes: 5,
               firstMileMode: 1,
               firstMileTime: 2,
               lastMileMode: 3,
@@ -193,22 +192,31 @@ void main() {
       expect(updates.map((u) => u.complete), [false, true]);
       expect(updates.first.result.nextPageCursor, 'next');
       final request = client.request!;
-      expect(request.fromLat, 25);
-      expect(request.fromLon, 121);
-      expect(request.toLat, 26);
-      expect(request.toLon, 122);
-      expect(request.date, '2026-10-10');
-      expect(request.time, '08:00');
+      expect(request.from.lat, 25);
+      expect(request.from.lng, 121);
+      expect(request.to.lat, 26);
+      expect(request.to.lng, 122);
+      // The rider's own clock, so it is the local wall time that is sent.
+      expect(request.time.toDateTime().toLocal(), DateTime(2026, 10, 10, 8));
       expect(request.arriveBy, isTrue);
-      expect(request.gc, 1);
+      expect(request.sort, planner.PlannerSort.PLANNER_SORT_LEAST_WALKING);
       expect(request.top, 3);
-      expect(request.transitModes, [4]);
-      expect(request.transferTimeMin, 5);
-      expect(request.transferTimeMax, 20);
-      expect(request.firstMileMode, 1);
-      expect(request.firstMileTime, 2);
-      expect(request.lastMileMode, 3);
-      expect(request.lastMileTime, 4);
+      // An id the planner does not know is dropped rather than sent.
+      expect(request.transitModes, [
+        planner.PlannerTransitMode.PLANNER_TRANSIT_MODE_RAIL,
+        planner.PlannerTransitMode.PLANNER_TRANSIT_MODE_BUS,
+      ]);
+      expect(request.transferBufferMinutes, 5);
+      expect(
+        request.firstMileMode,
+        planner.PlannerAccessMode.PLANNER_ACCESS_MODE_BIKE,
+      );
+      expect(request.firstMileMinutes, 2);
+      expect(
+        request.lastMileMode,
+        planner.PlannerAccessMode.PLANNER_ACCESS_MODE_SHARED_BIKE,
+      );
+      expect(request.lastMileMinutes, 4);
       expect(request.hasMaxTransfers(), isTrue);
       expect(request.maxTransfers, 0);
       expect(request.avoidReservation, isTrue);
@@ -223,11 +231,22 @@ void main() {
             fromLon: 121,
             toLat: 26,
             toLon: 122,
-            date: '2026-10-10',
+            date: 'not a date',
             time: '09:00',
           )
           .toList();
       expect(client.request!.hasMaxTransfers(), isFalse);
+      // Defaults: the fastest sort, walking at both ends, and from now when
+      // the clock could not be read.
+      expect(
+        client.request!.sort,
+        planner.PlannerSort.PLANNER_SORT_FASTEST,
+      );
+      expect(
+        client.request!.firstMileMode,
+        planner.PlannerAccessMode.PLANNER_ACCESS_MODE_WALK,
+      );
+      expect(client.request!.hasTime(), isFalse);
     },
   );
 
@@ -243,7 +262,9 @@ void main() {
         StateError('unexpected'): PlanFailureKind.unknown,
       };
       for (final entry in cases.entries) {
-        final repo = MaasRepository(client: FakeMaas()..failure = entry.key);
+        final repo = MaasRepository(
+          client: FakePlanner()..failure = entry.key,
+        );
         await expectLater(
           repo.planStream(
             fromLat: 1,

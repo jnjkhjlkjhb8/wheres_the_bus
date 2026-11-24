@@ -125,195 +125,142 @@ void main() {
     await next;
   });
 
-  test(
-    'search success enters results phase with the fastest selected',
-    () async {
-      final result = PlanResult(routes: [_route(), _route()]);
-      final bloc = PlanBloc(repository: _FakeMaasRepository(result: result));
-      addTearDown(bloc.close);
-
-      final next = expectLater(
-        bloc.stream,
-        emitsThrough(
-          isA<PlanState>()
-              .having((s) => s.status, 'status', PlanStatus.success)
-              .having((s) => s.selectedRouteIndex, 'selectedRouteIndex', 0)
-              .having((s) => s.previewing, 'previewing', false),
-        ),
-      );
-
-      bloc.add(_search());
-      await next;
-    },
-  );
-
-  test('selecting a route enters the preview phase', () async {
-    final bloc = PlanBloc(repository: _FakeMaasRepository());
+  test('a sort change asks the last search again with the new sort', () async {
+    final repository = _FakeMaasRepository(
+      result: PlanResult(routes: [_route()]),
+    );
+    final bloc = PlanBloc(repository: repository);
     addTearDown(bloc.close);
 
-    final next = expectLater(
-      bloc.stream,
-      emitsThrough(
-        isA<PlanState>()
-            .having((s) => s.selectedRouteIndex, 'selectedRouteIndex', 2)
-            .having((s) => s.previewing, 'previewing', true),
-      ),
-    );
+    bloc.add(_search(pageCursor: 'later'));
+    await bloc.stream.firstWhere((s) => s.status == PlanStatus.success);
+    bloc.add(const PlanSortChanged(PlanSort.cheapest));
+    await pumpEventQueue();
 
-    bloc.add(const RouteSelected(index: 2));
-    await next;
+    expect(repository.calls, hasLength(2));
+    final (first, second) = (repository.calls[0], repository.calls[1]);
+    expect(first.sort, PlanSort.fastest);
+    expect(second.sort, PlanSort.cheapest);
+    // Everything but the sort is the same question, so the planner can
+    // answer it from its cache.
+    expect(second.time, first.time);
+    expect(second.date, first.date);
+    expect(second.pageCursor, 'later');
   });
 
   test(
-    'closing a results preview returns to results, keeping the result',
+    'a sort change keeps the results on screen until the new order lands',
     () async {
-      final result = PlanResult(routes: [_route(), _route()]);
-      final bloc = PlanBloc(repository: _FakeMaasRepository(result: result));
+      final resorted = Completer<PlanResult>();
+      final repository = _ControlledMaasRepository([
+        Completer<PlanResult>()..complete(PlanResult(routes: [_route()])),
+        resorted,
+      ]);
+      final bloc = PlanBloc(repository: repository);
       addTearDown(bloc.close);
 
       bloc.add(_search());
-      await bloc.stream.firstWhere((s) => s.status == PlanStatus.success);
-      bloc.add(const RouteSelected(index: 1));
-      await bloc.stream.firstWhere((s) => s.previewing);
-
-      final next = expectLater(
-        bloc.stream,
-        emitsThrough(
-          isA<PlanState>()
-              .having((s) => s.previewing, 'previewing', false)
-              .having((s) => s.result, 'result', result)
-              .having((s) => s.selectedRouteIndex, 'selectedRouteIndex', 1),
-        ),
+      final first = await bloc.stream.firstWhere(
+        (s) => s.status == PlanStatus.success,
       );
+      final seen = <PlanState>[];
+      final sub = bloc.stream.listen(seen.add);
+      addTearDown(sub.cancel);
 
-      bloc.add(const PreviewClosed());
-      await next;
+      bloc.add(const PlanSortChanged(PlanSort.cheapest));
+      await pumpEventQueue();
+      expect(bloc.state.status, PlanStatus.success);
+      expect(bloc.state.result, first.result);
+      expect(bloc.state.sort, PlanSort.cheapest);
+
+      final reordered = PlanResult(routes: [_route(), _route()]);
+      resorted.complete(reordered);
+      await pumpEventQueue();
+
+      expect(seen.map((s) => s.status), everyElement(PlanStatus.success));
+      expect(bloc.state.result, reordered);
+      expect(bloc.state.sort, PlanSort.cheapest);
     },
   );
 
-  test('a new search resets an active preview back to results', () async {
-    final bloc = PlanBloc(
-      repository: _FakeMaasRepository(result: PlanResult(routes: [_route()])),
-    );
-    addTearDown(bloc.close);
-
-    bloc.add(const RouteSelected(index: 0));
-    await bloc.stream.firstWhere((s) => s.previewing);
-
-    final next = expectLater(
-      bloc.stream,
-      emitsThrough(
-        isA<PlanState>()
-            .having((s) => s.status, 'status', PlanStatus.success)
-            .having((s) => s.previewing, 'previewing', false),
-      ),
-    );
-
-    bloc.add(_search());
-    await next;
-  });
-
-  test('opening a saved route lands directly in preview', () async {
-    final bloc = PlanBloc(repository: _FakeMaasRepository());
-    addTearDown(bloc.close);
-
-    final next = expectLater(
-      bloc.stream,
-      emitsThrough(
-        isA<PlanState>()
-            .having((s) => s.status, 'status', PlanStatus.success)
-            .having((s) => s.previewing, 'previewing', true)
-            .having((s) => s.previewFromSaved, 'previewFromSaved', true)
-            .having((s) => s.result?.routes.length, 'routes', 1),
-      ),
-    );
-
-    bloc.add(SavedRouteOpened(_route()));
-    await next;
-  });
-
-  test('closing a saved-route preview clears the injected result', () async {
-    final bloc = PlanBloc(repository: _FakeMaasRepository());
-    addTearDown(bloc.close);
-
-    bloc.add(SavedRouteOpened(_route()));
-    await bloc.stream.firstWhere((s) => s.previewing);
-
-    final next = expectLater(
-      bloc.stream,
-      emitsThrough(
-        isA<PlanState>()
-            .having((s) => s.status, 'status', PlanStatus.initial)
-            .having((s) => s.result, 'result', null)
-            .having((s) => s.previewing, 'previewing', false)
-            .having((s) => s.previewFromSaved, 'previewFromSaved', false),
-      ),
-    );
-
-    bloc.add(const PreviewClosed());
-    await next;
-  });
-
-  test('ending navigation returns to the previewed route', () async {
-    final result = PlanResult(routes: [_route(), _route()]);
-    final bloc = PlanBloc(repository: _FakeMaasRepository(result: result));
+  test('choosing the current sort again asks nothing', () async {
+    final repository = _FakeMaasRepository();
+    final bloc = PlanBloc(repository: repository);
     addTearDown(bloc.close);
 
     bloc.add(_search());
     await bloc.stream.firstWhere((s) => s.status == PlanStatus.success);
-    bloc.add(const RouteSelected(index: 1));
-    await bloc.stream.firstWhere((s) => s.previewing);
-    bloc.add(const NavigationStarted());
-    await bloc.stream.firstWhere((s) => s.activeLegIndex != null);
+    bloc.add(const PlanSortChanged(PlanSort.fastest));
+    await pumpEventQueue();
 
-    final next = expectLater(
-      bloc.stream,
-      emitsThrough(
-        isA<PlanState>()
-            .having((s) => s.activeLegIndex, 'activeLegIndex', null)
-            .having((s) => s.previewing, 'previewing', true)
-            .having((s) => s.selectedRouteIndex, 'selectedRouteIndex', 1),
-      ),
-    );
-
-    bloc.add(const NavigationEnded());
-    await next;
+    expect(repository.calls, hasLength(1));
   });
 
-  test('navigation events update and clear active indexes', () async {
-    final bloc = PlanBloc(repository: _FakeMaasRepository());
+  test('a sort chosen before any search only sets the sort', () async {
+    final repository = _FakeMaasRepository();
+    final bloc = PlanBloc(repository: repository);
     addTearDown(bloc.close);
 
-    bloc
-      ..add(const NavigationStarted())
-      ..add(const StopArrived(legIndex: 1, stopIndex: 3))
-      ..add(const NavigationEnded());
+    bloc.add(const PlanSortChanged(PlanSort.leastWalking));
+    await pumpEventQueue();
 
-    await expectLater(
-      bloc.stream,
-      emitsInOrder([
-        // The constructor's SavedRoutesLoaded emits first; skip past it.
-        emitsThrough(
-          isA<PlanState>().having((s) => s.activeLegIndex, 'activeLegIndex', 0),
-        ),
-        isA<PlanState>().having((s) => s.activeStopIndex, 'activeStopIndex', 3),
-        isA<PlanState>().having(
-          (s) => s.activeLegIndex,
-          'activeLegIndex',
-          null,
-        ),
-      ]),
+    expect(repository.calls, isEmpty);
+    expect(bloc.state.sort, PlanSort.leastWalking);
+    expect(bloc.state.status, PlanStatus.initial);
+
+    bloc.add(_search());
+    await bloc.stream.firstWhere((s) => s.status == PlanStatus.success);
+    expect(
+      repository.calls.single.sort,
+      PlanSort.leastWalking,
     );
+  });
+
+  test('cancelling keeps the sort but forgets the search', () async {
+    final repository = _FakeMaasRepository();
+    final bloc = PlanBloc(repository: repository);
+    addTearDown(bloc.close);
+
+    bloc.add(_search());
+    await bloc.stream.firstWhere((s) => s.status == PlanStatus.success);
+    bloc.add(const PlanSortChanged(PlanSort.fewestTransfers));
+    await pumpEventQueue();
+    bloc.add(const PlanSearchCancelled());
+    await bloc.stream.firstWhere((s) => s.status == PlanStatus.initial);
+    expect(bloc.state.sort, PlanSort.fewestTransfers);
+
+    bloc.add(const PlanSortChanged(PlanSort.cheapest));
+    await pumpEventQueue();
+    expect(repository.calls, hasLength(2));
+    expect(bloc.state.status, PlanStatus.initial);
+  });
+
+  test('only the fastest sort names its first result the fastest', () {
+    final two = PlanResult(routes: [_route(), _route()]);
+    expect(PlanState(result: two).firstIsFastest, isTrue);
+    expect(
+      PlanState(
+        result: two,
+        sort: PlanSort.cheapest,
+      ).firstIsFastest,
+      isFalse,
+    );
+    expect(
+      PlanState(result: PlanResult(routes: [_route()])).firstIsFastest,
+      isFalse,
+    );
+    expect(const PlanState().firstIsFastest, isFalse);
   });
 }
 
-PlanSearchRequested _search() => const PlanSearchRequested(
+PlanSearchRequested _search({String pageCursor = ''}) => PlanSearchRequested(
   fromLat: 25,
   fromLon: 121,
   toLat: 25.1,
   toLon: 121.1,
   date: '2026-07-03',
   time: '12:00',
+  pageCursor: pageCursor,
 );
 
 PlanRoute _route() => const PlanRoute(
@@ -348,6 +295,7 @@ class _ControlledMaasRepository implements MaasRepository {
     PlanOptions options = const PlanOptions(),
     String pageCursor = '',
     int legAlternatives = 0,
+    PlanSort sort = PlanSort.fastest,
   }) {
     final pending = completers[_calls++].future;
     final controller = StreamController<PlanUpdate>();
@@ -376,6 +324,9 @@ class _FakeMaasRepository implements MaasRepository {
   /// instead of collapsing to a single complete update.
   final bool staged;
 
+  final calls =
+      <({String date, String time, String pageCursor, PlanSort sort})>[];
+
   @override
   Stream<PlanUpdate> planStream({
     required double fromLat,
@@ -388,7 +339,9 @@ class _FakeMaasRepository implements MaasRepository {
     PlanOptions options = const PlanOptions(),
     String pageCursor = '',
     int legAlternatives = 0,
+    PlanSort sort = PlanSort.fastest,
   }) async* {
+    calls.add((date: date, time: time, pageCursor: pageCursor, sort: sort));
     final error = this.error;
     if (error != null) throw error;
     if (staged) yield (result: result, complete: false);

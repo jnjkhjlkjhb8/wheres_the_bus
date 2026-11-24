@@ -16,12 +16,6 @@ class RouteSaveToggled extends PlanEvent {
   final PlanRoute route;
 }
 
-/// Load a saved snapshot as the current result so it draws on the map.
-class SavedRouteOpened extends PlanEvent {
-  const SavedRouteOpened(this.route);
-  final PlanRoute route;
-}
-
 class PlanSearchRequested extends PlanEvent {
   const PlanSearchRequested({
     required this.fromLat,
@@ -63,32 +57,9 @@ class PlanSearchCancelled extends PlanEvent {
   const PlanSearchCancelled();
 }
 
-class RouteSelected extends PlanEvent {
-  const RouteSelected({required this.index});
-  final int index;
-}
-
-class PreviewClosed extends PlanEvent {
-  const PreviewClosed();
-}
-
-class NavigationStarted extends PlanEvent {
-  const NavigationStarted();
-}
-
-class StopArrived extends PlanEvent {
-  const StopArrived({required this.legIndex, required this.stopIndex});
-  final int legIndex;
-  final int stopIndex;
-}
-
-class NavigationEnded extends PlanEvent {
-  const NavigationEnded();
-}
-
-/// Display-only: the current turn-by-turn walk step advanced. Does not touch
-/// leg progress (owned by [StopArrived]).
-class WalkStepAdvanced extends PlanEvent {
-  const WalkStepAdvanced({required this.index});
-  final int index;
+/// Order the results another way. The last search is asked again unchanged
+/// apart from the sort, which the planner answers from its cache.
+class PlanSortChanged extends PlanEvent {
+  const PlanSortChanged(this.sort);
+  final PlanSort sort;
 }

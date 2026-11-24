@@ -3,12 +3,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:wheres_the_bus/data/models/plan_models.dart';
+import 'package:wheres_the_bus/data/models/plan_options.dart';
 import 'package:wheres_the_bus/data/repositories/maas_repository.dart'
     show PlanFailureKind;
 import 'package:wheres_the_bus/data/repositories/planner_repository.dart';
 import 'package:wheres_the_bus/data/tracking/journey_session_state.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/plan_preview_event.dart';
 import 'package:wheres_the_bus/features/go/bloc/plan_state.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_event.dart';
+import 'package:wheres_the_bus/features/go/bloc/trip_state.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 import '../../support/fakes/map_platform.dart';
@@ -67,23 +71,9 @@ void main() {
   PlanResult result(List<PlanRoute> routes, {String next = ''}) =>
       PlanResult(routes: routes, nextPageCursor: next);
 
-  PlanState results(
-    List<PlanRoute> routes, {
-    bool previewing = false,
-    int? selected = 0,
-    String next = '',
-  }) => PlanState(
+  PlanState results(List<PlanRoute> routes, {String next = ''}) => PlanState(
     status: PlanStatus.success,
     result: result(routes, next: next),
-    selectedRouteIndex: selected,
-    previewing: previewing,
-  );
-
-  PlanState navigating(PlanRoute route, {int leg = 0}) => PlanState(
-    status: PlanStatus.success,
-    result: result([route]),
-    selectedRouteIndex: 0,
-    activeLegIndex: leg,
   );
 
   Future<void> settle(WidgetTester tester) async {
@@ -138,7 +128,7 @@ void main() {
     var fit = harness.maps.cameraUpdates.last as CameraUpdateNewLatLngBounds;
     expect(fit.bounds.southwest, const LatLng(25, 121));
     expect(fit.bounds.northeast, const LatLng(26.1, 122.1));
-    plan.show(results(routes, previewing: true, selected: 1));
+    harness.preview.show(routes[1]);
     await settle(tester);
     fit = harness.maps.cameraUpdates.last as CameraUpdateNewLatLngBounds;
     expect(fit.bounds.southwest, const LatLng(26, 122));
@@ -180,8 +170,9 @@ void main() {
     ];
     await harness.pump(
       tester,
-      results(routes, previewing: true, selected: 1),
+      results(routes),
       destination: goTestDestination,
+      previewing: routes[1],
     );
     await settle(tester);
     final fit = _updates(harness.maps, 'newLatLngBounds').first;
@@ -218,7 +209,7 @@ void main() {
     final routes = [
       _route([_leg(_a, _b)]),
     ];
-    final (plan, _) = await harness.pump(
+    await harness.pump(
       tester,
       results(routes),
       destination: goTestDestination,
@@ -235,10 +226,10 @@ void main() {
         )
         .canPop;
     expect(canPop(), isTrue);
-    plan.show(results(routes, previewing: true));
+    harness.preview.show(routes.first);
     await settle(tester);
     expect(canPop(), isFalse);
-    plan.show(navigating(routes.first));
+    harness.trip.show(goTripOn(routes.first));
     await settle(tester);
     expect(canPop(), isFalse);
     await harness.dispose(tester);
@@ -253,15 +244,27 @@ void main() {
     ];
     final (plan, _) = await harness.pump(
       tester,
-      results(routes, previewing: true, selected: 0),
+      results(routes),
       destination: goTestDestination,
+      previewing: routes.first,
     );
     await settle(tester);
     expect(find.text(i18n.goBadgeFastest), findsOneWidget);
-    plan.show(results(routes, previewing: true, selected: 1));
+    harness.preview.show(routes[1]);
     await settle(tester);
     expect(find.text(i18n.goBadgeFastest), findsNothing);
-    plan.show(results([routes.first], previewing: true, selected: 0));
+    plan.show(results([routes.first]));
+    harness.preview.show(routes.first);
+    await settle(tester);
+    expect(find.text(i18n.goBadgeFastest), findsNothing);
+    // Another sort's first result is not the fastest.
+    plan.show(
+      PlanState(
+        status: PlanStatus.success,
+        result: result(routes),
+        sort: PlanSort.cheapest,
+      ),
+    );
     await settle(tester);
     expect(find.text(i18n.goBadgeFastest), findsNothing);
     await harness.dispose(tester);
@@ -276,8 +279,9 @@ void main() {
     ];
     await harness.pump(
       tester,
-      results(routes, previewing: true, selected: 1),
+      results(routes),
       destination: goTestDestination,
+      previewing: routes[1],
     );
     await settle(tester);
     expect(find.textContaining('Second'), findsWidgets);
@@ -285,25 +289,102 @@ void main() {
     await harness.dispose(tester);
   });
 
-  testWidgets('route changes while planning re-frame the map', (tester) async {
+  testWidgets('opening and closing a preview re-frame the map', (
+    tester,
+  ) async {
     final routes = [
       _route([_leg(_a, _b)]),
       _route([_leg(_c, _d)]),
     ];
-    final (plan, _) = await harness.pump(
+    await harness.pump(
       tester,
       results(routes),
       destination: goTestDestination,
     );
     await settle(tester);
     harness.maps.cameraUpdates.clear();
-    plan.show(results(routes, selected: 1));
+    harness.preview.show(routes[1]);
     await settle(tester);
     expect(_updates(harness.maps, 'newLatLngBounds'), hasLength(1));
     harness.maps.cameraUpdates.clear();
-    plan.show(results(routes, selected: 1, previewing: true));
+    harness.preview.show(null);
     await settle(tester);
-    expect(_updates(harness.maps, 'newLatLngBounds'), hasLength(1));
+    final fit = harness.maps.cameraUpdates.last as CameraUpdateNewLatLngBounds;
+    expect(fit.bounds.southwest, const LatLng(25, 121));
+    expect(fit.bounds.northeast, const LatLng(26.1, 122.1));
+    await harness.dispose(tester);
+  });
+
+  testWidgets('the same itinerary with geometry keeps the camera still', (
+    tester,
+  ) async {
+    final first = PlanRoute(
+      travelTime: 600,
+      startTime: '',
+      endTime: '',
+      transfers: 0,
+      sections: [_leg(_a, _b)],
+      id: 'same',
+    );
+    final refreshed = PlanRoute(
+      travelTime: 600,
+      startTime: '',
+      endTime: '',
+      transfers: 0,
+      sections: [_leg(_a, _c)],
+      id: 'same',
+    );
+    final (plan, _) = await harness.pump(
+      tester,
+      results([first]),
+      destination: goTestDestination,
+      previewing: first,
+    );
+    await settle(tester);
+    harness.maps.cameraUpdates.clear();
+    harness.preview.events.clear();
+    harness.trip.events.clear();
+    plan.show(results([refreshed]));
+    await settle(tester);
+    // The held copies are asked to pick up the newer itinerary...
+    expect(
+      (harness.preview.events.single as PreviewRoutesRefreshed).routes,
+      [refreshed],
+    );
+    expect(
+      (harness.trip.events.single as TripRoutesRefreshed).routes,
+      [refreshed],
+    );
+    // ...and doing so is not a new selection to frame.
+    harness.preview.show(refreshed);
+    await settle(tester);
+    expect(harness.maps.cameraUpdates, isEmpty);
+    await harness.dispose(tester);
+  });
+
+  testWidgets('a sort chip asks for that sort without a haptic', (
+    tester,
+  ) async {
+    final (plan, _) = await harness.pump(
+      tester,
+      results([
+        _route([_leg(_a, _b)]),
+      ]),
+      destination: goTestDestination,
+    );
+    await settle(tester);
+    expect(find.text(i18n.goSortFastest), findsOneWidget);
+    expect(find.text(i18n.goSortFewestTransfers), findsOneWidget);
+    expect(find.text(i18n.goSortLeastWalking), findsOneWidget);
+    plan.events.clear();
+    harness.haptics.clear();
+    await tester.tap(find.text(i18n.goSortCheapest));
+    await tester.pump();
+    expect(
+      plan.events.whereType<PlanSortChanged>().single.sort,
+      PlanSort.cheapest,
+    );
+    expect(harness.haptics, isEmpty);
     await harness.dispose(tester);
   });
 
@@ -347,22 +428,6 @@ void main() {
     expect(find.byType(GoogleMap), findsOneWidget);
 
     await tester.binding.handlePopRoute();
-    await settle(tester);
-    expect(find.byType(GoogleMap), findsNothing);
-    expect(plan.events.whereType<PlanSearchCancelled>(), hasLength(1));
-    await harness.dispose(tester);
-  });
-
-  // FDPL-156: iOS has no edge swipe here, so the header button is the way out.
-  testWidgets('header back on results of a picked destination returns to the '
-      'form', (tester) async {
-    final (plan, _) = await harness.pump(tester, const PlanState());
-    await settle(tester);
-    await tapLabel(tester, i18n.goSwapEndpoints);
-    await settle(tester);
-    expect(find.byType(GoogleMap), findsOneWidget);
-
-    await tapLabel(tester, i18n.commonBack);
     await settle(tester);
     expect(find.byType(GoogleMap), findsNothing);
     expect(plan.events.whereType<PlanSearchCancelled>(), hasLength(1));
@@ -465,8 +530,9 @@ void main() {
     ) async {
       final (plan, journey) = await harness.pump(
         tester,
-        results([route], previewing: true),
+        results([route]),
         destination: goTestDestination,
+        previewing: route,
       );
       await settle(tester);
       harness.maps.cameraUpdates.clear();
@@ -478,7 +544,7 @@ void main() {
           .onPressed!();
       await tester.pump();
       await settle(tester);
-      plan.show(navigating(route));
+      harness.trip.show(goTripOn(route));
       await settle(tester);
       return (plan, journey);
     }
@@ -586,12 +652,12 @@ void main() {
     testWidgets('ending navigation resets the camera and releases compass', (
       tester,
     ) async {
-      final (plan, _) = await startNav(tester, trip);
+      await startNav(tester, trip);
       harness.maps.cameraUpdates.clear();
       harness.haptics.clear();
       await tapLabel(tester, i18n.goEndNavigation);
       await settle(tester);
-      expect(plan.events.last, isA<NavigationEnded>());
+      expect(harness.trip.events.last, isA<TripEnded>());
       expect(harness.haptics, ['lightImpact']);
       final reset = lastPosition(tester);
       expect(reset['target'], [25.0416, 121.5438]);
@@ -618,22 +684,21 @@ void main() {
     });
 
     testWidgets('only reaching done ends the plan navigation', (tester) async {
-      final (plan, journey) = await startNav(tester, trip);
-      plan.events.clear();
+      final (_, journey) = await startNav(tester, trip);
+      harness.trip.events.clear();
       journey.show(const JourneySessionState(phase: JourneyPhase.waiting));
       await settle(tester);
       journey.show(const JourneySessionState(phase: JourneyPhase.riding));
       await settle(tester);
-      expect(plan.events.whereType<NavigationEnded>(), isEmpty);
+      expect(harness.trip.events.whereType<TripEnded>(), isEmpty);
       await harness.dispose(tester);
     });
 
     testWidgets('while navigating the sheet yields to the map', (tester) async {
-      final (plan, _) = await startNav(tester, trip);
+      await startNav(tester, trip);
       expect(find.text(i18n.goSuggestedRoutes), findsNothing);
-      plan.show(
-        const PlanState(status: PlanStatus.success, activeLegIndex: 0),
-      );
+      harness.preview.show(null);
+      harness.trip.show(const TripState());
       await settle(tester);
       expect(find.text(i18n.goSuggestedRoutes), findsOneWidget);
       await harness.dispose(tester);
@@ -642,8 +707,9 @@ void main() {
     testWidgets('toggling a save taps lightly', (tester) async {
       await harness.pump(
         tester,
-        results([trip], previewing: true),
+        results([trip]),
         destination: goTestDestination,
+        previewing: trip,
       );
       await settle(tester);
       harness.haptics.clear();
@@ -655,13 +721,13 @@ void main() {
     testWidgets('swapping sheets slides the incoming one up from below', (
       tester,
     ) async {
-      final (plan, _) = await harness.pump(
+      await harness.pump(
         tester,
         results([trip]),
         destination: goTestDestination,
       );
       await settle(tester);
-      plan.show(results([trip], previewing: true));
+      harness.preview.show(trip);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 20));
       final offsets = [

@@ -263,7 +263,8 @@ class _PreviewMeta extends StatelessWidget {
           AppI18n.of(context).walkMinutes(walkMinutes(route)),
           style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
         ),
-        if (route.totalFare > 0) ...[
+        // A partial sum would read as cheaper than the trip is.
+        if (route.totalFare > 0 && route.fareComplete) ...[
           const SizedBox(width: AppTheme.space12),
           Text(
             r'NT$ ',
@@ -399,7 +400,10 @@ class _PreviewItinerary extends StatelessWidget {
           connectorColor: _connectorColor(s, cs),
           dashed: walk,
           showConnector: true,
-          minutes: sectionMinutes(s),
+          // A transfer walk runs on through the transfer buffer; the note on
+          // the next ride says how much room the change leaves instead.
+          minutes: isTransferWalk(sections, i) ? null : sectionMinutes(s),
+          time: formatClock(s.departure.time),
           content: walk
               ? _walkContent(context, i, s)
               : _transitContent(context, i, s),
@@ -490,17 +494,10 @@ class _PreviewItinerary extends StatelessWidget {
     final legLine = headsign.isNotEmpty
         ? AppI18n.of(context).rideStopsTowards(rideStops, headsign)
         : AppI18n.of(context).rideStops(rideStops);
-    // The wait belongs to the place the rider stands in, so it sits above the
-    // line badge — chronologically the wait comes before boarding, and the
-    // row's minutes column stays the ride itself.
-    final wait = waitMinutesBefore(route.sections, i);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (wait > 0) ...[
-          _WaitLine(minutes: wait),
-          const SizedBox(height: AppTheme.space6),
-        ],
+        ..._beforeBoarding(i),
         AppBadge(label: sectionLabel(AppI18n.of(context), s), color: color),
         const SizedBox(height: AppTheme.space6),
         Text(
@@ -520,6 +517,41 @@ class _PreviewItinerary extends StatelessWidget {
           style: AppTextStyles.bodySmall.copyWith(color: cs.onSurfaceVariant),
         ),
       ],
+    );
+  }
+
+  // What the rider stands through before boarding sits above the line badge,
+  // so the row's minutes column stays the ride itself. A timed change says how
+  // much room it leaves; otherwise the scheduled wait, if any.
+  List<Widget> _beforeBoarding(int i) {
+    final transfer = route.timedTransferInto(i);
+    if (transfer != null) {
+      return [
+        _TransferNote(transfer: transfer),
+        const SizedBox(height: AppTheme.space6),
+      ];
+    }
+    final wait = waitMinutesBefore(route.sections, i);
+    if (wait <= 0) return const [];
+    return [_WaitLine(minutes: wait), const SizedBox(height: AppTheme.space6)];
+  }
+}
+
+/// How much room the change onto this leg leaves, in words.
+class _TransferNote extends StatelessWidget {
+  const _TransferNote({required this.transfer});
+
+  final PlanTransfer transfer;
+
+  @override
+  Widget build(BuildContext context) {
+    final i18n = AppI18n.of(context);
+    return Text(
+      i18n.transferMarginPreview(transferMarginWords(i18n, transfer)!),
+      style: AppTextStyles.bodySmall.copyWith(
+        color: transferMarginColor(transfer, Theme.of(context).colorScheme),
+        fontWeight: FontWeight.w600,
+      ),
     );
   }
 }
@@ -560,6 +592,7 @@ class _PreviewRow extends StatelessWidget {
     required this.showConnector,
     required this.content,
     this.minutes,
+    this.time = '',
   });
 
   final Color nodeRing;
@@ -570,6 +603,10 @@ class _PreviewRow extends StatelessWidget {
   final Widget content;
   final int? minutes;
 
+  /// The clock time the row starts at; empty leaves the column blank so the
+  /// rail stays aligned.
+  final String time;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -577,6 +614,8 @@ class _PreviewRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _PreviewTime(time: time),
+          const SizedBox(width: AppTheme.space8),
           SizedBox(
             width: 24,
             child: Column(
@@ -650,6 +689,33 @@ class _PreviewRow extends StatelessWidget {
     );
   }
 }
+
+/// The left-hand clock column of the timeline, in mono so the times line up
+/// down the itinerary.
+class _PreviewTime extends StatelessWidget {
+  const _PreviewTime({required this.time});
+
+  final String time;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: _kPreviewTimeWidth,
+      child: Text(
+        time,
+        style: AppTextStyles.timeValue(
+          size: AppTextStyles.bodySmall.fontSize,
+          weight: FontWeight.w600,
+          color: cs.onSurface,
+        ),
+      ),
+    );
+  }
+}
+
+/// Wide enough for "23:59" at the label size.
+const double _kPreviewTimeWidth = 40;
 
 /// Pinned primary CTA that commits the previewed route to navigation.
 class _PreviewFooter extends StatelessWidget {

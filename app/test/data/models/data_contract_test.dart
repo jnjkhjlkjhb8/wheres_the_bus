@@ -136,11 +136,9 @@ void main() {
     'planner options retain omitted fields and can clear a transfer ceiling',
     () {
       const options = PlanOptions(
-        gc: 1,
         top: 2,
         transitModes: [3],
-        transferMin: 4,
-        transferMax: 5,
+        transferBufferMinutes: 4,
         firstMileMode: 6,
         firstMileTime: 7,
         lastMileMode: 8,
@@ -154,11 +152,9 @@ void main() {
       expect(options.copyWith(), options);
       expect(options.copyWith(clearMaxTransfers: true).maxTransfers, isNull);
       final changed = options.copyWith(
-        gc: 2,
         top: 3,
         transitModes: [4],
-        transferMin: 5,
-        transferMax: 6,
+        transferBufferMinutes: 5,
         firstMileMode: 7,
         firstMileTime: 8,
         lastMileMode: 9,
@@ -172,11 +168,9 @@ void main() {
       expect(
         changed,
         const PlanOptions(
-          gc: 2,
           top: 3,
           transitModes: [4],
-          transferMin: 5,
-          transferMax: 6,
+          transferBufferMinutes: 5,
           firstMileMode: 7,
           firstMileTime: 8,
           lastMileMode: 9,

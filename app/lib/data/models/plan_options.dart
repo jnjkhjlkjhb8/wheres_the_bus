@@ -1,12 +1,14 @@
 import 'package:equatable/equatable.dart';
 
+/// How plan results are ordered. Every order ranks the same itineraries, so
+/// changing it asks the planner nothing new.
+enum PlanSort { fastest, cheapest, fewestTransfers, leastWalking }
+
 class PlanOptions extends Equatable {
   const PlanOptions({
-    this.gc = 0,
     this.top = 5,
     this.transitModes = const [3, 4, 5, 6, 7, 8, 9],
-    this.transferMin = 15,
-    this.transferMax = 60,
+    this.transferBufferMinutes = 0,
     this.firstMileMode = 0,
     this.firstMileTime = 10,
     this.lastMileMode = 0,
@@ -18,11 +20,13 @@ class PlanOptions extends Equatable {
     this.walkSpeedCmPerSec = 0,
   });
 
-  final double gc;
   final int top;
   final List<int> transitModes;
-  final int transferMin;
-  final int transferMax;
+
+  /// Slack added on top of every transfer walk. Zero leaves the planner's own
+  /// walking and same-stop change times, so the transfer wording on each
+  /// result is about the connection itself rather than about padding.
+  final int transferBufferMinutes;
   final int firstMileMode;
   final int firstMileTime;
   final int lastMileMode;
@@ -49,11 +53,9 @@ class PlanOptions extends Equatable {
   /// `maxTransfers: null` cannot mean "clear it" and "leave it alone" at the
   /// same time.
   PlanOptions copyWith({
-    double? gc,
     int? top,
     List<int>? transitModes,
-    int? transferMin,
-    int? transferMax,
+    int? transferBufferMinutes,
     int? firstMileMode,
     int? firstMileTime,
     int? lastMileMode,
@@ -66,11 +68,10 @@ class PlanOptions extends Equatable {
     int? walkSpeedCmPerSec,
   }) {
     return PlanOptions(
-      gc: gc ?? this.gc,
       top: top ?? this.top,
       transitModes: transitModes ?? this.transitModes,
-      transferMin: transferMin ?? this.transferMin,
-      transferMax: transferMax ?? this.transferMax,
+      transferBufferMinutes:
+          transferBufferMinutes ?? this.transferBufferMinutes,
       firstMileMode: firstMileMode ?? this.firstMileMode,
       firstMileTime: firstMileTime ?? this.firstMileTime,
       lastMileMode: lastMileMode ?? this.lastMileMode,
@@ -87,11 +88,9 @@ class PlanOptions extends Equatable {
 
   @override
   List<Object?> get props => [
-    gc,
     top,
     transitModes,
-    transferMin,
-    transferMax,
+    transferBufferMinutes,
     firstMileMode,
     firstMileTime,
     lastMileMode,

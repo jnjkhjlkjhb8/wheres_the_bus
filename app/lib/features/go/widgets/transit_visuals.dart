@@ -7,6 +7,13 @@ import 'package:wheres_the_bus/l10n/app_i18n.dart';
 
 bool isWalk(PlanSection s) => s.type.toLowerCase() != 'transit';
 
+/// A walk between two rides. The planner ends it only once the transfer
+/// buffer has passed, so its duration is not time on foot.
+bool isTransferWalk(List<PlanSection> sections, int i) =>
+    isWalk(sections[i]) &&
+    sections.take(i).any((s) => !isWalk(s)) &&
+    sections.skip(i + 1).any((s) => !isWalk(s));
+
 // Walk sections carry a (non-walk) transport mode, so branch on isWalk before
 // falling back to the transport mode for the glyph.
 IconData sectionIcon(PlanSection s) =>

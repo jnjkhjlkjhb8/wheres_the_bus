@@ -4,6 +4,7 @@ import 'package:wheres_the_bus/data/models/plan_options.dart';
 import 'package:wheres_the_bus/data/repositories/planner_repository.dart';
 import 'package:wheres_the_bus/features/go/view/go_screen.dart';
 import 'package:wheres_the_bus/l10n/app_i18n.dart';
+import 'package:wheres_the_bus/shared/widgets/app_slider.dart';
 
 const _motis = PlannerCapabilities({
   'transitModes',
@@ -59,37 +60,17 @@ Future<void> _apply(WidgetTester tester) async {
 void main() {
   final i18n = lookupAppI18n(const Locale('zh'));
 
-  testWidgets('the preference readout names the stance at each boundary', (
-    tester,
-  ) async {
-    for (final (gc, label) in [
-      (0.0, i18n.goPrefCheapest),
-      (0.05, i18n.goPrefCheapest),
-      (0.1, i18n.goPrefCheapest),
-      (0.2, i18n.goPrefCheaperLeaning),
-      (0.4, i18n.goPrefBalanced),
-      (0.6, i18n.goPrefBalanced),
-      (0.7, i18n.goPrefFasterLeaning),
-      (0.9, i18n.goPrefFastest),
-    ]) {
-      await _openSheet(tester, PlanOptions(gc: gc), (_) {});
-      // The end label repeats the extreme stances, so count them apart.
-      final ends = (label == i18n.goPrefCheapest || label == i18n.goPrefFastest)
-          ? 2
-          : 1;
-      expect(find.text(label), findsNWidgets(ends), reason: 'gc $gc');
-      await tester.pumpWidget(const SizedBox.shrink());
-    }
-  });
-
   testWidgets('the sheet labels its sections and end stops', (tester) async {
-    await _openSheet(tester, const PlanOptions(gc: 0.5), (_) {});
+    // A buffer off zero, so its readout does not repeat the 0 分 end stop.
+    await _openSheet(
+      tester,
+      const PlanOptions(transferBufferMinutes: 5),
+      (_) {},
+    );
     for (final text in [
       i18n.goRouteOptions,
-      i18n.goPrefRow,
-      i18n.goPrefCheapest,
-      i18n.goPrefFastest,
       i18n.goRouteCount,
+      i18n.goTransferBuffer,
       i18n.goZeroMinutes,
       i18n.goSixtyMinutes,
       i18n.goFirstMile,
@@ -147,18 +128,21 @@ void main() {
     expect(again!.top, 10);
   });
 
-  testWidgets('the transfer window keeps its range through apply', (
+  testWidgets('the transfer buffer reads in minutes and survives apply', (
     tester,
   ) async {
     PlanOptions? result;
     await _openSheet(
       tester,
-      const PlanOptions(transferMin: 15, transferMax: 60),
+      const PlanOptions(transferBufferMinutes: 15),
       (value) => result = value,
     );
-    expect(find.text(i18n.minutesRange(15, 60)), findsOneWidget);
+    expect(find.text(i18n.minutesValue(15)), findsOneWidget);
+    tester.widget<AppSlider>(find.byType(AppSlider)).onChanged!(29.6);
+    await tester.pumpAndSettle();
+    expect(find.text(i18n.minutesValue(30)), findsOneWidget);
     await _apply(tester);
-    expect((result!.transferMin, result!.transferMax), (15, 60));
+    expect(result!.transferBufferMinutes, 30);
   });
 
   testWidgets('the skeleton stands in for a 32 minute, 30 dollar journey', (
