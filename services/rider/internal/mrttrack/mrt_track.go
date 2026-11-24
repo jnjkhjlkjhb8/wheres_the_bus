@@ -550,13 +550,7 @@ func (t *mrtTracker) sendMrtCard(ctx context.Context, next *models.MrtTrackState
 	card := mrtCard(next, now)
 	alert := mrtCardAlert(fire, card)
 	if err := t.pusher.PushCard(ctx, card, target, alert); err != nil {
-		zap.S().Warnw("push error",
-			"component", "mrt_track",
-			"action", "push",
-			"event", "push_error",
-			"track", track.ID,
-			"err", err,
-		)
+		t.handleCardPushError(ctx, track.ID, target.ActivityToken, err)
 		return
 	}
 	zap.S().Infow("pushed",
@@ -566,6 +560,64 @@ func (t *mrtTracker) sendMrtCard(ctx context.Context, next *models.MrtTrackState
 		"track", track.ID,
 		"phase", card.Phase,
 		"remaining", card.RemainingStops,
+	)
+}
+
+// handleCardPushError treats Apple's 410 as the card having ended, not as a
+// failure. It can arrive joined with an FCM failure for the same session, which
+// is still reported.
+func (t *mrtTracker) handleCardPushError(ctx context.Context, trackID, activityToken string, err error) {
+	if errors.Is(err, notify.ErrAPNSGone) {
+		t.dropActivityToken(ctx, trackID, activityToken)
+	}
+	if rest := withoutAPNSGone(err); rest != nil {
+		zap.S().Warnw("push error",
+			"component", "mrt_track",
+			"action", "push",
+			"event", "push_error",
+			"track", trackID,
+			"err", rest,
+		)
+	}
+}
+
+func withoutAPNSGone(err error) error {
+	parts := []error{err}
+	var joined interface{ Unwrap() []error }
+	if errors.As(err, &joined) {
+		parts = joined.Unwrap()
+	}
+	var rest []error
+	for _, part := range parts {
+		if !errors.Is(part, notify.ErrAPNSGone) {
+			rest = append(rest, part)
+		}
+	}
+	return errors.Join(rest...)
+}
+
+// _dropActivityTokenScript deletes the session's activity token only while it
+// still holds the token Apple refused: the app may have registered a fresh one
+// for a restored card while the push was in flight.
+const _dropActivityTokenScript = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0`
+
+func (t *mrtTracker) dropActivityToken(ctx context.Context, trackID, activityToken string) {
+	key := shared.MrtTrackPushTokenKey(trackID)
+	if err := t.rc.Eval(ctx, _dropActivityTokenScript, []string{key}, activityToken).Err(); err != nil {
+		zap.S().Warnw("push token drop error",
+			"component", "mrt_track",
+			"action", "push",
+			"event", "push_token_drop_error",
+			"track", trackID,
+			"err", err,
+		)
+		return
+	}
+	zap.S().Infow("activity gone",
+		"component", "mrt_track",
+		"action", "push",
+		"event", "activity_gone",
+		"track", trackID,
 	)
 }
 

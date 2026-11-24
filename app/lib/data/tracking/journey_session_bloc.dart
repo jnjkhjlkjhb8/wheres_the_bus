@@ -241,7 +241,15 @@ class JourneySessionBloc
     // momentarily between stops) leaves the prior stops-remaining in place
     // rather than blanking the Live Activity's 還剩 N 站 back to null.
     if (event.stopsRemaining == null) return;
-    emit(state.copyWith(pinnedStopsRemaining: event.stopsRemaining));
+    emit(
+      state.copyWith(
+        pinnedStopsRemaining: event.stopsRemaining,
+        nextStopEta: event.nextStopEta,
+        clearNextStopEta: event.nextStopEta == null,
+        pinnedTargetEta: event.targetEta,
+        clearPinnedTargetEta: event.targetEta == null,
+      ),
+    );
     _pushUpdate();
   }
 
@@ -325,20 +333,16 @@ class JourneySessionBloc
     // Stream error (gRPC drop) → stopsRemaining simply stops updating; the
     // card keeps its last-known value rather than going blank.
     _routeEtaSub = _routeEtaStream(routeKey).listen(
-      (etas) => add(
-        PinnedStopsUpdated(
-          _pinnedStopsRemaining(etas, leg, plate),
-          generation: generation,
-        ),
-      ),
+      (etas) => add(_pinnedUpdate(etas, leg, plate, generation)),
       onError: (Object _) {},
     );
   }
 
-  int? _pinnedStopsRemaining(
+  PinnedStopsUpdated _pinnedUpdate(
     List<BusStopEtaViewModel> etas,
     JourneyLeg leg,
     String plate,
+    int generation,
   ) {
     final direction = leg.identity.direction;
     final inDirection = direction.isEmpty
@@ -347,10 +351,43 @@ class JourneySessionBloc
 
     final target = _lastTargetStop(inDirection, leg.identity.departureStopKey);
     final plateStop = _earliestPlateStop(inDirection, plate);
-    if (target == null || plateStop == null) return null;
+    if (target == null || plateStop == null) {
+      return PinnedStopsUpdated(null, generation: generation);
+    }
     final gap = target.sequence - plateStop.sequence;
-    return gap.clamp(0, gap.abs());
+    return PinnedStopsUpdated(
+      gap.clamp(0, gap.abs()),
+      nextStopEta: _plateNextStopEta(inDirection, plateStop, target),
+      targetEta: _plateEta(target, plateStop.plate),
+      generation: generation,
+    );
   }
+
+  /// The pinned plate's estimate for the stop the card names as next: the one
+  /// after the plate's earliest stop, matching [_contentProgress]. Only that
+  /// plate's own estimate counts; another bus's would be a different ride.
+  Duration? _plateNextStopEta(
+    Iterable<BusStopEtaViewModel> etas,
+    BusStopEtaViewModel plateStop,
+    BusStopEtaViewModel target,
+  ) {
+    final next = plateStop.sequence + 1;
+    if (next > target.sequence) return null;
+    final entry = etas
+        .where((e) => _plateAt(e, next, plateStop.plate))
+        .firstOrNull;
+    return entry == null ? null : _positiveEta(entry);
+  }
+
+  Duration? _plateEta(BusStopEtaViewModel entry, String plate) =>
+      entry.plate == plate ? _positiveEta(entry) : null;
+
+  bool _plateAt(BusStopEtaViewModel entry, int sequence, String plate) =>
+      entry.sequence == sequence && entry.plate == plate;
+
+  Duration? _positiveEta(BusStopEtaViewModel entry) => entry.estimateSeconds > 0
+      ? Duration(seconds: entry.estimateSeconds)
+      : null;
 
   BusStopEtaViewModel? _lastTargetStop(
     Iterable<BusStopEtaViewModel> etas,
@@ -398,6 +435,7 @@ class JourneySessionBloc
           aboard: f.aboard,
           etaToBoard: f.etaToBoard,
           delay: f.delay,
+          etaToNextStop: f.etaToNextStop,
           generation: generation,
         ),
       ),
@@ -419,6 +457,8 @@ class JourneySessionBloc
         railNextStop: e.nextStop,
         railAboard: e.aboard,
         railDelay: e.delay,
+        nextStopEta: e.etaToNextStop,
+        clearNextStopEta: e.etaToNextStop == null,
       ),
     );
     _pushUpdate();
@@ -493,8 +533,9 @@ class JourneySessionBloc
       currentIndex: progress.travelled,
       remainingStops: progress.remaining,
       leadStops: s.leadStops,
-      etaMs: _etaEpoch(s.eta),
+      etaMs: _etaEpoch(_arrivalEta(s)),
       etaMinutes: _etaMinutes(s.eta),
+      nextStopEtaMinutes: _etaMinutes(s.nextStopEta),
       walkMinutes: aboard ? 0 : leg.leadingWalkMinutes,
       // Only while the train is still to come: a rider on the platform reads
       // the timetable and the slip against it, not a stop count. Both drop
@@ -514,6 +555,11 @@ class JourneySessionBloc
   int? _waitingDepartureMs(bool waitingRail, JourneyLeg leg) => waitingRail
       ? leg.railSchedule.first.scheduledArrival.millisecondsSinceEpoch
       : null;
+
+  /// A pinned card promises that plate's arrival; [JourneySessionState.eta]
+  /// is whichever bus is due next.
+  Duration? _arrivalEta(JourneySessionState s) =>
+      s.plate == null ? s.eta : s.pinnedTargetEta;
 
   int? _etaEpoch(Duration? eta) =>
       eta == null ? null : DateTime.now().add(eta).millisecondsSinceEpoch;

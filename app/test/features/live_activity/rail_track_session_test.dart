@@ -73,6 +73,7 @@ void main() {
         aboard: true,
         etaToBoard: Duration.zero,
         delay: Duration.zero,
+        etaToNextStop: null,
       ));
       await bloc.stream.firstWhere((s) => s.railProgress != null);
 
@@ -100,6 +101,58 @@ void main() {
   );
 
   test(
+    'a riding rail card carries the next-stop minutes and the alight time',
+    () async {
+      final frames = StreamController<RailTrackFrame>.broadcast();
+      final channel = _FakeChannel();
+      final bloc = JourneySessionBloc(
+        channel: channel,
+        railTrackStream: (_) => frames.stream,
+        liveActivityEnabled: () => true,
+      )..add(JourneyStarted(trackOnly: true, legs: [_railLeg()]));
+
+      await Future<void>.delayed(Duration.zero);
+
+      RailTrackFrame frame(Duration? toNext) => (
+        remainingStops: 1,
+        etaToAlight: const Duration(minutes: 30),
+        progress: 0.5,
+        nextStop: '台中',
+        aboard: true,
+        etaToBoard: Duration.zero,
+        delay: Duration.zero,
+        etaToNextStop: toNext,
+      );
+
+      final before = DateTime.now();
+      frames.add(frame(const Duration(minutes: 3, seconds: 30)));
+      await bloc.stream.firstWhere((s) => s.nextStopEta != null);
+
+      final timed = channel.contents.last;
+      expect(timed.nextStopEtaMinutes, 4);
+      // The alight arrival keeps flowing once aboard: it is what the card's
+      // expected-arrival clock is read from.
+      expect(
+        timed.etaMs,
+        inInclusiveRange(
+          before.add(const Duration(minutes: 30)).millisecondsSinceEpoch,
+          DateTime.now()
+              .add(const Duration(minutes: 30))
+              .millisecondsSinceEpoch,
+        ),
+      );
+
+      // A frame without a next-stop time must not leave the old one standing.
+      frames.add(frame(null));
+      await bloc.stream.firstWhere((s) => s.nextStopEta == null);
+      expect(channel.contents.last.nextStopEtaMinutes, isNull);
+
+      await bloc.close();
+      await frames.close();
+    },
+  );
+
+  test(
     'a train that has not reached the platform reads as waiting, not riding',
     () async {
       final frames = StreamController<RailTrackFrame>.broadcast();
@@ -120,6 +173,7 @@ void main() {
         aboard: false,
         etaToBoard: const Duration(minutes: 7),
         delay: const Duration(minutes: 5),
+        etaToNextStop: null,
       ));
       await Future<void>.delayed(Duration.zero);
 
@@ -142,6 +196,7 @@ void main() {
         aboard: true,
         etaToBoard: Duration.zero,
         delay: const Duration(minutes: 5),
+        etaToNextStop: null,
       ));
       await Future<void>.delayed(Duration.zero);
 

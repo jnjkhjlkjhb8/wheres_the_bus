@@ -26,6 +26,7 @@ func (f *fakeAPNS) SendLiveActivity(_ context.Context, token string, payload []b
 
 func testCard() AlightCard {
 	return AlightCard{
+		TrackID:        "track-1",
 		Mode:           "metro",
 		Phase:          "riding",
 		VehicleLabel:   "板南線",
@@ -79,7 +80,13 @@ func TestTrackPusherSendsBothTransports(t *testing.T) {
 		t.Errorf("numbers did not survive as strings: %v", message.Data)
 	}
 	if message.Android == nil || message.Android.Priority != "high" {
-		t.Error("android priority must be high or Doze holds the refresh past the stop")
+		t.Fatal("android priority must be high or Doze holds the refresh past the stop")
+	}
+	if ttl := message.Android.TTL; ttl == nil || *ttl != 2*time.Minute {
+		t.Errorf("android ttl = %v, want two minutes so an offline phone never replays old hops", ttl)
+	}
+	if message.Android.CollapseKey != "alight_track:track-1" {
+		t.Errorf("collapse key = %q, want one per session", message.Android.CollapseKey)
 	}
 
 	if len(apns.tokens) != 1 || apns.tokens[0] != "activity-token" {
@@ -121,6 +128,27 @@ func TestTrackPusherEndsTheActivityOnATerminalPhase(t *testing.T) {
 	// An ending has to be seen: it lingers rather than vanishing under the rider.
 	if aps["dismissal-date"] != float64(1_800_000_000+8) {
 		t.Errorf("dismissal-date = %v, want a short linger", aps["dismissal-date"])
+	}
+}
+
+func TestTrackPusherHoldsATerminalReadingAsLongAsTheCard(t *testing.T) {
+	for _, phase := range []string{"arrived", "lost"} {
+		t.Run(phase, func(t *testing.T) {
+			fcm := &fakeFCM{}
+			card := testCard()
+			card.Phase = phase
+
+			if err := NewTrackPusher(fcm, nil).PushCard(
+				context.Background(), card, CardTarget{FCMToken: "device-token"}, nil,
+			); err != nil {
+				t.Fatalf("PushCard() error = %v", err)
+			}
+
+			ttl := fcm.messages[0].Android.TTL
+			if ttl == nil || *ttl != 12*time.Minute {
+				t.Errorf("android ttl = %v, want twelve minutes so a phone back online still hears the end", ttl)
+			}
+		})
 	}
 }
 
@@ -178,6 +206,20 @@ func TestTrackPusherReportsBothLegsWhenOneFails(t *testing.T) {
 	// unreachable is not a reason to freeze the other's card.
 	if len(apns.tokens) != 1 {
 		t.Error("a failing FCM leg stopped the APNs leg")
+	}
+}
+
+func TestTrackPusherKeepsAPNSGoneReachableBesideAnFCMFailure(t *testing.T) {
+	fcm := &fakeFCM{err: errors.New("fcm down")}
+	apns := &fakeAPNS{err: ErrAPNSGone}
+
+	err := NewTrackPusher(fcm, apns).PushCard(context.Background(), testCard(), CardTarget{
+		FCMToken: "device-token", ActivityToken: "activity-token",
+	}, nil)
+	// The tracker drops a dead activity token on this sentinel, so the wrapping
+	// and the join must both leave it matchable.
+	if !errors.Is(err, ErrAPNSGone) || !errMentions(err, "fcm down") {
+		t.Fatalf("PushCard() error = %v, want both the 410 and the FCM failure", err)
 	}
 }
 

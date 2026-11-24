@@ -19,6 +19,8 @@ class JourneySessionState extends Equatable {
     this.leadStops = 1,
     this.railAboard = true,
     this.railDelay = Duration.zero,
+    this.nextStopEta,
+    this.pinnedTargetEta,
   });
 
   final JourneyPhase phase;
@@ -59,6 +61,15 @@ class JourneySessionState extends Equatable {
   /// Live delay on a rail track leg. Zero on THSR and off the rails.
   final Duration railDelay;
 
+  /// Live time to the stop the card names as next: the pinned plate's
+  /// estimate on a bus, the timetable plus delay on rail. Null where neither
+  /// applies, and as soon as a fresh frame stops carrying it.
+  final Duration? nextStopEta;
+
+  /// The pinned plate's own time to the alight stop. [eta] there is the next
+  /// bus due, whichever plate it is. Cleared like [nextStopEta].
+  final Duration? pinnedTargetEta;
+
   JourneyLeg? get currentLeg => legIndex < legs.length ? legs[legIndex] : null;
 
   bool get isLastLeg => legIndex >= legs.length - 1;
@@ -82,6 +93,10 @@ class JourneySessionState extends Equatable {
     int? leadStops,
     bool? railAboard,
     Duration? railDelay,
+    Duration? nextStopEta,
+    bool clearNextStopEta = false,
+    Duration? pinnedTargetEta,
+    bool clearPinnedTargetEta = false,
   }) {
     return JourneySessionState(
       phase: phase ?? this.phase,
@@ -98,6 +113,10 @@ class JourneySessionState extends Equatable {
       leadStops: leadStops ?? this.leadStops,
       railAboard: railAboard ?? this.railAboard,
       railDelay: railDelay ?? this.railDelay,
+      nextStopEta: clearNextStopEta ? null : nextStopEta ?? this.nextStopEta,
+      pinnedTargetEta: clearPinnedTargetEta
+          ? null
+          : pinnedTargetEta ?? this.pinnedTargetEta,
     );
   }
 
@@ -117,5 +136,7 @@ class JourneySessionState extends Equatable {
     leadStops,
     railAboard,
     railDelay,
+    nextStopEta,
+    pinnedTargetEta,
   ];
 }

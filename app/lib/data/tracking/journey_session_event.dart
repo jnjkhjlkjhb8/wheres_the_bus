@@ -60,8 +60,21 @@ class ProgressTicked extends JourneySessionEvent {
 /// recomputed from a fresh route-ETA frame (null = not yet resolvable). See
 /// [EtaTicked.generation].
 class PinnedStopsUpdated extends JourneySessionEvent {
-  const PinnedStopsUpdated(this.stopsRemaining, {required this.generation});
+  const PinnedStopsUpdated(
+    this.stopsRemaining, {
+    required this.generation,
+    this.nextStopEta,
+    this.targetEta,
+  });
   final int? stopsRemaining;
+
+  /// The pinned vehicle's time to the stop after its current one. Null when
+  /// the frame carries no estimate for that plate there.
+  final Duration? nextStopEta;
+
+  /// The pinned vehicle's time to the alight stop. Null when the next bus due
+  /// there is another plate, or the frame has no positive estimate.
+  final Duration? targetEta;
   final int generation;
 }
 
@@ -77,6 +90,7 @@ class RailTrackTicked extends JourneySessionEvent {
     required this.etaToBoard,
     required this.delay,
     required this.generation,
+    this.etaToNextStop,
   });
   final Duration eta;
   final int remainingStops;
@@ -91,5 +105,8 @@ class RailTrackTicked extends JourneySessionEvent {
 
   /// Live delay against the timetable. Zero on THSR, which has no live feed.
   final Duration delay;
+
+  /// Time to [nextStop]; null while the train has yet to leave the board stop.
+  final Duration? etaToNextStop;
   final int generation;
 }

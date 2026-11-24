@@ -13,6 +13,7 @@ import (
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/rider/internal/notify"
 	"github.com/jnjkhjlkjhb8/wheres_the_bus/services/shared"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -265,4 +266,80 @@ func TestTrackerPushAndRedisFailuresLeaveStateRetryable(t *testing.T) {
 	}
 	state.VehicleLabel = string([]byte{0xff})
 	tracker.publishState(ctx, state)
+}
+
+func TestTrackerTickDropsTheActivityTokenAppleReportsGone(t *testing.T) {
+	tracker, _, _, _, pusher, state, now := trackerDependencies(t)
+	logs := mrtContractLogs(t)
+	ctx := context.Background()
+	seedTrackerState(t, tracker.rc, state)
+	tokenKey := shared.MrtTrackPushTokenKey(state.TrackId)
+	tracker.rc.Set(ctx, tokenKey, "activity", time.Hour)
+	pusher.err = fmt.Errorf("apns: %w", notify.ErrAPNSGone)
+	tracker.Tick(ctx, now)
+	if n := tracker.rc.Exists(ctx, tokenKey).Val(); n != 0 {
+		t.Fatal("dead activity token kept, so every later hop pushes to it again")
+	}
+	gone := logs.FilterField(zap.String("event", "activity_gone")).FilterField(zap.String("track", state.TrackId))
+	if gone.Len() != 1 || gone.All()[0].Level != zap.InfoLevel {
+		t.Fatalf("activity_gone entries=%+v, want one at info", gone.All())
+	}
+	for _, entry := range logs.All() {
+		if event := entry.ContextMap()["event"]; event == "push_error" || event == "pushed" {
+			t.Fatalf("an ended activity was reported as %v: %+v", event, entry)
+		}
+	}
+}
+
+// tokenSwappingPusher registers a fresh activity token while the push is in
+// flight, as a restored iOS card does.
+type tokenSwappingPusher struct {
+	*trackerPusher
+	rc  *redis.Client
+	key string
+}
+
+func (p *tokenSwappingPusher) PushCard(ctx context.Context, c notify.AlightCard, target notify.CardTarget, alert *notify.CardAlert) error {
+	p.rc.Set(ctx, p.key, "fresh", time.Hour)
+	return p.trackerPusher.PushCard(ctx, c, target, alert)
+}
+
+func TestTrackerTickKeepsAFreshTokenAndReportsTheOtherTransport(t *testing.T) {
+	tracker, _, _, _, pusher, state, now := trackerDependencies(t)
+	logs := mrtContractLogs(t)
+	ctx := context.Background()
+	seedTrackerState(t, tracker.rc, state)
+	tokenKey := shared.MrtTrackPushTokenKey(state.TrackId)
+	tracker.rc.Set(ctx, tokenKey, "activity", time.Hour)
+	cause := errors.New("fcm unavailable")
+	pusher.err = errors.Join(cause, fmt.Errorf("apns: %w", notify.ErrAPNSGone))
+	tracker.pusher = &tokenSwappingPusher{trackerPusher: pusher, rc: tracker.rc, key: tokenKey}
+	tracker.Tick(ctx, now)
+	if got := tracker.rc.Get(ctx, tokenKey).Val(); got != "fresh" {
+		t.Fatalf("activity token = %q, want the token registered during the push", got)
+	}
+	mrtContractCause(t, logs, state.TrackId, "push_error", cause)
+	for _, entry := range logs.FilterField(zap.String("event", "push_error")).All() {
+		for _, field := range entry.Context {
+			if err, ok := field.Interface.(error); field.Key == "err" && ok && errors.Is(err, notify.ErrAPNSGone) {
+				t.Fatalf("the expected 410 was reported as a push failure: %v", err)
+			}
+		}
+	}
+}
+
+func TestTrackerTickReportsAFailedActivityTokenDrop(t *testing.T) {
+	tracker, _, _, _, pusher, state, now := trackerDependencies(t)
+	logs := mrtContractLogs(t)
+	ctx := context.Background()
+	seedTrackerState(t, tracker.rc, state)
+	tracker.rc.Set(ctx, shared.MrtTrackPushTokenKey(state.TrackId), "activity", time.Hour)
+	pusher.err = notify.ErrAPNSGone
+	cause := errors.New("owned Redis EVAL failed")
+	tracker.rc.AddHook(&mrtContractRedisFault{command: "eval", cause: cause})
+	tracker.Tick(ctx, now)
+	mrtContractCause(t, logs, state.TrackId, "push_token_drop_error", cause)
+	if logs.FilterField(zap.String("event", "activity_gone")).Len() != 0 {
+		t.Fatal("a failed drop was reported as done")
+	}
 }

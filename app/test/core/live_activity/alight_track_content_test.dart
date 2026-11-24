@@ -43,6 +43,26 @@ void main() {
     expect(args['vehicleId'], isNull);
   });
 
+  test('toArgs carries next-stop minutes, and declares them when absent', () {
+    const timed = AlightTrackContent(
+      mode: AlightTrackMode.tra,
+      phase: AlightTrackPhase.riding,
+      vehicleLabel: '自強 408',
+      boardStation: 'A',
+      targetStation: 'C',
+      nextStation: 'B',
+      hopCount: 6,
+      currentIndex: 2,
+      remainingStops: 4,
+      leadStops: 2,
+      nextStopEtaMinutes: 3,
+    );
+
+    expect(timed.toArgs()['nextStopEtaMinutes'], 3);
+    expect(base.toArgs().containsKey('nextStopEtaMinutes'), isTrue);
+    expect(base.toArgs()['nextStopEtaMinutes'], isNull);
+  });
+
   test('every mode and phase crosses the wire as its bare name', () {
     // The Kotlin and Swift sides switch on these strings; renaming an enum
     // value without renaming the platform branch would silently fall back to

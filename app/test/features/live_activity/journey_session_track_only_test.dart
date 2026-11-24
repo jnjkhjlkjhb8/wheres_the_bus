@@ -318,6 +318,150 @@ void main() {
     await b.close();
   });
 
+  test('a pinned bus card times the next stop from its own plate', () async {
+    final channel = _CapturingChannel();
+    final b = bloc(channel: channel)
+      ..add(
+        JourneyStarted(
+          legs: [
+            busTrackingLeg(
+              route: _route,
+              stops: _route.stopsGo,
+              boardIndex: 0,
+              targetIndex: 3,
+              direction: 0,
+            ),
+          ],
+          trackOnly: true,
+          plate: 'KKA-1288',
+        ),
+      );
+    await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+
+    // [plateAt] is the plate's earliest stop; [estimates] are per sequence,
+    // and [others] names sequences whose next bus is a different vehicle.
+    List<BusStopEtaViewModel> frame(
+      int plateAt,
+      Map<int, int> estimates, {
+      Set<int> others = const {},
+    }) => [
+      for (var seq = 1; seq <= 5; seq++)
+        BusStopEtaViewModel(
+          stopUid: 'stop-$seq',
+          direction: 0,
+          sequence: seq,
+          estimateSeconds: estimates[seq] ?? 0,
+          nextBusTime: '',
+          stopStatus: 1,
+          vehiclePlates: const ['KKA-1288'],
+          plate: seq < plateAt
+              ? ''
+              : (others.contains(seq) ? 'OTHER-1' : 'KKA-1288'),
+        ),
+    ];
+
+    Future<int?> minutesFor(List<BusStopEtaViewModel> etas) async {
+      routeEtaCtrl.add(etas);
+      await Future<void>.delayed(Duration.zero);
+      return channel.last?.nextStopEtaMinutes;
+    }
+
+    // The card names 第三站 (sequence 3) next; its estimate is the one read,
+    // rounded up, not the plate's own stop (sequence 2) nor the one before.
+    expect(await minutesFor(frame(2, {1: 900, 2: 30, 3: 150})), 3);
+    expect(channel.last?.nextStation, '第三站');
+
+    // Another bus is next at 第三站: its time is not this ride's.
+    expect(await minutesFor(frame(2, {2: 30, 3: 150}, others: {3})), isNull);
+
+    // One stop short of the target, the target itself is the next stop.
+    expect(await minutesFor(frame(3, {4: 60})), 1);
+
+    // An estimate of zero carries no time.
+    expect(await minutesFor(frame(3, {4: 0})), isNull);
+
+    // At the target there is no next stop to time, even if the feed has one
+    // past it.
+    expect(await minutesFor(frame(4, {4: 0, 5: 120})), isNull);
+
+    await b.close();
+  });
+
+  test('a pinned bus card promises its own plate arrival only', () async {
+    final channel = _CapturingChannel();
+    final b = bloc(channel: channel)
+      ..add(
+        JourneyStarted(
+          legs: [
+            busTrackingLeg(
+              route: _route,
+              stops: _route.stopsGo,
+              boardIndex: 0,
+              targetIndex: 3,
+              direction: 0,
+            ),
+          ],
+          trackOnly: true,
+          plate: 'KKA-1288',
+        ),
+      );
+    await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+
+    // The next bus due at the target (sequence 4), whichever plate it is.
+    etaCtrl.add(const Duration(minutes: 20));
+    await Future<void>.delayed(Duration.zero);
+    expect(channel.last?.etaMs, isNull);
+
+    List<BusStopEtaViewModel> frame(String targetPlate, int targetSeconds) => [
+      for (var seq = 2; seq <= 4; seq++)
+        BusStopEtaViewModel(
+          stopUid: 'stop-$seq',
+          direction: 0,
+          sequence: seq,
+          estimateSeconds: seq == 4 ? targetSeconds : 60,
+          nextBusTime: '',
+          stopStatus: 1,
+          vehiclePlates: const ['KKA-1288'],
+          plate: seq == 4 ? targetPlate : 'KKA-1288',
+        ),
+    ];
+
+    Future<int?> arrivalFor(List<BusStopEtaViewModel> etas) async {
+      routeEtaCtrl.add(etas);
+      await Future<void>.delayed(Duration.zero);
+      final etaMs = channel.last?.etaMs;
+      return etaMs == null
+          ? null
+          : etaMs - DateTime.now().millisecondsSinceEpoch;
+    }
+
+    expect(
+      await arrivalFor(frame('KKA-1288', 300)),
+      inInclusiveRange(299000, 300000),
+    );
+    // Another bus is due at the target first: its time is not this ride's.
+    expect(await arrivalFor(frame('OTHER-1', 300)), isNull);
+    expect(await arrivalFor(frame('KKA-1288', 0)), isNull);
+
+    await b.close();
+  });
+
+  test('an unpinned bus card promises the next bus arrival', () async {
+    final channel = _CapturingChannel();
+    final b = bloc(channel: channel)
+      ..add(JourneyStarted(legs: [_leg()], trackOnly: true));
+    await b.stream.firstWhere((s) => s.phase == JourneyPhase.waiting);
+
+    etaCtrl.add(const Duration(minutes: 5));
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      channel.last!.etaMs! - DateTime.now().millisecondsSinceEpoch,
+      inInclusiveRange(299000, 300000),
+    );
+
+    await b.close();
+  });
+
   test(
     'the buzz is filed under the card session, not a process counter',
     () async {

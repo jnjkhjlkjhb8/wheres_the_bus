@@ -37,6 +37,8 @@ void main() {
       expect(state.leadStops, 1);
       expect(state.railAboard, isTrue);
       expect(state.railDelay, Duration.zero);
+      expect(state.nextStopEta, isNull);
+      expect(state.pinnedTargetEta, isNull);
       expect(state.currentLeg, isNull);
     });
   });
@@ -94,6 +96,8 @@ void main() {
       leadStops: 4,
       railAboard: false,
       railDelay: const Duration(minutes: 2),
+      nextStopEta: const Duration(minutes: 3),
+      pinnedTargetEta: const Duration(minutes: 7),
     );
 
     test('without arguments it keeps every field', () {
@@ -116,6 +120,8 @@ void main() {
         full.copyWith(leadStops: 2),
         full.copyWith(railAboard: true),
         full.copyWith(railDelay: Duration.zero),
+        full.copyWith(nextStopEta: const Duration(minutes: 1)),
+        full.copyWith(pinnedTargetEta: const Duration(minutes: 1)),
       ];
       for (final changed in changes) {
         expect(changed, isNot(full));
@@ -135,6 +141,44 @@ void main() {
       expect(full.copyWith(nextStopIndex: 1).nextStopIndex, 1);
       expect(full.copyWith(suggestBoarding: false).suggestBoarding, isFalse);
       expect(full.copyWith(trackOnly: false).trackOnly, isFalse);
+      expect(
+        full.copyWith(nextStopEta: const Duration(minutes: 1)).nextStopEta,
+        const Duration(minutes: 1),
+      );
+      expect(
+        full
+            .copyWith(pinnedTargetEta: const Duration(minutes: 1))
+            .pinnedTargetEta,
+        const Duration(minutes: 1),
+      );
+    });
+
+    test('clearNextStopEta drops the time and wins over a new one', () {
+      expect(full.copyWith(clearNextStopEta: true).nextStopEta, isNull);
+      expect(
+        full
+            .copyWith(
+              clearNextStopEta: true,
+              nextStopEta: const Duration(minutes: 1),
+            )
+            .nextStopEta,
+        isNull,
+      );
+      expect(full.copyWith().nextStopEta, const Duration(minutes: 3));
+    });
+
+    test('clearPinnedTargetEta drops the time and wins over a new one', () {
+      expect(full.copyWith(clearPinnedTargetEta: true).pinnedTargetEta, isNull);
+      expect(
+        full
+            .copyWith(
+              clearPinnedTargetEta: true,
+              pinnedTargetEta: const Duration(minutes: 1),
+            )
+            .pinnedTargetEta,
+        isNull,
+      );
+      expect(full.copyWith().pinnedTargetEta, const Duration(minutes: 7));
     });
 
     test('clearEta drops the eta and wins over a new value', () {

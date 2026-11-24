@@ -97,6 +97,7 @@ RailTrackFrame _frame(Duration eta) => (
   aboard: true,
   etaToBoard: Duration.zero,
   delay: Duration.zero,
+  etaToNextStop: null,
 );
 
 BusStopEtaViewModel _eta(String stop, int sequence, {String plate = ''}) =>

@@ -38,6 +38,7 @@ class AlightTrackContent {
     this.vehicleId,
     this.etaMs,
     this.etaMinutes,
+    this.nextStopEtaMinutes,
     this.walkMinutes = 0,
     this.scheduledDepartureMs,
     this.delayMinutes = 0,
@@ -79,11 +80,18 @@ class AlightTrackContent {
   final int leadStops;
 
   /// Absolute arrival time, for iOS's Live Activity — ActivityKit renders its
-  /// own live timer and needs a target date to do it. Null once stops carry
-  /// the reading.
+  /// own live timer and needs a target date to do it. Once aboard it is the
+  /// expected arrival at [targetStation], where the feed carries one; on a
+  /// pinned bus only that plate's own estimate counts, so it is null when the
+  /// next bus due there is another one.
   final int? etaMs;
 
   final int? etaMinutes;
+
+  /// Live minutes until the vehicle reaches [nextStation]. Only a bus pinned
+  /// to a plate and a rail session carry a time per stop; null everywhere
+  /// else, metro included.
+  final int? nextStopEtaMinutes;
 
   /// Walk to the board stop, minutes. Only meaningful while
   /// [AlightTrackPhase.waiting]; 0 everywhere else.
@@ -115,6 +123,7 @@ class AlightTrackContent {
     'leadStops': leadStops,
     'etaMs': etaMs,
     'etaMinutes': etaMinutes,
+    'nextStopEtaMinutes': nextStopEtaMinutes,
     'walkMinutes': walkMinutes,
     'scheduledDepartureMs': scheduledDepartureMs,
     'delayMinutes': delayMinutes,

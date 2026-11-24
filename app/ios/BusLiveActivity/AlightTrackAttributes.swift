@@ -53,6 +53,11 @@ struct AlightTrackAttributes: ActivityAttributes {
 
         var etaMinutes: Int?
 
+        /// Live minutes to [nextStation], where the feed carries a time per
+        /// stop (a pinned bus, rail). Optional so a push that omits it, as the
+        /// metro tracker's does, still decodes.
+        var nextStopEtaMinutes: Int?
+
         /// Walk to the board stop, minutes. Only meaningful while waiting.
         var walkMinutes: Int
 

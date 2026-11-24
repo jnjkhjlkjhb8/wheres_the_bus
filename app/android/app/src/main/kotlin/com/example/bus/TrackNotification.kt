@@ -50,6 +50,8 @@ class TrackNotification(private val context: Context) {
 
         private const val ENDED_LINGER_MS = 8 * 1000L
 
+        private const val COUNTDOWN_LINGER_MS = 60 * 1000L
+
         /** Reads a value that arrives as a number over the channel and as a string over FCM. */
         internal fun intOf(data: Map<String, Any?>, key: String): Int? = when (val value = data[key]) {
             is Number -> value.toInt()
@@ -149,6 +151,8 @@ class TrackNotification(private val context: Context) {
         val remaining = max(0, intOf(data, "remainingStops") ?: 0)
         val lead = max(0, intOf(data, "leadStops") ?: 0)
         val etaMinutes = intOf(data, "etaMinutes")
+        val etaMs = longOf(data, "etaMs")
+        val nextStopMinutes = intOf(data, "nextStopEtaMinutes")
         val departureMs = longOf(data, "scheduledDepartureMs")
         val delayMinutes = intOf(data, "delayMinutes") ?: 0
 
@@ -176,8 +180,8 @@ class TrackNotification(private val context: Context) {
             phase == "lost" -> "請重新綁定"
             phase == "arrived" -> "追蹤結束"
             waiting -> boardingLine(vehicle, board, departureMs, delayMinutes)
-            remaining <= ARRIVING_STOPS -> "準備下車 · 下一站 $next"
-            else -> "$vehicle · 下一站 $next"
+            remaining <= ARRIVING_STOPS -> "準備下車 · ${nextStopLine(next, nextStopMinutes, etaMs)}"
+            else -> "$vehicle · ${nextStopLine(next, nextStopMinutes, etaMs)}"
         }
         // Under 7 characters, so the status-bar chip renders it in full rather
         // than collapsing to the icon alone.
@@ -218,9 +222,23 @@ class TrackNotification(private val context: Context) {
             .setShowWhen(true)
             .setRequestPromotedOngoing(live)
 
-        builder.setWhen(System.currentTimeMillis())
-
-        builder.setTimeoutAfter(if (live) staleWindowMs(mode) else ENDED_LINGER_MS)
+        val now = System.currentTimeMillis()
+        // While waiting, the header counts down to the arrival on the system's
+        // clock, so it keeps moving after the app stops pushing. A reading
+        // already past its arrival keeps the post time: a countdown to a moment
+        // behind it would open negative.
+        // The countdown keeps running past zero, so its card retires a minute
+        // after the arrival rather than on the stale window, close to iOS,
+        // where a waiting card goes stale at the arrival.
+        if (waiting && etaMs != null && etaMs > now) {
+            builder.setWhen(etaMs)
+                .setUsesChronometer(true)
+                .setChronometerCountDown(true)
+                .setTimeoutAfter(etaMs - now + COUNTDOWN_LINGER_MS)
+        } else {
+            builder.setWhen(now)
+                .setTimeoutAfter(if (live) staleWindowMs(mode) else ENDED_LINGER_MS)
+        }
 
         // Below Android 16 there is no chip, so the reading has to live in the
         // notification itself. On 16+ this would only duplicate the chip.
@@ -306,6 +324,19 @@ class TrackNotification(private val context: Context) {
         val clock = timeFormat.format(java.util.Date(departureMs))
         val late = if (delayMinutes > 0) " · 誤點 ${delayMinutes} 分" else ""
         return "$vehicle · $clock 開$late"
+    }
+
+    /**
+     * `下一站 X`, with the live minutes, and the target's expected arrival on a
+     * second line when known.
+     */
+    private fun nextStopLine(next: String, nextStopMinutes: Int?, etaMs: Long?): String {
+        val minutes = if (nextStopMinutes != null) " $nextStopMinutes 分" else ""
+        // ProgressStyle's expanded text allows two lines and the collapsed one
+        // shows only the first, so a narrow screen cuts the arrival whole
+        // instead of cutting the next stop's minutes.
+        val arrival = if (etaMs != null) "\n預計 ${timeFormat.format(java.util.Date(etaMs))} 抵達" else ""
+        return "下一站 $next$minutes$arrival"
     }
 
     private val timeFormat = java.text.SimpleDateFormat(

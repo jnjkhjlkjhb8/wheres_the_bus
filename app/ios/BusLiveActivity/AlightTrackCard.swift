@@ -36,12 +36,13 @@ struct AlightTrackWidget: Widget {
                     state: state,
                     copy: copy,
                     badgeSize: 24,
-                    showsSubtitle: false
+                    showsSubtitle: false,
+                    detail: copy.arrival
                 )
                 .padding(.leading, 4)
             }
             DynamicIslandExpandedRegion(.trailing) {
-                TrackReading(state: state, tone: tone)
+                TrackReading(state: state, tone: tone, isStale: isStale)
             }
             DynamicIslandExpandedRegion(.bottom) {
                 VStack(spacing: 9) {
@@ -60,9 +61,9 @@ struct AlightTrackWidget: Widget {
                 size: 21
             )
         } compactTrailing: {
-            CompactReading(state: state, tone: tone)
+            CompactReading(state: state, tone: tone, isStale: isStale)
         } minimal: {
-            MinimalReading(attributes: attributes, state: state, tone: tone)
+            MinimalReading(attributes: attributes, state: state, tone: tone, isStale: isStale)
         }
         // Distance reaches the collapsed island through its outline, which is
         // the only surface the system lets a Live Activity colour there.
@@ -84,7 +85,7 @@ struct AlightTrackCard: View {
             HStack(alignment: .center, spacing: 10) {
                 TrackIdentity(attributes: attributes, state: state, copy: copy, badgeSize: 27)
                 Spacer(minLength: 8)
-                TrackReading(state: state, tone: tone)
+                TrackReading(state: state, tone: tone, isStale: isStale)
             }
             TrackBar(state: state, tone: tone)
             TrackFoot(state: state, isStale: isStale, text: copy.lead)
@@ -99,6 +100,10 @@ private struct TrackCopy {
     let title: String
     let subtitle: String
     let lead: String
+    /// `預計 HH:mm 抵達` at the 目標站, while riding with an arrival to name.
+    /// A wall-clock time rather than a countdown, so a card that stops updating
+    /// shows a time that was once right instead of a number that is now wrong.
+    let arrival: String?
 
     init(_ attributes: AlightTrackAttributes, _ state: AlightTrackAttributes.ContentState, isStale: Bool) {
         // The title is the destination, not the vehicle: the session exists to
@@ -116,7 +121,15 @@ private struct TrackCopy {
             subtitle = "於 \(attributes.boardStation) 上車\(walk)"
         case .riding, .approaching:
             title = "往 \(attributes.targetStation)"
-            subtitle = "\(state.vehicle) · 下一站 \(state.nextStation)"
+            let minutes = state.nextStopEtaMinutes.map { " \($0) 分" } ?? ""
+            subtitle = "\(state.vehicle) · 下一站 \(state.nextStation)\(minutes)"
+        }
+
+        switch state.phase {
+        case .riding, .approaching:
+            arrival = state.etaDate.map { "預計 \(Self.clock.string(from: $0)) 抵達" }
+        case .waiting, .arrived, .lost:
+            arrival = nil
         }
 
         if isStale, state.phase.isLive {
@@ -130,13 +143,22 @@ private struct TrackCopy {
                 if state.remainingStops <= 1 {
                     lead = "下一站就是 \(attributes.targetStation)"
                 } else if state.remainingStops <= state.leadStops + 1 {
-                    lead = "準備下車"
+                    lead = arrival.map { "準備下車 · \($0)" } ?? "準備下車"
                 } else {
-                    lead = "車上"
+                    lead = arrival ?? "車上"
                 }
             }
         }
     }
+
+    /// The transit clock is 24-hour whatever the device's own setting, as on
+    /// the platform board the rider compares it with.
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 }
 
 // MARK: - Row 1: identity and reading
@@ -146,8 +168,12 @@ private struct TrackIdentity: View {
     let state: AlightTrackAttributes.ContentState
     let copy: TrackCopy
     let badgeSize: CGFloat
-    /// The island's leading region has no room for two stacked lines.
+    /// The island's leading region has no room for the full subtitle, which
+    /// moves to its bottom row instead.
     var showsSubtitle = true
+    /// A short second line for where the subtitle does not fit: the island's
+    /// expected arrival.
+    var detail: String?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -167,17 +193,24 @@ private struct TrackIdentity: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                } else if let detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
                 }
             }
         }
     }
 }
 
-/// The headline reading: `剩 N 站` while riding, a self-ticking countdown while
-/// waiting, nothing once the session has ended.
+/// The headline reading: `剩 N 站` while riding, a countdown on the system
+/// clock while waiting, nothing once the session has ended.
 private struct TrackReading: View {
     let state: AlightTrackAttributes.ContentState
     let tone: TrackTone
+    let isStale: Bool
 
     var body: some View {
         switch state.phase {
@@ -185,8 +218,21 @@ private struct TrackReading: View {
             // Nothing to read: there are no stops left to count.
             EmptyView()
         case .waiting:
-            if let minutes = state.etaMinutes, minutes > 0 {
-                Reading(value: "\(minutes)", unit: "分", color: tone.color)
+            // A waiting card goes stale at the arrival, so past it a countdown
+            // would only read as minutes since the vehicle came.
+            if !isStale, let minutes = state.etaMinutes, minutes > 0 {
+                // 124pt caps a two-digit `分` reading at title size.
+                Countdown(
+                    state: state,
+                    format: .minutes,
+                    font: .title.weight(.semibold),
+                    color: tone.color,
+                    width: 124,
+                    isFixedWidth: false,
+                    alignment: .trailing
+                ) {
+                    Reading(value: "\(minutes)", unit: "分", color: tone.color)
+                }
             } else {
                 Text("進站中").font(.headline)
             }
@@ -218,18 +264,155 @@ private struct Reading: View {
     }
 }
 
+/// The countdown's unit is part of the formatted string, so it is pinned to the
+/// locale of the card's other copy rather than following the device language.
+/// SwiftUI formats with the environment's locale and ignores one set on the
+/// style, so this goes on the environment.
+private let countdownLocale = Locale(identifier: "zh-Hant-TW")
+
+/// Time to the vehicle's arrival, advanced by the system on its own clock so it
+/// keeps moving while the app is suspended. Falls back to the caller's static
+/// reading when there is no date ahead of the reading.
+private struct Countdown<Fallback: View>: View {
+    enum Format {
+        /// `3分` on iOS 18 and later, m:ss before it.
+        case minutes
+        /// m:ss everywhere.
+        case timer
+    }
+
+    let state: AlightTrackAttributes.ContentState
+    let format: Format
+    let font: Font
+    let color: Color
+    /// Timer texts expand to every point they are offered, so each place caps
+    /// them.
+    let width: CGFloat
+    let isFixedWidth: Bool
+    let alignment: TextAlignment
+    @ViewBuilder let fallback: () -> Fallback
+
+    var body: some View {
+        // A date at or behind the reading would trap the timer's range and
+        // read as zero on the minutes text, while the push still says minutes
+        // remain, so it falls back to those minutes.
+        if let eta = state.etaDate, eta > state.asOfDate {
+            reading(to: eta)
+                .font(font)
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .multilineTextAlignment(alignment)
+                .frame(
+                    minWidth: isFixedWidth ? width : nil,
+                    maxWidth: width,
+                    alignment: alignment == .center ? .center : .trailing
+                )
+        } else {
+            fallback()
+        }
+    }
+
+    @ViewBuilder
+    private func reading(to eta: Date) -> some View {
+        if #available(iOS 18.0, *), format == .minutes {
+            // The components style truncates to whole minutes, so the end is
+            // moved just under a minute later to read rounded up, as the
+            // push's own minutes do.
+            Text(
+                .dateRange(endingAt: eta.addingTimeInterval(59.999)),
+                format: .components(style: .narrow, fields: [.minute])
+            )
+            .environment(\.locale, countdownLocale)
+        } else {
+            Text(timerInterval: state.asOfDate...eta, countsDown: true)
+        }
+    }
+}
+
 // MARK: - Row 2: progress
 
 private struct TrackBar: View {
     let state: AlightTrackAttributes.ContentState
     let tone: TrackTone
 
+    /// Past this many hops the marks crowd into a dotted line that says less
+    /// than a plain bar.
+    private static let maxMarkedHops = 12
+
     var body: some View {
         if state.phase != .waiting {
-            ProgressView(value: state.progress)
-                .progressViewStyle(.linear)
-                .tint(tone.color)
+            if state.hopCount <= Self.maxMarkedHops {
+                StopMarks(state: state, tone: tone)
+            } else {
+                ProgressView(value: state.progress)
+                    .progressViewStyle(.linear)
+                    .tint(tone.color)
+            }
         }
+    }
+}
+
+/// One mark per stop from board to target: the stops behind dimmed, the
+/// vehicle's own stop larger, the target a ring, and the run after the rider's
+/// 提前提醒站 warm, so the place the reminder fires is visible before it fires.
+private struct StopMarks: View {
+    let state: AlightTrackAttributes.ContentState
+    let tone: TrackTone
+
+    private var hops: Int { max(1, state.hopCount) }
+
+    private var current: Int {
+        state.phase == .arrived ? hops : min(max(state.currentIndex, 0), hops)
+    }
+
+    /// Pushed past the target when there is nothing left to warn about, so an
+    /// ended card has no warm run, as on Android.
+    private var leadStop: Int {
+        state.phase == .riding || state.phase == .approaching
+            ? hops - state.leadStops - 1
+            : hops
+    }
+
+    private var runColor: Color {
+        state.remainingStops <= 1 ? TrackTone.go.color : TrackTone.warm.color
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(0...hops, id: \.self) { stop in
+                if stop > 0 {
+                    Capsule()
+                        .fill(color(at: stop))
+                        .frame(height: 2)
+                }
+                mark(at: stop)
+            }
+        }
+        .frame(height: 12)
+    }
+
+    @ViewBuilder
+    private func mark(at stop: Int) -> some View {
+        if stop == current {
+            Circle()
+                .fill(tone.color)
+                .frame(width: 12, height: 12)
+        } else if stop == hops {
+            Circle()
+                .strokeBorder(color(at: stop), lineWidth: 2)
+                .frame(width: 10, height: 10)
+        } else {
+            Circle()
+                .fill(color(at: stop))
+                .frame(width: 6, height: 6)
+        }
+    }
+
+    private func color(at stop: Int) -> Color {
+        if stop <= current { return Color.secondary.opacity(0.35) }
+        return stop > leadStop ? runColor : Color.secondary
     }
 }
 
@@ -277,6 +460,7 @@ private struct TrackFoot: View {
 private struct CompactReading: View {
     let state: AlightTrackAttributes.ContentState
     let tone: TrackTone
+    let isStale: Bool
 
     var body: some View {
         switch state.phase {
@@ -285,11 +469,22 @@ private struct CompactReading: View {
         case .lost:
             Text("失效").font(.caption).lineLimit(1)
         case .waiting:
-            if let minutes = state.etaMinutes, minutes > 0 {
-                Text("\(minutes) 分")
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .lineLimit(1)
+            if !isStale, let minutes = state.etaMinutes, minutes > 0 {
+                // 54pt holds a two-digit `分` reading at caption size.
+                Countdown(
+                    state: state,
+                    format: .minutes,
+                    font: .caption.weight(.semibold),
+                    color: tone.color,
+                    width: 54,
+                    isFixedWidth: true,
+                    alignment: .trailing
+                ) {
+                    Text("\(minutes) 分")
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
             } else {
                 Text("進站中").font(.caption).lineLimit(1)
             }
@@ -309,6 +504,13 @@ private struct MinimalReading: View {
     let attributes: AlightTrackAttributes
     let state: AlightTrackAttributes.ContentState
     let tone: TrackTone
+    let isStale: Bool
+
+    private var glyph: some View {
+        Image(systemName: attributes.mode.glyph)
+            .font(.caption)
+            .foregroundStyle(tone.color)
+    }
 
     var body: some View {
         switch state.phase {
@@ -322,12 +524,32 @@ private struct MinimalReading: View {
             }
             .gaugeStyle(.accessoryCircularCapacity)
             .tint(tone.color)
-        case .waiting, .arrived, .lost:
+        case .waiting:
+            if !isStale, let minutes = state.etaMinutes, minutes > 0 {
+                // m:ss rather than whole minutes: the last minute still moves
+                // in a slot too small for anything else to say so.
+                Countdown(
+                    state: state,
+                    format: .timer,
+                    font: .caption.weight(.semibold),
+                    color: tone.color,
+                    width: 36,
+                    isFixedWidth: true,
+                    alignment: .center
+                ) {
+                    Text("\(minutes)")
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(tone.color)
+                        .countdownDigits()
+                }
+            } else {
+                glyph
+            }
+        case .arrived, .lost:
             // No stop count to show: the glyph says a session is running, and
             // the pill next to it says which.
-            Image(systemName: attributes.mode.glyph)
-                .font(.caption)
-                .foregroundStyle(tone.color)
+            glyph
         }
     }
 }

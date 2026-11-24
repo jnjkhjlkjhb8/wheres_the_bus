@@ -19,6 +19,8 @@ void main() {
     expect(r.progress, 0.0);
     expect(r.nextStop, '台北');
     expect(r.etaToAlight, const Duration(hours: 1, minutes: 10));
+    // Still on the platform: there is no next stop to time yet.
+    expect(r.etaToNextStop, isNull);
   });
 
   test('mid-run: decremented, partial progress, real next stop', () {
@@ -32,6 +34,7 @@ void main() {
     expect(r.nextStop, '台中');
     expect(r.progress, closeTo(0.5, 0.001)); // 30 of 60 scheduled min
     expect(r.etaToAlight, const Duration(minutes: 30));
+    expect(r.etaToNextStop, const Duration(minutes: 30));
   });
 
   test('delay shifts both the boundary and the ETA', () {
@@ -45,6 +48,8 @@ void main() {
     expect(r.nextStop, '板橋');
     // alight effective 09:10; eta = 45 min.
     expect(r.etaToAlight, const Duration(minutes: 45));
+    // 板橋 effective 08:30.
+    expect(r.etaToNextStop, const Duration(minutes: 5));
   });
 
   test('at/after alight: nothing left, full progress', () {
@@ -57,6 +62,7 @@ void main() {
     expect(r.progress, 1.0);
     expect(r.etaToAlight, Duration.zero);
     expect(r.nextStop, '台中');
+    expect(r.etaToNextStop, isNull);
   });
 
   test('single-stop segment is a no-op tracker', () {

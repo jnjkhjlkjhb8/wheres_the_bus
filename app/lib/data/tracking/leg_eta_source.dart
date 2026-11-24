@@ -115,6 +115,7 @@ Stream<Duration?> scheduledCountdown(
   bool aboard,
   Duration etaToBoard,
   Duration delay,
+  Duration? etaToNextStop,
 })
 railProgress(List<RailStopSchedule> schedule, Duration delay, DateTime now) {
   final n = schedule.length;
@@ -153,6 +154,7 @@ railProgress(List<RailStopSchedule> schedule, Duration delay, DateTime now) {
     // names the slip ("08:20 開 · 誤點 5 分") instead of quietly restating the
     // timetable, because a rider compares it against the printed board.
     delay: delay,
+    etaToNextStop: _railEtaToNextStop(schedule, delay, now, passed),
   );
 }
 
@@ -163,6 +165,20 @@ int _passedRailStops(
 ) => schedule
     .where((stop) => !stop.scheduledArrival.add(delay).isAfter(now))
     .length;
+
+/// Time until the train reaches the stop [railProgress] names as next. Null
+/// before it leaves the board stop, where the rider is still waiting, and once
+/// it has reached the last.
+Duration? _railEtaToNextStop(
+  List<RailStopSchedule> schedule,
+  Duration delay,
+  DateTime now,
+  int passed,
+) => _railMoving(passed, schedule.length)
+    ? schedule[passed].scheduledArrival.add(delay).difference(now)
+    : null;
+
+bool _railMoving(int passed, int stopCount) => passed > 0 && passed < stopCount;
 
 Duration _nonNegative(Duration duration) =>
     duration.isNegative ? Duration.zero : duration;
@@ -185,6 +201,7 @@ typedef RailTrackFrame = ({
   bool aboard,
   Duration etaToBoard,
   Duration delay,
+  Duration? etaToNextStop,
 });
 
 typedef RailTrackStream = Stream<RailTrackFrame> Function(JourneyLeg leg);

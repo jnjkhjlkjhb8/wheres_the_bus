@@ -129,16 +129,41 @@ func cardMessage(token string, card AlightCard) *messaging.Message {
 		"lineCode":       card.LineCode,
 		"lineColorHex":   card.LineColorHex,
 	}
+	ttl := cardPushTTL(card.Phase)
 	return &messaging.Message{
-		Token:   token,
-		Data:    data,
-		Android: &messaging.AndroidConfig{Priority: "high"},
+		Token: token,
+		Data:  data,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+			// A reading is only worth showing while it is current: a phone that
+			// comes back online should get the latest one for this session, or
+			// none, not a backlog of hops it has already passed.
+			TTL:         &ttl,
+			CollapseKey: _trackPushType + ":" + card.TrackID,
+		},
 	}
 }
 
 // _trackPushType is the discriminator the Android receiver filters on. It sits
 // beside the existing "alight_vibrate" type on the same FCM path.
 const _trackPushType = "alight_track"
+
+// _cardPushTTL bounds how long FCM holds an undelivered live reading. A metro
+// hop is one to three minutes, so an older reading names a station the rider
+// has already passed.
+const _cardPushTTL = 2 * time.Minute
+
+// _cardEndPushTTL holds an arrived or lost reading as long as the phone would
+// otherwise keep the card, the metro stale window in TrackNotification.kt: a
+// phone back online inside it still hears that the session ended.
+const _cardEndPushTTL = 12 * time.Minute
+
+func cardPushTTL(phase string) time.Duration {
+	if cardPhaseIsLive(phase) {
+		return _cardPushTTL
+	}
+	return _cardEndPushTTL
+}
 
 // _cardDismissalLinger keeps a terminal card on screen before the system takes it
 // away, matching the linger the local iOS path ends with: an ending has to be

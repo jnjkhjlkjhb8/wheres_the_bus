@@ -245,6 +245,7 @@ class LiveActivityPlugin: NSObject, FlutterPlugin {
             leadStops: max(0, args["leadStops"] as? Int ?? 0),
             etaUnix: etaUnix,
             etaMinutes: args["etaMinutes"] as? Int,
+            nextStopEtaMinutes: args["nextStopEtaMinutes"] as? Int,
             walkMinutes: args["walkMinutes"] as? Int ?? 0,
             lineCode: args["lineCode"] as? String,
             lineColorHex: args["lineColorHex"] as? String,
