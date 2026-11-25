@@ -574,7 +574,6 @@ class _NearbyStationRow extends StatelessWidget {
     required this.station,
     required this.onStationTap,
     this.arrivals = const [],
-    super.key,
   });
 
   /// [TransportIcon]'s default size; the skeleton bone must match it.
