@@ -268,7 +268,7 @@ void main() {
     tripBloc.show(goTripOn(trip, walkStep: 99));
     await tester.pumpAndSettle();
     expect(find.text('即將抵達'), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.close_rounded));
+    await tester.tap(find.text('結束導航'));
     await tester.pump();
     expect(tripBloc.events.last, isA<TripEnded>());
     expect(journey.events.last, isA<JourneyCancelled>());
@@ -310,7 +310,7 @@ void main() {
       dark: true,
     );
     expect(find.textContaining('B'), findsWidgets);
-    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+    expect(find.text('結束導航'), findsOneWidget);
     await disposeGo(tester);
   });
 
@@ -442,7 +442,7 @@ void main() {
       final saved = route([section(walk: true)]);
       final (plan, _) = await pumpGo(
         tester,
-        PlanState(status: PlanStatus.failure, savedRoutesReady: true),
+        const PlanState(status: PlanStatus.failure, savedRoutesReady: true),
         destination: true,
         reduced: reduced,
       );
@@ -1098,7 +1098,6 @@ void main() {
     final results = PlanState(
       status: PlanStatus.success,
       result: PlanResult(routes: [trip]),
-      selectedRouteIndex: 0,
     );
     Future<void> settle() async {
       for (var i = 0; i < 3; i++) {
@@ -1106,14 +1105,10 @@ void main() {
       }
     }
 
-    final (previewed, _) = await pumpGo(
-      tester,
-      results.copyWith(previewing: true),
-      destination: true,
-    );
+    await pumpGo(tester, results, destination: true, previewing: trip);
     await tester.pumpAndSettle();
     press(tester, '返回');
-    expect(previewed.events.last, isA<PreviewClosed>());
+    expect(previewBloc.events.last, isA<PreviewClosed>());
     await disposeGo(tester);
 
     final (picked, _) = await pumpGo(tester, const PlanState());
@@ -1132,8 +1127,12 @@ void main() {
     addTearDown(tester.view.reset);
     final handed = _Plan(results);
     final journey = _Journey();
+    final preview = GoPreview();
+    final trips = GoTrip();
     addTearDown(handed.close);
     addTearDown(journey.close);
+    addTearDown(preview.close);
+    addTearDown(trips.close);
     final router = GoRouter(
       initialLocation: '/go',
       routes: [
@@ -1155,6 +1154,8 @@ void main() {
       MultiBlocProvider(
         providers: [
           BlocProvider<PlanBloc>.value(value: handed),
+          BlocProvider<PlanPreviewBloc>.value(value: preview),
+          BlocProvider<TripBloc>.value(value: trips),
           BlocProvider<JourneySessionBloc>.value(value: journey),
         ],
         child: MaterialApp.router(
